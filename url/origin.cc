@@ -107,8 +107,10 @@ Origin::~Origin() {
 Origin Origin::UnsafelyCreateOriginWithoutNormalization(
     base::StringPiece scheme,
     base::StringPiece host,
-    uint16_t port) {
-  return Origin(scheme, host, port, "", SchemeHostPort::CHECK_CANONICALIZATION);
+    uint16_t port,
+    base::StringPiece suborigin) {
+  return Origin(scheme, host, port, suborigin,
+                SchemeHostPort::CHECK_CANONICALIZATION);
 }
 
 Origin Origin::CreateFromNormalizedTupleWithSuborigin(
@@ -168,12 +170,13 @@ bool Origin::IsSamePhysicalOriginWith(const Origin& other) const {
   return GetPhysicalOrigin().IsSameOriginWith(other.GetPhysicalOrigin());
 }
 
-bool Origin::DomainIs(base::StringPiece lower_ascii_domain) const {
-  return !unique_ && url::DomainIs(tuple_.host(), lower_ascii_domain);
+bool Origin::DomainIs(base::StringPiece canonical_domain) const {
+  return !unique_ && url::DomainIs(tuple_.host(), canonical_domain);
 }
 
 bool Origin::operator<(const Origin& other) const {
-  return tuple_ < other.tuple_;
+  return tuple_ < other.tuple_ ||
+         (tuple_.Equals(other.tuple_) && suborigin_ < other.suborigin_);
 }
 
 std::ostream& operator<<(std::ostream& out, const url::Origin& origin) {

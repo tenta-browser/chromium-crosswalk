@@ -41,8 +41,8 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
   WTF_MAKE_NONCOPYABLE(FontFallbackList);
 
  public:
-  static PassRefPtr<FontFallbackList> Create() {
-    return AdoptRef(new FontFallbackList());
+  static RefPtr<FontFallbackList> Create() {
+    return WTF::AdoptRef(new FontFallbackList());
   }
 
   ~FontFallbackList() { ReleaseFontData(); }
@@ -71,7 +71,6 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
 
   const SimpleFontData* PrimarySimpleFontData(
       const FontDescription& font_description) {
-    DCHECK(IsMainThread());
     if (!cached_primary_simple_font_data_) {
       cached_primary_simple_font_data_ =
           DeterminePrimarySimpleFontData(font_description);
@@ -86,8 +85,7 @@ class PLATFORM_EXPORT FontFallbackList : public RefCounted<FontFallbackList> {
  private:
   FontFallbackList();
 
-  PassRefPtr<FontData> GetFontData(const FontDescription&,
-                                   int& family_index) const;
+  RefPtr<FontData> GetFontData(const FontDescription&, int& family_index) const;
 
   const SimpleFontData* DeterminePrimarySimpleFontData(
       const FontDescription&) const;

@@ -22,6 +22,7 @@
 #include "components/ntp_snippets/category_status.h"
 #include "components/ntp_snippets/content_suggestion.h"
 #include "components/ntp_snippets/content_suggestions_provider.h"
+#include "components/ntp_snippets/logger.h"
 #include "components/ntp_snippets/mock_content_suggestions_provider.h"
 #include "components/ntp_snippets/remote/remote_suggestions_provider_impl.h"
 #include "components/ntp_snippets/user_classifier.h"
@@ -159,7 +160,7 @@ class ContentSuggestionsServiceTest : public testing::Test {
         enabled, /*signin_manager=*/nullptr, /*history_service=*/nullptr,
         /*large_icon_service=*/nullptr, pref_service_.get(),
         std::move(category_ranker_), std::move(user_classifier),
-        /*scheduler=*/nullptr);
+        /*scheduler=*/nullptr, /*debug_logger=*/base::MakeUnique<Logger>());
   }
 
   void ResetService() {
@@ -279,8 +280,8 @@ TEST_F(ContentSuggestionsServiceTest, ShouldRedirectFetchSuggestionImage) {
                                     CreateSuggestions(articles_category, {1}));
   ContentSuggestion::ID suggestion_id(articles_category, "1");
 
-  EXPECT_CALL(*provider1, FetchSuggestionImage(suggestion_id, _));
-  EXPECT_CALL(*provider2, FetchSuggestionImage(_, _)).Times(0);
+  EXPECT_CALL(*provider1, FetchSuggestionImageMock(suggestion_id, _));
+  EXPECT_CALL(*provider2, FetchSuggestionImageMock(_, _)).Times(0);
   service()->FetchSuggestionImage(
       suggestion_id, base::Bind(&ContentSuggestionsServiceTest::OnImageFetched,
                                 base::Unretained(this)));
@@ -649,7 +650,7 @@ TEST_F(ContentSuggestionsServiceTest, ShouldForwardFetch) {
   MockContentSuggestionsProvider* provider =
       MakeRegisteredMockProvider(category);
   provider->FireCategoryStatusChangedWithCurrentStatus(category);
-  EXPECT_CALL(*provider, Fetch(category, known_suggestions, _));
+  EXPECT_CALL(*provider, FetchMock(category, known_suggestions, _));
   service()->Fetch(category, known_suggestions, FetchDoneCallback());
 }
 

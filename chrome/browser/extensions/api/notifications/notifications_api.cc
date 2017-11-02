@@ -16,14 +16,18 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper.h"
 #include "chrome/browser/extensions/api/notifications/extension_notification_display_helper_factory.h"
 #include "chrome/browser/notifications/notification.h"
+#include "chrome/browser/notifications/notification_common.h"
 #include "chrome/browser/notifications/notifier_state_tracker.h"
 #include "chrome/browser/notifications/notifier_state_tracker_factory.h"
+#include "chrome/browser/notifications/web_notification_delegate.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/notifications/notification_style.h"
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
@@ -38,7 +42,6 @@
 #include "extensions/browser/extension_system_provider.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/features/feature.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/layout.h"
 #include "ui/gfx/image/image.h"
@@ -46,8 +49,9 @@
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_rep.h"
 #include "ui/gfx/skia_util.h"
-#include "ui/message_center/message_center_style.h"
+#include "ui/message_center/notification_delegate.h"
 #include "ui/message_center/notifier_settings.h"
+#include "ui/message_center/public/cpp/message_center_constants.h"
 #include "url/gurl.h"
 
 using message_center::NotifierId;
@@ -56,11 +60,11 @@ namespace extensions {
 
 namespace notifications = api::notifications;
 
-const base::Feature kAllowFullscreenAppNotificationsFeature{
-  "FSNotificationsApp", base::FEATURE_ENABLED_BY_DEFAULT
-};
-
 namespace {
+
+// The maximum length of a notification ID, in number of characters. Some
+// platforms have limitattions on the length of the ID.
+constexpr int kNotificationIdLengthLimit = 500;
 
 const char kMissingRequiredPropertiesForCreateNotification[] =
     "Some of the required properties are missing: type, iconUrl, title and "
@@ -75,6 +79,8 @@ const char kExtraListItemsProvided[] =
     "List items provided for notification type != list";
 const char kExtraImageProvided[] =
     "Image resource provided for notification type != image";
+const char kNotificationIdTooLong[] =
+    "The notification's ID should be %d characters or less";
 
 #if !defined(OS_CHROMEOS)
 const char kLowPriorityDeprecatedOnPlatform[] =
@@ -91,11 +97,11 @@ std::string CreateScopedIdentifier(const std::string& extension_id,
 // Removes the unique internal identifier to send the ID as the
 // extension expects it.
 std::string StripScopeFromIdentifier(const std::string& extension_id,
-                                     const std::string& id) {
+                                     const std::string& scoped_id) {
   size_t index_of_separator = extension_id.length() + 1;
-  DCHECK_LT(index_of_separator, id.length());
+  DCHECK_LT(index_of_separator, scoped_id.length());
 
-  return id.substr(index_of_separator);
+  return scoped_id.substr(index_of_separator);
 }
 
 const gfx::ImageSkia CreateSolidColorImage(int width,
@@ -161,7 +167,7 @@ bool NotificationBitmapToGfxImage(
     return false;
 
   // Ensure that our bitmap and our data now refer to the same number of pixels.
-  if (rgba_data_length != bitmap.getSafeSize())
+  if (rgba_data_length != bitmap.computeByteSize())
     return false;
 
   uint32_t* pixels = bitmap.getAddr32(0, 0);
@@ -183,160 +189,6 @@ bool NotificationBitmapToGfxImage(
   *return_image = gfx::Image(skia);
   return true;
 }
-
-class ShutdownNotifierFactory
-    : public BrowserContextKeyedServiceShutdownNotifierFactory {
- public:
-  static ShutdownNotifierFactory* GetInstance() {
-    return base::Singleton<ShutdownNotifierFactory>::get();
-  }
-
- private:
-  friend struct base::DefaultSingletonTraits<ShutdownNotifierFactory>;
-
-  ShutdownNotifierFactory()
-      : BrowserContextKeyedServiceShutdownNotifierFactory(
-            "NotificationsApiDelegate") {
-    DependsOn(ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
-  }
-  ~ShutdownNotifierFactory() override {}
-
-  DISALLOW_COPY_AND_ASSIGN(ShutdownNotifierFactory);
-};
-
-class NotificationsApiDelegate : public NotificationDelegate {
- public:
-  NotificationsApiDelegate(ChromeAsyncExtensionFunction* api_function,
-                           Profile* profile,
-                           const std::string& extension_id,
-                           const std::string& id)
-      : api_function_(api_function),
-        event_router_(EventRouter::Get(profile)),
-        display_helper_(
-            ExtensionNotificationDisplayHelperFactory::GetForProfile(profile)),
-        extension_id_(extension_id),
-        id_(id),
-        scoped_id_(CreateScopedIdentifier(extension_id, id)) {
-    DCHECK(api_function_);
-    DCHECK(display_helper_);
-
-    shutdown_notifier_subscription_ =
-        ShutdownNotifierFactory::GetInstance()->Get(profile)->Subscribe(
-            base::Bind(&NotificationsApiDelegate::Shutdown,
-                       base::Unretained(this)));
-  }
-
-  void Close(bool by_user) override {
-    EventRouter::UserGestureState gesture =
-        by_user ? EventRouter::USER_GESTURE_ENABLED
-                : EventRouter::USER_GESTURE_NOT_ENABLED;
-    std::unique_ptr<base::ListValue> args(CreateBaseEventArgs());
-    args->AppendBoolean(by_user);
-    SendEvent(events::NOTIFICATIONS_ON_CLOSED,
-              notifications::OnClosed::kEventName, gesture, std::move(args));
-
-    DCHECK(display_helper_);
-    display_helper_->EraseDataForNotificationId(scoped_id_);
-  }
-
-  void Click() override {
-    std::unique_ptr<base::ListValue> args(CreateBaseEventArgs());
-    SendEvent(events::NOTIFICATIONS_ON_CLICKED,
-              notifications::OnClicked::kEventName,
-              EventRouter::USER_GESTURE_ENABLED, std::move(args));
-  }
-
-  bool HasClickedListener() override {
-    if (!event_router_)
-      return false;
-
-    return event_router_->HasEventListener(
-        notifications::OnClicked::kEventName);
-  }
-
-  void ButtonClick(int index) override {
-    std::unique_ptr<base::ListValue> args(CreateBaseEventArgs());
-    args->AppendInteger(index);
-    SendEvent(events::NOTIFICATIONS_ON_BUTTON_CLICKED,
-              notifications::OnButtonClicked::kEventName,
-              EventRouter::USER_GESTURE_ENABLED, std::move(args));
-  }
-
-  std::string id() const override { return scoped_id_; }
-
-  // Should only display when fullscreen if this app is the source of the
-  // fullscreen window.
-  bool ShouldDisplayOverFullscreen() const override {
-    AppWindowRegistry::AppWindowList windows = AppWindowRegistry::Get(
-        api_function_->GetProfile())->GetAppWindowsForApp(extension_id_);
-    for (auto* window : windows) {
-      // Window must be fullscreen and visible
-      if (window->IsFullscreen() && window->GetBaseWindow()->IsActive()) {
-        bool enabled = base::FeatureList::IsEnabled(
-            kAllowFullscreenAppNotificationsFeature);
-        if (enabled) {
-          UMA_HISTOGRAM_ENUMERATION("Notifications.Display_Fullscreen.Shown",
-                                    NotifierId::APPLICATION,
-                                    NotifierId::SIZE);
-        } else {
-          UMA_HISTOGRAM_ENUMERATION(
-              "Notifications.Display_Fullscreen.Suppressed",
-              NotifierId::APPLICATION,
-              NotifierId::SIZE);
-
-        }
-        return enabled;
-      }
-    }
-
-    return false;
-  }
-
- private:
-  ~NotificationsApiDelegate() override {}
-
-  void SendEvent(events::HistogramValue histogram_value,
-                 const std::string& name,
-                 EventRouter::UserGestureState user_gesture,
-                 std::unique_ptr<base::ListValue> args) {
-    if (!event_router_)
-      return;
-
-    std::unique_ptr<Event> event(
-        new Event(histogram_value, name, std::move(args)));
-    event->user_gesture = user_gesture;
-    event_router_->DispatchEventToExtension(extension_id_, std::move(event));
-  }
-
-  void Shutdown() {
-    shutdown_notifier_subscription_.reset();
-    event_router_ = nullptr;
-    display_helper_ = nullptr;
-  }
-
-  std::unique_ptr<base::ListValue> CreateBaseEventArgs() {
-    std::unique_ptr<base::ListValue> args(new base::ListValue());
-    args->AppendString(id_);
-    return args;
-  }
-
-  scoped_refptr<ChromeAsyncExtensionFunction> api_function_;
-
-  // Since this class is refcounted it may outlive the profile.  We listen for
-  // profile-keyed service shutdown events and reset to nullptr at that time,
-  // so make sure to check for a valid pointer before use.
-  EventRouter* event_router_;
-  ExtensionNotificationDisplayHelper* display_helper_;
-
-  const std::string extension_id_;
-  const std::string id_;
-  const std::string scoped_id_;
-
-  std::unique_ptr<KeyedServiceShutdownNotifier::Subscription>
-      shutdown_notifier_subscription_;
-
-  DISALLOW_COPY_AND_ASSIGN(NotificationsApiDelegate);
-};
 
 }  // namespace
 
@@ -491,15 +343,23 @@ bool NotificationsApiFunction::CreateNotification(
   if (options->is_clickable.get())
     optional_fields.clickable = *options->is_clickable;
 
-  NotificationsApiDelegate* api_delegate(new NotificationsApiDelegate(
-      this, GetProfile(), extension_->id(), id));  // ownership is passed to
-                                                   // Notification
+  // TODO(crbug.com/772004): Remove the manual limitation in favor of an IDL
+  // annotation once supported.
+  if (id.size() > kNotificationIdLengthLimit) {
+    SetError(
+        base::StringPrintf(kNotificationIdTooLong, kNotificationIdLengthLimit));
+    return false;
+  }
+
+  std::string notification_id = CreateScopedIdentifier(extension_->id(), id);
   Notification notification(
-      type, title, message, icon,
+      type, notification_id, title, message, icon,
       message_center::NotifierId(message_center::NotifierId::APPLICATION,
                                  extension_->id()),
-      base::UTF8ToUTF16(extension_->name()), extension_->url(),
-      api_delegate->id(), optional_fields, api_delegate);
+      base::UTF8ToUTF16(extension_->name()), extension_->url(), notification_id,
+      optional_fields,
+      new WebNotificationDelegate(NotificationCommon::EXTENSION, GetProfile(),
+                                  notification_id, extension_->url()));
 
   // Apply the "requireInteraction" flag. The value defaults to false.
   notification.set_never_timeout(options->require_interaction &&
@@ -722,6 +582,11 @@ bool NotificationsCreateFunction::RunNotificationsApi() {
 
   SetResult(base::MakeUnique<base::Value>(notification_id));
 
+  // TODO(crbug.com/749402): Cap the length of notification Ids to a certain
+  // limit if the histogram indicates that this is safe to do.
+  UMA_HISTOGRAM_COUNTS_1000("Notifications.ExtensionNotificationIdLength",
+                            notification_id.size());
+
   // TODO(dewittj): Add more human-readable error strings if this fails.
   if (!CreateNotification(notification_id, &params_->options))
     return false;
@@ -803,8 +668,8 @@ bool NotificationsGetAllFunction::RunNotificationsApi() {
 
   for (std::set<std::string>::iterator iter = notification_ids.begin();
        iter != notification_ids.end(); iter++) {
-    result->SetBooleanWithoutPathExpansion(
-        StripScopeFromIdentifier(extension_->id(), *iter), true);
+    result->SetKey(StripScopeFromIdentifier(extension_->id(), *iter),
+                   base::Value(true));
   }
 
   SetResult(std::move(result));

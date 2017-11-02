@@ -9,7 +9,6 @@
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
@@ -76,12 +75,14 @@ AttachmentDownloaderImpl::AttachmentDownloaderImpl(
   DCHECK(!raw_store_birthday_.empty());
 }
 
-AttachmentDownloaderImpl::~AttachmentDownloaderImpl() {}
+AttachmentDownloaderImpl::~AttachmentDownloaderImpl() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
 
 void AttachmentDownloaderImpl::DownloadAttachment(
     const AttachmentId& attachment_id,
     const DownloadCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   AttachmentUrl url = AttachmentUploaderImpl::GetURLForAttachmentId(
                           sync_service_url_, attachment_id)
@@ -107,7 +108,7 @@ void AttachmentDownloaderImpl::OnGetTokenSuccess(
     const OAuth2TokenService::Request* request,
     const std::string& access_token,
     const base::Time& expiration_time) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(request == access_token_request_.get());
   access_token_request_.reset();
   StateList::const_iterator iter;
@@ -127,7 +128,7 @@ void AttachmentDownloaderImpl::OnGetTokenSuccess(
 void AttachmentDownloaderImpl::OnGetTokenFailure(
     const OAuth2TokenService::Request* request,
     const GoogleServiceAuthError& error) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(request == access_token_request_.get());
   access_token_request_.reset();
   StateList::const_iterator iter;
@@ -149,7 +150,7 @@ void AttachmentDownloaderImpl::OnGetTokenFailure(
 
 void AttachmentDownloaderImpl::OnURLFetchComplete(
     const net::URLFetcher* source) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Find DownloadState by url.
   AttachmentUrl url = source->GetOriginalURL().spec();
@@ -231,7 +232,7 @@ std::unique_ptr<net::URLFetcher> AttachmentDownloaderImpl::CreateFetcher(
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting:
             "Users can disable Chrome Sync by going into the profile settings "
             "and choosing to Sign Out."
@@ -271,7 +272,7 @@ void AttachmentDownloaderImpl::ReportResult(
        iter != download_state.user_callbacks.end(); ++iter) {
     std::unique_ptr<Attachment> attachment;
     if (result == DOWNLOAD_SUCCESS) {
-      attachment = base::MakeUnique<Attachment>(Attachment::CreateFromParts(
+      attachment = std::make_unique<Attachment>(Attachment::CreateFromParts(
           download_state.attachment_id, attachment_data));
     }
 

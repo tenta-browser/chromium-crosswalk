@@ -15,20 +15,20 @@
 #include <stddef.h>
 
 #include "base/logging.h"
-#include "net/base/net_export.h"
 #include "net/http2/decoder/decode_buffer.h"
 #include "net/http2/decoder/decode_status.h"
 #include "net/http2/decoder/http2_frame_decoder_listener.h"
 #include "net/http2/decoder/http2_structure_decoder.h"
 #include "net/http2/http2_constants.h"
 #include "net/http2/http2_structures.h"
+#include "net/http2/platform/api/http2_export.h"
 
 namespace net {
 namespace test {
 class FrameDecoderStatePeer;
 }  // namespace test
 
-class NET_EXPORT_PRIVATE FrameDecoderState {
+class HTTP2_EXPORT_PRIVATE FrameDecoderState {
  public:
   FrameDecoderState() {}
 
@@ -134,10 +134,6 @@ class NET_EXPORT_PRIVATE FrameDecoderState {
     DCHECK(IsPaddable()) << frame_header();
     return remaining_padding_;
   }
-
-  // Returns the amount of trailing padding after the payload that remains to be
-  // decoded.
-  uint32_t remaining_padding_for_test() const { return remaining_padding_; }
 
   // How many bytes of the remaining payload are in db?
   size_t AvailablePayload(DecodeBuffer* db) const {

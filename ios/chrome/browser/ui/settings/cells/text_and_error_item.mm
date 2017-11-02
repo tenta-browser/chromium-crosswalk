@@ -6,7 +6,7 @@
 
 #include "base/mac/foundation_util.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
+#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -60,9 +60,9 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
   if (self.isEnabled) {
     cell.textLabel.textColor = [[MDCPalette greyPalette] tint900];
     [cell setUserInteractionEnabled:YES];
-    [accessoryImage setTintColor:[[MDCPalette greyPalette] tint900]];
+    [accessoryImage setTintColor:[[MDCPalette greyPalette] tint400]];
   } else {
-    [accessoryImage setTintColor:[[[MDCPalette greyPalette] tint500]
+    [accessoryImage setTintColor:[[[MDCPalette greyPalette] tint200]
                                      colorWithAlphaComponent:0.5]];
     cell.textLabel.textColor = [[MDCPalette greyPalette] tint500];
     [cell setUserInteractionEnabled:NO];
@@ -89,8 +89,7 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
     self.contentView.clipsToBounds = YES;
     _textLabel = [[UILabel alloc] init];
     _textLabel.translatesAutoresizingMaskIntoConstraints = NO;
-    _textLabel.font =
-        [[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:14];
+    _textLabel.font = [[MDCTypography fontLoader] mediumFontOfSize:14];
     _textLabel.textColor = [[MDCPalette greyPalette] tint900];
     _textLabel.numberOfLines = 0;
     [self.contentView addSubview:_textLabel];
@@ -160,7 +159,7 @@ const CGFloat kHorizontalErrorIconFixedSize = 25;
       base::mac::ObjCCastStrict<UIImageView>(self.accessoryView);
   accessoryImage.image = [accessoryImage.image
       imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-  [accessoryImage setTintColor:[[MDCPalette greyPalette] tint900]];
+  [accessoryImage setTintColor:[[MDCPalette greyPalette] tint400]];
 }
 
 @end

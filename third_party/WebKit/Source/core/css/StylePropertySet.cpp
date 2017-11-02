@@ -26,13 +26,12 @@
 #include "core/StylePropertyShorthand.h"
 #include "core/css/CSSCustomPropertyDeclaration.h"
 #include "core/css/CSSIdentifierValue.h"
-#include "core/css/CSSPropertyMetadata.h"
 #include "core/css/StylePropertySerializer.h"
 #include "core/css/StyleSheetContents.h"
 #include "core/css/parser/CSSParser.h"
 #include "core/css/parser/CSSParserContext.h"
+#include "core/css/properties/CSSPropertyAPI.h"
 #include "core/frame/UseCounter.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/wtf/text/StringBuilder.h"
 
 #ifndef NDEBUG
@@ -65,7 +64,7 @@ ImmutableStylePropertySet* StylePropertySet::ImmutableCopyIfNeeded() const {
     return ToImmutableStylePropertySet(const_cast<StylePropertySet*>(this));
   const MutableStylePropertySet* mutable_this = ToMutableStylePropertySet(this);
   return ImmutableStylePropertySet::Create(
-      mutable_this->property_vector_.Data(),
+      mutable_this->property_vector_.data(),
       mutable_this->property_vector_.size(), CssParserMode());
 }
 
@@ -114,7 +113,10 @@ static bool IsPropertyMatch(const StylePropertyMetadata& metadata,
   DCHECK_EQ(id, property_id);
   bool result = metadata.property_id_ == id;
   // Only enabled properties should be part of the style.
-  DCHECK(!result || CSSPropertyMetadata::IsEnabledProperty(property_id));
+#if DCHECK_IS_ON()
+  DCHECK(!result ||
+         CSSPropertyAPI::Get(resolveCSSPropertyID(property_id)).IsEnabled());
+#endif
   return result;
 }
 
@@ -232,7 +234,7 @@ bool MutableStylePropertySet::RemovePropertyAtIndex(int property_index,
 
   // A more efficient removal strategy would involve marking entries as empty
   // and sweeping them when the vector grows too big.
-  property_vector_.erase(property_index);
+  property_vector_.EraseAt(property_index);
 
   return true;
 }
@@ -384,7 +386,7 @@ bool MutableStylePropertySet::SetProperty(CSSPropertyID property_id,
 void MutableStylePropertySet::ParseDeclarationList(
     const String& style_declaration,
     StyleSheetContents* context_style_sheet) {
-  property_vector_.Clear();
+  property_vector_.clear();
 
   CSSParserContext* context;
   if (context_style_sheet) {
@@ -443,7 +445,7 @@ bool StylePropertySet::HasFailedOrCanceledSubresources() const {
 }
 
 void MutableStylePropertySet::Clear() {
-  property_vector_.Clear();
+  property_vector_.clear();
 }
 
 inline bool ContainsId(const CSSPropertyID* set,
@@ -461,7 +463,7 @@ bool MutableStylePropertySet::RemovePropertiesInSet(const CSSPropertyID* set,
   if (property_vector_.IsEmpty())
     return false;
 
-  CSSProperty* properties = property_vector_.Data();
+  CSSProperty* properties = property_vector_.data();
   unsigned old_size = property_vector_.size();
   unsigned new_index = 0;
   for (unsigned old_index = 0; old_index < old_size; ++old_index) {
@@ -545,7 +547,7 @@ MutableStylePropertySet* StylePropertySet::CopyPropertiesInSet(
     if (value)
       list.push_back(CSSProperty(properties[i], *value, false));
   }
-  return MutableStylePropertySet::Create(list.Data(), list.size());
+  return MutableStylePropertySet::Create(list.data(), list.size());
 }
 
 CSSStyleDeclaration* MutableStylePropertySet::EnsureCSSStyleDeclaration() {
@@ -563,7 +565,7 @@ CSSStyleDeclaration* MutableStylePropertySet::EnsureCSSStyleDeclaration() {
 
 template <typename T>
 int MutableStylePropertySet::FindPropertyIndex(T property) const {
-  const CSSProperty* begin = property_vector_.Data();
+  const CSSProperty* begin = property_vector_.data();
   const CSSProperty* end = begin + property_vector_.size();
 
   uint16_t id = GetConvertedCSSPropertyID(property);
@@ -603,7 +605,7 @@ static_assert(sizeof(StylePropertySet) == sizeof(SameSizeAsStylePropertySet),
 
 #ifndef NDEBUG
 void StylePropertySet::ShowStyle() {
-  fprintf(stderr, "%s\n", AsText().Ascii().Data());
+  fprintf(stderr, "%s\n", AsText().Ascii().data());
 }
 #endif
 

@@ -12,7 +12,6 @@
 #include "base/files/file_path.h"
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
@@ -29,14 +28,18 @@ class WaitableEvent;
 namespace net {
 class CookieStore;
 class NetLog;
-class WriteToFileNetLogObserver;
+class FileNetLogObserver;
 }  // namespace net
 
 namespace cronet {
+class CronetPrefsManager;
+
 // CronetEnvironment contains all the network stack configuration
 // and initialization.
 class CronetEnvironment {
  public:
+  using PkpVector = std::vector<std::unique_ptr<URLRequestContextConfig::Pkp>>;
+
   // Initialize Cronet environment globals. Must be called only once on the
   // main thread.
   static void Initialize();
@@ -66,13 +69,15 @@ class CronetEnvironment {
   void AddQuicHint(const std::string& host, int port, int alternate_port);
 
   // Setters and getters for |http2_enabled_|, |quic_enabled_|, and
-  // |forced_quic_origin_|. These only have any effect before Start() is
-  // called.
+  // |brotli_enabled| These only have any effect
+  // before Start() is called.
   void set_http2_enabled(bool enabled) { http2_enabled_ = enabled; }
   void set_quic_enabled(bool enabled) { quic_enabled_ = enabled; }
+  void set_brotli_enabled(bool enabled) { brotli_enabled_ = enabled; }
 
   bool http2_enabled() const { return http2_enabled_; }
   bool quic_enabled() const { return quic_enabled_; }
+  bool brotli_enabled() const { return brotli_enabled_; }
 
   void set_quic_user_agent_id(const std::string& quic_user_agent_id) {
     quic_user_agent_id_ = quic_user_agent_id;
@@ -91,10 +96,21 @@ class CronetEnvironment {
     http_cache_ = http_cache;
   }
 
+  void set_experimental_options(const std::string& experimental_options) {
+    experimental_options_ = experimental_options;
+  }
+
   void SetHostResolverRules(const std::string& host_resolver_rules);
 
   void set_ssl_key_log_file_name(const std::string& ssl_key_log_file_name) {
     ssl_key_log_file_name_ = ssl_key_log_file_name;
+  }
+
+  void set_pkp_list(PkpVector pkp_list) { pkp_list_ = std::move(pkp_list); }
+
+  void set_enable_public_key_pinning_bypass_for_local_trust_anchors(
+      bool enable) {
+    enable_pkp_bypass_for_local_trust_anchors_ = enable;
   }
 
   // Returns the URLRequestContext associated with this object.
@@ -103,21 +119,41 @@ class CronetEnvironment {
   // Return the URLRequestContextGetter associated with this object.
   net::URLRequestContextGetter* GetURLRequestContextGetter() const;
 
+  // Used by Cronet tests.
+  base::SingleThreadTaskRunner* GetFileThreadRunnerForTesting() const;
+
  private:
+  // Extends the base thread class to add the Cronet specific cleanup logic.
+  class CronetNetworkThread : public base::Thread {
+   public:
+    CronetNetworkThread(const std::string& name,
+                        cronet::CronetEnvironment* cronet_environment);
+
+   protected:
+    ~CronetNetworkThread() override;
+    void CleanUp() override;
+
+   private:
+    cronet::CronetEnvironment* const cronet_environment_;
+
+    DISALLOW_COPY_AND_ASSIGN(CronetNetworkThread);
+  };
+
   // Performs initialization tasks that must happen on the network thread.
   void InitializeOnNetworkThread();
 
+  // Returns the task runner for the network thread.
+  base::SingleThreadTaskRunner* GetNetworkThreadTaskRunner();
+
   // Runs a closure on the network thread.
-  void PostToNetworkThread(const tracked_objects::Location& from_here,
+  void PostToNetworkThread(const base::Location& from_here,
                            const base::Closure& task);
 
-  // Runs a closure on the file user blocking thread.
-  void PostToFileUserBlockingThread(const tracked_objects::Location& from_here,
-                                    const base::Closure& task);
-
   // Helper methods that start/stop net logging on the network thread.
-  void StartNetLogOnNetworkThread(base::ScopedFILE file, bool log_bytes);
+  void StartNetLogOnNetworkThread(const base::FilePath&, bool log_bytes);
   void StopNetLogOnNetworkThread(base::WaitableEvent* log_stopped_event);
+
+  std::unique_ptr<base::DictionaryValue> GetNetLogInfo() const;
 
   // Returns the HttpNetworkSession object from the passed in
   // URLRequestContext or NULL if none exists.
@@ -130,19 +166,27 @@ class CronetEnvironment {
 
   std::string getDefaultQuicUserAgentId() const;
 
+  // Prepares the Cronet environment to be destroyed. The method must be
+  // executed on the network thread. No other tasks should be posted to the
+  // network thread after calling this method.
+  void CleanUpOnNetworkThread();
+
   bool http2_enabled_;
   bool quic_enabled_;
+  bool brotli_enabled_;
   std::string quic_user_agent_id_;
   std::string accept_language_;
+  std::string experimental_options_;
+  // Effective experimental options. Kept for NetLog.
+  std::unique_ptr<base::DictionaryValue> effective_experimental_options_;
   std::string ssl_key_log_file_name_;
   URLRequestContextConfig::HttpCacheType http_cache_;
+  PkpVector pkp_list_;
 
   std::list<net::HostPortPair> quic_hints_;
 
   std::unique_ptr<base::Thread> network_io_thread_;
-  std::unique_ptr<base::Thread> network_cache_thread_;
   std::unique_ptr<base::Thread> file_thread_;
-  std::unique_ptr<base::Thread> file_user_blocking_thread_;
   scoped_refptr<base::SequencedTaskRunner> pref_store_worker_pool_;
   std::unique_ptr<net::CertVerifier> mock_cert_verifier_;
   std::unique_ptr<net::CookieStore> cookie_store_;
@@ -151,7 +195,9 @@ class CronetEnvironment {
   std::string user_agent_;
   bool user_agent_partial_;
   std::unique_ptr<net::NetLog> net_log_;
-  std::unique_ptr<net::WriteToFileNetLogObserver> net_log_observer_;
+  std::unique_ptr<net::FileNetLogObserver> file_net_log_observer_;
+  bool enable_pkp_bypass_for_local_trust_anchors_;
+  std::unique_ptr<CronetPrefsManager> cronet_prefs_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(CronetEnvironment);
 };

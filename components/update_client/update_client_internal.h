@@ -6,11 +6,11 @@
 #define COMPONENTS_UPDATE_CLIENT_UPDATE_CLIENT_INTERNAL_H_
 
 #include <memory>
-#include <queue>
 #include <set>
 #include <string>
 #include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
@@ -49,7 +49,8 @@ class UpdateClientImpl : public UpdateClient {
   void Stop() override;
   void SendUninstallPing(const std::string& id,
                          const base::Version& version,
-                         int reason) override;
+                         int reason,
+                         const Callback& callback) override;
 
  private:
   ~UpdateClientImpl() override;
@@ -61,8 +62,8 @@ class UpdateClientImpl : public UpdateClient {
 
   base::ThreadChecker thread_checker_;
 
-  // True is Stop method has been called.
-  bool is_stopped_;
+  // True if Stop method has been called.
+  bool is_stopped_ = false;
 
   scoped_refptr<Configurator> config_;
 
@@ -70,7 +71,7 @@ class UpdateClientImpl : public UpdateClient {
   // only update tasks (background tasks) are queued up. These tasks are
   // pending while they are in this queue. They have not been picked up yet
   // by the update engine.
-  std::queue<Task*> task_queue_;
+  base::circular_deque<Task*> task_queue_;
 
   // Contains all tasks in progress. These are the tasks that the update engine
   // is executing at one moment. Install tasks are run concurrently, update

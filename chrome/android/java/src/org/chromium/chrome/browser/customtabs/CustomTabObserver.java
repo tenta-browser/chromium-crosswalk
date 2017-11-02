@@ -51,7 +51,7 @@ class CustomTabObserver extends EmptyTabObserver {
         if (openedByChrome) {
             mCustomTabsConnection = null;
         } else {
-            mCustomTabsConnection = CustomTabsConnection.getInstance(application);
+            mCustomTabsConnection = CustomTabsConnection.getInstance();
         }
         mSession = session;
         if (!openedByChrome && mCustomTabsConnection.shouldSendNavigationInfoForSession(mSession)) {
@@ -148,6 +148,17 @@ class CustomTabObserver extends EmptyTabObserver {
                 long timeToPageLoadStartedMs = mPageLoadStartedTimestamp - mIntentReceivedTimestamp;
                 // Intent to Load Start is recorded here to make sure we do not record
                 // failed/aborted page loads.
+                RecordHistogram.recordCustomTimesHistogram(
+                        histogramPrefix + ".IntentToFirstNavigationStartTime.ZoomedOut",
+                        timeToPageLoadStartedMs, 50, TimeUnit.MINUTES.toMillis(10),
+                        TimeUnit.MILLISECONDS, 50);
+                RecordHistogram.recordCustomTimesHistogram(
+                        histogramPrefix + ".IntentToFirstNavigationStartTime.ZoomedIn",
+                        timeToPageLoadStartedMs, 200, 1000, TimeUnit.MILLISECONDS, 100);
+
+                // Record the histograms under deprecated names to overlap in time with
+                // the new names during one Chrome release.
+                // TODO(pasko): remove after M62 reaches Stable.
                 RecordHistogram.recordCustomTimesHistogram(
                         histogramPrefix + ".IntentToFirstCommitNavigationTime2.ZoomedOut",
                         timeToPageLoadStartedMs, 50, TimeUnit.MINUTES.toMillis(10),

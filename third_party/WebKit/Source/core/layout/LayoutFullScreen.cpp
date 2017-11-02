@@ -25,8 +25,8 @@
 
 #include "core/layout/LayoutFullScreen.h"
 
-#include "core/dom/Fullscreen.h"
 #include "core/frame/VisualViewport.h"
+#include "core/fullscreen/Fullscreen.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/page/Page.h"
 
@@ -44,7 +44,7 @@ class LayoutFullScreenPlaceholder final : public LayoutBlockFlow {
   }
 
   // Must call setStyleWithWritingModeOfParent() instead.
-  void SetStyle(PassRefPtr<ComputedStyle>) = delete;
+  void SetStyle(RefPtr<ComputedStyle>) = delete;
 
  private:
   bool IsOfType(LayoutObjectType type) const override {
@@ -108,7 +108,7 @@ void LayoutFullScreen::UpdateStyle(LayoutObject* parent) {
   // Alignment (align-items) value can't be used to resolve its children Self
   // Alignment 'auto' values.
   fullscreen_style->SetAlignItemsPosition(kItemPositionCenter);
-  fullscreen_style->SetFlexDirection(kFlowColumn);
+  fullscreen_style->SetFlexDirection(EFlexDirection::kColumn);
 
   fullscreen_style->SetPosition(EPosition::kFixed);
   fullscreen_style->SetLeft(Length(0, blink::kFixed));
@@ -202,7 +202,7 @@ void LayoutFullScreen::UnwrapLayoutObject() {
   Destroy();
 }
 
-void LayoutFullScreen::CreatePlaceholder(PassRefPtr<ComputedStyle> style,
+void LayoutFullScreen::CreatePlaceholder(RefPtr<ComputedStyle> style,
                                          const LayoutRect& frame_rect) {
   if (style->Width().IsAuto())
     style->SetWidth(Length(frame_rect.Width(), kFixed));

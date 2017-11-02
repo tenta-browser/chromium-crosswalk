@@ -10,7 +10,6 @@
 #include "cc/base/math_util.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/layers/layer_list_iterator.h"
-#include "cc/layers/layer_utils.h"
 #include "cc/layers/render_surface_impl.h"
 #include "cc/trees/damage_tracker.h"
 #include "cc/trees/layer_tree_host.h"
@@ -32,7 +31,7 @@ DebugRectHistory::~DebugRectHistory() {}
 void DebugRectHistory::SaveDebugRectsForCurrentFrame(
     LayerTreeImpl* tree_impl,
     LayerImpl* hud_layer,
-    const LayerImplList& render_surface_layer_list,
+    const RenderSurfaceList& render_surface_list,
     const LayerTreeDebugState& debug_state) {
   // For now, clear all rects from previous frames. In the future we may want to
   // store all debug rects for a history of many frames.
@@ -54,16 +53,13 @@ void DebugRectHistory::SaveDebugRectsForCurrentFrame(
     SavePaintRects(tree_impl);
 
   if (debug_state.show_property_changed_rects)
-    SavePropertyChangedRects(render_surface_layer_list, hud_layer);
+    SavePropertyChangedRects(tree_impl, hud_layer);
 
   if (debug_state.show_surface_damage_rects)
-    SaveSurfaceDamageRects(render_surface_layer_list);
+    SaveSurfaceDamageRects(render_surface_list);
 
   if (debug_state.show_screen_space_rects)
-    SaveScreenSpaceRects(render_surface_layer_list);
-
-  if (debug_state.show_layer_animation_bounds_rects)
-    SaveLayerAnimationBoundsRects(tree_impl);
+    SaveScreenSpaceRects(render_surface_list);
 }
 
 void DebugRectHistory::SavePaintRects(LayerTreeImpl* tree_impl) {
@@ -84,46 +80,27 @@ void DebugRectHistory::SavePaintRects(LayerTreeImpl* tree_impl) {
   }
 }
 
-void DebugRectHistory::SavePropertyChangedRects(
-    const LayerImplList& render_surface_layer_list,
-    LayerImpl* hud_layer) {
-  for (size_t i = 0; i < render_surface_layer_list.size(); ++i) {
-    size_t surface_index = render_surface_layer_list.size() - 1 - i;
-    LayerImpl* render_surface_layer = render_surface_layer_list[surface_index];
-    RenderSurfaceImpl* render_surface =
-        render_surface_layer->GetRenderSurface();
-    DCHECK(render_surface);
+void DebugRectHistory::SavePropertyChangedRects(LayerTreeImpl* tree_impl,
+                                                LayerImpl* hud_layer) {
+  for (LayerImpl* layer : *tree_impl) {
+    if (layer == hud_layer)
+      continue;
 
-    const LayerImplList& layer_list = render_surface->layer_list();
-    for (unsigned layer_index = 0; layer_index < layer_list.size();
-         ++layer_index) {
-      LayerImpl* layer = layer_list[layer_index];
+    if (!layer->LayerPropertyChanged())
+      continue;
 
-      if (layer->GetRenderSurface() &&
-          layer->GetRenderSurface() != render_surface)
-        continue;
-
-      if (layer == hud_layer)
-        continue;
-
-      if (!layer->LayerPropertyChanged())
-        continue;
-
-      debug_rects_.push_back(DebugRect(
-          PROPERTY_CHANGED_RECT_TYPE,
-          MathUtil::MapEnclosingClippedRect(layer->ScreenSpaceTransform(),
-                                            gfx::Rect(layer->bounds()))));
-    }
+    debug_rects_.push_back(DebugRect(
+        PROPERTY_CHANGED_RECT_TYPE,
+        MathUtil::MapEnclosingClippedRect(layer->ScreenSpaceTransform(),
+                                          gfx::Rect(layer->bounds()))));
   }
 }
 
 void DebugRectHistory::SaveSurfaceDamageRects(
-    const LayerImplList& render_surface_layer_list) {
-  for (size_t i = 0; i < render_surface_layer_list.size(); ++i) {
-    size_t surface_index = render_surface_layer_list.size() - 1 - i;
-    LayerImpl* render_surface_layer = render_surface_layer_list[surface_index];
-    RenderSurfaceImpl* render_surface =
-        render_surface_layer->GetRenderSurface();
+    const RenderSurfaceList& render_surface_list) {
+  for (size_t i = 0; i < render_surface_list.size(); ++i) {
+    size_t surface_index = render_surface_list.size() - 1 - i;
+    RenderSurfaceImpl* render_surface = render_surface_list[surface_index];
     DCHECK(render_surface);
 
     debug_rects_.push_back(DebugRect(
@@ -134,12 +111,10 @@ void DebugRectHistory::SaveSurfaceDamageRects(
 }
 
 void DebugRectHistory::SaveScreenSpaceRects(
-    const LayerImplList& render_surface_layer_list) {
-  for (size_t i = 0; i < render_surface_layer_list.size(); ++i) {
-    size_t surface_index = render_surface_layer_list.size() - 1 - i;
-    LayerImpl* render_surface_layer = render_surface_layer_list[surface_index];
-    RenderSurfaceImpl* render_surface =
-        render_surface_layer->GetRenderSurface();
+    const RenderSurfaceList& render_surface_list) {
+  for (size_t i = 0; i < render_surface_list.size(); ++i) {
+    size_t surface_index = render_surface_list.size() - 1 - i;
+    RenderSurfaceImpl* render_surface = render_surface_list[surface_index];
     DCHECK(render_surface);
 
     debug_rects_.push_back(DebugRect(
@@ -156,12 +131,17 @@ void DebugRectHistory::SaveTouchEventHandlerRects(LayerTreeImpl* tree_impl) {
 }
 
 void DebugRectHistory::SaveTouchEventHandlerRectsCallback(LayerImpl* layer) {
-  for (Region::Iterator iter(layer->touch_event_handler_region());
-       iter.has_rect(); iter.next()) {
-    debug_rects_.push_back(
-        DebugRect(TOUCH_EVENT_HANDLER_RECT_TYPE,
-                  MathUtil::MapEnclosingClippedRect(
-                      layer->ScreenSpaceTransform(), iter.rect())));
+  const TouchActionRegion& touch_action_region = layer->touch_action_region();
+  for (int touch_action_index = kTouchActionNone;
+       touch_action_index != kTouchActionMax; ++touch_action_index) {
+    auto touch_action = static_cast<TouchAction>(touch_action_index);
+    Region region = touch_action_region.GetRegionForTouchAction(touch_action);
+    for (Region::Iterator iter(region); iter.has_rect(); iter.next()) {
+      debug_rects_.emplace_back(TOUCH_EVENT_HANDLER_RECT_TYPE,
+                                MathUtil::MapEnclosingClippedRect(
+                                    layer->ScreenSpaceTransform(), iter.rect()),
+                                touch_action);
+    }
   }
 }
 
@@ -213,25 +193,6 @@ void DebugRectHistory::SaveNonFastScrollableRectsCallback(LayerImpl* layer) {
         DebugRect(NON_FAST_SCROLLABLE_RECT_TYPE,
                   MathUtil::MapEnclosingClippedRect(
                       layer->ScreenSpaceTransform(), iter.rect())));
-  }
-}
-
-void DebugRectHistory::SaveLayerAnimationBoundsRects(LayerTreeImpl* tree_impl) {
-  for (auto it = tree_impl->rbegin(); it != tree_impl->rend(); ++it) {
-    if (!(*it)->is_drawn_render_surface_layer_list_member())
-      continue;
-
-    // TODO(avallee): Figure out if we should show something for a layer who's
-    // animating bounds but that we can't compute them.
-    gfx::BoxF inflated_bounds;
-    if (!LayerUtils::GetAnimationBounds(**it, &inflated_bounds))
-      continue;
-
-    debug_rects_.push_back(
-        DebugRect(ANIMATION_BOUNDS_RECT_TYPE,
-                  gfx::ToEnclosingRect(gfx::RectF(
-                      inflated_bounds.x(), inflated_bounds.y(),
-                      inflated_bounds.width(), inflated_bounds.height()))));
   }
 }
 

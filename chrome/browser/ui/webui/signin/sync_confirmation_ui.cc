@@ -17,7 +17,7 @@
 #include "ui/base/webui/web_ui_util.h"
 
 SyncConfirmationUI::SyncConfirmationUI(content::WebUI* web_ui)
-    : WebDialogUI(web_ui) {
+    : SigninWebDialogUI(web_ui) {
   Profile* profile = Profile::FromWebUI(web_ui);
   bool is_sync_allowed = profile->IsSyncAllowed();
 
@@ -38,8 +38,8 @@ SyncConfirmationUI::SyncConfirmationUI(content::WebUI* web_ui)
       IDS_SYNC_CONFIRMATION_PERSONALIZE_SERVICES_TITLE);
   source->AddLocalizedString("syncConfirmationPersonalizeServicesBody",
       IDS_SYNC_CONFIRMATION_PERSONALIZE_SERVICES_BODY);
-  source->AddLocalizedString("syncConfirmationSyncSettingsLabel",
-                             IDS_SYNC_CONFIRMATION_SYNC_SETTINGS_LABEL);
+  source->AddLocalizedString("syncConfirmationSyncSettingsLinkBody",
+                             IDS_SYNC_CONFIRMATION_SYNC_SETTINGS_LINK_BODY);
   source->AddLocalizedString("syncDisabledConfirmationDetails",
                              IDS_SYNC_DISABLED_CONFIRMATION_DETAILS);
 

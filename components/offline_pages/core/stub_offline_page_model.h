@@ -28,14 +28,13 @@ class StubOfflinePageModel : public OfflinePageModel, public KeyedService {
   void SavePage(const SavePageParams& save_page_params,
                 std::unique_ptr<OfflinePageArchiver> archiver,
                 const SavePageCallback& callback) override;
+  void AddPage(const OfflinePageItem& page,
+               const AddPageCallback& callback) override;
   void MarkPageAccessed(int64_t offline_id) override;
   void DeletePagesByOfflineId(const std::vector<int64_t>& offline_ids,
                               const DeletePageCallback& callback) override;
   void DeletePagesByClientIds(const std::vector<ClientId>& client_ids,
                               const DeletePageCallback& callback) override;
-  void GetPagesMatchingQuery(
-      std::unique_ptr<OfflinePageModelQuery> query,
-      const MultipleOfflinePageItemCallback& callback) override;
   void GetPagesByClientIds(
       const std::vector<ClientId>& client_ids,
       const MultipleOfflinePageItemCallback& callback) override;
@@ -56,6 +55,18 @@ class StubOfflinePageModel : public OfflinePageModel, public KeyedService {
       const GURL& url,
       URLSearchMode url_search_mode,
       const MultipleOfflinePageItemCallback& callback) override;
+  void GetPagesByRequestOrigin(
+      const std::string& origin,
+      const MultipleOfflinePageItemCallback& callback) override;
+  void GetPagesRemovedOnCacheReset(
+      const MultipleOfflinePageItemCallback& callback) override;
+  void GetPagesByNamespace(
+      const std::string& name_space,
+      const MultipleOfflinePageItemCallback& callback) override;
+  void GetPagesSupportedByDownloads(
+      const MultipleOfflinePageItemCallback& callback) override;
+  const base::FilePath& GetArchiveDirectory(
+      const std::string& name_space) const override;
   ClientPolicyController* GetPolicyController() override;
   bool is_loaded() const override;
   OfflineEventLogger* GetLogger() override;
@@ -63,6 +74,7 @@ class StubOfflinePageModel : public OfflinePageModel, public KeyedService {
  private:
   ClientPolicyController policy_controller_;
   std::vector<int64_t> offline_ids_;
+  base::FilePath archive_directory_;
 };
 
 }  // namespace offline_pages

@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
-#include "content/browser/accessibility/accessibility_tree_formatter.h"
+#include "content/browser/accessibility/accessibility_tree_formatter_browser.h"
 
 namespace content {
 
 class CONTENT_EXPORT AccessibilityTreeFormatterBlink
-    : public AccessibilityTreeFormatter {
+    : public AccessibilityTreeFormatterBrowser {
  public:
   explicit AccessibilityTreeFormatterBlink();
   ~AccessibilityTreeFormatterBlink() override;
@@ -27,6 +27,9 @@ class CONTENT_EXPORT AccessibilityTreeFormatterBlink
                                  uint32_t i) const override;
   void AddProperties(const BrowserAccessibility& node,
                      base::DictionaryValue* dict) override;
+  std::string IntAttrToString(const BrowserAccessibility& node,
+                              ui::AXIntAttribute attr,
+                              int value) const;
   base::string16 ToString(const base::DictionaryValue& node) override;
 };
 

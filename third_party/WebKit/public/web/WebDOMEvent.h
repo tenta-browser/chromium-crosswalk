@@ -31,8 +31,8 @@
 #ifndef WebDOMEvent_h
 #define WebDOMEvent_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebPrivatePtr.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebPrivatePtr.h"
 
 namespace blink {
 
@@ -54,9 +54,9 @@ class WebDOMEvent {
 
   bool IsNull() const { return private_.IsNull(); }
 
-#if BLINK_IMPLEMENTATION
-  WebDOMEvent(Event*);
-  operator Event*() const;
+#if INSIDE_BLINK
+  BLINK_EXPORT WebDOMEvent(Event*);
+  BLINK_EXPORT operator Event*() const;
 #endif
 
   template <typename T>
@@ -74,7 +74,7 @@ class WebDOMEvent {
   }
 
  protected:
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   void Assign(Event*);
 
   template <typename T>

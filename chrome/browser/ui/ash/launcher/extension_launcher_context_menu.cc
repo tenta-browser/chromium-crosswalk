@@ -4,25 +4,27 @@
 
 #include "chrome/browser/ui/ash/launcher/extension_launcher_context_menu.h"
 
-#include "ash/shell.h"
+#include "ash/scoped_root_window_for_new_windows.h"  // mash-ok
+#include "ash/shell.h"                               // mash-ok
 #include "base/bind.h"
+#include "chrome/browser/chromeos/ash_config.h"
 #include "chrome/browser/extensions/context_menu_matcher.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/ash/launcher/browser_shortcut_launcher_item_controller.h"
-#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_impl.h"
+#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_util.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/common/context_menu_params.h"
 #include "extensions/browser/extension_prefs.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
+// A helper used to filter which menu items added by the extension are shown.
 bool MenuItemHasLauncherContext(const extensions::MenuItem* item) {
   return item->contexts().Contains(extensions::MenuItem::LAUNCHER);
 }
@@ -30,10 +32,10 @@ bool MenuItemHasLauncherContext(const extensions::MenuItem* item) {
 }  // namespace
 
 ExtensionLauncherContextMenu::ExtensionLauncherContextMenu(
-    ChromeLauncherControllerImpl* controller,
+    ChromeLauncherController* controller,
     const ash::ShelfItem* item,
-    ash::WmShelf* wm_shelf)
-    : LauncherContextMenu(controller, item, wm_shelf) {
+    int64_t display_id)
+    : LauncherContextMenu(controller, item, display_id) {
   Init();
 }
 
@@ -46,7 +48,11 @@ void ExtensionLauncherContextMenu::Init() {
   if (item().type == ash::TYPE_PINNED_APP || item().type == ash::TYPE_APP) {
     // V1 apps can be started from the menu - but V2 apps should not.
     if (!controller()->IsPlatformApp(item().id)) {
-      AddItem(MENU_OPEN_NEW, base::string16());
+      int string_id = (GetLaunchType() == extensions::LAUNCH_TYPE_PINNED ||
+                       GetLaunchType() == extensions::LAUNCH_TYPE_REGULAR)
+                          ? IDS_APP_LIST_CONTEXT_MENU_NEW_TAB
+                          : IDS_APP_LIST_CONTEXT_MENU_NEW_WINDOW;
+      AddItemWithStringId(MENU_OPEN_NEW, string_id);
       AddSeparator(ui::NORMAL_SEPARATOR);
     }
 
@@ -83,10 +89,9 @@ void ExtensionLauncherContextMenu::Init() {
       AddItemWithStringId(MENU_NEW_INCOGNITO_WINDOW,
                           IDS_APP_LIST_NEW_INCOGNITO_WINDOW);
     }
-    if (!BrowserShortcutLauncherItemController(ash::Shell::Get()->shelf_model())
+    if (!BrowserShortcutLauncherItemController(controller()->shelf_model())
              .IsListOfActiveBrowserEmpty()) {
-      AddItem(MENU_CLOSE,
-              l10n_util::GetStringUTF16(IDS_LAUNCHER_CONTEXT_MENU_CLOSE));
+      AddItemWithStringId(MENU_CLOSE, IDS_LAUNCHER_CONTEXT_MENU_CLOSE);
     }
   } else if (item().type == ash::TYPE_DIALOG) {
     AddItemWithStringId(MENU_CLOSE, IDS_LAUNCHER_CONTEXT_MENU_CLOSE);
@@ -95,8 +100,7 @@ void ExtensionLauncherContextMenu::Init() {
   }
   AddSeparator(ui::NORMAL_SEPARATOR);
   if (item().type == ash::TYPE_PINNED_APP || item().type == ash::TYPE_APP) {
-    const extensions::MenuItem::ExtensionKey app_key(
-        controller()->GetAppIDForShelfID(item().id));
+    const extensions::MenuItem::ExtensionKey app_key(item().id.app_id);
     if (!app_key.empty()) {
       int index = 0;
       extension_items_->AppendExtensionItems(app_key, base::string16(), &index,
@@ -104,33 +108,6 @@ void ExtensionLauncherContextMenu::Init() {
       AddSeparator(ui::NORMAL_SEPARATOR);
     }
   }
-  AddShelfOptionsMenu();
-}
-
-bool ExtensionLauncherContextMenu::IsItemForCommandIdDynamic(
-    int command_id) const {
-  return command_id == MENU_OPEN_NEW;
-}
-
-base::string16 ExtensionLauncherContextMenu::GetLabelForCommandId(
-    int command_id) const {
-  if (command_id == MENU_OPEN_NEW) {
-    if (controller()->IsPlatformApp(item().id))
-      return l10n_util::GetStringUTF16(IDS_APP_LIST_CONTEXT_MENU_NEW_WINDOW);
-    switch (GetLaunchType()) {
-      case extensions::LAUNCH_TYPE_PINNED:
-      case extensions::LAUNCH_TYPE_REGULAR:
-        return l10n_util::GetStringUTF16(IDS_APP_LIST_CONTEXT_MENU_NEW_TAB);
-      case extensions::LAUNCH_TYPE_FULLSCREEN:
-      case extensions::LAUNCH_TYPE_WINDOW:
-        return l10n_util::GetStringUTF16(IDS_APP_LIST_CONTEXT_MENU_NEW_WINDOW);
-      default:
-        NOTREACHED();
-        return base::string16();
-    }
-  }
-  NOTREACHED();
-  return base::string16();
 }
 
 bool ExtensionLauncherContextMenu::IsCommandIdChecked(int command_id) const {
@@ -175,6 +152,15 @@ void ExtensionLauncherContextMenu::ExecuteCommand(int command_id,
                                                   int event_flags) {
   if (ExecuteCommonCommand(command_id, event_flags))
     return;
+
+  // Place new windows on the same display as the context menu.
+  // TODO(crbug.com/768908): Fix this in mash (where Chrome can't use Shell).
+  std::unique_ptr<ash::ScopedRootWindowForNewWindows> scoped_root;
+  if (chromeos::GetAshConfig() != ash::Config::MASH) {
+    aura::Window* root = ash::Shell::GetRootWindowForDisplayId(display_id());
+    scoped_root = std::make_unique<ash::ScopedRootWindowForNewWindows>(root);
+  }
+
   switch (static_cast<MenuItem>(command_id)) {
     case LAUNCH_TYPE_PINNED_TAB:
       SetLaunchType(extensions::LAUNCH_TYPE_PINNED);
@@ -212,8 +198,8 @@ void ExtensionLauncherContextMenu::ExecuteCommand(int command_id,
 }
 
 extensions::LaunchType ExtensionLauncherContextMenu::GetLaunchType() const {
-  const extensions::Extension* extension = GetExtensionForAppID(
-      item().app_launch_id.app_id(), controller()->profile());
+  const extensions::Extension* extension =
+      GetExtensionForAppID(item().id.app_id, controller()->profile());
 
   // An extension can be unloaded/updated/unavailable at any time.
   if (!extension)
@@ -224,6 +210,5 @@ extensions::LaunchType ExtensionLauncherContextMenu::GetLaunchType() const {
 }
 
 void ExtensionLauncherContextMenu::SetLaunchType(extensions::LaunchType type) {
-  extensions::SetLaunchType(controller()->profile(),
-                            item().app_launch_id.app_id(), type);
+  extensions::SetLaunchType(controller()->profile(), item().id.app_id, type);
 }

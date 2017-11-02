@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/variations/android/variations_associated_data_android.h"
-
 #include <string>
 
 #include "base/android/jni_string.h"
@@ -17,7 +15,6 @@ using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace variations {
-
 namespace android {
 
 ScopedJavaLocalRef<jstring> GetVariationParamValue(
@@ -40,10 +37,5 @@ ScopedJavaLocalRef<jstring> GetFeedbackVariations(
   return ConvertUTF8ToJavaString(env, values);
 }
 
-bool RegisterVariationsAssociatedData(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 }  // namespace android
-
 }  // namespace variations

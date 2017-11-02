@@ -15,10 +15,11 @@
 #include "core/loader/resource/CSSStyleSheetResource.h"
 #include "core/loader/resource/StyleSheetResourceClient.h"
 #include "core/page/Page.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/RawResource.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "public/platform/WebCachePolicy.h"
 #include "public/platform/WebURLRequest.h"
 
@@ -54,7 +55,7 @@ class InspectorResourceContentLoader::ResourceClient final
   void SetCSSStyleSheet(const String&,
                         const KURL&,
                         ReferrerPolicy,
-                        const String&,
+                        const WTF::TextEncoding&,
                         const CSSStyleSheetResource*) override;
   void NotifyFinished(Resource*) override;
   String DebugName() const override {
@@ -80,7 +81,7 @@ void InspectorResourceContentLoader::ResourceClient::SetCSSStyleSheet(
     const String&,
     const KURL& url,
     ReferrerPolicy,
-    const String&,
+    const WTF::TextEncoding&,
     const CSSStyleSheetResource* resource) {
   ResourceFinished(const_cast<CSSStyleSheetResource*>(resource));
 }
@@ -117,15 +118,16 @@ void InspectorResourceContentLoader::Start() {
       resource_request = item->GenerateResourceRequest(
           WebCachePolicy::kReturnCacheDataDontLoad);
     } else {
-      resource_request = document->Url();
+      resource_request = ResourceRequest(document->Url());
       resource_request.SetCachePolicy(WebCachePolicy::kReturnCacheDataDontLoad);
     }
     resource_request.SetRequestContext(WebURLRequest::kRequestContextInternal);
 
     if (!resource_request.Url().GetString().IsEmpty()) {
       urls_to_fetch.insert(resource_request.Url().GetString());
-      FetchParameters params(resource_request,
-                             FetchInitiatorTypeNames::internal);
+      ResourceLoaderOptions options;
+      options.initiator_info.name = FetchInitiatorTypeNames::internal;
+      FetchParameters params(resource_request, options);
       Resource* resource = RawResource::Fetch(params, document->Fetcher());
       if (resource) {
         // Prevent garbage collection by holding a reference to this resource.
@@ -148,8 +150,9 @@ void InspectorResourceContentLoader::Start() {
       ResourceRequest resource_request(url);
       resource_request.SetRequestContext(
           WebURLRequest::kRequestContextInternal);
-      FetchParameters params(resource_request,
-                             FetchInitiatorTypeNames::internal);
+      ResourceLoaderOptions options;
+      options.initiator_info.name = FetchInitiatorTypeNames::internal;
+      FetchParameters params(resource_request, options);
       Resource* resource =
           CSSStyleSheetResource::Fetch(params, document->Fetcher());
       if (!resource)
@@ -172,7 +175,7 @@ int InspectorResourceContentLoader::CreateClientId() {
 
 void InspectorResourceContentLoader::EnsureResourcesContentLoaded(
     int client_id,
-    std::unique_ptr<WTF::Closure> callback) {
+    WTF::Closure callback) {
   if (!started_)
     Start();
   callbacks_.insert(client_id, Callbacks())
@@ -185,7 +188,7 @@ void InspectorResourceContentLoader::Cancel(int client_id) {
 }
 
 InspectorResourceContentLoader::~InspectorResourceContentLoader() {
-  ASSERT(resources_.IsEmpty());
+  DCHECK(resources_.IsEmpty());
 }
 
 DEFINE_TRACE(InspectorResourceContentLoader) {
@@ -200,16 +203,24 @@ void InspectorResourceContentLoader::DidCommitLoadForLocalFrame(
     Stop();
 }
 
+Resource* InspectorResourceContentLoader::ResourceForURL(const KURL& url) {
+  for (const auto& resource : resources_) {
+    if (resource->Url() == url)
+      return resource;
+  }
+  return nullptr;
+}
+
 void InspectorResourceContentLoader::Dispose() {
   Stop();
 }
 
 void InspectorResourceContentLoader::Stop() {
   HeapHashSet<Member<ResourceClient>> pending_resource_clients;
-  pending_resource_clients_.Swap(pending_resource_clients);
+  pending_resource_clients_.swap(pending_resource_clients);
   for (const auto& client : pending_resource_clients)
     client->loader_ = nullptr;
-  resources_.Clear();
+  resources_.clear();
   // Make sure all callbacks are called to prevent infinite waiting time.
   CheckDone();
   all_requests_started_ = false;
@@ -224,10 +235,10 @@ void InspectorResourceContentLoader::CheckDone() {
   if (!HasFinished())
     return;
   HashMap<int, Callbacks> callbacks;
-  callbacks.Swap(callbacks_);
+  callbacks.swap(callbacks_);
   for (const auto& key_value : callbacks) {
     for (const auto& callback : key_value.value)
-      (*callback)();
+      callback();
   }
 }
 

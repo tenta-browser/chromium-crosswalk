@@ -5,9 +5,7 @@
 #include "net/cert/cert_verifier.h"
 
 #include <algorithm>
-#include <memory>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "net/cert/cert_verify_proc.h"
@@ -81,8 +79,8 @@ std::unique_ptr<CertVerifier> CertVerifier::CreateDefault() {
   NOTIMPLEMENTED();
   return std::unique_ptr<CertVerifier>();
 #else
-  return base::MakeUnique<CachingCertVerifier>(
-      base::MakeUnique<MultiThreadedCertVerifier>(
+  return std::make_unique<CachingCertVerifier>(
+      std::make_unique<MultiThreadedCertVerifier>(
           CertVerifyProc::CreateDefault()));
 #endif
 }

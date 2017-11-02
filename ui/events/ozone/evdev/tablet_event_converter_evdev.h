@@ -9,10 +9,10 @@
 #include "base/macros.h"
 #include "base/message_loop/message_pump_libevent.h"
 #include "ui/events/event.h"
+#include "ui/events/event_modifiers.h"
 #include "ui/events/ozone/evdev/cursor_delegate_evdev.h"
 #include "ui/events/ozone/evdev/event_converter_evdev.h"
 #include "ui/events/ozone/evdev/event_device_info.h"
-#include "ui/events/ozone/evdev/event_modifiers_evdev.h"
 #include "ui/events/ozone/evdev/events_ozone_evdev_export.h"
 #include "ui/events/ozone/evdev/scoped_input_device.h"
 
@@ -86,6 +86,9 @@ class EVENTS_OZONE_EVDEV_EXPORT TabletEventConverterEvdev
 
   // Set if we drop events in kernel (SYN_DROPPED) or in process.
   bool dropped_events_ = false;
+
+  // Pen has only one side button
+  bool one_side_btn_pen_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TabletEventConverterEvdev);
 };

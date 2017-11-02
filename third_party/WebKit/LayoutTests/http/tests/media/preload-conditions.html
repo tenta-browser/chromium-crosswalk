@@ -126,7 +126,7 @@ function runTest(t, test) {
   }));
 
   // Test not allowed values.
-  [ '', 'default', 'foo' ].forEach(preload => {
+  [ 'default', 'foo' ].forEach(preload => {
     checkPreloadAttribute(media, preload, test.expectations.default);
   });
 

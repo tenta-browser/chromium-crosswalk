@@ -8,6 +8,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -33,7 +35,11 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "device/geolocation/geoposition.h"
+#include "device/geolocation/network_location_request.h"
+#include "google_apis/google_api_keys.h"
+#include "net/base/escape.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/url_request/test_url_fetcher_factory.h"
 
 namespace {
 
@@ -95,7 +101,6 @@ IFrameLoader::IFrameLoader(Browser* browser, int iframe_id, const GURL& url)
   registrar_.Add(this, content::NOTIFICATION_DOM_OPERATION_RESPONSE,
                  content::NotificationService::AllSources());
   std::string script(base::StringPrintf(
-      "window.domAutomationController.setAutomationId(0);"
       "window.domAutomationController.send(addIFrame(%d, \"%s\"));",
       iframe_id, url.spec().c_str()));
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
@@ -124,7 +129,7 @@ void IFrameLoader::Observe(int type,
     javascript_completed_ = true;
   }
   if (javascript_completed_ && navigation_completed_)
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 // PermissionRequestObserver ---------------------------------------------------
@@ -162,6 +167,39 @@ class PermissionRequestObserver : public PermissionRequestManager::Observer {
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(PermissionRequestObserver);
+};
+
+// Observer that waits until a TestURLFetcher with the specified fetcher_id
+// starts, after which it is made available through .fetcher().
+class TestURLFetcherObserver : public net::TestURLFetcher::DelegateForTests {
+ public:
+  explicit TestURLFetcherObserver(int expected_fetcher_id)
+      : expected_fetcher_id_(expected_fetcher_id) {
+    factory_.SetDelegateForTests(this);
+  }
+  virtual ~TestURLFetcherObserver() {}
+
+  void Wait() { loop_.Run(); }
+
+  net::TestURLFetcher* fetcher() { return fetcher_; }
+
+  // net::TestURLFetcher::DelegateForTests:
+  void OnRequestStart(int fetcher_id) override {
+    if (fetcher_id == expected_fetcher_id_) {
+      fetcher_ = factory_.GetFetcherByID(fetcher_id);
+      fetcher_->SetDelegateForTests(nullptr);
+      factory_.SetDelegateForTests(nullptr);
+      loop_.Quit();
+    }
+  }
+  void OnChunkUpload(int fetcher_id) override {}
+  void OnRequestEnd(int fetcher_id) override {}
+
+ private:
+  const int expected_fetcher_id_;
+  net::TestURLFetcher* fetcher_ = nullptr;
+  net::TestURLFetcherFactory factory_;
+  base::RunLoop loop_;
 };
 
 }  // namespace
@@ -412,19 +450,16 @@ void GeolocationBrowserTest::ExpectValueFromScript(
 
 bool GeolocationBrowserTest::SetPositionAndWaitUntilUpdated(double latitude,
                                                             double longitude) {
+  content::DOMMessageQueue dom_message_queue;
+
   fake_latitude_ = latitude;
   fake_longitude_ = longitude;
   ui_test_utils::OverrideGeolocation(latitude, longitude);
 
-  // Now wait until the new position gets to the script.
-  // Control will return (a) if the update has already been received, or (b)
-  // when the update is received. This will hang if the position is never
-  // updated. Currently this expects the position to be updated once; if your
-  // test updates it repeatedly, |position_updated| (JS) needs to change to an
-  // int to count how often it's been updated.
-  std::string result =
-      RunScript(render_frame_host_, "checkIfGeopositionUpdated()");
-  return result == "geoposition-updated";
+  std::string result;
+  if (!dom_message_queue.WaitForMessage(&result))
+    return false;
+  return result == "\"geoposition-updated\"";
 }
 
 int GeolocationBrowserTest::GetRequestQueueSize(
@@ -458,6 +493,35 @@ IN_PROC_BROWSER_TEST_F(GeolocationBrowserTest, Geoposition) {
   ASSERT_NO_FATAL_FAILURE(Initialize(INITIALIZATION_DEFAULT));
   ASSERT_TRUE(WatchPositionAndGrantPermission());
   ExpectPosition(fake_latitude(), fake_longitude());
+}
+
+#if defined(OS_CHROMEOS)
+// ChromeOS fails to perform network geolocation when zero wifi networks are
+// detected in a scan: https://crbug.com/767300.
+#define MAYBE_UrlWithApiKey DISABLED_UrlWithApiKey
+#else
+#define MAYBE_UrlWithApiKey UrlWithApiKey
+#endif
+// Tests that Chrome makes a network geolocation request to the correct URL
+// including Google API key query param.
+IN_PROC_BROWSER_TEST_F(GeolocationBrowserTest, MAYBE_UrlWithApiKey) {
+  ASSERT_NO_FATAL_FAILURE(Initialize(INITIALIZATION_DEFAULT));
+
+  // Unique ID (derived from Gerrit CL number):
+  device::NetworkLocationRequest::url_fetcher_id_for_tests = 675023;
+
+  // Intercept the URLFetcher from network geolocation request.
+  TestURLFetcherObserver observer(
+      device::NetworkLocationRequest::url_fetcher_id_for_tests);
+  ASSERT_TRUE(WatchPositionAndGrantPermission());
+  observer.Wait();
+  DCHECK(observer.fetcher());
+
+  // Verify full URL including Google API key.
+  const std::string expected_url =
+      "https://www.googleapis.com/geolocation/v1/geolocate?key=" +
+      net::EscapeQueryParamValue(google_apis::GetAPIKey(), true);
+  EXPECT_EQ(expected_url, observer.fetcher()->GetOriginalURL());
 }
 
 IN_PROC_BROWSER_TEST_F(GeolocationBrowserTest, ErrorOnPermissionDenied) {
@@ -574,9 +638,9 @@ IN_PROC_BROWSER_TEST_F(GeolocationBrowserTest, TogglePersistBlocked) {
                 current_url(), current_url(), CONTENT_SETTINGS_TYPE_GEOLOCATION,
                 std::string()));
 
-  // Expect the block to be remembered at the blink layer, so a second request
-  // on this page doesn't create a request.
-  WatchPositionAndObservePermissionRequest(false);
+  // Expect the page to make another request since we have not persisted the
+  // user's response.
+  WatchPositionAndObservePermissionRequest(true);
 
   // Navigate and ensure that a prompt is shown when we request again.
   ASSERT_NO_FATAL_FAILURE(Initialize(INITIALIZATION_DEFAULT));

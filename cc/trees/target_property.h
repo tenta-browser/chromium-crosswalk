@@ -7,8 +7,6 @@
 
 #include <bitset>
 
-#include "cc/cc_export.h"
-
 namespace cc {
 
 namespace TargetProperty {
@@ -19,12 +17,11 @@ enum Type {
   FILTER,
   SCROLL_OFFSET,
   BACKGROUND_COLOR,
+  BOUNDS,
   // These sentinels must be last
   FIRST_TARGET_PROPERTY = TRANSFORM,
-  LAST_TARGET_PROPERTY = BACKGROUND_COLOR
+  LAST_TARGET_PROPERTY = BOUNDS
 };
-
-CC_EXPORT const char* GetName(TargetProperty::Type property);
 
 }  // namespace TargetProperty
 

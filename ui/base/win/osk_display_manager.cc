@@ -20,6 +20,7 @@
 #include "base/win/scoped_co_mem.h"
 #include "base/win/win_util.h"
 #include "base/win/windows_version.h"
+#include "ui/base/win/hidden_window.h"
 #include "ui/base/win/osk_display_observer.h"
 #include "ui/display/win/dpi.h"
 #include "ui/gfx/geometry/dip_util.h"
@@ -62,6 +63,9 @@ class OnScreenKeyboardDetector {
   // are destroyed.
   void AddObserver(OnScreenKeyboardObserver* observer);
   void RemoveObserver(OnScreenKeyboardObserver* observer);
+
+  // Returns true if the osk is visible. Sets osk bounding rect if non-null
+  static bool IsKeyboardVisible(gfx::Rect* osk_bounding_rect);
 
  private:
   // Executes as a task and detects if the on screen keyboard is displayed.
@@ -114,7 +118,9 @@ class OnScreenKeyboardDetector {
 OnScreenKeyboardDetector::OnScreenKeyboardDetector()
     : keyboard_detector_factory_(this) {}
 
-OnScreenKeyboardDetector::~OnScreenKeyboardDetector() {}
+OnScreenKeyboardDetector::~OnScreenKeyboardDetector() {
+  ClearObservers();
+}
 
 void OnScreenKeyboardDetector::DetectKeyboard(HWND main_window) {
   main_window_ = main_window;
@@ -166,15 +172,21 @@ void OnScreenKeyboardDetector::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
-void OnScreenKeyboardDetector::CheckIfKeyboardVisible() {
+// static
+bool OnScreenKeyboardDetector::IsKeyboardVisible(gfx::Rect* osk_bounding_rect) {
   HWND osk = ::FindWindow(kOSKClassName, nullptr);
   if (!::IsWindow(osk))
-    return;
+    return false;
+  if (osk_bounding_rect) {
+    RECT osk_rect = {};
+    ::GetWindowRect(osk, &osk_rect);
+    *osk_bounding_rect = gfx::Rect(osk_rect);
+  }
+  return ::IsWindowVisible(osk) && ::IsWindowEnabled(osk);
+}
 
-  RECT osk_rect = {};
-  ::GetWindowRect(osk, &osk_rect);
-  osk_rect_pixels_ = gfx::Rect(osk_rect);
-  if (::IsWindowVisible(osk) && ::IsWindowEnabled(osk)) {
+void OnScreenKeyboardDetector::CheckIfKeyboardVisible() {
+  if (IsKeyboardVisible(&osk_rect_pixels_)) {
     if (!osk_visible_notification_received_)
       HandleKeyboardVisible();
   } else {
@@ -260,7 +272,7 @@ bool OnScreenKeyboardDisplayManager::DisplayVirtualKeyboard(
   if (base::win::GetVersion() < base::win::VERSION_WIN8)
     return false;
 
-  if (base::win::IsKeyboardPresentOnSlate(nullptr))
+  if (base::win::IsKeyboardPresentOnSlate(nullptr, ui::GetHiddenWindow()))
     return false;
 
   if (osk_path_.empty() && !GetOSKPath(&osk_path_)) {
@@ -358,6 +370,10 @@ bool OnScreenKeyboardDisplayManager::GetOSKPath(base::string16* osk_path) {
     osk_path->insert(common_program_files_offset, common_program_files_path);
   }
   return !osk_path->empty();
+}
+
+bool OnScreenKeyboardDisplayManager::IsKeyboardVisible() const {
+  return OnScreenKeyboardDetector::IsKeyboardVisible(nullptr);
 }
 
 }  // namespace ui

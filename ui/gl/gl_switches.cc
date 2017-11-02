@@ -28,10 +28,6 @@ const char kANGLEImplementationNullName[]     = "null";
 
 namespace switches {
 
-// Ask the GLX driver for the default context instead of trying to get the
-// highest version possible.
-const char kCreateDefaultGLContext[] = "create-default-gl-context";
-
 // Disables use of D3D11.
 const char kDisableD3D11[]                  = "disable-d3d11";
 
@@ -79,21 +75,12 @@ const char kGpuNoContextLost[]              = "gpu-no-context-lost";
 // Disables the use of DirectComposition to draw to the screen.
 const char kDisableDirectComposition[] = "disable-direct-composition";
 
-// Indicates whether the dual GPU switching is supported or not.
-const char kSupportsDualGpus[]              = "supports-dual-gpus";
-
 // Flag used for Linux tests: for desktop GL bindings, try to load this GL
 // library first, but fall back to regular library if loading fails.
 const char kTestGLLib[]                     = "test-gl-lib";
 
 // Use hardware gpu, if available, for tests.
 const char kUseGpuInTests[] = "use-gpu-in-tests";
-
-// Enable OpenGL ES 3 APIs.
-const char kEnableES3APIs[] = "enable-es3-apis";
-
-// Disable OpenGL ES 3 APIs. This in turn will disable WebGL2.
-const char kDisableES3APIs[] = "disable-es3-apis";
 
 // Enable use of the SGI_video_sync extension, which can have
 // driver/sandbox/window manager compatibility issues.
@@ -122,12 +109,14 @@ const char kEnableDirectCompositionLayers[] =
 const char kDisableDirectCompositionLayers[] =
     "disable-direct-composition-layers";
 
+
 // This is the list of switches passed from this file that are passed from the
 // GpuProcessHost to the GPU Process. Add your switch to this list if you need
 // to read it in the GPU process, else don't add it.
-const char* kGLSwitchesCopiedFromGpuProcessHost[] = {
+const char* const kGLSwitchesCopiedFromGpuProcessHost[] = {
     kDisableGpuVsync,
     kDisableD3D11,
+    kDisableES3GLContext,
     kEnableGPUServiceLogging,
     kEnableGPUServiceTracing,
     kEnableSgiVideoSync,
@@ -135,7 +124,6 @@ const char* kGLSwitchesCopiedFromGpuProcessHost[] = {
     kDisableGLDrawingForTests,
     kOverrideUseSoftwareGLForTests,
     kUseANGLE,
-    kDisableDirectComposition,
     kEnableSwapBuffersWithBounds,
     kEnableDirectCompositionLayers,
     kDisableDirectCompositionLayers,
@@ -163,5 +151,9 @@ const base::Feature kDirectCompositionUnderlays{
 // overlay.
 const base::Feature kDirectCompositionComplexOverlays{
     "DirectCompositionComplexOverlays", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Allow using overlays for non-root render passes.
+const base::Feature kDirectCompositionNonrootOverlays{
+    "DirectCompositionNonrootOverlays", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace features

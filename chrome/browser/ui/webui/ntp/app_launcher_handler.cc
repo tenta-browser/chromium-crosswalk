@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "apps/metrics_names.h"
@@ -14,6 +16,7 @@
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/i18n/rtl.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
@@ -67,6 +70,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/extension_set.h"
+#include "extensions/common/manifest_handlers/icons_handler.h"
 #include "net/base/url_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
@@ -160,12 +164,25 @@ void AppLauncherHandler::CreateAppInfo(
       service->profile())->management_policy()->UserMayModifySettings(
       extension, NULL));
 
-  // Instead of setting grayscale here, we do it in apps_page.js.
-  GURL icon = extensions::ExtensionIconSource::GetIconURL(
-      extension, extension_misc::EXTENSION_ICON_LARGE,
-      ExtensionIconSet::MATCH_BIGGER, false);
-  DCHECK_NE(GURL(), icon);
-  value->SetString("icon", icon.spec());
+  auto icon_size = extension_misc::EXTENSION_ICON_LARGE;
+  auto match_type = ExtensionIconSet::MATCH_BIGGER;
+  bool has_non_default_large_icon =
+      !extensions::IconsInfo::GetIconURL(extension, icon_size, match_type)
+           .is_empty();
+  GURL large_icon = extensions::ExtensionIconSource::GetIconURL(
+      extension, icon_size, match_type, false);
+  value->SetString("icon_big", large_icon.spec());
+  value->SetBoolean("icon_big_exists", has_non_default_large_icon);
+
+  icon_size = extension_misc::EXTENSION_ICON_BITTY;
+  bool has_non_default_small_icon =
+      !extensions::IconsInfo::GetIconURL(extension, icon_size, match_type)
+           .is_empty();
+  GURL small_icon = extensions::ExtensionIconSource::GetIconURL(
+      extension, icon_size, match_type, false);
+  value->SetString("icon_small", small_icon.spec());
+  value->SetBoolean("icon_small_exists", has_non_default_small_icon);
+
   value->SetInteger("launch_container",
                     extensions::AppLaunchInfo::GetLaunchContainer(extension));
   ExtensionPrefs* prefs = ExtensionPrefs::Get(service->profile());
@@ -344,7 +361,7 @@ void AppLauncherHandler::OnExtensionLoaded(
 void AppLauncherHandler::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    extensions::UnloadedExtensionInfo::Reason reason) {
+    extensions::UnloadedExtensionReason reason) {
   AppRemoved(extension, false);
 }
 
@@ -359,7 +376,7 @@ void AppLauncherHandler::FillAppDictionary(base::DictionaryValue* dictionary) {
   // CreateAppInfo and ClearOrdinals can change the extension prefs.
   base::AutoReset<bool> auto_reset(&ignore_changes_, true);
 
-  base::ListValue* list = new base::ListValue();
+  auto installed_extensions = base::MakeUnique<base::ListValue>();
   Profile* profile = Profile::FromWebUI(web_ui());
   PrefService* prefs = profile->GetPrefs();
 
@@ -368,24 +385,22 @@ void AppLauncherHandler::FillAppDictionary(base::DictionaryValue* dictionary) {
     const Extension* extension = extension_service_->GetInstalledExtension(*it);
     if (extension && extensions::ui_util::ShouldDisplayInNewTabPage(
             extension, profile)) {
-      list->Append(GetAppInfo(extension));
+      installed_extensions->Append(GetAppInfo(extension));
     }
   }
 
-  dictionary->Set("apps", list);
+  dictionary->Set("apps", std::move(installed_extensions));
 
   const base::ListValue* app_page_names =
       prefs->GetList(prefs::kNtpAppPageNames);
   if (!app_page_names || !app_page_names->GetSize()) {
     ListPrefUpdate update(prefs, prefs::kNtpAppPageNames);
     base::ListValue* list = update.Get();
-    list->Set(0, new base::Value(
+    list->Set(0, base::MakeUnique<base::Value>(
                      l10n_util::GetStringUTF16(IDS_APP_DEFAULT_PAGE_NAME)));
-    dictionary->Set("appPageNames",
-                    static_cast<base::ListValue*>(list->DeepCopy()));
+    dictionary->SetKey("appPageNames", list->Clone());
   } else {
-    dictionary->Set("appPageNames",
-                    static_cast<base::ListValue*>(app_page_names->DeepCopy()));
+    dictionary->SetKey("appPageNames", app_page_names->Clone());
   }
 }
 
@@ -593,7 +608,7 @@ void AppLauncherHandler::HandleUninstallApp(const base::ListValue* args) {
         base::Bind(&base::DoNothing), nullptr);
     CleanupAfterUninstall();
   } else {
-    GetExtensionUninstallDialog()->ConfirmUninstall(
+    CreateExtensionUninstallDialog()->ConfirmUninstall(
         extension, extensions::UNINSTALL_REASON_USER_INITIATED,
         extensions::UNINSTALL_SOURCE_CHROME_APPS_PAGE);
   }
@@ -628,9 +643,9 @@ void AppLauncherHandler::HandleShowAppInfo(const base::ListValue* args) {
                             AppInfoLaunchSource::FROM_APPS_PAGE,
                             AppInfoLaunchSource::NUM_LAUNCH_SOURCES);
 
-  ShowAppInfoInNativeDialog(
-      web_ui()->GetWebContents(), GetAppInfoNativeDialogSize(),
-      Profile::FromWebUI(web_ui()), extension, base::Closure());
+  ShowAppInfoInNativeDialog(web_ui()->GetWebContents(),
+                            Profile::FromWebUI(web_ui()), extension,
+                            base::Closure());
 }
 
 void AppLauncherHandler::HandleReorderApps(const base::ListValue* args) {
@@ -681,7 +696,7 @@ void AppLauncherHandler::HandleSetPageIndex(const base::ListValue* args) {
 }
 
 void AppLauncherHandler::HandleSaveAppPageName(const base::ListValue* args) {
-  base::string16 name;
+  std::string name;
   CHECK(args->GetString(0, &name));
 
   double page_index;
@@ -691,7 +706,8 @@ void AppLauncherHandler::HandleSaveAppPageName(const base::ListValue* args) {
   PrefService* prefs = Profile::FromWebUI(web_ui())->GetPrefs();
   ListPrefUpdate update(prefs, prefs::kNtpAppPageNames);
   base::ListValue* list = update.Get();
-  list->Set(static_cast<size_t>(page_index), new base::Value(name));
+  list->Set(static_cast<size_t>(page_index),
+            base::MakeUnique<base::Value>(name));
 }
 
 void AppLauncherHandler::HandleGenerateAppForLink(const base::ListValue* args) {
@@ -853,16 +869,13 @@ void AppLauncherHandler::ExtensionEnableFlowAborted(bool user_initiated) {
 }
 
 extensions::ExtensionUninstallDialog*
-AppLauncherHandler::GetExtensionUninstallDialog() {
-  if (!extension_uninstall_dialog_.get()) {
-    Browser* browser = chrome::FindBrowserWithWebContents(
-        web_ui()->GetWebContents());
-    extension_uninstall_dialog_.reset(
-        extensions::ExtensionUninstallDialog::Create(
-            extension_service_->profile(),
-            browser->window()->GetNativeWindow(),
-            this));
-  }
+AppLauncherHandler::CreateExtensionUninstallDialog() {
+  Browser* browser =
+      chrome::FindBrowserWithWebContents(web_ui()->GetWebContents());
+  extension_uninstall_dialog_.reset(
+      extensions::ExtensionUninstallDialog::Create(
+          extension_service_->profile(), browser->window()->GetNativeWindow(),
+          this));
   return extension_uninstall_dialog_.get();
 }
 

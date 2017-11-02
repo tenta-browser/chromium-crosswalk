@@ -13,7 +13,6 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/memory/scoped_vector.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_data_model.h"
@@ -388,7 +387,7 @@ syncer::SyncDataList AutofillWalletMetadataSyncableService::GetAllSyncData(
 }
 
 syncer::SyncError AutofillWalletMetadataSyncableService::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const syncer::SyncChangeList& changes_from_sync) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
@@ -500,8 +499,8 @@ void AutofillWalletMetadataSyncableService::CreateForWebDataServiceAndBackend(
     AutofillWebDataBackend* web_data_backend,
     const std::string& app_locale) {
   web_data_service->GetDBUserData()->SetUserData(
-      UserDataKey(),
-      new AutofillWalletMetadataSyncableService(web_data_backend, app_locale));
+      UserDataKey(), base::WrapUnique(new AutofillWalletMetadataSyncableService(
+                         web_data_backend, app_locale)));
 }
 
 // static

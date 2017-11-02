@@ -15,15 +15,13 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "net/android/keystore.h"
 #include "net/android/legacy_openssl.h"
 #include "net/base/net_errors.h"
-#include "net/ssl/openssl_client_key_store.h"
-#include "net/ssl/ssl_platform_key.h"
 #include "net/ssl/ssl_platform_key_util.h"
 #include "net/ssl/threaded_ssl_private_key.h"
 #include "third_party/boringssl/src/include/openssl/ecdsa.h"
+#include "third_party/boringssl/src/include/openssl/evp.h"
 #include "third_party/boringssl/src/include/openssl/mem.h"
 #include "third_party/boringssl/src/include/openssl/nid.h"
 #include "third_party/boringssl/src/include/openssl/rsa.h"
@@ -74,7 +72,7 @@ void LeakEngine(const JavaRef<jobject>& private_key) {
 
 class SSLPlatformKeyAndroid : public ThreadedSSLPrivateKey::Delegate {
  public:
-  SSLPlatformKeyAndroid(SSLPrivateKey::Type type,
+  SSLPlatformKeyAndroid(int type,
                         const JavaRef<jobject>& key,
                         size_t max_length,
                         android::AndroidRSA* legacy_rsa)
@@ -84,8 +82,6 @@ class SSLPlatformKeyAndroid : public ThreadedSSLPrivateKey::Delegate {
 
   ~SSLPlatformKeyAndroid() override {}
 
-  SSLPrivateKey::Type GetType() override { return type_; }
-
   std::vector<SSLPrivateKey::Hash> GetDigestPreferences() override {
     static const SSLPrivateKey::Hash kHashes[] = {
         SSLPrivateKey::Hash::SHA512, SSLPrivateKey::Hash::SHA384,
@@ -94,8 +90,6 @@ class SSLPlatformKeyAndroid : public ThreadedSSLPrivateKey::Delegate {
                                             kHashes + arraysize(kHashes));
   }
 
-  size_t GetMaxSignatureLengthInBytes() override { return max_length_; }
-
   Error SignDigest(SSLPrivateKey::Hash hash,
                    const base::StringPiece& input_in,
                    std::vector<uint8_t>* signature) override {
@@ -103,7 +97,7 @@ class SSLPlatformKeyAndroid : public ThreadedSSLPrivateKey::Delegate {
 
     // Prepend the DigestInfo for RSA.
     bssl::UniquePtr<uint8_t> digest_info_storage;
-    if (type_ == SSLPrivateKey::Type::RSA) {
+    if (type_ == EVP_PKEY_RSA) {
       int hash_nid = NID_undef;
       switch (hash) {
         case SSLPrivateKey::Hash::MD5_SHA1:
@@ -147,13 +141,6 @@ class SSLPlatformKeyAndroid : public ThreadedSSLPrivateKey::Delegate {
           signature->data(), legacy_rsa_, android::ANDROID_RSA_PKCS1_PADDING);
       if (ret < 0) {
         LOG(WARNING) << "Could not sign message with legacy RSA key!";
-        // System OpenSSL will use a separate error queue, so it is still
-        // necessary to push a new error.
-        //
-        // TODO(davidben): It would be good to also clear the system error queue
-        // if there were some way to convince Java to do it. (Without going
-        // through Java, it's difficult to get a handle on a system OpenSSL
-        // function; dlopen loads a second copy.)
         return ERR_SSL_CLIENT_AUTH_SIGNATURE_FAILED;
       }
       signature->resize(ret);
@@ -168,7 +155,7 @@ class SSLPlatformKeyAndroid : public ThreadedSSLPrivateKey::Delegate {
   }
 
  private:
-  SSLPrivateKey::Type type_;
+  int type_;
   ScopedJavaGlobalRef<jobject> key_;
   size_t max_length_;
   android::AndroidRSA* legacy_rsa_;
@@ -181,13 +168,13 @@ class SSLPlatformKeyAndroid : public ThreadedSSLPrivateKey::Delegate {
 scoped_refptr<SSLPrivateKey> WrapJavaPrivateKey(
     const X509Certificate* certificate,
     const JavaRef<jobject>& key) {
-  SSLPrivateKey::Type type;
+  int type;
   size_t max_length;
   if (!GetClientCertInfo(certificate, &type, &max_length))
     return nullptr;
 
   android::AndroidRSA* sys_rsa = nullptr;
-  if (type == SSLPrivateKey::Type::RSA) {
+  if (type == EVP_PKEY_RSA) {
     const int kAndroid42ApiLevel = 17;
     if (base::android::BuildInfo::GetInstance()->sdk_int() <
         kAndroid42ApiLevel) {
@@ -217,15 +204,9 @@ scoped_refptr<SSLPrivateKey> WrapJavaPrivateKey(
     }
   }
 
-  return make_scoped_refptr(new ThreadedSSLPrivateKey(
-      base::MakeUnique<SSLPlatformKeyAndroid>(type, key, max_length, sys_rsa),
-      GetSSLPlatformKeyTaskRunner()));
-}
-
-scoped_refptr<SSLPrivateKey> FetchClientCertPrivateKey(
-    const X509Certificate* certificate) {
-  return OpenSSLClientKeyStore::GetInstance()->FetchClientCertPrivateKey(
-      certificate);
+  return base::MakeRefCounted<ThreadedSSLPrivateKey>(
+      std::make_unique<SSLPlatformKeyAndroid>(type, key, max_length, sys_rsa),
+      GetSSLPlatformKeyTaskRunner());
 }
 
 }  // namespace net

@@ -28,8 +28,8 @@
 
 #include "modules/accessibility/AXSlider.h"
 
-#include "core/dom/shadow/ShadowRoot.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/shadow/ShadowElementNames.h"
 #include "core/layout/LayoutObject.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
@@ -110,20 +110,21 @@ AXObject* AXSlider::ElementAccessibilityHitTest(const IntPoint& point) const {
   return AxObjectCache().GetOrCreate(layout_object_);
 }
 
-void AXSlider::SetValue(const String& value) {
-  HTMLInputElement* input = GetElement();
+bool AXSlider::OnNativeSetValueAction(const String& value) {
+  HTMLInputElement* input = GetInputElement();
 
   if (input->value() == value)
-    return;
+    return false;
 
   input->setValue(value, kDispatchInputAndChangeEvent);
 
   // Fire change event manually, as LayoutSlider::setValueForPosition does.
   input->DispatchFormControlChangeEvent();
+  return true;
 }
 
-HTMLInputElement* AXSlider::GetElement() const {
-  return toHTMLInputElement(layout_object_->GetNode());
+HTMLInputElement* AXSlider::GetInputElement() const {
+  return ToHTMLInputElement(layout_object_->GetNode());
 }
 
 AXSliderThumb::AXSliderThumb(AXObjectCacheImpl& ax_object_cache)
@@ -143,7 +144,7 @@ LayoutObject* AXSliderThumb::LayoutObjectForRelativeBounds() const {
   Element* thumb_element =
       ToElement(slider_layout_object->GetNode())
           ->UserAgentShadowRoot()
-          ->GetElementById(ShadowElementNames::SliderThumb());
+          ->getElementById(ShadowElementNames::SliderThumb());
   DCHECK(thumb_element);
   return thumb_element->GetLayoutObject();
 }

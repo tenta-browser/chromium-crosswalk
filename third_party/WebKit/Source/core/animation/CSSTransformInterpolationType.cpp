@@ -11,6 +11,7 @@
 #include "core/css/CSSValueList.h"
 #include "core/css/resolver/StyleResolverState.h"
 #include "core/css/resolver/TransformBuilder.h"
+#include "core/style/ComputedStyle.h"
 #include "platform/transforms/TransformOperations.h"
 #include "platform/transforms/TranslateTransformOperation.h"
 #include "platform/wtf/PtrUtil.h"
@@ -19,24 +20,24 @@ namespace blink {
 
 class CSSTransformNonInterpolableValue : public NonInterpolableValue {
  public:
-  static PassRefPtr<CSSTransformNonInterpolableValue> Create(
+  static RefPtr<CSSTransformNonInterpolableValue> Create(
       TransformOperations&& transform) {
-    return AdoptRef(new CSSTransformNonInterpolableValue(
+    return WTF::AdoptRef(new CSSTransformNonInterpolableValue(
         true, std::move(transform), EmptyTransformOperations(), false, false));
   }
 
-  static PassRefPtr<CSSTransformNonInterpolableValue> Create(
+  static RefPtr<CSSTransformNonInterpolableValue> Create(
       CSSTransformNonInterpolableValue&& start,
       double start_fraction,
       CSSTransformNonInterpolableValue&& end,
       double end_fraction) {
-    return AdoptRef(new CSSTransformNonInterpolableValue(
+    return WTF::AdoptRef(new CSSTransformNonInterpolableValue(
         false, start.GetInterpolatedTransform(start_fraction),
         end.GetInterpolatedTransform(end_fraction), start.IsAdditive(),
         end.IsAdditive()));
   }
 
-  PassRefPtr<CSSTransformNonInterpolableValue> Composite(
+  RefPtr<CSSTransformNonInterpolableValue> Composite(
       const CSSTransformNonInterpolableValue& other,
       double other_progress) {
     DCHECK(!IsAdditive());
@@ -129,17 +130,17 @@ InterpolationValue ConvertTransform(const TransformOperations& transform) {
   return ConvertTransform(TransformOperations(transform));
 }
 
-class InheritedTransformChecker : public InterpolationType::ConversionChecker {
+class InheritedTransformChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedTransformChecker> Create(
       const TransformOperations& inherited_transform) {
     return WTF::WrapUnique(new InheritedTransformChecker(inherited_transform));
   }
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
-    return inherited_transform_ ==
-           environment.GetState().ParentStyle()->Transform();
+    return inherited_transform_ == state.ParentStyle()->Transform();
   }
 
  private:

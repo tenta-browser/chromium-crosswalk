@@ -12,9 +12,12 @@
 namespace blink {
 
 class LocalFrame;
-class ThreadedWorkletMessagingProxy;
-class WorkletGlobalScopeProxy;
 
+// Represents the animation worklet on the main thread. All the logic for
+// loading a new source module is implemented in its parent class |Worklet|. The
+// sole responsibility of this class it to create the appropriate
+// |WorkletGlobalScopeProxy| instances that are responsible to proxy a
+// corresponding |AnimationWorkletGlobalScope| on the worklet thread.
 class MODULES_EXPORT AnimationWorklet final : public Worklet {
   WTF_MAKE_NONCOPYABLE(AnimationWorklet);
 
@@ -22,19 +25,14 @@ class MODULES_EXPORT AnimationWorklet final : public Worklet {
   static AnimationWorklet* Create(LocalFrame*);
   ~AnimationWorklet() override;
 
-  void Initialize() final;
-  bool IsInitialized() const final;
-
-  WorkletGlobalScopeProxy* GetWorkletGlobalScopeProxy() const final;
-
   DECLARE_VIRTUAL_TRACE();
 
  private:
   explicit AnimationWorklet(LocalFrame*);
 
-  // The proxy outlives the worklet as it is used to perform thread shutdown,
-  // it deletes itself once this has occured.
-  ThreadedWorkletMessagingProxy* worklet_messaging_proxy_;
+  // Implements Worklet.
+  bool NeedsToCreateGlobalScope() final;
+  WorkletGlobalScopeProxy* CreateGlobalScope() final;
 };
 
 }  // namespace blink

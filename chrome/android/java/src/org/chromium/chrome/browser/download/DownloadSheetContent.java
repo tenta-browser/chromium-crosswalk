@@ -4,27 +4,31 @@
 
 package org.chromium.chrome.browser.download;
 
-import android.app.Activity;
-import android.support.v7.widget.Toolbar;
 import android.view.View;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.ApplicationStatus.ActivityStateListener;
+import org.chromium.base.CollectionUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.download.ui.DownloadHistoryItemWrapper;
 import org.chromium.chrome.browser.download.ui.DownloadManagerUi;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 import org.chromium.chrome.browser.toolbar.BottomToolbarPhone;
+import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.BottomSheetContent;
 import org.chromium.chrome.browser.widget.bottomsheet.BottomSheetContentController;
+import org.chromium.chrome.browser.widget.selection.SelectableListToolbar;
+
+import java.util.List;
 
 /**
  * A {@link BottomSheetContent} holding a {@link DownloadManagerUi} for display in the BottomSheet.
  */
 public class DownloadSheetContent implements BottomSheetContent {
     private final View mContentView;
-    private final Toolbar mToolbarView;
+    private final SelectableListToolbar<DownloadHistoryItemWrapper> mToolbarView;
     private final ActivityStateListener mActivityStateListener;
     private DownloadManagerUi mDownloadManager;
 
@@ -33,14 +37,25 @@ public class DownloadSheetContent implements BottomSheetContent {
      * @param isIncognito Whether the activity is currently displaying an incognito tab.
      * @param snackbarManager The {@link SnackbarManager} used to display snackbars.
      */
-    public DownloadSheetContent(
-            ChromeActivity activity, final boolean isIncognito, SnackbarManager snackbarManager) {
+    public DownloadSheetContent(final ChromeActivity activity, final boolean isIncognito,
+            SnackbarManager snackbarManager) {
         ThreadUtils.assertOnUiThread();
 
         mDownloadManager = new DownloadManagerUi(
                 activity, isIncognito, activity.getComponentName(), false, snackbarManager);
         mContentView = mDownloadManager.getView();
         mToolbarView = mDownloadManager.detachToolbarView();
+        mToolbarView.addObserver(new SelectableListToolbar.SelectableListToolbarObserver() {
+            @Override
+            public void onThemeColorChanged(boolean isLightTheme) {
+                activity.getBottomSheet().updateHandleTint();
+            }
+
+            @Override
+            public void onStartSearch() {
+                activity.getBottomSheet().setSheetState(BottomSheet.SHEET_STATE_FULL, true);
+            }
+        });
         ((BottomToolbarPhone) activity.getToolbarManager().getToolbar())
                 .setOtherToolbarStyle(mToolbarView);
 
@@ -49,16 +64,15 @@ public class DownloadSheetContent implements BottomSheetContent {
         // own ActivityStateListener. If multiple tabs are showing the downloads page, multiple
         // requests to check for externally removed downloads will be issued when the activity is
         // resumed.
-        mActivityStateListener = new ActivityStateListener() {
-            @Override
-            public void onActivityStateChange(Activity activity, int newState) {
-                if (newState == ActivityState.RESUMED) {
-                    DownloadUtils.checkForExternallyRemovedDownloads(
-                            mDownloadManager.getBackendProvider(), isIncognito);
-                }
+        mActivityStateListener = (activity1, newState) -> {
+            if (newState == ActivityState.RESUMED) {
+                DownloadUtils.checkForExternallyRemovedDownloads(
+                        mDownloadManager.getBackendProvider(), isIncognito);
             }
         };
         ApplicationStatus.registerStateListenerForActivity(mActivityStateListener, activity);
+
+        mToolbarView.setActionBarDelegate(activity.getBottomSheet().getActionBarDelegate());
     }
 
     @Override
@@ -67,8 +81,24 @@ public class DownloadSheetContent implements BottomSheetContent {
     }
 
     @Override
+    public List<View> getViewsForPadding() {
+        return CollectionUtil.newArrayList(
+                mDownloadManager.getRecyclerView(), mDownloadManager.getEmptyView());
+    }
+
+    @Override
     public View getToolbarView() {
         return mToolbarView;
+    }
+
+    @Override
+    public boolean isUsingLightToolbarTheme() {
+        return mToolbarView.isLightTheme();
+    }
+
+    @Override
+    public boolean isIncognitoThemedContent() {
+        return false;
     }
 
     @Override
@@ -86,5 +116,15 @@ public class DownloadSheetContent implements BottomSheetContent {
     @Override
     public int getType() {
         return BottomSheetContentController.TYPE_DOWNLOADS;
+    }
+
+    @Override
+    public boolean applyDefaultTopPadding() {
+        return false;
+    }
+
+    @Override
+    public void scrollToTop() {
+        mDownloadManager.scrollToTop();
     }
 }

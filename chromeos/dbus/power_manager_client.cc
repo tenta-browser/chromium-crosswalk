@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -180,10 +181,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
         power_manager::kPowerManagerInterface,
         power_manager::kGetScreenBrightnessPercentMethod);
     power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&PowerManagerClientImpl::OnGetScreenBrightnessPercent,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(&PowerManagerClientImpl::OnGetScreenBrightnessPercent,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
   void RequestStatusUpdate() override {
@@ -192,10 +192,10 @@ class PowerManagerClientImpl : public PowerManagerClient {
         power_manager::kPowerManagerInterface,
         power_manager::kGetPowerSupplyPropertiesMethod);
     power_manager_proxy_->CallMethod(
-        &method_call,
-        dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&PowerManagerClientImpl::OnGetPowerSupplyPropertiesMethod,
-                   weak_ptr_factory_.GetWeakPtr()));
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        base::BindOnce(
+            &PowerManagerClientImpl::OnGetPowerSupplyPropertiesMethod,
+            weak_ptr_factory_.GetWeakPtr()));
   }
 
   void RequestSuspend() override {
@@ -203,14 +203,32 @@ class PowerManagerClientImpl : public PowerManagerClient {
     SimpleMethodCallToPowerManager(power_manager::kRequestSuspendMethod);
   }
 
-  void RequestRestart() override {
-    POWER_LOG(USER) << "RequestRestart";
-    SimpleMethodCallToPowerManager(power_manager::kRequestRestartMethod);
+  void RequestRestart(power_manager::RequestRestartReason reason,
+                      const std::string& description) override {
+    POWER_LOG(USER) << "RequestRestart: " << reason << " (" << description
+                    << ")";
+    dbus::MethodCall method_call(power_manager::kPowerManagerInterface,
+                                 power_manager::kRequestRestartMethod);
+    dbus::MessageWriter writer(&method_call);
+    writer.AppendInt32(reason);
+    writer.AppendString(description);
+    power_manager_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        dbus::ObjectProxy::EmptyResponseCallback());
   }
 
-  void RequestShutdown() override {
-    POWER_LOG(USER) << "RequestShutdown";
-    SimpleMethodCallToPowerManager(power_manager::kRequestShutdownMethod);
+  void RequestShutdown(power_manager::RequestShutdownReason reason,
+                       const std::string& description) override {
+    POWER_LOG(USER) << "RequestShutdown: " << reason << " (" << description
+                    << ")";
+    dbus::MethodCall method_call(power_manager::kPowerManagerInterface,
+                                 power_manager::kRequestShutdownMethod);
+    dbus::MessageWriter writer(&method_call);
+    writer.AppendInt32(reason);
+    writer.AppendString(description);
+    power_manager_proxy_->CallMethod(
+        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+        dbus::ObjectProxy::EmptyResponseCallback());
   }
 
   void NotifyUserActivity(power_manager::UserActivityType type) override {
@@ -295,8 +313,8 @@ class PowerManagerClientImpl : public PowerManagerClient {
                                  power_manager::kGetBacklightsForcedOffMethod);
     power_manager_proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&PowerManagerClientImpl::OnGetBacklightsForcedOff,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&PowerManagerClientImpl::OnGetBacklightsForcedOff,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
   void GetSwitchStates(const GetSwitchStatesCallback& callback) override {
@@ -304,8 +322,8 @@ class PowerManagerClientImpl : public PowerManagerClient {
                                  power_manager::kGetSwitchStatesMethod);
     power_manager_proxy_->CallMethod(
         &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
-        base::Bind(&PowerManagerClientImpl::OnGetSwitchStates,
-                   weak_ptr_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&PowerManagerClientImpl::OnGetSwitchStates,
+                       weak_ptr_factory_.GetWeakPtr(), callback));
   }
 
   base::Closure GetSuspendReadinessCallback() override {
@@ -338,6 +356,14 @@ class PowerManagerClientImpl : public PowerManagerClient {
         power_manager::kPowerManagerInterface,
         power_manager::kBrightnessChangedSignal,
         base::Bind(&PowerManagerClientImpl::BrightnessChangedReceived,
+                   weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&PowerManagerClientImpl::SignalConnected,
+                   weak_ptr_factory_.GetWeakPtr()));
+
+    power_manager_proxy_->ConnectToSignal(
+        power_manager::kPowerManagerInterface,
+        power_manager::kKeyboardBrightnessChangedSignal,
+        base::Bind(&PowerManagerClientImpl::KeyboardBrightnessChangedReceived,
                    weak_ptr_factory_.GetWeakPtr()),
         base::Bind(&PowerManagerClientImpl::SignalConnected,
                    weak_ptr_factory_.GetWeakPtr()));
@@ -469,6 +495,22 @@ class PowerManagerClientImpl : public PowerManagerClient {
                      << ": user initiated " << user_initiated;
     for (auto& observer : observers_)
       observer.BrightnessChanged(brightness_level, user_initiated);
+  }
+
+  void KeyboardBrightnessChangedReceived(dbus::Signal* signal) {
+    dbus::MessageReader reader(signal);
+    int32_t brightness_level = 0;
+    bool user_initiated = 0;
+    if (!(reader.PopInt32(&brightness_level) &&
+          reader.PopBool(&user_initiated))) {
+      POWER_LOG(ERROR) << "Keyboard brightness changed signal had incorrect "
+                       << "parameters: " << signal->ToString();
+      return;
+    }
+    POWER_LOG(DEBUG) << "Keyboard brightness changed to " << brightness_level
+                     << ": user initiated " << user_initiated;
+    for (auto& observer : observers_)
+      observer.KeyboardBrightnessChanged(brightness_level, user_initiated);
   }
 
   void PeripheralBatteryStatusReceived(dbus::Signal* signal) {
@@ -788,8 +830,9 @@ class PowerManagerClientImpl : public PowerManagerClient {
       return;
     }
 
-    power_manager_proxy_->CallMethod(
-        &method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT, callback);
+    power_manager_proxy_->CallMethod(&method_call,
+                                     dbus::ObjectProxy::TIMEOUT_USE_DEFAULT,
+                                     std::move(callback));
   }
 
   // Registers suspend delays with the power manager.  This is usually only

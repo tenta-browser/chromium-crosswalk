@@ -15,6 +15,10 @@
 #include "chrome/browser/permissions/permission_util.h"
 #include "content/public/browser/permission_type.h"
 
+namespace content {
+class WebContents;
+}
+
 enum class PermissionRequestGestureType;
 class GURL;
 class PermissionRequest;
@@ -126,10 +130,6 @@ class PermissionUmaUtil {
                                   PermissionRequestGestureType gesture_type,
                                   const GURL& requesting_origin,
                                   Profile* profile);
-  static void PermissionIgnored(ContentSettingsType permission,
-                                PermissionRequestGestureType gesture_type,
-                                const GURL& requesting_origin,
-                                Profile* profile);
   static void PermissionRevoked(ContentSettingsType permission,
                                 PermissionSourceUI source_ui,
                                 const GURL& revoked_origin,
@@ -158,17 +158,10 @@ class PermissionUmaUtil {
   static void PermissionPromptShown(
       const std::vector<PermissionRequest*>& requests);
 
-  // The following two functions can be combined with the PermissionPromptShown
-  // metrics to calculate accept, deny and ignore rates.
-  // Note that for coalesced permission bubbles, PermissionPromptAccepted will
-  // always be called, with |accept_states| containing whether each request was
-  // accepted or denied.
-  static void PermissionPromptAccepted(
+  static void PermissionPromptResolved(
       const std::vector<PermissionRequest*>& requests,
-      const std::vector<bool>& accept_states);
-
-  static void PermissionPromptDenied(
-      const std::vector<PermissionRequest*>& requests);
+      const content::WebContents* web_contents,
+      PermissionAction permission_action);
 
   // Records the request type and gesture type for a shown, accepted, and denied
   // prompt. Defined separately as Android must call this method explicitly
@@ -196,6 +189,12 @@ class PermissionUmaUtil {
       ContentSettingsType permission,
       bool toggle_enabled);
 
+  static void RecordWithBatteryBucket(const std::string& histogram);
+
+  // Permission Action Reporting data is only sent in official, Chrome branded
+  // builds. This function allows this to be overridden for testing.
+  static void FakeOfficialBuildForTest();
+
  private:
   friend class PermissionUmaUtilTest;
 
@@ -214,6 +213,13 @@ class PermissionUmaUtil {
       ContentSettingsType permission,
       const std::string& prefix,
       int count);
+
+  static void RecordPromptDecided(
+      const std::vector<PermissionRequest*>& requests,
+      bool accepted);
+
+  static void PermissionIgnored(const std::vector<PermissionRequest*>& requests,
+                                const content::WebContents* web_contents);
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(PermissionUmaUtil);
 };

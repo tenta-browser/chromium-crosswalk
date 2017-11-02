@@ -4,8 +4,8 @@
 
 #include "core/timing/PerformanceObserver.h"
 
-#include "bindings/core/v8/PerformanceObserverCallback.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
+#include "bindings/core/v8/v8_performance_observer_callback.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/timing/Performance.h"
@@ -33,9 +33,9 @@ class PerformanceObserverTest : public ::testing::Test {
     v8::Local<v8::Function> callback =
         v8::Function::New(script_state->GetContext(), nullptr).ToLocalChecked();
     base_ = new MockPerformanceBase(script_state);
-    cb_ = PerformanceObserverCallback::Create(script_state, callback);
-    observer_ = PerformanceObserver::Create(
-        ExecutionContext::From(script_state), base_, cb_);
+    cb_ = V8PerformanceObserverCallback::Create(script_state, callback);
+    observer_ = new PerformanceObserver(ExecutionContext::From(script_state),
+                                        base_, cb_);
   }
 
   bool IsRegistered() { return observer_->is_registered_; }
@@ -43,7 +43,7 @@ class PerformanceObserverTest : public ::testing::Test {
   void Deliver() { observer_->Deliver(); }
 
   Persistent<MockPerformanceBase> base_;
-  Persistent<PerformanceObserverCallback> cb_;
+  Persistent<V8PerformanceObserverCallback> cb_;
   Persistent<PerformanceObserver> observer_;
 };
 

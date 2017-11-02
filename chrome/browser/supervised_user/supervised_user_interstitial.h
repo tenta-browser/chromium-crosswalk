@@ -29,8 +29,10 @@ class Profile;
 class SupervisedUserInterstitial : public content::InterstitialPageDelegate,
                                    public SupervisedUserServiceObserver {
  public:
+  ~SupervisedUserInterstitial() override;
+
   // Interstitial type, used for testing.
-  static content::InterstitialPageDelegate::TypeID kTypeForTesting;
+  static const content::InterstitialPageDelegate::TypeID kTypeForTesting;
 
   static void Show(content::WebContents* web_contents,
                    const GURL& url,
@@ -49,9 +51,8 @@ class SupervisedUserInterstitial : public content::InterstitialPageDelegate,
       supervised_user_error_page::FilteringBehaviorReason reason,
       bool initial_page_load,
       const base::Callback<void(bool)>& callback);
-  ~SupervisedUserInterstitial() override;
 
-  bool Init();
+  void Init();
 
   // InterstitialPageDelegate implementation.
   std::string GetHTMLContents() override;

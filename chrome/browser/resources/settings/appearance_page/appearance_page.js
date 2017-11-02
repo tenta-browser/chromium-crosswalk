@@ -14,14 +14,6 @@ var SIZE_DIFFERENCE_FIXED_STANDARD_ = 3;
 /**
  * 'settings-appearance-page' is the settings page containing appearance
  * settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-appearance-page prefs="{{prefs}}">
- *      </settings-appearance-page>
- *      ... other pages ...
- *    </iron-animated-pages>
  */
 Polymer({
   is: 'settings-appearance-page',
@@ -42,6 +34,9 @@ Polymer({
 
     /** @private */
     defaultZoom_: Number,
+
+    /** @private */
+    isWallpaperPolicyControlled_: {type: Boolean, value: true},
 
     /**
      * List of options for the font size drop-down menu.
@@ -94,6 +89,9 @@ Polymer({
     themeSublabel_: String,
 
     /** @private */
+    themeUrl_: String,
+
+    /** @private */
     useSystemTheme_: {
       type: Boolean,
       value: false,  // Can only be true on Linux, but value exists everywhere.
@@ -104,9 +102,10 @@ Polymer({
       type: Object,
       value: function() {
         var map = new Map();
-        map.set(
-            settings.Route.FONTS.path,
-            '#customize-fonts-subpage-trigger .subpage-arrow');
+        if (settings.routes.FONTS) {
+          map.set(
+              settings.routes.FONTS.path, '#customize-fonts-subpage-trigger');
+        }
         return map;
       },
     },
@@ -114,9 +113,6 @@ Polymer({
 
   /** @private {?settings.AppearanceBrowserProxy} */
   browserProxy_: null,
-
-  /** @private {string} */
-  themeUrl_: '',
 
   observers: [
     'defaultFontSizeChanged_(prefs.webkit.webprefs.default_font_size.value)',
@@ -128,17 +124,30 @@ Polymer({
     // </if>
   ],
 
+  /** @override */
   created: function() {
     this.browserProxy_ = settings.AppearanceBrowserProxyImpl.getInstance();
   },
 
+  /** @override */
   ready: function() {
     this.$.defaultFontSize.menuOptions = this.fontSizeOptions_;
     // TODO(dschuyler): Look into adding a listener for the
     // default zoom percent.
-    this.browserProxy_.getDefaultZoom().then(function(zoom) {
+    this.browserProxy_.getDefaultZoom().then(zoom => {
       this.defaultZoom_ = zoom;
-    }.bind(this));
+    });
+    // <if expr="chromeos">
+    this.browserProxy_.isWallpaperSettingVisible().then(
+        isWallpaperSettingVisible => {
+          assert(this.pageVisibility);
+          this.pageVisibility.setWallpaper = isWallpaperSettingVisible;
+        });
+    this.browserProxy_.isWallpaperPolicyControlled().then(
+        isPolicyControlled => {
+          this.isWallpaperPolicyControlled_ = isPolicyControlled;
+        });
+    // </if>
   },
 
   /**
@@ -167,7 +176,7 @@ Polymer({
 
   /** @private */
   onCustomizeFontsTap_: function() {
-    settings.navigateTo(settings.Route.FONTS);
+    settings.navigateTo(settings.routes.FONTS);
   },
 
   /** @private */
@@ -187,8 +196,11 @@ Polymer({
         value - SIZE_DIFFERENCE_FIXED_STANDARD_);
   },
 
-  /** @private */
-  onThemesTap_: function() {
+  /**
+   * Open URL for either current theme or the theme gallery.
+   * @private
+   */
+  openThemeUrl_: function() {
     window.open(this.themeUrl_ || loadTimeData.getString('themesGalleryUrl'));
   },
 
@@ -245,7 +257,7 @@ Polymer({
    */
   showThemesSecondary_: function(themeId, useSystemTheme) {
     return this.showUseClassic_(themeId, useSystemTheme) ||
-           this.showUseSystem_(themeId, useSystemTheme);
+        this.showUseSystem_(themeId, useSystemTheme);
   },
 
   /** @private */
@@ -263,9 +275,9 @@ Polymer({
     if (themeId) {
       assert(!useSystemTheme);
 
-      this.browserProxy_.getThemeInfo(themeId).then(function(info) {
+      this.browserProxy_.getThemeInfo(themeId).then(info => {
         this.themeSublabel_ = info.name;
-      }.bind(this));
+      });
 
       this.themeUrl_ = 'https://chrome.google.com/webstore/detail/' + themeId;
       return;

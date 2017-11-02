@@ -11,6 +11,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/lazy_task_runner.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/task_scheduler/single_thread_task_runner_thread_mode.h"
+#include "base/task_scheduler/task_traits.h"
 #include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/policy/policy_path_parser.h"
@@ -43,6 +47,18 @@ namespace shell_integration {
 namespace {
 
 const struct AppModeInfo* gAppModeInfo = nullptr;
+
+// TODO(crbug.com/773563): Remove |g_sequenced_task_runner| and use an instance
+// field / singleton instead.
+#if defined(OS_WIN)
+base::LazyCOMSTATaskRunner g_sequenced_task_runner =
+    LAZY_COM_STA_TASK_RUNNER_INITIALIZER(
+        base::TaskTraits(base::MayBlock()),
+        base::SingleThreadTaskRunnerThreadMode::SHARED);
+#else
+base::LazySequencedTaskRunner g_sequenced_task_runner =
+    LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(base::TaskTraits(base::MayBlock()));
+#endif
 
 }  // namespace
 
@@ -136,15 +152,14 @@ base::string16 GetAppShortcutsSubdirName() {
 //
 
 void DefaultWebClientWorker::StartCheckIsDefault() {
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
+  g_sequenced_task_runner.Get()->PostTask(
+      FROM_HERE,
       base::Bind(&DefaultWebClientWorker::CheckIsDefault, this, false));
 }
 
 void DefaultWebClientWorker::StartSetAsDefault() {
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&DefaultWebClientWorker::SetAsDefault, this));
+  g_sequenced_task_runner.Get()->PostTask(
+      FROM_HERE, base::Bind(&DefaultWebClientWorker::SetAsDefault, this));
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -171,7 +186,8 @@ void DefaultWebClientWorker::OnCheckIsDefaultComplete(
 // DefaultWebClientWorker, private:
 
 void DefaultWebClientWorker::CheckIsDefault(bool is_following_set_as_default) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
+
   DefaultWebClientState state = CheckIsDefaultImpl();
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
@@ -180,7 +196,7 @@ void DefaultWebClientWorker::CheckIsDefault(bool is_following_set_as_default) {
 }
 
 void DefaultWebClientWorker::SetAsDefault() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   // SetAsDefaultImpl will make sure the callback is executed exactly once.
   SetAsDefaultImpl(
@@ -201,18 +217,15 @@ void DefaultWebClientWorker::UpdateUI(DefaultWebClientState state) {
   if (!callback_.is_null()) {
     switch (state) {
       case NOT_DEFAULT:
-        callback_.Run(NOT_DEFAULT);
-        break;
       case IS_DEFAULT:
-        callback_.Run(IS_DEFAULT);
-        break;
       case UNKNOWN_DEFAULT:
-        callback_.Run(UNKNOWN_DEFAULT);
-        break;
+      case OTHER_MODE_IS_DEFAULT:
+        callback_.Run(state);
+        return;
       case NUM_DEFAULT_STATES:
-        NOTREACHED();
         break;
     }
+    NOTREACHED();
   }
 }
 

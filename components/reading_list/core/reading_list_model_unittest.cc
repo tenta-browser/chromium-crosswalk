@@ -115,7 +115,7 @@ class TestReadingListStorage : public ReadingListModelStorage {
 
   base::Optional<syncer::ModelError> MergeSyncData(
       std::unique_ptr<syncer::MetadataChangeList> metadata_change_list,
-      syncer::EntityDataMap entity_data_map) override {
+      syncer::EntityChangeList entity_data) override {
     NOTREACHED();
     return {};
   }
@@ -314,6 +314,9 @@ TEST_F(ReadingListModelTest, EmptyLoaded) {
   EXPECT_EQ(0ul, ReadSize());
   model_->Shutdown();
   EXPECT_FALSE(model_->loaded());
+  // Shutdown() does not delete the model observer. Verify that deleting the
+  // model will delete the model observer.
+  model_.reset();
   AssertObserverCount(1, 0, 0, 1, 0, 0, 0, 0, 0);
 }
 
@@ -358,6 +361,35 @@ TEST_F(ReadingListModelTest, AddEntry) {
 
   AssertObserverCount(0, 0, 0, 0, 0, 0, 1, 0, 1);
   AssertStorageCount(1, 0);
+  EXPECT_EQ(1ul, UnreadSize());
+  EXPECT_EQ(0ul, ReadSize());
+  EXPECT_TRUE(model_->GetLocalUnseenFlag());
+
+  const ReadingListEntry* other_entry =
+      model_->GetEntryByURL(GURL("http://example.com"));
+  EXPECT_NE(other_entry, nullptr);
+  EXPECT_FALSE(other_entry->IsRead());
+  EXPECT_EQ(GURL("http://example.com"), other_entry->URL());
+  EXPECT_EQ("sample Test", other_entry->Title());
+}
+
+// Tests adding an entry that already exists.
+TEST_F(ReadingListModelTest, AddExistingEntry) {
+  auto clock = base::MakeUnique<base::SimpleTestClock>();
+  auto storage = base::MakeUnique<TestReadingListStorage>(this, clock.get());
+  SetStorage(std::move(storage), std::move(clock));
+  GURL url = GURL("http://example.com");
+  std::string title = "\n  \tsample Test ";
+  model_->AddEntry(url, title, reading_list::ADDED_VIA_CURRENT_APP);
+  ClearCounts();
+
+  const ReadingListEntry& entry =
+      model_->AddEntry(url, title, reading_list::ADDED_VIA_CURRENT_APP);
+  EXPECT_EQ(GURL("http://example.com"), entry.URL());
+  EXPECT_EQ("sample Test", entry.Title());
+
+  AssertObserverCount(0, 1, 1, 0, 1, 0, 1, 0, 2);
+  AssertStorageCount(1, 1);
   EXPECT_EQ(1ul, UnreadSize());
   EXPECT_EQ(0ul, ReadSize());
   EXPECT_TRUE(model_->GetLocalUnseenFlag());

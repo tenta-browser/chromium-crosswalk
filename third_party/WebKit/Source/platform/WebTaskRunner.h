@@ -10,17 +10,13 @@
 #include "platform/wtf/Compiler.h"
 #include "platform/wtf/Functional.h"
 #include "platform/wtf/RefCounted.h"
+#include "platform/wtf/Time.h"
 #include "platform/wtf/WeakPtr.h"
 #include "public/platform/WebCommon.h"
 #include "public/platform/WebTraceLocation.h"
-
-namespace base {
-class SingleThreadTaskRunner;
-}
+#include "public/platform/scheduler/single_thread_task_runner.h"
 
 namespace blink {
-
-using SingleThreadTaskRunner = base::SingleThreadTaskRunner;
 
 // TaskHandle is associated to a task posted by
 // WebTaskRunner::postCancellableTask or
@@ -59,15 +55,9 @@ class BLINK_PLATFORM_EXPORT TaskHandle {
 class BLINK_PLATFORM_EXPORT WebTaskRunner
     : public ThreadSafeRefCounted<WebTaskRunner> {
  public:
-  // Schedule a task to be run after |delayMs| on the the associated WebThread.
-  // Can be called from any thread.
-  virtual void PostDelayedTask(const WebTraceLocation&,
-                               base::OnceClosure,
-                               double delay_ms) = 0;
-
-  // Returns true if the current thread is a thread on which a task may be run.
-  // Can be called from any thread.
-  virtual bool RunsTasksOnCurrentThread() = 0;
+  // Returns true if tasks posted to this TaskRunner are sequenced
+  // with this call.
+  virtual bool RunsTasksInCurrentSequence() = 0;
 
   // ---
 
@@ -89,35 +79,37 @@ class BLINK_PLATFORM_EXPORT WebTaskRunner
   virtual double MonotonicallyIncreasingVirtualTimeSeconds() const = 0;
 
   // Returns the underlying task runner object.
-  virtual SingleThreadTaskRunner* ToSingleThreadTaskRunner() = 0;
+  virtual SingleThreadTaskRunnerRefPtr ToSingleThreadTaskRunner() = 0;
 
   // Helpers for posting bound functions as tasks.
 
   // For cross-thread posting. Can be called from any thread.
-  void PostTask(const WebTraceLocation&, std::unique_ptr<CrossThreadClosure>);
+  void PostTask(const WebTraceLocation&, CrossThreadClosure);
   void PostDelayedTask(const WebTraceLocation&,
-                       std::unique_ptr<CrossThreadClosure>,
-                       long long delay_ms);
+                       CrossThreadClosure,
+                       TimeDelta delay);
 
   // For same-thread posting. Must be called from the associated WebThread.
-  void PostTask(const WebTraceLocation&, std::unique_ptr<WTF::Closure>);
-  void PostDelayedTask(const WebTraceLocation&,
-                       std::unique_ptr<WTF::Closure>,
-                       long long delay_ms);
+  void PostTask(const WebTraceLocation&, WTF::Closure);
+  void PostDelayedTask(const WebTraceLocation&, WTF::Closure, TimeDelta delay);
 
   // For same-thread cancellable task posting. Returns a TaskHandle object for
   // cancellation.
-  WARN_UNUSED_RESULT TaskHandle
-  PostCancellableTask(const WebTraceLocation&, std::unique_ptr<WTF::Closure>);
+  WARN_UNUSED_RESULT TaskHandle PostCancellableTask(const WebTraceLocation&,
+                                                    WTF::Closure);
   WARN_UNUSED_RESULT TaskHandle
   PostDelayedCancellableTask(const WebTraceLocation&,
-                             std::unique_ptr<WTF::Closure>,
-                             long long delay_ms);
+                             WTF::Closure,
+                             TimeDelta delay);
 
  protected:
   friend ThreadSafeRefCounted<WebTaskRunner>;
   WebTaskRunner() = default;
   virtual ~WebTaskRunner();
+
+  virtual bool PostDelayedTask(const base::Location&,
+                               base::OnceClosure,
+                               base::TimeDelta) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WebTaskRunner);

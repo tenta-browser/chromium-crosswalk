@@ -82,8 +82,8 @@ void StreamURLRequestJob::OnDataAvailable(Stream* stream) {
 void StreamURLRequestJob::Start() {
   // Continue asynchronously.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&StreamURLRequestJob::DidStart, weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&StreamURLRequestJob::DidStart,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void StreamURLRequestJob::Kill() {
@@ -136,13 +136,6 @@ bool StreamURLRequestJob::GetMimeType(std::string* mime_type) const {
 void StreamURLRequestJob::GetResponseInfo(net::HttpResponseInfo* info) {
   if (response_info_)
     *info = *response_info_;
-}
-
-int StreamURLRequestJob::GetResponseCode() const {
-  if (!response_info_)
-    return -1;
-
-  return response_info_->headers->response_code();
 }
 
 int64_t StreamURLRequestJob::GetTotalReceivedBytes() const {

@@ -6,21 +6,18 @@
 
 #include <stddef.h>
 
-#include "base/memory/ptr_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include <memory>
+
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/psl_matching_helper.h"
 #include "components/password_manager/core/browser/statistics_table.h"
 
 namespace password_manager {
 
-TestPasswordStore::TestPasswordStore()
-    : PasswordStore(base::ThreadTaskRunnerHandle::Get(),
-                    base::ThreadTaskRunnerHandle::Get()) {
-}
+TestPasswordStore::TestPasswordStore() = default;
 
-TestPasswordStore::~TestPasswordStore() {
-}
+TestPasswordStore::~TestPasswordStore() = default;
 
 const TestPasswordStore::PasswordMap& TestPasswordStore::stored_passwords()
     const {
@@ -40,6 +37,11 @@ bool TestPasswordStore::IsEmpty() const {
     number_of_passwords += it->second.size();
   }
   return number_of_passwords == 0u;
+}
+
+scoped_refptr<base::SequencedTaskRunner>
+TestPasswordStore::CreateBackgroundTaskRunner() const {
+  return base::SequencedTaskRunnerHandle::Get();
 }
 
 PasswordStoreChangeList TestPasswordStore::AddLoginImpl(
@@ -87,7 +89,7 @@ TestPasswordStore::FillMatchingLogins(const FormDigest& form) {
   std::vector<std::unique_ptr<autofill::PasswordForm>> matched_forms;
   for (const auto& elements : stored_passwords_) {
     // The code below doesn't support PSL federated credential. It's doable but
-    // no test need it so far.
+    // no tests need it so far.
     const bool realm_matches = elements.first == form.signon_realm;
     const bool realm_psl_matches =
         IsPublicSuffixDomainMatch(elements.first, form.signon_realm);
@@ -103,13 +105,20 @@ TestPasswordStore::FillMatchingLogins(const FormDigest& form) {
              password_manager::IsFederatedRealm(stored_form.signon_realm,
                                                 form.origin))) {
           matched_forms.push_back(
-              base::MakeUnique<autofill::PasswordForm>(stored_form));
+              std::make_unique<autofill::PasswordForm>(stored_form));
           matched_forms.back()->is_public_suffix_match = is_psl;
         }
       }
     }
   }
   return matched_forms;
+}
+
+std::vector<std::unique_ptr<autofill::PasswordForm>>
+TestPasswordStore::FillLoginsForSameOrganizationName(
+    const std::string& signon_realm) {
+  // TODO: Implement when needed.
+  return std::vector<std::unique_ptr<autofill::PasswordForm>>();
 }
 
 void TestPasswordStore::ReportMetricsImpl(const std::string& sync_username,
@@ -152,7 +161,7 @@ bool TestPasswordStore::FillAutofillableLogins(
   for (const auto& forms_for_realm : stored_passwords_) {
     for (const autofill::PasswordForm& form : forms_for_realm.second) {
       if (!form.blacklisted_by_user)
-        forms->push_back(base::MakeUnique<autofill::PasswordForm>(form));
+        forms->push_back(std::make_unique<autofill::PasswordForm>(form));
     }
   }
   return true;
@@ -163,7 +172,7 @@ bool TestPasswordStore::FillBlacklistLogins(
   for (const auto& forms_for_realm : stored_passwords_) {
     for (const autofill::PasswordForm& form : forms_for_realm.second) {
       if (form.blacklisted_by_user)
-        forms->push_back(base::MakeUnique<autofill::PasswordForm>(form));
+        forms->push_back(std::make_unique<autofill::PasswordForm>(form));
     }
   }
   return true;

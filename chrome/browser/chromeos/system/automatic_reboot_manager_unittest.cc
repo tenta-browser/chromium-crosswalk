@@ -11,13 +11,12 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
-#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task_scheduler/task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/tick_clock.h"
 #include "base/values.h"
@@ -37,7 +36,6 @@
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
-#include "content/public/test/test_browser_thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/message_center.h"
@@ -201,7 +199,8 @@ class AutomaticRebootManagerBasicTest : public testing::Test {
 
   bool reboot_after_update_ = false;
 
-  base::ThreadTaskRunnerHandle ui_thread_task_runner_handle_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  base::ScopedClosureRunner reset_main_thread_task_runner_;
 
   TestingPrefServiceSimple local_state_;
   MockUserManager* mock_user_manager_;  // Not owned.
@@ -264,9 +263,7 @@ TestAutomaticRebootManagerTaskRunner::~TestAutomaticRebootManagerTaskRunner() {
 }
 
 void TestAutomaticRebootManagerTaskRunner::OnBeforeSelectingTask() {
-  base::SequencedWorkerPool* blocking_pool =
-      content::BrowserThread::GetBlockingPool();
-  blocking_pool->FlushForTesting();
+  base::TaskScheduler::GetInstance()->FlushForTesting();
 }
 
 void TestAutomaticRebootManagerTaskRunner::OnAfterTimePassed() {
@@ -274,9 +271,7 @@ void TestAutomaticRebootManagerTaskRunner::OnAfterTimePassed() {
 }
 
 void TestAutomaticRebootManagerTaskRunner::OnAfterTaskRun() {
-  base::SequencedWorkerPool* blocking_pool =
-      content::BrowserThread::GetBlockingPool();
-  blocking_pool->FlushForTesting();
+  base::TaskScheduler::GetInstance()->FlushForTesting();
 }
 
 MockAutomaticRebootManagerObserver::MockAutomaticRebootManagerObserver()
@@ -307,7 +302,8 @@ void MockAutomaticRebootManagerObserver::StopObserving() {
 
 AutomaticRebootManagerBasicTest::AutomaticRebootManagerBasicTest()
     : task_runner_(new TestAutomaticRebootManagerTaskRunner),
-      ui_thread_task_runner_handle_(task_runner_),
+      reset_main_thread_task_runner_(
+          base::ThreadTaskRunnerHandle::OverrideForTesting(task_runner_)),
       mock_user_manager_(new MockUserManager),
       user_manager_enabler_(mock_user_manager_) {}
 

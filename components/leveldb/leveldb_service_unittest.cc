@@ -98,7 +98,7 @@ void LevelDBSyncOpenInMemory(mojom::LevelDBService* leveldb,
                              mojom::LevelDBDatabaseAssociatedRequest database,
                              mojom::DatabaseError* out_error) {
   base::RunLoop run_loop;
-  leveldb->OpenInMemory(std::move(database),
+  leveldb->OpenInMemory(base::nullopt, std::move(database),
                         Capture(out_error, run_loop.QuitClosure()));
   run_loop.Run();
 }
@@ -260,12 +260,12 @@ TEST_F(LevelDBServiceTest, Reconnect) {
     temp_directory->Clone(MakeRequest(&directory));
 
     mojom::LevelDBDatabaseAssociatedPtr database;
-    leveldb::mojom::OpenOptionsPtr options = leveldb::mojom::OpenOptions::New();
-    options->error_if_exists = true;
-    options->create_if_missing = true;
+    leveldb_env::Options options;
+    options.error_if_exists = true;
+    options.create_if_missing = true;
     base::RunLoop run_loop;
     leveldb()->OpenWithOptions(std::move(options), std::move(directory), "test",
-                               MakeRequest(&database),
+                               base::nullopt, MakeRequest(&database),
                                Capture(&error, run_loop.QuitClosure()));
     run_loop.Run();
     EXPECT_EQ(mojom::DatabaseError::OK, error);
@@ -285,7 +285,8 @@ TEST_F(LevelDBServiceTest, Reconnect) {
     // Reconnect to the database.
     mojom::LevelDBDatabaseAssociatedPtr database;
     base::RunLoop run_loop;
-    leveldb()->Open(std::move(directory), "test", MakeRequest(&database),
+    leveldb()->Open(std::move(directory), "test", base::nullopt,
+                    MakeRequest(&database),
                     Capture(&error, run_loop.QuitClosure()));
     run_loop.Run();
     EXPECT_EQ(mojom::DatabaseError::OK, error);
@@ -310,12 +311,12 @@ TEST_F(LevelDBServiceTest, Destroy) {
     temp_directory->Clone(MakeRequest(&directory));
 
     mojom::LevelDBDatabaseAssociatedPtr database;
-    leveldb::mojom::OpenOptionsPtr options = leveldb::mojom::OpenOptions::New();
-    options->error_if_exists = true;
-    options->create_if_missing = true;
+    leveldb_env::Options options;
+    options.error_if_exists = true;
+    options.create_if_missing = true;
     base::RunLoop run_loop;
     leveldb()->OpenWithOptions(std::move(options), std::move(directory), "test",
-                               MakeRequest(&database),
+                               base::nullopt, MakeRequest(&database),
                                Capture(&error, run_loop.QuitClosure()));
     run_loop.Run();
     EXPECT_EQ(mojom::DatabaseError::OK, error);
@@ -347,7 +348,8 @@ TEST_F(LevelDBServiceTest, Destroy) {
     // Reconnect to the database should fail.
     mojom::LevelDBDatabaseAssociatedPtr database;
     base::RunLoop run_loop;
-    leveldb()->Open(std::move(directory), "test", MakeRequest(&database),
+    leveldb()->Open(std::move(directory), "test", base::nullopt,
+                    MakeRequest(&database),
                     Capture(&error, run_loop.QuitClosure()));
     run_loop.Run();
     EXPECT_EQ(mojom::DatabaseError::INVALID_ARGUMENT, error);

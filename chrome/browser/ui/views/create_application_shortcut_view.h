@@ -23,7 +23,6 @@ class Extension;
 
 namespace views {
 class Checkbox;
-class Label;
 }
 
 // A dialog allowing the user to create a desktop shortcut pointing to Chrome
@@ -41,7 +40,7 @@ class CreateChromeApplicationShortcutView : public views::DialogDelegateView,
   void InitControls();
 
   // DialogDelegateView:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
   ui::ModalType GetModalType() const override;
@@ -63,9 +62,6 @@ class CreateChromeApplicationShortcutView : public views::DialogDelegateView,
   Profile* profile_;
 
   base::Callback<void(bool)> close_callback_;
-
-  // UI elements on the dialog.
-  views::Label* create_shortcuts_label_;
 
   // May be null if the platform doesn't support a particular location.
   views::Checkbox* desktop_check_box_;

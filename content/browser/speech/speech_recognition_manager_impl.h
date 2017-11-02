@@ -50,9 +50,9 @@ class SpeechRecognizer;
 //    corresponding listener (demuxing on the base of their session_id).
 //  - Relays also recognition results/status/error events of every session to
 //    the catch-all snoop listener (optionally) provided by the delegate.
-class CONTENT_EXPORT SpeechRecognitionManagerImpl :
-    public NON_EXPORTED_BASE(SpeechRecognitionManager),
-    public SpeechRecognitionEventListener {
+class CONTENT_EXPORT SpeechRecognitionManagerImpl
+    : public SpeechRecognitionManager,
+      public SpeechRecognitionEventListener {
  public:
   // Returns the current SpeechRecognitionManagerImpl or NULL if the call is
   // issued when it is not created yet or destroyed (by BrowserMainLoop).
@@ -93,10 +93,13 @@ class CONTENT_EXPORT SpeechRecognitionManagerImpl :
   SpeechRecognitionManagerDelegate* delegate() const { return delegate_.get(); }
 
  protected:
-  // BrowserMainLoop is the only one allowed to istantiate and free us.
+  // BrowserMainLoop is the only one allowed to instantiate this class.
   friend class BrowserMainLoop;
-  // Needed for dtor.
+
+  // Needed for deletion on the IO thread.
   friend std::default_delete<SpeechRecognitionManagerImpl>;
+  friend class base::DeleteHelper<content::SpeechRecognitionManagerImpl>;
+
   SpeechRecognitionManagerImpl(media::AudioSystem* audio_system,
                                media::AudioManager* audio_manager,
                                MediaStreamManager* media_stream_manager);

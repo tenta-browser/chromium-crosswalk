@@ -151,8 +151,16 @@ IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
 // MSID and bundle attribute from the initial offer to verify that
 // video is playing for the call even if the initiating client don't support
 // MSID. http://tools.ietf.org/html/draft-alvestrand-rtcweb-msid-02
+// Fails with TSAN. https://crbug.com/756568
+#if defined(THREAD_SANITIZER)
+#define MAYBE_CanSetupAudioAndVideoCallWithoutMsidAndBundle \
+  DISABLED_CanSetupAudioAndVideoCallWithoutMsidAndBundle
+#else
+#define MAYBE_CanSetupAudioAndVideoCallWithoutMsidAndBundle \
+  CanSetupAudioAndVideoCallWithoutMsidAndBundle
+#endif
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
-                       CanSetupAudioAndVideoCallWithoutMsidAndBundle) {
+                       MAYBE_CanSetupAudioAndVideoCallWithoutMsidAndBundle) {
   MakeTypicalPeerConnectionCall("callWithoutMsidAndBundle();");
 }
 
@@ -217,6 +225,16 @@ IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest, SetConfiguration) {
 // Tests the error conditions of SetConfiguration as described by webrtc-pc.
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest, SetConfigurationErrors) {
   SetConfigurationTest("testSetConfigurationErrors();");
+}
+
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest, ApplyConstraints) {
+  MakeTypicalPeerConnectionCall("testApplyConstraints();");
+}
+
+IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcBrowserTest,
+                       GetSettingsWhenRemoteDimensionsUnknown) {
+  MakeTypicalPeerConnectionCall(
+      "testGetSettingsWhenRemoteDimensionsUnknown();");
 }
 
 }  // namespace content

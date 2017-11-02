@@ -25,11 +25,15 @@
 #if defined(OS_WIN)
 #include "sandbox/win/src/sandbox_types.h"
 #else
-#include "content/public/browser/file_descriptor_info.h"
+#include "content/public/browser/posix_file_descriptor_info.h"
 #endif
 
 #if defined(OS_LINUX)
 #include "content/public/common/zygote_handle.h"
+#endif
+
+#if defined(OS_MACOSX)
+#include "sandbox/mac/seatbelt_exec.h"
 #endif
 
 namespace base {
@@ -39,16 +43,19 @@ class CommandLine;
 namespace content {
 
 class ChildProcessLauncher;
-class FileDescriptorInfo;
 class SandboxedProcessLauncherDelegate;
+struct ChildProcessLauncherPriority;
+
+#if defined(OS_POSIX)
+class PosixFileDescriptorInfo;
+#endif
 
 namespace internal {
 
-
-#if defined(OS_WIN)
-using FileMappedForLaunch = base::HandlesToInheritVector;
+#if defined(OS_POSIX)
+using FileMappedForLaunch = PosixFileDescriptorInfo;
 #else
-using FileMappedForLaunch = FileDescriptorInfo;
+using FileMappedForLaunch = base::HandlesToInheritVector;
 #endif
 
 // ChildProcessLauncherHelper is used by ChildProcessLauncher to start a
@@ -122,14 +129,10 @@ class ChildProcessLauncherHelper :
       const base::LaunchOptions& options);
 
   // Called once the process has been created, successfully or not.
-  // If |post_launch_on_client_thread_called| is false,
-  // this calls PostLaunchOnClientThread on the client thread.
   void PostLaunchOnLauncherThread(ChildProcessLauncherHelper::Process process,
-                                  int launch_result,
-                                  bool post_launch_on_client_thread_called);
+                                  int launch_result);
 
-  // Note that this could be called before PostLaunchOnLauncherThread() is
-  // called.
+  // Posted by PostLaunchOnLauncherThread onto the client thread.
   void PostLaunchOnClientThread(ChildProcessLauncherHelper::Process process,
                                 int error_code);
 
@@ -157,8 +160,9 @@ class ChildProcessLauncherHelper :
   static void ForceNormalProcessTerminationAsync(
       ChildProcessLauncherHelper::Process process);
 
-  void SetProcessBackgroundedOnLauncherThread(base::Process process,
-                                              bool background);
+  void SetProcessPriorityOnLauncherThread(
+      base::Process process,
+      const ChildProcessLauncherPriority& priority);
 
   static void SetRegisteredFilesForService(
       const std::string& service_name,
@@ -191,6 +195,12 @@ class ChildProcessLauncherHelper :
   static void ForceNormalProcessTerminationSync(
       ChildProcessLauncherHelper::Process process);
 
+#if defined(OS_ANDROID)
+  void set_java_peer_available_on_client_thread() {
+    java_peer_avaiable_on_client_thread_ = true;
+  }
+#endif
+
   const int child_process_id_;
   const BrowserThread::ID client_thread_id_;
   base::TimeTicks begin_launch_time_;
@@ -201,8 +211,13 @@ class ChildProcessLauncherHelper :
   mojo::edk::ScopedPlatformHandle mojo_server_handle_;
   bool terminate_on_shutdown_;
 
+#if defined(OS_MACOSX)
+  std::unique_ptr<sandbox::SeatbeltExecClient> seatbelt_exec_client_;
+#endif  // defined(OS_MACOSX)
+
 #if defined(OS_ANDROID)
   base::android::ScopedJavaGlobalRef<jobject> java_peer_;
+  bool java_peer_avaiable_on_client_thread_ = false;
 #endif
 };
 

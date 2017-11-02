@@ -26,7 +26,7 @@
 #include "core/page/PointerLockController.h"
 
 #include "core/dom/Element.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/page/ChromeClient.h"
@@ -50,10 +50,11 @@ void PointerLockController::RequestPointerLock(Element* target) {
   }
 
   UseCounter::CountCrossOriginIframe(
-      target->GetDocument(), UseCounter::kElementRequestPointerLockIframe);
-  if (target->IsInShadowTree())
+      target->GetDocument(), WebFeature::kElementRequestPointerLockIframe);
+  if (target->IsInShadowTree()) {
     UseCounter::Count(target->GetDocument(),
-                      UseCounter::kElementRequestPointerLockInShadow);
+                      WebFeature::kElementRequestPointerLockInShadow);
+  }
 
   if (target->GetDocument().IsSandboxed(kSandboxPointerLock)) {
     // FIXME: This message should be moved off the console once a solution to
@@ -139,6 +140,10 @@ void PointerLockController::DispatchLockedMouseEvent(
     return;
 
   element_->DispatchMouseEvent(event, event_type, event.click_count);
+
+  // Event handlers may remove element.
+  if (!element_)
+    return;
 
   // Create click events
   if (event_type == EventTypeNames::mouseup) {

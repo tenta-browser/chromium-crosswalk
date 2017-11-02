@@ -4,6 +4,7 @@
 
 #include "components/pdf/renderer/pepper_pdf_host.h"
 
+#include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "components/pdf/renderer/pdf_accessibility_tree.h"
 #include "content/public/common/associated_interface_provider.h"
@@ -43,7 +44,16 @@ PepperPDFHost::PepperPDFHost(content::RendererPpapiHost* host,
                              PP_Instance instance,
                              PP_Resource resource)
     : ppapi::host::ResourceHost(host->GetPpapiHost(), instance, resource),
-      host_(host) {}
+      host_(host),
+      binding_(this) {
+  mojom::PdfService* service = GetRemotePdfService();
+  if (!service)
+    return;
+
+  mojom::PdfListenerPtr listener;
+  binding_.Bind(mojo::MakeRequest(&listener));
+  service->SetListener(std::move(listener));
+}
 
 PepperPDFHost::~PepperPDFHost() {}
 
@@ -91,6 +101,8 @@ int32_t PepperPDFHost::OnResourceMessageReceived(
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(
         PpapiHostMsg_PDF_SetAccessibilityPageInfo,
         OnHostMsgSetAccessibilityPageInfo)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_PDF_SelectionChanged,
+                                      OnHostMsgSelectionChanged)
   PPAPI_END_MESSAGE_MAP()
   return PP_ERROR_FAILED;
 }
@@ -226,6 +238,21 @@ int32_t PepperPDFHost::OnHostMsgSetAccessibilityPageInfo(
   return PP_OK;
 }
 
+int32_t PepperPDFHost::OnHostMsgSelectionChanged(
+    ppapi::host::HostMessageContext* context,
+    const PP_FloatPoint& left,
+    int32_t left_height,
+    const PP_FloatPoint& right,
+    int32_t right_height) {
+  mojom::PdfService* service = GetRemotePdfService();
+  if (!service)
+    return PP_ERROR_FAILED;
+
+  service->SelectionChanged(gfx::PointF(left.x, left.y), left_height,
+                            gfx::PointF(right.x, right.y), right_height);
+  return PP_OK;
+}
+
 void PepperPDFHost::CreatePdfAccessibilityTreeIfNeeded() {
   if (!pdf_accessibility_tree_) {
     pdf_accessibility_tree_ =
@@ -249,6 +276,28 @@ mojom::PdfService* PepperPDFHost::GetRemotePdfService() {
         &remote_pdf_service_);
   }
   return remote_pdf_service_.get();
+}
+
+void PepperPDFHost::SetCaretPosition(const gfx::PointF& position) {
+  content::PepperPluginInstance* instance =
+      host_->GetPluginInstance(pp_instance());
+  if (instance)
+    instance->SetCaretPosition(position);
+}
+
+void PepperPDFHost::MoveRangeSelectionExtent(const gfx::PointF& extent) {
+  content::PepperPluginInstance* instance =
+      host_->GetPluginInstance(pp_instance());
+  if (instance)
+    instance->MoveRangeSelectionExtent(extent);
+}
+
+void PepperPDFHost::SetSelectionBounds(const gfx::PointF& base,
+                                       const gfx::PointF& extent) {
+  content::PepperPluginInstance* instance =
+      host_->GetPluginInstance(pp_instance());
+  if (instance)
+    instance->SetSelectionBounds(base, extent);
 }
 
 }  // namespace pdf

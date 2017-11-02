@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/command_line.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/frame_tree_node.h"
+#include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/notification_service.h"
@@ -24,11 +26,6 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "third_party/WebKit/public/web/WebSandboxFlags.h"
 #include "url/url_constants.h"
-
-// For fine-grained suppression on flaky tests.
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 namespace content {
 
@@ -134,7 +131,8 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, FrameTreeAfterCrash) {
   RenderProcessHostWatcher crash_observer(
       shell()->web_contents(),
       RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-  NavigateToURL(shell(), GURL(kChromeUICrashURL));
+  ASSERT_TRUE(
+      shell()->web_contents()->GetMainFrame()->GetProcess()->Shutdown(0, true));
   crash_observer.Wait();
 
   // The frame tree should be cleared.
@@ -166,11 +164,6 @@ IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, FrameTreeAfterCrash) {
 #define MAYBE_NavigateWithLeftoverFrames NavigateWithLeftoverFrames
 #endif
 IN_PROC_BROWSER_TEST_F(FrameTreeBrowserTest, MAYBE_NavigateWithLeftoverFrames) {
-#if defined(OS_WIN)
-  // Flaky on XP bot http://crbug.com/468713
-  if (base::win::GetVersion() <= base::win::VERSION_XP)
-    return;
-#endif
   GURL base_url = embedded_test_server()->GetURL("A.com", "/site_isolation/");
 
   NavigateToURL(shell(),
@@ -634,7 +627,7 @@ IN_PROC_BROWSER_TEST_F(CrossProcessFrameTreeBrowserTest,
 
   EXPECT_NE(shell()->web_contents()->GetRenderViewHost(), rvh);
   EXPECT_NE(shell()->web_contents()->GetSiteInstance(), child_instance);
-  EXPECT_NE(shell()->web_contents()->GetRenderProcessHost(), rph);
+  EXPECT_NE(shell()->web_contents()->GetMainFrame()->GetProcess(), rph);
 
   // Ensure that the root node has a proxy for the child node's SiteInstance.
   EXPECT_TRUE(root->render_manager()->GetRenderFrameProxyHost(child_instance));
@@ -699,8 +692,8 @@ IN_PROC_BROWSER_TEST_F(CrossProcessFrameTreeBrowserTest,
 }
 
 // FrameTreeBrowserTest variant where we isolate http://*.is, Iceland's top
-// level domain. This is an analogue to --isolate-extensions that we use inside
-// of content_browsertests, where extensions don't exist. Iceland, like an
+// level domain. This is an analogue to isolating extensions, which we can use
+// inside content_browsertests, where extensions don't exist. Iceland, like an
 // extension process, is a special place with magical powers; we want to protect
 // it from outsiders.
 class IsolateIcelandFrameTreeBrowserTest : public ContentBrowserTest {
@@ -708,6 +701,10 @@ class IsolateIcelandFrameTreeBrowserTest : public ContentBrowserTest {
   IsolateIcelandFrameTreeBrowserTest() {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
+    // blink suppresses navigations to blob URLs of origins different from the
+    // frame initiating the navigation. We disable those checks for this test,
+    // to test what happens in a compromise scenario.
+    command_line->AppendSwitch(switches::kDisableWebSecurity);
     command_line->AppendSwitchASCII(switches::kIsolateSitesForTesting, "*.is");
   }
 
@@ -724,12 +721,6 @@ class IsolateIcelandFrameTreeBrowserTest : public ContentBrowserTest {
 // Regression test for https://crbug.com/644966
 IN_PROC_BROWSER_TEST_F(IsolateIcelandFrameTreeBrowserTest,
                        ProcessSwitchForIsolatedBlob) {
-  // blink suppresses navigations to blob URLs of origins different from the
-  // frame initiating the navigation. We disable those checks for this test, to
-  // test what happens in a compromise scenario.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kDisableWebSecurity);
-
   // Set up an iframe.
   WebContents* contents = shell()->web_contents();
   FrameTreeNode* root =

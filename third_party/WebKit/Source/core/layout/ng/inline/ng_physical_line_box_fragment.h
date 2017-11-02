@@ -6,29 +6,34 @@
 #define NGPhysicalLineBoxFragment_h
 
 #include "core/CoreExport.h"
-#include "core/layout/ng/geometry/ng_logical_offset.h"
 #include "core/layout/ng/inline/ng_line_height_metrics.h"
-#include "core/layout/ng/ng_physical_fragment.h"
+#include "core/layout/ng/ng_physical_container_fragment.h"
+#include "platform/fonts/FontBaseline.h"
 
 namespace blink {
 
-class CORE_EXPORT NGPhysicalLineBoxFragment final : public NGPhysicalFragment {
+class CORE_EXPORT NGPhysicalLineBoxFragment final
+    : public NGPhysicalContainerFragment {
  public:
   // This modifies the passed-in children vector.
-  NGPhysicalLineBoxFragment(NGPhysicalSize size,
+  NGPhysicalLineBoxFragment(const ComputedStyle&,
+                            NGPhysicalSize size,
                             Vector<RefPtr<NGPhysicalFragment>>& children,
                             const NGLineHeightMetrics&,
                             RefPtr<NGBreakToken> break_token = nullptr);
 
-  const Vector<RefPtr<NGPhysicalFragment>>& Children() const {
-    return children_;
-  }
-
   const NGLineHeightMetrics& Metrics() const { return metrics_; }
 
- private:
-  Vector<RefPtr<NGPhysicalFragment>> children_;
+  // Compute baseline for the specified baseline type.
+  LayoutUnit BaselinePosition(FontBaseline) const;
 
+  RefPtr<NGPhysicalFragment> CloneWithoutOffset() const {
+    Vector<RefPtr<NGPhysicalFragment>> children_copy(children_);
+    return WTF::AdoptRef(new NGPhysicalLineBoxFragment(
+        Style(), size_, children_copy, metrics_, break_token_));
+  }
+
+ private:
   NGLineHeightMetrics metrics_;
 };
 

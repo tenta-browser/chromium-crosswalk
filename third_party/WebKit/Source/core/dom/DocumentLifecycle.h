@@ -67,13 +67,11 @@ class CORE_EXPORT DocumentLifecycle {
     kLayoutClean,
 
     kInCompositingUpdate,
+    kCompositingInputsClean,
     kCompositingClean,
 
-    kInPaintInvalidation,
-    kPaintInvalidationClean,
-
     // In InPrePaint step, any data needed by painting are prepared.
-    // When RuntimeEnabledFeatures::slimmingPaintV2Enabled, paint property trees
+    // When RuntimeEnabledFeatures::SlimmingPaintV2Enabled, paint property trees
     // are built.
     // Otherwise these steps are not applicable.
     kInPrePaint,
@@ -245,15 +243,14 @@ inline bool DocumentLifecycle::StateAllowsDetach() const {
   return state_ == kVisualUpdatePending || state_ == kInStyleRecalc ||
          state_ == kStyleClean || state_ == kLayoutSubtreeChangeClean ||
          state_ == kInPreLayout || state_ == kLayoutClean ||
-         state_ == kCompositingClean || state_ == kPaintInvalidationClean ||
+         state_ == kCompositingInputsClean || state_ == kCompositingClean ||
          state_ == kPrePaintClean || state_ == kPaintClean ||
          state_ == kStopping;
 }
 
 inline bool DocumentLifecycle::StateAllowsLayoutInvalidation() const {
   return state_ != kInPerformLayout && state_ != kInCompositingUpdate &&
-         state_ != kInPaintInvalidation && state_ != kInPrePaint &&
-         state_ != kInPaint;
+         state_ != kInPrePaint && state_ != kInPaint;
 }
 
 }  // namespace blink

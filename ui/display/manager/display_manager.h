@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
@@ -27,6 +28,7 @@
 #include "ui/display/types/display_constants.h"
 
 #if defined(OS_CHROMEOS)
+#include "base/optional.h"
 #include "ui/display/manager/chromeos/display_configurator.h"
 #endif
 
@@ -69,7 +71,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
     // |clear_focus| is true, the implementation should deactivate the active
     // window and set the focus window to NULL.
     virtual void PreDisplayConfigurationChange(bool clear_focus) = 0;
-    virtual void PostDisplayConfigurationChange(bool must_clear_window) = 0;
+    virtual void PostDisplayConfigurationChange() = 0;
 
 #if defined(OS_CHROMEOS)
     // Get the DisplayConfigurator.
@@ -112,6 +114,10 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
     configure_displays_ = configure_displays;
   }
 
+  void set_internal_display_has_accelerometer(bool has_accelerometer) {
+    internal_display_has_accelerometer_ = has_accelerometer;
+  }
+
   // Returns the display id of the first display in the outupt list.
   int64_t first_display_id() const { return first_display_id_; }
 
@@ -121,6 +127,9 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
 
   // Initialize default display.
   void InitDefaultDisplay();
+
+  // Update the internal display's display info.
+  void UpdateInternalDisplay(const ManagedDisplayInfo& display_info);
 
   // Initializes font related params that depends on display configuration.
   void RefreshFontParams();
@@ -185,8 +194,7 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
       const gfx::Insets* overscan_insets,
       const gfx::Size& resolution_in_pixels,
       float device_scale_factor,
-      ColorCalibrationProfile color_profile,
-      const TouchCalibrationData* touch_calibration_data);
+      std::map<uint32_t, TouchCalibrationData>* touch_calibration_data_map);
 
   // Register stored rotation properties for the internal display.
   void RegisterDisplayRotationProperties(bool rotation_lock,
@@ -227,10 +235,6 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   // Returns an empty insets (0, 0, 0, 0) if no insets are specified for the
   // display.
   gfx::Insets GetOverscanInsets(int64_t display_id) const;
-
-  // Sets the color calibration of the display to |profile|.
-  void SetColorCalibrationProfile(int64_t display_id,
-                                  ColorCalibrationProfile profile);
 
   // Called when display configuration has changed. The new display
   // configurations is passed as a vector of Display object, which contains each
@@ -319,8 +323,11 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   void SetTouchCalibrationData(
       int64_t display_id,
       const TouchCalibrationData::CalibrationPointPairQuad& point_pair_quad,
-      const gfx::Size& display_bounds);
-  void ClearTouchCalibrationData(int64_t display_id);
+      const gfx::Size& display_bounds,
+      uint32_t touch_device_identifier);
+  void ClearTouchCalibrationData(
+      int64_t display_id,
+      base::Optional<uint32_t> touch_device_identifier);
 #endif
 
   // Sets/gets default multi display mode.
@@ -372,6 +379,18 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
  private:
   friend class test::DisplayManagerTestApi;
 
+  // See description above |notify_depth_| for details.
+  class BeginEndNotifier {
+   public:
+    explicit BeginEndNotifier(DisplayManager* display_manager);
+    ~BeginEndNotifier();
+
+   private:
+    DisplayManager* display_manager_;
+
+    DISALLOW_COPY_AND_ASSIGN(BeginEndNotifier);
+  };
+
   bool software_mirroring_enabled() const {
     return multi_display_mode_ == MIRRORING;
   }
@@ -395,9 +414,6 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
   // be different from |new_info| (due to overscan state), so you must use
   // |GetDisplayInfo| to get the correct ManagedDisplayInfo for a display.
   void InsertAndUpdateDisplayInfo(const ManagedDisplayInfo& new_info);
-
-  // Called when the display info is updated through InsertAndUpdateDisplayInfo.
-  void OnDisplayInfoUpdated(const ManagedDisplayInfo& display_info);
 
   // Creates a display object from the ManagedDisplayInfo for
   // |display_id|.
@@ -489,7 +505,16 @@ class DISPLAY_MANAGER_EXPORT DisplayManager
 
   bool unified_desktop_enabled_ = false;
 
+  bool internal_display_has_accelerometer_ = false;
+
+  base::Closure created_mirror_window_;
+
   base::ObserverList<DisplayObserver> observers_;
+
+  // This is incremented whenever a BeginEndNotifier is created and decremented
+  // when destroyed. BeginEndNotifier uses this to track when it should call
+  // OnWillProcessDisplayChanges() and OnDidProcessDisplayChanges().
+  int notify_depth_ = 0;
 
   base::WeakPtrFactory<DisplayManager> weak_ptr_factory_;
 

@@ -4,7 +4,7 @@
 
 #include "components/drive/file_system/operation_test_base.h"
 
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "components/drive/chromeos/change_list_loader.h"
 #include "components/drive/chromeos/fake_free_disk_space_getter.h"
 #include "components/drive/chromeos/file_cache.h"
@@ -16,7 +16,6 @@
 #include "components/drive/service/fake_drive_service.h"
 #include "components/drive/service/test_util.h"
 #include "components/prefs/testing_pref_service.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "google_apis/drive/test_util.h"
 
@@ -63,10 +62,8 @@ OperationTestBase::~OperationTestBase() {
 }
 
 void OperationTestBase::SetUp() {
-  scoped_refptr<base::SequencedWorkerPool> pool =
-      content::BrowserThread::GetBlockingPool();
   blocking_task_runner_ =
-      pool->GetSequencedTaskRunner(pool->GetSequenceToken());
+      base::CreateSequencedTaskRunnerWithTraits({base::MayBlock()});
 
   pref_service_.reset(new TestingPrefServiceSimple);
   test_util::RegisterDrivePrefs(pref_service_->registry());
@@ -78,11 +75,9 @@ void OperationTestBase::SetUp() {
   fake_drive_service_.reset(new FakeDriveService);
   ASSERT_TRUE(test_util::SetUpTestEntries(fake_drive_service_.get()));
 
-  scheduler_.reset(new JobScheduler(
-      pref_service_.get(),
-      logger_.get(),
-      fake_drive_service_.get(),
-      blocking_task_runner_.get()));
+  scheduler_.reset(new JobScheduler(pref_service_.get(), logger_.get(),
+                                    fake_drive_service_.get(),
+                                    blocking_task_runner_.get(), nullptr));
 
   metadata_storage_.reset(new internal::ResourceMetadataStorage(
       temp_dir_.GetPath(), blocking_task_runner_.get()));
@@ -93,7 +88,7 @@ void OperationTestBase::SetUp() {
       base::Bind(&internal::ResourceMetadataStorage::Initialize,
                  base::Unretained(metadata_storage_.get())),
       google_apis::test_util::CreateCopyResultCallback(&success));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   ASSERT_TRUE(success);
 
   fake_free_disk_space_getter_.reset(new FakeFreeDiskSpaceGetter);
@@ -107,7 +102,7 @@ void OperationTestBase::SetUp() {
       base::Bind(&internal::FileCache::Initialize,
                  base::Unretained(cache_.get())),
       google_apis::test_util::CreateCopyResultCallback(&success));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   ASSERT_TRUE(success);
 
   metadata_.reset(new internal::ResourceMetadata(metadata_storage_.get(),
@@ -121,7 +116,7 @@ void OperationTestBase::SetUp() {
       base::Bind(&internal::ResourceMetadata::Initialize,
                  base::Unretained(metadata_.get())),
       google_apis::test_util::CreateCopyResultCallback(&error));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   ASSERT_EQ(FILE_ERROR_OK, error);
 
   // Makes sure the FakeDriveService's content is loaded to the metadata_.
@@ -137,7 +132,7 @@ void OperationTestBase::SetUp() {
       loader_controller_.get()));
   change_list_loader_->LoadIfNeeded(
       google_apis::test_util::CreateCopyResultCallback(&error));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   ASSERT_EQ(FILE_ERROR_OK, error);
 }
 
@@ -149,7 +144,7 @@ FileError OperationTestBase::GetLocalResourceEntry(const base::FilePath& path,
       base::Bind(&internal::ResourceMetadata::GetResourceEntryByPath,
                  base::Unretained(metadata()), path, entry),
       google_apis::test_util::CreateCopyResultCallback(&error));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   return error;
 }
 
@@ -162,7 +157,7 @@ FileError OperationTestBase::GetLocalResourceEntryById(
       base::Bind(&internal::ResourceMetadata::GetResourceEntryById,
                  base::Unretained(metadata()), local_id, entry),
       google_apis::test_util::CreateCopyResultCallback(&error));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   return error;
 }
 
@@ -174,7 +169,7 @@ std::string OperationTestBase::GetLocalId(const base::FilePath& path) {
       base::Bind(&internal::ResourceMetadata::GetIdByPath,
                  base::Unretained(metadata()), path, &local_id),
       google_apis::test_util::CreateCopyResultCallback(&error));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(FILE_ERROR_OK, error) << path.value();
   return local_id;
 }
@@ -183,7 +178,7 @@ FileError OperationTestBase::CheckForUpdates() {
   FileError error = FILE_ERROR_FAILED;
   change_list_loader_->CheckForUpdates(
       google_apis::test_util::CreateCopyResultCallback(&error));
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   return error;
 }
 

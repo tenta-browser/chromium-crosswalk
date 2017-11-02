@@ -32,13 +32,13 @@
 
 namespace blink {
 
-FastSharedBufferReader::FastSharedBufferReader(PassRefPtr<SegmentReader> data)
+FastSharedBufferReader::FastSharedBufferReader(RefPtr<SegmentReader> data)
     : data_(std::move(data)),
       segment_(0),
       segment_length_(0),
       data_position_(0) {}
 
-void FastSharedBufferReader::SetData(PassRefPtr<SegmentReader> data) {
+void FastSharedBufferReader::SetData(RefPtr<SegmentReader> data) {
   if (data == data_)
     return;
   data_ = std::move(data);
@@ -54,14 +54,14 @@ void FastSharedBufferReader::ClearCache() {
 const char* FastSharedBufferReader::GetConsecutiveData(size_t data_position,
                                                        size_t length,
                                                        char* buffer) const {
-  RELEASE_ASSERT(data_position + length <= data_->size());
+  CHECK_LE(data_position + length, data_->size());
 
   // Use the cached segment if it can serve the request.
   if (data_position >= data_position_ &&
       data_position + length <= data_position_ + segment_length_)
     return segment_ + data_position - data_position_;
 
-  // Return a pointer into |m_data| if the request doesn't span segments.
+  // Return a pointer into |data_| if the request doesn't span segments.
   GetSomeDataInternal(data_position);
   if (length <= segment_length_)
     return segment_;

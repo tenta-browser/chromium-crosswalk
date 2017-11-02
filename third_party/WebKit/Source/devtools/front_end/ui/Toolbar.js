@@ -68,6 +68,7 @@ UI.Toolbar = class {
     /** @type {?Element} */
     var longClickGlyph = null;
     toggled();
+    button.setEnabled(action.enabled());
     return button;
 
     /**
@@ -124,7 +125,7 @@ UI.Toolbar = class {
       document.documentElement.addEventListener('mouseup', mouseUp, false);
 
       var optionsGlassPane = new UI.GlassPane();
-      optionsGlassPane.setBlockPointerEvents(true);
+      optionsGlassPane.setPointerEventsBehavior(UI.GlassPane.PointerEventsBehavior.BlockedByGlassPane);
       optionsGlassPane.show(document);
       var optionsBar = new UI.Toolbar('fill', optionsGlassPane.contentElement);
       optionsBar._contentElement.classList.add('floating');
@@ -190,6 +191,13 @@ UI.Toolbar = class {
   static createActionButtonForId(actionId) {
     const action = UI.actionRegistry.action(actionId);
     return UI.Toolbar.createActionButton(/** @type {!UI.Action} */ (action));
+  }
+
+  /**
+   * @return {!Element}
+   */
+  gripElementForResize() {
+    return this._contentElement;
   }
 
   /**
@@ -452,6 +460,13 @@ UI.ToolbarText = class extends UI.ToolbarItem {
   }
 
   /**
+   * @return {string}
+   */
+  text() {
+    return this.element.textContent;
+  }
+
+  /**
    * @param {string} text
    */
   setText(text) {
@@ -560,34 +575,43 @@ UI.ToolbarInput = class extends UI.ToolbarItem {
    * @param {string} placeholder
    * @param {number=} growFactor
    * @param {number=} shrinkFactor
-   * @param {boolean=} isSearchField
+   * @param {string=} tooltip
    */
-  constructor(placeholder, growFactor, shrinkFactor, isSearchField) {
+  constructor(placeholder, growFactor, shrinkFactor, tooltip) {
     super(createElementWithClass('div', 'toolbar-input'));
 
-    this.input = this.element.createChild('input');
-    this.input.addEventListener('focus', () => this.element.classList.add('focused'));
-    this.input.addEventListener('blur', () => this.element.classList.remove('focused'));
-    this.input.addEventListener('input', () => this._onChangeCallback(), false);
-    this._isSearchField = !!isSearchField;
+    var internalPromptElement = this.element.createChild('div', 'toolbar-input-prompt');
+    internalPromptElement.addEventListener('focus', () => this.element.classList.add('focused'));
+    internalPromptElement.addEventListener('blur', () => this.element.classList.remove('focused'));
+
+    this._prompt = new UI.TextPrompt();
+    this._proxyElement = this._prompt.attach(internalPromptElement);
+    this._proxyElement.classList.add('toolbar-prompt-proxy');
+    this._proxyElement.addEventListener('keydown', event => this._onKeydownCallback(event));
+    this._prompt.initialize(() => Promise.resolve([]));
+    if (tooltip)
+      this._prompt.setTitle(tooltip);
+    this._prompt.setPlaceholder(placeholder);
+    this._prompt.addEventListener(UI.TextPrompt.Events.TextChanged, this._onChangeCallback.bind(this));
+
     if (growFactor)
       this.element.style.flexGrow = growFactor;
     if (shrinkFactor)
       this.element.style.flexShrink = shrinkFactor;
-    if (placeholder)
-      this.input.setAttribute('placeholder', placeholder);
 
-    if (isSearchField)
-      this._setupSearchControls();
+    var clearButton = this.element.createChild('div', 'toolbar-input-clear-button');
+    clearButton.appendChild(UI.Icon.create('mediumicon-gray-cross-hover', 'search-cancel-button'));
+    clearButton.addEventListener('click', () => this._internalSetValue('', true));
 
     this._updateEmptyStyles();
   }
 
-  _setupSearchControls() {
-    var clearButton = this.element.createChild('div', 'toolbar-input-clear-button');
-    clearButton.appendChild(UI.Icon.create('mediumicon-gray-cross-hover', 'search-cancel-button'));
-    clearButton.addEventListener('click', () => this._internalSetValue('', true));
-    this.input.addEventListener('keydown', event => this._onKeydownCallback(event));
+  /**
+   * @override
+   * @param {boolean} enabled
+   */
+  _applyEnabledState(enabled) {
+    this._prompt.setEnabled(enabled);
   }
 
   /**
@@ -602,7 +626,7 @@ UI.ToolbarInput = class extends UI.ToolbarItem {
    * @param {boolean} notify
    */
   _internalSetValue(value, notify) {
-    this.input.value = value;
+    this._prompt.setText(value);
     if (notify)
       this._onChangeCallback();
     this._updateEmptyStyles();
@@ -612,14 +636,14 @@ UI.ToolbarInput = class extends UI.ToolbarItem {
    * @return {string}
    */
   value() {
-    return this.input.value;
+    return this._prompt.text();
   }
 
   /**
    * @param {!Event} event
    */
   _onKeydownCallback(event) {
-    if (!this._isSearchField || !isEscKey(event) || !this.input.value)
+    if (!isEscKey(event) || !this._prompt.text())
       return;
     this._internalSetValue('', true);
     event.consume(true);
@@ -627,11 +651,11 @@ UI.ToolbarInput = class extends UI.ToolbarItem {
 
   _onChangeCallback() {
     this._updateEmptyStyles();
-    this.dispatchEventToListeners(UI.ToolbarInput.Event.TextChanged, this.input.value);
+    this.dispatchEventToListeners(UI.ToolbarInput.Event.TextChanged, this._prompt.text());
   }
 
   _updateEmptyStyles() {
-    this.element.classList.toggle('toolbar-input-empty', !this.input.value);
+    this.element.classList.toggle('toolbar-input-empty', !this._prompt.text());
   }
 };
 
@@ -941,6 +965,13 @@ UI.ToolbarComboBox = class extends UI.ToolbarItem {
    */
   setMaxWidth(width) {
     this._selectElement.style.maxWidth = width + 'px';
+  }
+
+  /**
+   * @param {number} width
+   */
+  setMinWidth(width) {
+    this._selectElement.style.minWidth = width + 'px';
   }
 };
 

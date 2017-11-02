@@ -2,16 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// MSVC++ requires this to be set before any other includes to get M_PI.
-#define _USE_MATH_DEFINES
-
 #include "ui/events/blink/blink_event_util.h"
 
 #include <stddef.h>
 
 #include <algorithm>
 #include <bitset>
-#include <cmath>
 #include <limits>
 
 #include "base/time/time.h"
@@ -24,6 +20,7 @@
 #include "ui/events/gesture_detection/motion_event.h"
 #include "ui/events/gesture_event_details.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
+#include "ui/gfx/geometry/angle_conversions.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/transform.h"
@@ -119,6 +116,26 @@ WebPointerProperties::PointerType ToWebPointerType(int tool_type) {
   return WebPointerProperties::PointerType::kUnknown;
 }
 
+WebPointerProperties::PointerType ToWebPointerType(
+    EventPointerType event_pointer_type) {
+  switch (event_pointer_type) {
+    case EventPointerType::POINTER_TYPE_UNKNOWN:
+      return WebPointerProperties::PointerType::kUnknown;
+    case EventPointerType::POINTER_TYPE_MOUSE:
+      return WebPointerProperties::PointerType::kMouse;
+    case EventPointerType::POINTER_TYPE_PEN:
+      return WebPointerProperties::PointerType::kPen;
+    case EventPointerType::POINTER_TYPE_TOUCH:
+      return WebPointerProperties::PointerType::kTouch;
+    case EventPointerType::POINTER_TYPE_ERASER:
+      return WebPointerProperties::PointerType::kEraser;
+    default:
+      NOTREACHED() << "Invalid EventPointerType = "
+                   << static_cast<int>(event_pointer_type);
+      return WebPointerProperties::PointerType::kUnknown;
+  }
+}
+
 WebPointerProperties::Button ToWebPointerButton(int android_button_state) {
   if (android_button_state & MotionEvent::BUTTON_PRIMARY)
     return WebPointerProperties::Button::kLeft;
@@ -145,14 +162,14 @@ WebTouchPoint CreateWebTouchPoint(const MotionEvent& event,
   SetWebPointerPropertiesFromMotionEventData(
       touch, event.GetPointerId(pointer_index),
       event.GetPressure(pointer_index), event.GetOrientation(pointer_index),
-      event.GetTilt(pointer_index), 0 /* no button changed */,
-      event.GetToolType(pointer_index));
+      event.GetTiltX(pointer_index), event.GetTiltY(pointer_index),
+      0 /* no button changed */, event.GetToolType(pointer_index));
 
   touch.state = ToWebTouchPointState(event, pointer_index);
-  touch.position.x = event.GetX(pointer_index);
-  touch.position.y = event.GetY(pointer_index);
-  touch.screen_position.x = event.GetRawX(pointer_index);
-  touch.screen_position.y = event.GetRawY(pointer_index);
+  touch.SetPositionInWidget(event.GetX(pointer_index),
+                            event.GetY(pointer_index));
+  touch.SetPositionInScreen(event.GetRawX(pointer_index),
+                            event.GetRawY(pointer_index));
 
   // A note on touch ellipse specifications:
   //
@@ -168,7 +185,7 @@ WebTouchPoint CreateWebTouchPoint(const MotionEvent& event,
 
   float major_radius = event.GetTouchMajor(pointer_index) / 2.f;
   float minor_radius = event.GetTouchMinor(pointer_index) / 2.f;
-  float orientation_deg = event.GetOrientation(pointer_index) * 180.f / M_PI;
+  float orientation_deg = gfx::RadToDeg(event.GetOrientation(pointer_index));
 
   DCHECK_GE(major_radius, 0);
   DCHECK_GE(minor_radius, 0);
@@ -283,6 +300,7 @@ void Coalesce(const WebMouseWheelEvent& event_to_coalesce,
   float old_wheelTicksY = event->wheel_ticks_y;
   float old_movementX = event->movement_x;
   float old_movementY = event->movement_y;
+  WebInputEvent::DispatchType old_dispatch_type = event->dispatch_type;
   *event = event_to_coalesce;
   event->delta_x += old_deltaX;
   event->delta_y += old_deltaY;
@@ -294,6 +312,8 @@ void Coalesce(const WebMouseWheelEvent& event_to_coalesce,
       GetAccelerationRatio(event->delta_x, unaccelerated_x);
   event->acceleration_ratio_y =
       GetAccelerationRatio(event->delta_y, unaccelerated_y);
+  event->dispatch_type =
+      MergeDispatchTypes(old_dispatch_type, event_to_coalesce.dispatch_type);
 }
 
 bool CanCoalesce(const WebTouchEvent& event_to_coalesce,
@@ -343,6 +363,7 @@ void Coalesce(const WebTouchEvent& event_to_coalesce, WebTouchEvent* event) {
   event->moved_beyond_slop_region |= old_event.moved_beyond_slop_region;
   event->dispatch_type = MergeDispatchTypes(old_event.dispatch_type,
                                             event_to_coalesce.dispatch_type);
+  event->unique_touch_event_id = old_event.unique_touch_event_id;
 }
 
 bool CanCoalesce(const WebGestureEvent& event_to_coalesce,
@@ -486,7 +507,7 @@ std::pair<WebGestureEvent, WebGestureEvent> CoalesceScrollAndPinch(
     const WebGestureEvent& last_event,
     const WebGestureEvent& new_event) {
   DCHECK(!CanCoalesce(new_event, last_event))
-      << "New event can be coalesced with the last event in queue directly.";
+      << "New event can't be coalesced with the last event in queue directly.";
   DCHECK(IsContinuousGestureEvent(new_event.GetType()));
   DCHECK(IsCompatibleScrollorPinch(new_event, last_event));
   DCHECK(!second_last_event ||
@@ -497,6 +518,7 @@ std::pair<WebGestureEvent, WebGestureEvent> CoalesceScrollAndPinch(
                                new_event.TimeStampSeconds());
   WebGestureEvent pinch_event;
   scroll_event.source_device = new_event.source_device;
+  scroll_event.primary_pointer_type = new_event.primary_pointer_type;
   pinch_event = scroll_event;
   pinch_event.SetType(WebInputEvent::kGesturePinchUpdate);
   pinch_event.x = new_event.GetType() == WebInputEvent::kGesturePinchUpdate
@@ -626,6 +648,10 @@ WebGestureEvent CreateWebGestureEvent(const GestureEventDetails& details,
       break;
   }
 
+  gesture.is_source_touch_event_set_non_blocking =
+      details.is_source_touch_event_set_non_blocking();
+  gesture.primary_pointer_type =
+      ToWebPointerType(details.primary_pointer_type());
   gesture.unique_touch_event_id = unique_touch_event_id;
 
   switch (details.type()) {
@@ -782,10 +808,9 @@ std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
     scaled_event.reset(touch_event);
     *touch_event = static_cast<const blink::WebTouchEvent&>(event);
     for (unsigned i = 0; i < touch_event->touches_length; i++) {
-      touch_event->touches[i].position.x += delta.x();
-      touch_event->touches[i].position.y += delta.y();
-      touch_event->touches[i].position.x *= scale;
-      touch_event->touches[i].position.y *= scale;
+      touch_event->touches[i].SetPositionInWidget(
+          (touch_event->touches[i].PositionInWidget().x + delta.x()) * scale,
+          (touch_event->touches[i].PositionInWidget().y + delta.y()) * scale);
       touch_event->touches[i].radius_x *= scale;
       touch_event->touches[i].radius_y *= scale;
     }
@@ -891,27 +916,103 @@ WebInputEvent::Type ToWebMouseEventType(MotionEvent::Action action) {
   return WebInputEvent::kUndefined;
 }
 
+EventType WebEventTypeToEventType(WebInputEvent::Type type) {
+  switch (type) {
+    case WebInputEvent::kMouseDown:
+      return ET_MOUSE_PRESSED;
+    case WebInputEvent::kMouseUp:
+      return ET_MOUSE_RELEASED;
+    case WebInputEvent::kMouseMove:
+      return ET_MOUSE_MOVED;
+    case WebInputEvent::kMouseEnter:
+      return ET_MOUSE_ENTERED;
+    case WebInputEvent::kMouseLeave:
+      return ET_MOUSE_EXITED;
+    case WebInputEvent::kContextMenu:
+      return ET_UNKNOWN;
+    case WebInputEvent::kMouseWheel:
+      return ET_MOUSEWHEEL;
+    case WebInputEvent::kRawKeyDown:
+      return ET_UNKNOWN;
+    case WebInputEvent::kKeyDown:
+      return ET_KEY_PRESSED;
+    case WebInputEvent::kKeyUp:
+      return ET_KEY_RELEASED;
+    case WebInputEvent::kChar:
+      return ET_UNKNOWN;
+    case WebInputEvent::kGestureScrollBegin:
+      return ET_GESTURE_SCROLL_BEGIN;
+    case WebInputEvent::kGestureScrollEnd:
+      return ET_GESTURE_SCROLL_END;
+    case WebInputEvent::kGestureScrollUpdate:
+      return ET_GESTURE_SCROLL_UPDATE;
+    case WebInputEvent::kGestureFlingStart:
+      return ET_SCROLL_FLING_START;
+    case WebInputEvent::kGestureFlingCancel:
+      return ET_SCROLL_FLING_CANCEL;
+    case WebInputEvent::kGesturePinchBegin:
+      return ET_GESTURE_PINCH_BEGIN;
+    case WebInputEvent::kGesturePinchEnd:
+      return ET_GESTURE_PINCH_END;
+    case WebInputEvent::kGesturePinchUpdate:
+      return ET_GESTURE_PINCH_UPDATE;
+    case WebInputEvent::kGestureTapDown:
+      return ET_GESTURE_TAP_DOWN;
+    case WebInputEvent::kGestureShowPress:
+      return ET_GESTURE_SHOW_PRESS;
+    case WebInputEvent::kGestureTap:
+      return ET_GESTURE_TAP;
+    case WebInputEvent::kGestureTapCancel:
+      return ET_GESTURE_TAP_CANCEL;
+    case WebInputEvent::kGestureLongPress:
+      return ET_GESTURE_LONG_PRESS;
+    case WebInputEvent::kGestureLongTap:
+      return ET_GESTURE_LONG_TAP;
+    case WebInputEvent::kGestureTwoFingerTap:
+      return ET_GESTURE_TWO_FINGER_TAP;
+    case WebInputEvent::kGestureTapUnconfirmed:
+      return ET_GESTURE_TAP_UNCONFIRMED;
+    case WebInputEvent::kGestureDoubleTap:
+      return ET_GESTURE_DOUBLE_TAP;
+    case WebInputEvent::kTouchStart:
+      return ET_TOUCH_PRESSED;
+    case WebInputEvent::kTouchMove:
+      return ET_TOUCH_MOVED;
+    case WebInputEvent::kTouchEnd:
+      return ET_TOUCH_RELEASED;
+    case WebInputEvent::kTouchCancel:
+      return ET_TOUCH_CANCELLED;
+    case WebInputEvent::kTouchScrollStarted:
+    case WebInputEvent::kPointerDown:
+      return ET_POINTER_DOWN;
+    case WebInputEvent::kPointerUp:
+      return ET_POINTER_UP;
+    case WebInputEvent::kPointerMove:
+      return ET_POINTER_MOVED;
+    case WebInputEvent::kPointerCancel:
+      return ET_POINTER_CANCELLED;
+    default:
+      return ET_UNKNOWN;
+  }
+}
+
 void SetWebPointerPropertiesFromMotionEventData(
     WebPointerProperties& webPointerProperties,
     int pointer_id,
     float pressure,
     float orientation_rad,
-    float tilt_rad,
+    float tilt_x,
+    float tilt_y,
     int android_buttons_changed,
     int tool_type) {
-
   webPointerProperties.id = pointer_id;
   webPointerProperties.force = pressure;
 
   if (tool_type == MotionEvent::TOOL_TYPE_STYLUS) {
     // A stylus points to a direction specified by orientation and tilts to
     // the opposite direction. Coordinate system is left-handed.
-    float r = sin(tilt_rad);
-    float z = cos(tilt_rad);
-    webPointerProperties.tilt_x =
-        lround(atan2(sin(-orientation_rad) * r, z) * 180.f / M_PI);
-    webPointerProperties.tilt_y =
-        lround(atan2(cos(-orientation_rad) * r, z) * 180.f / M_PI);
+    webPointerProperties.tilt_x = tilt_x;
+    webPointerProperties.tilt_y = tilt_y;
   } else {
     webPointerProperties.tilt_x = webPointerProperties.tilt_y = 0;
   }
@@ -991,6 +1092,24 @@ bool IsContinuousGestureEvent(WebInputEvent::Type type) {
     default:
       return false;
   }
+}
+
+EventPointerType WebPointerTypeToEventPointerType(
+    WebPointerProperties::PointerType type) {
+  switch (type) {
+    case WebPointerProperties::PointerType::kMouse:
+      return EventPointerType::POINTER_TYPE_MOUSE;
+    case WebPointerProperties::PointerType::kPen:
+      return EventPointerType::POINTER_TYPE_PEN;
+    case WebPointerProperties::PointerType::kEraser:
+      return EventPointerType::POINTER_TYPE_ERASER;
+    case WebPointerProperties::PointerType::kTouch:
+      return EventPointerType::POINTER_TYPE_TOUCH;
+    case WebPointerProperties::PointerType::kUnknown:
+      return EventPointerType::POINTER_TYPE_UNKNOWN;
+  }
+  NOTREACHED() << "Invalid pointer type";
+  return EventPointerType::POINTER_TYPE_UNKNOWN;
 }
 
 }  // namespace ui

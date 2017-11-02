@@ -5,14 +5,37 @@
 #include "core/testing/DummyModulator.h"
 
 #include "bindings/core/v8/ScriptValue.h"
+#include "core/dom/ScriptModuleResolver.h"
 
 namespace blink {
 
-DummyModulator::DummyModulator() {}
+namespace {
+
+class EmptyScriptModuleResolver final : public ScriptModuleResolver {
+ public:
+  EmptyScriptModuleResolver() {}
+
+  // We ignore {Unr,R}egisterModuleScript() calls caused by
+  // ModuleScript::CreateForTest().
+  void RegisterModuleScript(ModuleScript*) override {}
+  void UnregisterModuleScript(ModuleScript*) override {}
+
+  ScriptModule Resolve(const String& specifier,
+                       const ScriptModule& referrer,
+                       ExceptionState&) override {
+    NOTREACHED();
+    return ScriptModule();
+  }
+};
+
+}  // namespace
+
+DummyModulator::DummyModulator() : resolver_(new EmptyScriptModuleResolver()) {}
 
 DummyModulator::~DummyModulator() {}
 
 DEFINE_TRACE(DummyModulator) {
+  visitor->Trace(resolver_);
   Modulator::Trace(visitor);
 }
 
@@ -26,15 +49,35 @@ SecurityOrigin* DummyModulator::GetSecurityOrigin() {
   return nullptr;
 }
 
-ScriptModuleResolver* DummyModulator::GetScriptModuleResolver() {
+ScriptState* DummyModulator::GetScriptState() {
   NOTREACHED();
   return nullptr;
+}
+
+ScriptModuleResolver* DummyModulator::GetScriptModuleResolver() {
+  return resolver_.Get();
 }
 
 WebTaskRunner* DummyModulator::TaskRunner() {
   NOTREACHED();
   return nullptr;
 };
+
+void DummyModulator::FetchTree(const ModuleScriptFetchRequest&,
+                               ModuleTreeClient*) {
+  NOTREACHED();
+}
+
+void DummyModulator::FetchSingle(const ModuleScriptFetchRequest&,
+                                 ModuleGraphLevel,
+                                 SingleModuleClient*) {
+  NOTREACHED();
+}
+
+void DummyModulator::FetchDescendantsForInlineScript(ModuleScript*,
+                                                     ModuleTreeClient*) {
+  NOTREACHED();
+}
 
 ModuleScript* DummyModulator::GetFetchedModuleScript(const KURL&) {
   NOTREACHED();
@@ -47,9 +90,25 @@ void DummyModulator::FetchNewSingleModule(const ModuleScriptFetchRequest&,
   NOTREACHED();
 }
 
+bool DummyModulator::HasValidContext() {
+  return true;
+}
+
+void DummyModulator::ResolveDynamically(const String&,
+                                        const KURL&,
+                                        const ReferrerScriptInfo&,
+                                        ScriptPromiseResolver*) {
+  NOTREACHED();
+}
+
 ScriptModule DummyModulator::CompileModule(const String& script,
                                            const String& url_str,
-                                           AccessControlStatus) {
+                                           AccessControlStatus,
+                                           WebURLRequest::FetchCredentialsMode,
+                                           const String& nonce,
+                                           ParserDisposition,
+                                           const TextPosition&,
+                                           ExceptionState&) {
   NOTREACHED();
   return ScriptModule();
 }
@@ -59,13 +118,31 @@ ScriptValue DummyModulator::InstantiateModule(ScriptModule) {
   return ScriptValue();
 }
 
-Vector<String> DummyModulator::ModuleRequestsFromScriptModule(ScriptModule) {
+ScriptModuleState DummyModulator::GetRecordStatus(ScriptModule) {
   NOTREACHED();
-  return Vector<String>();
+  return ScriptModuleState::kErrored;
 }
 
-void DummyModulator::ExecuteModule(ScriptModule) {
+ScriptValue DummyModulator::GetError(const ModuleScript*) {
   NOTREACHED();
+  return ScriptValue();
+}
+
+Vector<Modulator::ModuleRequest> DummyModulator::ModuleRequestsFromScriptModule(
+    ScriptModule) {
+  NOTREACHED();
+  return Vector<ModuleRequest>();
+}
+
+ScriptValue DummyModulator::ExecuteModule(const ModuleScript*,
+                                          CaptureEvalErrorFlag) {
+  NOTREACHED();
+  return ScriptValue();
+}
+
+ModuleScriptFetcher* DummyModulator::CreateModuleScriptFetcher() {
+  NOTREACHED();
+  return nullptr;
 }
 
 }  // namespace blink

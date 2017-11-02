@@ -4,9 +4,9 @@
 
 #include "net/reporting/reporting_persister.h"
 
+#include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/clock.h"
 #include "base/time/tick_clock.h"
@@ -16,7 +16,6 @@
 #include "net/reporting/reporting_cache.h"
 #include "net/reporting/reporting_client.h"
 #include "net/reporting/reporting_context.h"
-#include "net/reporting/reporting_delegate.h"
 #include "net/reporting/reporting_observer.h"
 #include "net/reporting/reporting_policy.h"
 #include "net/reporting/reporting_report.h"
@@ -25,7 +24,7 @@ namespace net {
 namespace {
 
 std::unique_ptr<base::Value> SerializeOrigin(const url::Origin& origin) {
-  auto serialized = base::MakeUnique<base::DictionaryValue>();
+  auto serialized = std::make_unique<base::DictionaryValue>();
 
   serialized->SetString("scheme", origin.scheme());
   serialized->SetString("host", origin.host());
@@ -61,49 +60,15 @@ bool DeserializeOrigin(const base::DictionaryValue& serialized,
   return true;
 }
 
-class ReportingPersisterImpl : public ReportingPersister,
-                               public ReportingObserver {
+class ReportingPersisterImpl : public ReportingPersister {
  public:
-  ReportingPersisterImpl(ReportingContext* context)
-      : context_(context), timer_(base::MakeUnique<base::OneShotTimer>()) {}
+  ReportingPersisterImpl(ReportingContext* context) : context_(context) {}
 
   // ReportingPersister implementation:
 
-  ~ReportingPersisterImpl() override {
-    DCHECK(context_->initialized());
-    context_->RemoveObserver(this);
-  }
-
-  void Initialize() override {
-    std::unique_ptr<const base::Value> persisted_data =
-        context_->delegate()->GetPersistedData();
-    if (persisted_data)
-      Deserialize(*persisted_data);
-    context_->AddObserver(this);
-  }
-
-  void SetTimerForTesting(std::unique_ptr<base::Timer> timer) override {
-    DCHECK(!context_->initialized());
-    timer_ = std::move(timer);
-  }
-
-  // ReportingObserver implementation:
-
-  void OnCacheUpdated() override {
-    DCHECK(context_->initialized());
-    if (!timer_->IsRunning())
-      StartTimer();
-  }
+  ~ReportingPersisterImpl() override {}
 
  private:
-  void StartTimer() {
-    timer_->Start(
-        FROM_HERE, context_->policy().persistence_interval,
-        base::Bind(&ReportingPersisterImpl::Persist, base::Unretained(this)));
-  }
-
-  void Persist() { delegate()->PersistData(Serialize()); }
-
   std::string SerializeTicks(base::TimeTicks time_ticks) {
     base::Time time = time_ticks - tick_clock()->NowTicks() + clock()->Now();
     return base::Int64ToString(time.ToInternalValue());
@@ -121,7 +86,7 @@ class ReportingPersisterImpl : public ReportingPersister,
   }
 
   std::unique_ptr<base::Value> SerializeReport(const ReportingReport& report) {
-    auto serialized = base::MakeUnique<base::DictionaryValue>();
+    auto serialized = std::make_unique<base::DictionaryValue>();
 
     serialized->SetString("url", report.url.spec());
     serialized->SetString("group", report.group);
@@ -175,7 +140,7 @@ class ReportingPersisterImpl : public ReportingPersister,
     std::vector<const ReportingReport*> reports;
     cache()->GetReports(&reports);
 
-    auto serialized = base::MakeUnique<base::ListValue>();
+    auto serialized = std::make_unique<base::ListValue>();
     for (const ReportingReport* report : reports)
       serialized->Append(SerializeReport(*report));
 
@@ -195,7 +160,7 @@ class ReportingPersisterImpl : public ReportingPersister,
   }
 
   std::unique_ptr<base::Value> SerializeClient(const ReportingClient& client) {
-    auto serialized = base::MakeUnique<base::DictionaryValue>();
+    auto serialized = std::make_unique<base::DictionaryValue>();
 
     serialized->Set("origin", SerializeOrigin(client.origin));
     serialized->SetString("endpoint", client.endpoint.spec());
@@ -249,7 +214,7 @@ class ReportingPersisterImpl : public ReportingPersister,
     std::vector<const ReportingClient*> clients;
     cache()->GetClients(&clients);
 
-    auto serialized = base::MakeUnique<base::ListValue>();
+    auto serialized = std::make_unique<base::ListValue>();
     for (const ReportingClient* client : clients)
       serialized->Append(SerializeClient(*client));
 
@@ -271,7 +236,7 @@ class ReportingPersisterImpl : public ReportingPersister,
   static const int kSupportedVersion = 1;
 
   std::unique_ptr<base::Value> Serialize() {
-    auto serialized = base::MakeUnique<base::DictionaryValue>();
+    auto serialized = std::make_unique<base::DictionaryValue>();
 
     serialized->SetInteger("reporting_serialized_cache_version",
                            kSupportedVersion);
@@ -336,13 +301,11 @@ class ReportingPersisterImpl : public ReportingPersister,
   }
 
   const ReportingPolicy& policy() { return context_->policy(); }
-  ReportingDelegate* delegate() { return context_->delegate(); }
   base::Clock* clock() { return context_->clock(); }
   base::TickClock* tick_clock() { return context_->tick_clock(); }
   ReportingCache* cache() { return context_->cache(); }
 
   ReportingContext* context_;
-  std::unique_ptr<base::Timer> timer_;
 };
 
 }  // namespace
@@ -350,7 +313,7 @@ class ReportingPersisterImpl : public ReportingPersister,
 // static
 std::unique_ptr<ReportingPersister> ReportingPersister::Create(
     ReportingContext* context) {
-  return base::MakeUnique<ReportingPersisterImpl>(context);
+  return std::make_unique<ReportingPersisterImpl>(context);
 }
 
 ReportingPersister::~ReportingPersister() {}

@@ -28,20 +28,20 @@
 #define HTMLMediaElement_h
 
 #include <memory>
-#include "bindings/core/v8/ActiveScriptWrappable.h"
+#include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/Nullable.h"
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/CoreExport.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/SuspendableObject.h"
-#include "core/events/GenericEventQueue.h"
+#include "core/dom/events/MediaElementEventQueue.h"
 #include "core/html/HTMLElement.h"
 #include "core/html/media/MediaControls.h"
-#include "core/html/track/TextTrack.h"
 #include "platform/Supplementable.h"
 #include "platform/WebTaskRunner.h"
 #include "platform/audio/AudioSourceProvider.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
 #include "public/platform/WebAudioSourceProviderClient.h"
 #include "public/platform/WebMediaPlayerClient.h"
@@ -51,10 +51,9 @@ namespace blink {
 class AudioSourceProviderClient;
 class AudioTrack;
 class AudioTrackList;
-class AutoplayUmaHelper;
+class AutoplayPolicy;
 class ContentType;
 class CueTimeline;
-class ElementVisibilityObserver;
 class EnumerationHistogram;
 class Event;
 class ExceptionState;
@@ -66,6 +65,7 @@ class MediaError;
 class MediaStreamDescriptor;
 class HTMLMediaSource;
 class ScriptState;
+class TextTrack;
 class TextTrackContainer;
 class TextTrackList;
 class TimeRanges;
@@ -103,11 +103,6 @@ class CORE_EXPORT HTMLMediaElement
   // Notify the HTMLMediaElement that the media controls settings have changed
   // for the given document.
   static void OnMediaControlsEnabledChange(Document*);
-
-  // Called by the module implementing the media controls to notify of the
-  // factory to use. It should only be called once at process initialisation.
-  static void RegisterMediaControlsFactory(
-      std::unique_ptr<MediaControls::Factory>);
 
   DECLARE_VIRTUAL_TRACE();
 
@@ -211,7 +206,6 @@ class CORE_EXPORT HTMLMediaElement
       const RecordMetricsBehavior = RecordMetricsBehavior::kDoNotRecord) const;
   DOMTokenList* controlsList() const;
   HTMLMediaElementControlsList* ControlsListInternal() const;
-  void ControlsListValueWasSet();
   double volume() const;
   void setVolume(double, ExceptionState& = ASSERT_NO_EXCEPTION);
   bool muted() const;
@@ -291,7 +285,7 @@ class CORE_EXPORT HTMLMediaElement
   void SourceWasAdded(HTMLSourceElement*);
 
   // ScriptWrappable functions.
-  bool HasPendingActivity() const final;
+  bool HasPendingActivity() const override;
 
   AudioSourceProviderClient* AudioSourceNode() { return audio_source_node_; }
   void SetAudioSourceNode(AudioSourceProviderClient*);
@@ -323,12 +317,13 @@ class CORE_EXPORT HTMLMediaElement
 
   void VideoWillBeDrawnToCanvas() const;
 
-  WebRemotePlaybackClient* RemotePlaybackClient() {
-    return remote_playback_client_;
-  }
   const WebRemotePlaybackClient* RemotePlaybackClient() const {
     return remote_playback_client_;
   }
+
+  const AutoplayPolicy& GetAutoplayPolicy() const { return *autoplay_policy_; }
+
+  WebMediaPlayer::LoadType GetLoadType() const;
 
  protected:
   HTMLMediaElement(const QualifiedName&, Document&);
@@ -338,7 +333,7 @@ class CORE_EXPORT HTMLMediaElement
   void ParseAttribute(const AttributeModificationParams&) override;
   void FinishParsingChildren() final;
   bool IsURLAttribute(const Attribute&) const override;
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
 
   InsertionNotificationRequest InsertedInto(ContainerNode*) override;
   void RemovedFrom(ContainerNode*) override;
@@ -412,12 +407,20 @@ class CORE_EXPORT HTMLMediaElement
   void DisconnectedFromRemoteDevice() final;
   void CancelledRemotePlaybackRequest() final;
   void RemotePlaybackStarted() final;
-  void OnBecamePersistentVideo(bool) override{};
+  void RemotePlaybackCompatibilityChanged(const WebURL&,
+                                          bool is_compatible) final;
+  void OnBecamePersistentVideo(bool) override {}
   bool HasSelectedVideoTrack() final;
   WebMediaPlayer::TrackId GetSelectedVideoTrackId() final;
   bool IsAutoplayingMuted() final;
-  void RequestReload(const WebURL&) final;
   void ActivateViewportIntersectionMonitoring(bool) final;
+  bool HasNativeControls() final;
+  bool IsAudioElement() final;
+  WebMediaPlayer::DisplayType DisplayType() const override;
+  WebRemotePlaybackClient* RemotePlaybackClient() final {
+    return remote_playback_client_;
+  }
+  gfx::ColorSpace TargetColorSpace() override;
 
   void LoadTimerFired(TimerBase*);
   void ProgressEventTimerFired(TimerBase*);
@@ -441,9 +444,8 @@ class CORE_EXPORT HTMLMediaElement
   void LoadInternal();
   void SelectMediaResource();
   void LoadResource(const WebMediaPlayerSource&, const String& content_type);
-  void StartPlayerLoad(const KURL& player_provided_url = KURL());
+  void StartPlayerLoad();
   void SetPlayerPreload();
-  WebMediaPlayer::LoadType GetLoadType() const;
   void ScheduleNextSourceChild();
   void LoadSourceFromObject();
   void LoadSourceFromAttribute();
@@ -524,33 +526,6 @@ class CORE_EXPORT HTMLMediaElement
   // transition to kHaveMetadata.
   void SelectInitialTracksIfNecessary();
 
-  // Return true if and only if a user gesture is required to unlock this
-  // media element for unrestricted autoplay / script control.  Don't confuse
-  // this with isGestureNeededForPlayback().  The latter is usually what one
-  // should use, if checking to see if an action is allowed.
-  bool IsLockedPendingUserGesture() const;
-
-  bool IsLockedPendingUserGestureIfCrossOriginExperimentEnabled() const;
-
-  // If the user gesture is required, then this will remove it.  Note that
-  // one should not generally call this method directly; use the one on
-  // m_helper and give it a reason.
-  void UnlockUserGesture();
-
-  // Return true if and only if a user gesture is requried for playback.  Even
-  // if isLockedPendingUserGesture() return true, this might return false if
-  // the requirement is currently overridden.  This does not check if a user
-  // gesture is currently being processed.
-  bool IsGestureNeededForPlayback() const;
-
-  bool IsGestureNeededForPlaybackIfCrossOriginExperimentEnabled() const;
-
-  bool IsGestureNeededForPlaybackIfPendingUserGestureIsLocked() const;
-
-  // Return true if and only if the settings allow autoplay of media on this
-  // frame.
-  bool IsAutoplayAllowedPerSettings() const;
-
   void SetNetworkState(NetworkState);
 
   void AudioTracksTimerFired(TimerBase*);
@@ -565,19 +540,14 @@ class CORE_EXPORT HTMLMediaElement
 
   EnumerationHistogram& ShowControlsHistogram() const;
 
-  void OnVisibilityChangedForAutoplay(bool is_visible);
-
-  void ViewportFillDebouncerTimerFired(TimerBase*);
-
   TaskRunnerTimer<HTMLMediaElement> load_timer_;
   TaskRunnerTimer<HTMLMediaElement> progress_event_timer_;
   TaskRunnerTimer<HTMLMediaElement> playback_progress_timer_;
   TaskRunnerTimer<HTMLMediaElement> audio_tracks_timer_;
-  TaskRunnerTimer<HTMLMediaElement> viewport_fill_debouncer_timer_;
   TaskRunnerTimer<HTMLMediaElement> check_viewport_intersection_timer_;
 
   Member<TimeRanges> played_time_ranges_;
-  Member<GenericEventQueue> async_event_queue_;
+  Member<MediaElementEventQueue> async_event_queue_;
 
   double playback_rate_;
   double default_playback_rate_;
@@ -652,8 +622,6 @@ class CORE_EXPORT HTMLMediaElement
   PendingActionFlags pending_action_flags_;
 
   // FIXME: HTMLMediaElement has way too many state bits.
-  bool locked_pending_user_gesture_ : 1;
-  bool locked_pending_user_gesture_if_cross_origin_experiment_enabled_ : 1;
   bool playing_ : 1;
   bool should_delay_load_event_ : 1;
   bool have_fired_loaded_data_ : 1;
@@ -692,7 +660,7 @@ class CORE_EXPORT HTMLMediaElement
   HeapVector<Member<ScriptPromiseResolver>> play_promise_reject_list_;
   ExceptionCode play_promise_error_code_;
 
-  // This is a weak reference, since m_audioSourceNode holds a reference to us.
+  // This is a weak reference, since audio_source_node_ holds a reference to us.
   // TODO(Oilpan): Consider making this a strongly traced pointer with oilpan
   // where strong cycles are not a problem.
   GC_PLUGIN_IGNORE("http://crbug.com/404577")
@@ -745,7 +713,7 @@ class CORE_EXPORT HTMLMediaElement
 
   AudioSourceProviderImpl audio_source_provider_;
 
-  friend class AutoplayUmaHelper;  // for isAutoplayAllowedPerSettings
+  friend class AutoplayPolicy;
   friend class AutoplayUmaHelperTest;
   friend class Internals;
   friend class TrackDisplayUpdateScope;
@@ -753,14 +721,13 @@ class CORE_EXPORT HTMLMediaElement
   friend class HTMLMediaElementTest;
   friend class HTMLMediaElementEventListenersTest;
   friend class HTMLVideoElement;
+  friend class MediaControlInputElementTest;
   friend class MediaControlsOrientationLockDelegateTest;
+  friend class MediaControlsRotateToFullscreenDelegateTest;
 
-  Member<AutoplayUmaHelper> autoplay_uma_helper_;
+  Member<AutoplayPolicy> autoplay_policy_;
 
   WebRemotePlaybackClient* remote_playback_client_;
-
-  // class AutoplayVisibilityObserver;
-  Member<ElementVisibilityObserver> autoplay_visibility_observer_;
 
   IntRect current_intersect_rect_;
 
@@ -771,7 +738,7 @@ class CORE_EXPORT HTMLMediaElement
 };
 
 inline bool IsHTMLMediaElement(const HTMLElement& element) {
-  return isHTMLAudioElement(element) || isHTMLVideoElement(element);
+  return IsHTMLAudioElement(element) || IsHTMLVideoElement(element);
 }
 
 DEFINE_HTMLELEMENT_TYPE_CASTS_WITH_FUNCTION(HTMLMediaElement);

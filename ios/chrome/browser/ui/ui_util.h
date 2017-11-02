@@ -10,6 +10,8 @@
 // UI Util containing functions that do not require Objective-C.
 
 // Running on an iPad?
+// TODO(crbug.com/330493): deprecated, use GetDeviceFormFactor() from
+// ui/base/device_form_factor.h instead.
 bool IsIPadIdiom();
 
 // Enum for arrays by UI idiom.
@@ -33,6 +35,9 @@ CGFloat CurrentScreenHeight();
 
 // Returns the width of the screen in the current orientation.
 CGFloat CurrentScreenWidth();
+
+// Returns true if the device is an iPhone X.
+bool IsIPhoneX();
 
 // Returns the height of the status bar, accounting for orientation.
 CGFloat StatusBarHeight();

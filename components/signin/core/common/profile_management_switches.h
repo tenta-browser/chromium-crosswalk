@@ -9,25 +9,50 @@
 #ifndef COMPONENTS_SIGNIN_CORE_COMMON_PROFILE_MANAGEMENT_SWITCHES_H_
 #define COMPONENTS_SIGNIN_CORE_COMMON_PROFILE_MANAGEMENT_SWITCHES_H_
 
-namespace base {
-class CommandLine;
-}
+#include "base/feature_list.h"
 
-namespace switches {
+namespace signin {
 
-// Checks whether account consistency is enabled. If enabled, the account
+// Account consistency feature. Only used on platforms where Mirror is not
+// always enabled (ENABLE_MIRROR is false).
+extern const base::Feature kAccountConsistencyFeature;
+
+// The account consistency method parameter name.
+extern const char kAccountConsistencyFeatureMethodParameter[];
+
+// Account consistency method values.
+extern const char kAccountConsistencyFeatureMethodMirror[];
+extern const char kAccountConsistencyFeatureMethodDiceFixAuthErrors[];
+extern const char kAccountConsistencyFeatureMethodDice[];
+
+enum class AccountConsistencyMethod {
+  kDisabled,           // No account consistency.
+  kMirror,             // Account management UI in the avatar bubble.
+  kDiceFixAuthErrors,  // No account consistency, but Dice fixes authentication
+                       // errors.
+  kDice                // Account management UI on Gaia webpages.
+};
+
+// Returns the account consistency method.
+AccountConsistencyMethod GetAccountConsistencyMethod();
+
+// Checks whether Mirror account consistency is enabled. If enabled, the account
 // management UI is available in the avatar bubble.
-bool IsEnableAccountConsistency();
+bool IsAccountConsistencyMirrorEnabled();
+
+// Checks whether Dice account consistency is enabled. If enabled, then account
+// management UI is available on the Gaia webpages.
+// Returns true when the account consistency method is kDice.
+// WARNING: returns false when the method is kDiceFixAuthErrors.
+bool IsAccountConsistencyDiceEnabled();
+
+// Returns true if the account consistency method is kDiceFixAuthErrors or
+// kDice.
+bool IsDiceFixAuthErrorsEnabled();
 
 // Whether the chrome.identity API should be multi-account.
 bool IsExtensionsMultiAccount();
 
-// Checks whether the new gaia password separated sign in flow is enabled.
-bool UsePasswordSeparatedSigninFlow();
-
-// Called in tests to force enable account consistency.
-void EnableAccountConsistencyForTesting(base::CommandLine* command_line);
-
-}  // namespace switches
+}  // namespace signin
 
 #endif  // COMPONENTS_SIGNIN_CORE_COMMON_PROFILE_MANAGEMENT_SWITCHES_H_

@@ -31,7 +31,9 @@ namespace {
 class MockRenderWidgetHostView : public RenderWidgetHostViewAura {
  public:
   MockRenderWidgetHostView(RenderWidgetHost* host, bool is_guest_view_hack)
-      : RenderWidgetHostViewAura(host, is_guest_view_hack),
+      : RenderWidgetHostViewAura(host,
+                                 is_guest_view_hack,
+                                 false /* enable_surface_synchronization */),
         host_(RenderWidgetHostImpl::From(host)) {}
   ~MockRenderWidgetHostView() override {
     if (mouse_locked_)
@@ -346,10 +348,24 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockWheelEventRouting) {
   wheel_event.SetPositionInWidget(10, 11);
   wheel_event.delta_x = -12;
   wheel_event.delta_y = -13;
+  wheel_event.phase = blink::WebMouseWheelEvent::kPhaseBegan;
   router->RouteMouseWheelEvent(root_view, &wheel_event, ui::LatencyInfo());
 
   // Make sure that the renderer handled the input event.
   root_observer.Wait();
+
+  if (root_view->wheel_scroll_latching_enabled()) {
+    // When wheel scroll latching is enabled all wheel events during a scroll
+    // sequence will be sent to a single target. Send a wheel end event to the
+    // current target before sending wheel events to a new target.
+    wheel_event.delta_x = 0;
+    wheel_event.delta_y = 0;
+    wheel_event.phase = blink::WebMouseWheelEvent::kPhaseEnded;
+    router->RouteMouseWheelEvent(root_view, &wheel_event, ui::LatencyInfo());
+
+    // Make sure that the renderer handled the input event.
+    root_observer.Wait();
+  }
 
   int x, y, deltaX, deltaY;
   EXPECT_TRUE(ExecuteScriptAndExtractInt(
@@ -395,6 +411,8 @@ IN_PROC_BROWSER_TEST_F(PointerLockBrowserTest, PointerLockWheelEventRouting) {
                                   -transformed_point.y() + 15);
   wheel_event.delta_x = -16;
   wheel_event.delta_y = -17;
+  if (root_view->wheel_scroll_latching_enabled())
+    wheel_event.phase = blink::WebMouseWheelEvent::kPhaseBegan;
   // We use root_view intentionally as the RenderWidgetHostInputEventRouter is
   // responsible for correctly routing the event to the child frame.
   router->RouteMouseWheelEvent(root_view, &wheel_event, ui::LatencyInfo());

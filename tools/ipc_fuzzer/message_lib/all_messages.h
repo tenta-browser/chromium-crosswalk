@@ -14,12 +14,20 @@
 #undef CONTENT_COMMON_FRAME_PARAM_MACROS_H_
 #undef CONTENT_PUBLIC_COMMON_COMMON_PARAM_TRAITS_MACROS_H_
 
+#include "components/nacl/common/features.h"
+
 #include "chrome/common/all_messages.h"
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
 #include "components/nacl/common/nacl_host_messages.h"
 #endif
+#include "components/guest_view/common/guest_view_message_generator.h"
 #include "components/network_hints/common/network_hints_message_generator.h"
+#include "components/safe_browsing/common/safebrowsing_message_generator.h"
 #include "components/spellcheck/common/spellcheck_message_generator.h"
+#include "components/subresource_filter/content/common/subresource_filter_messages.h"
 #include "components/tracing/common/tracing_messages.h"
 #include "content/common/all_messages.h"
 #include "extensions/common/extension_message_generator.h"
+#include "gpu/ipc/common/gpu_message_generator.h"
+#include "media/gpu/ipc/common/media_message_generator.h"
+#include "remoting/host/chromoting_messages.h"

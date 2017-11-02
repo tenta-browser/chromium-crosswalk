@@ -24,10 +24,11 @@
 #include "core/dom/Document.h"
 #include "core/loader/resource/XSLStyleSheetResource.h"
 #include "platform/SharedBuffer.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/RawResource.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "platform/wtf/text/TextEncoding.h"
 
 namespace blink {
@@ -87,10 +88,10 @@ void XSLImportRule::LoadSheet() {
       return;
   }
 
-  ResourceLoaderOptions fetch_options(
-      ResourceFetcher::DefaultResourceOptions());
+  ResourceLoaderOptions fetch_options;
+  fetch_options.initiator_info.name = FetchInitiatorTypeNames::xml;
   FetchParameters params(ResourceRequest(owner_document->CompleteURL(abs_href)),
-                         FetchInitiatorTypeNames::xml, fetch_options);
+                         fetch_options);
   params.SetOriginRestriction(FetchParameters::kRestrictToSameOrigin);
   XSLStyleSheetResource* resource = XSLStyleSheetResource::FetchSynchronously(
       params, owner_document->Fetcher());

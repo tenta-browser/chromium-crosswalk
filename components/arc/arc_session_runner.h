@@ -9,8 +9,13 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "chromeos/dbus/session_manager_client.h"
+#include "components/arc/arc_instance_mode.h"
 #include "components/arc/arc_session.h"
 #include "components/arc/arc_stop_reason.h"
 
@@ -18,7 +23,8 @@ namespace arc {
 
 // Accept requests to start/stop ARC instance. Also supports automatic
 // restarting on unexpected ARC instance crash.
-class ArcSessionRunner : public ArcSession::Observer {
+class ArcSessionRunner : public ArcSession::Observer,
+                         public chromeos::SessionManagerClient::Observer {
  public:
   // Observer to notify events across multiple ARC session runs.
   class Observer {
@@ -29,6 +35,11 @@ class ArcSessionRunner : public ArcSession::Observer {
     // CRASH on ARC container, and expected SHUTDOWN of ARC triggered by
     // RequestStop(), so may be called multiple times for one RequestStart().
     virtual void OnSessionStopped(ArcStopReason reason, bool restarting) = 0;
+
+    // Called when ARC session is stopped, but is being restarted automatically.
+    // Unlike OnSessionStopped() with |restarting| == true, this is called
+    // _after_ the container is actually created.
+    virtual void OnSessionRestarting() = 0;
 
    protected:
     virtual ~Observer() = default;
@@ -47,7 +58,7 @@ class ArcSessionRunner : public ArcSession::Observer {
 
   // Starts the ARC service, then it will connect the Mojo channel. When the
   // bridge becomes ready, registered Observer's OnSessionReady() is called.
-  void RequestStart();
+  void RequestStart(ArcInstanceMode request_mode);
 
   // Stops the ARC service.
   void RequestStop();
@@ -56,12 +67,6 @@ class ArcSessionRunner : public ArcSession::Observer {
   // only be called on the thread that this class was created on. We assume that
   // when this function is called, MessageLoop is no longer exists.
   void OnShutdown();
-
-  // Returns whether currently ARC instance is running or stopped respectively.
-  // Note that, both can return false at same time when, e.g., starting
-  // or stopping ARC instance.
-  bool IsRunning() const;
-  bool IsStopped() const;
 
   // Returns the current ArcSession instance for testing purpose.
   ArcSession* GetArcSessionForTesting() { return arc_session_.get(); }
@@ -72,53 +77,26 @@ class ArcSessionRunner : public ArcSession::Observer {
   void SetRestartDelayForTesting(const base::TimeDelta& restart_delay);
 
  private:
-  // The possible states.  In the normal flow, the state changes in the
-  // following sequence:
-  //
-  // STOPPED
-  //   RequestStart() ->
-  // STARTING
-  //   OnSessionReady() ->
-  // RUNNING
-  //
-  // The ArcSession state machine can be thought of being substates of
-  // ArcBridgeService's STARTING state.
-  // ArcBridgeService's state machine can be stopped at any phase.
-  //
-  // *
-  //   RequestStop() ->
-  // STOPPING
-  //   OnSessionStopped() ->
-  // STOPPED
-  enum class State {
-    // ARC instance is not currently running.
-    STOPPED,
-
-    // Request to start ARC instance is received. Starting an ARC instance.
-    STARTING,
-
-    // ARC instance has finished initializing, and is now ready for interaction
-    // with other services.
-    RUNNING,
-
-    // Request to stop ARC instance is recieved. Stopping the ARC instance.
-    STOPPING,
-  };
-
   // Starts to run an ARC instance.
   void StartArcSession();
 
-  // ArcSession::Observer:
-  void OnSessionReady() override;
-  void OnSessionStopped(ArcStopReason reason) override;
+  // Restarts an ARC instance.
+  void RestartArcSession();
 
-  base::ThreadChecker thread_checker_;
+  // ArcSession::Observer:
+  void OnSessionStopped(ArcStopReason reason, bool was_running) override;
+
+  // chromeos::SessionManagerClient::Observer:
+  void EmitLoginPromptVisibleCalled() override;
+
+  THREAD_CHECKER(thread_checker_);
 
   // Observers for the ARC instance state change events.
   base::ObserverList<Observer> observer_list_;
 
-  // Whether a client requests to run session or not.
-  bool run_requested_ = false;
+  // Target ARC instance running mode. If nullopt, it means the ARC instance
+  // should stop eventually.
+  base::Optional<ArcInstanceMode> target_mode_;
 
   // Instead of immediately trying to restart the container, give it some time
   // to finish tearing down in case it is still in the process of stopping.
@@ -127,9 +105,6 @@ class ArcSessionRunner : public ArcSession::Observer {
 
   // Factory to inject a fake ArcSession instance for testing.
   ArcSessionFactory factory_;
-
-  // Current runner's state.
-  State state_ = State::STOPPED;
 
   // ArcSession object for currently running ARC instance. This should be
   // nullptr if the state is STOPPED, otherwise non-nullptr.

@@ -1,140 +1,196 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
-    <title>Test Constructor: DynamicsCompressor</title>
+    <title>
+      Test Constructor: DynamicsCompressor
+    </title>
     <script src="../../resources/testharness.js"></script>
     <script src="../../resources/testharnessreport.js"></script>
     <script src="../resources/audit-util.js"></script>
-    <script src="../resources/audio-testing.js"></script>
+    <script src="../resources/audit.js"></script>
     <script src="audionodeoptions.js"></script>
   </head>
-
   <body>
-    <script>
-      var context;
+    <script id="layout-test-code">
+      let context;
 
-      var audit = Audit.createTaskRunner();
+      let audit = Audit.createTaskRunner();
 
-      audit.defineTask("initialize", function (taskDone) {
-        Should("context = new OfflineAudioContext(...)", function () {
-          context = new OfflineAudioContext(1, 1, 48000);
-        }).notThrow();
-        taskDone();
+      audit.define('initialize', (task, should) => {
+        context = initializeContext(should);
+        task.done();
       });
 
-      audit.defineTask("invalid constructor", function (taskDone) {
-        var node;
-        var success = true;
-
-        success = Should("new DynamicsCompressorNode()", function () {
-          node = new DynamicsCompressorNode();
-        }).throw("TypeError");
-        success = Should("new DynamicsCompressorNode(1)", function () {
-          node = new DynamicsCompressorNode(1);
-        }).throw("TypeError") && success;
-        success = Should("new DynamicsCompressorNode(context, 42)", function () {
-          node = new DynamicsCompressorNode(context, 42);
-        }).throw("TypeError") && success;
-
-        Should("Invalid constructors", success)
-            .summarize(
-                "correctly threw errors",
-                "did not throw errors in all cases");
-
-        taskDone();
+      audit.define('invalid constructor', (task, should) => {
+        testInvalidConstructor(should, 'DynamicsCompressorNode', context);
+        task.done();
       });
 
-      audit.defineTask("default constructor", function (taskDone) {
-        var node;
-        var success = true;
+      audit.define('default constructor', (task, should) => {
+        let prefix = 'node0';
+        let node =
+            testDefaultConstructor(should, 'DynamicsCompressorNode', context, {
+              prefix: prefix,
+              numberOfInputs: 1,
+              numberOfOutputs: 1,
+              channelCount: 2,
+              channelCountMode: 'max',
+              channelInterpretation: 'speakers'
+            });
 
-        success = Should("node0 = new DynamicsCompressorNode(context)", function () {
-          node = new DynamicsCompressorNode(context);
-        }).notThrow();
-        success = Should("node0 instanceof DynamicsCompressorNode",
-            node instanceof DynamicsCompressorNode)
-          .beEqualTo(true) && success;
+        testDefaultAttributes(should, node, prefix, [
+          {name: 'threshold', value: -24}, {name: 'knee', value: 30},
+          {name: 'ratio', value: 12}, {name: 'reduction', value: 0},
+          {name: 'attack', value: Math.fround(0.003)},
+          {name: 'release', value: 0.25}
+        ]);
 
-        success = Should("node0.threshold.value", node.threshold.value)
-          .beEqualTo(-24) && success;
-        success = Should("node0.knee.value", node.knee.value)
-          .beEqualTo(30) && success;
-        success = Should("node0.ratio.value", node.ratio.value)
-          .beEqualTo(12) && success;
-        success = Should("node0.reduction", node.reduction)
-          .beEqualTo(0) && success;
-        success = Should("node0.attack.value", node.attack.value)
-          .beEqualTo(Math.fround(0.003)) && success;
-        success = Should("node0.release.value", node.release.value)
-          .beEqualTo(0.25) && success;
-
-        success = Should("node0.channelCount", node.channelCount)
-          .beEqualTo(2) && success;
-        success = Should("node0.channelCountMode", node.channelCountMode)
-          .beEqualTo("max") && success;
-        success = Should("node0.channelInterpretation", node.channelInterpretation)
-          .beEqualTo("speakers") && success;
-
-        Should("new DynamicsCompressorNode(context)", success)
-            .summarize(
-                "constructed node with correct attributes",
-                "did not construct correct node correctly")
-
-        taskDone();
+        task.done();
       });
 
-      audit.defineTask("test AudioNodeOptions", function (taskDone) {
-        testAudioNodeOptions(context, "DynamicsCompressorNode");
-        taskDone();
+      audit.define('test AudioNodeOptions', (task, should) => {
+        // Can't use testAudioNodeOptions because the constraints for this node
+        // are not supported there.
+
+        // Array of test options to be run.  Each entry is a dictionary where
+        // |testAttribute| is the name of the attribute to be tested,
+        // |testValue| is the value to be used, and |expectedErrorType| is the
+        // error type if the test is expected to throw an error.
+        // |expectedErrorType| should be set only if the test does throw.
+        let testOptions = [
+          // Test channel count
+          {
+            testAttribute: 'channelCount',
+            testValue: 1,
+          },
+          {
+            testAttribute: 'channelCount',
+            testValue: 2,
+          },
+          {
+            testAttribute: 'channelCount',
+            testValue: 0,
+            expectedErrorType: 'NotSupportedError'
+          },
+          {
+            testAttribute: 'channelCount',
+            testValue: 3,
+            expectedErrorType: 'NotSupportedError'
+          },
+          {
+            testAttribute: 'channelCount',
+            testValue: 99,
+            expectedErrorType: 'NotSupportedError'
+          },
+          // Test channel count mode
+          {
+            testAttribute: 'channelCountMode',
+            testValue: 'clamped-max',
+          },
+          {
+            testAttribute: 'channelCountMode',
+            testValue: 'explicit',
+          },
+          {
+            testAttribute: 'channelCountMode',
+            testValue: 'max',
+            expectedErrorType: 'NotSupportedError'
+          },
+          {
+            testAttribute: 'channelCountMode',
+            testValue: 'foobar',
+            expectedErrorType: 'TypeError'
+          },
+          // Test channel interpretation
+          {
+            testAttribute: 'channelInterpretation',
+            testValue: 'speakers',
+          },
+          {
+            testAttribute: 'channelInterpretation',
+            testValue: 'discrete',
+          },
+          {
+            testAttribute: 'channelInterpretation',
+            testValue: 'foobar',
+            expectedErrorType: 'TypeError'
+          }
+        ];
+
+        testOptions.forEach((option) => {
+          let nodeOptions = {};
+          nodeOptions[option.testAttribute] = option.testValue;
+
+          testNode(should, context, {
+            nodeOptions: nodeOptions,
+            testAttribute: option.testAttribute,
+            expectedValue: option.testValue,
+            expectedErrorType: option.expectedErrorType
+          });
+        });
+
+        task.done();
       });
 
-      audit.defineTask("constructor with options", function (taskDone) {
-        var node;
-        var success = true;
-        var options = {
-          threshold: -33,
-          knee: 15,
-          ratio: 7,
-          attack: 0.625,
-          release: 0.125
+      audit.define('constructor with options', (task, should) => {
+        let node;
+        let options =
+            {threshold: -33, knee: 15, ratio: 7, attack: 0.625, release: 0.125};
+
+        should(
+            () => {
+              node = new DynamicsCompressorNode(context, options);
+            },
+            'node1 = new DynamicsCompressorNode(c, ' + JSON.stringify(options) +
+                ')')
+            .notThrow();
+        should(
+            node instanceof DynamicsCompressorNode,
+            'node1 instanceof DynamicsCompressorNode')
+            .beEqualTo(true);
+
+        should(node.threshold.value, 'node1.threshold.value')
+            .beEqualTo(options.threshold);
+        should(node.knee.value, 'node1.knee.value').beEqualTo(options.knee);
+        should(node.ratio.value, 'node1.ratio.value').beEqualTo(options.ratio);
+        should(node.attack.value, 'node1.attack.value')
+            .beEqualTo(options.attack);
+        should(node.release.value, 'node1.release.value')
+            .beEqualTo(options.release);
+
+        should(node.channelCount, 'node1.channelCount').beEqualTo(2);
+        should(node.channelCountMode, 'node1.channelCountMode')
+            .beEqualTo('max');
+        should(node.channelInterpretation, 'node1.channelInterpretation')
+            .beEqualTo('speakers');
+
+        task.done();
+      });
+
+      audit.run();
+
+      // Test possible options for DynamicsCompressor constructor.
+      function testNode(should, context, options) {
+        // Node to be tested
+        let node;
+
+        let createNodeFunction = () => {
+          return () => node =
+                     new DynamicsCompressorNode(context, options.nodeOptions);
         };
 
-        success = Should("node1 = new DynamicsCompressorNode(c, " + JSON.stringify(options) +
-          ")",
-          function () {
-            node = new DynamicsCompressorNode(context, options);
-          }).notThrow();
-        success = Should("node1 instanceof DynamicsCompressorNode",
-            node instanceof DynamicsCompressorNode)
-          .beEqualTo(true) && success;
+        let message = 'new DynamicsCompressorNode(c, ' +
+            JSON.stringify(options.nodeOptions) + ')';
 
-        success = Should("node1.threshold.value", node.threshold.value)
-          .beEqualTo(options.threshold) && success;
-        success = Should("node1.knee.value", node.knee.value)
-          .beEqualTo(options.knee) && success;
-        success = Should("node1.ratio.value", node.ratio.value)
-          .beEqualTo(options.ratio) && success;
-        success = Should("node1.attack.value", node.attack.value)
-          .beEqualTo(options.attack) && success;
-        success = Should("node1.release.value", node.release.value)
-          .beEqualTo(options.release) && success;
-
-        success = Should("node1.channelCount", node.channelCount)
-          .beEqualTo(2) && success;
-        success = Should("node1.channelCountMode", node.channelCountMode)
-          .beEqualTo("max") && success;
-        success = Should("node1.channelInterpretation", node.channelInterpretation)
-          .beEqualTo("speakers") && success;
-
-        success = Should("DynamicsCompressorNode(context) constructed with correct values",
-            success)
-          .beEqualTo(true);
-
-        taskDone();
-      });
-
-
-      audit.runTasks();
+        if (options.expectedErrorType) {
+          should(createNodeFunction(), message)
+              .throw(options.expectedErrorType);
+        } else {
+          should(createNodeFunction(), message).notThrow();
+          should(node[options.testAttribute], 'node.' + options.testAttribute)
+              .beEqualTo(options.expectedValue);
+        }
+      }
     </script>
   </body>
 </html>

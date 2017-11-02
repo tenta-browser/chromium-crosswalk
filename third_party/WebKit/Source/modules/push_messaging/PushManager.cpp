@@ -4,13 +4,15 @@
 
 #include "modules/push_messaging/PushManager.h"
 
+#include <memory>
+
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "modules/push_messaging/PushController.h"
 #include "modules/push_messaging/PushError.h"
 #include "modules/push_messaging/PushPermissionStatusCallbacks.h"
@@ -19,6 +21,7 @@
 #include "modules/push_messaging/PushSubscriptionOptions.h"
 #include "modules/push_messaging/PushSubscriptionOptionsInit.h"
 #include "modules/serviceworkers/ServiceWorkerRegistration.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/RefPtr.h"
 #include "public/platform/Platform.h"
@@ -40,6 +43,11 @@ WebPushProvider* PushProvider() {
 PushManager::PushManager(ServiceWorkerRegistration* registration)
     : registration_(registration) {
   DCHECK(registration);
+}
+
+// static
+Vector<String> PushManager::supportedContentEncodings() {
+  return Vector<String>({"aes128gcm", "aesgcm"});
 }
 
 ScriptPromise PushManager::subscribe(ScriptState* script_state,
@@ -71,12 +79,14 @@ ScriptPromise PushManager::subscribe(ScriptState* script_state,
                                "Document is detached from window."));
     PushController::ClientFrom(document->GetFrame())
         .Subscribe(registration_->WebRegistration(), web_options,
-                   WTF::MakeUnique<PushSubscriptionCallbacks>(resolver,
-                                                              registration_));
+                   UserGestureIndicator::ProcessingUserGestureThreadSafe(),
+                   std::make_unique<PushSubscriptionCallbacks>(resolver,
+                                                               registration_));
   } else {
     PushProvider()->Subscribe(
         registration_->WebRegistration(), web_options,
-        WTF::MakeUnique<PushSubscriptionCallbacks>(resolver, registration_));
+        UserGestureIndicator::ProcessingUserGestureThreadSafe(),
+        std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
   }
 
   return promise;
@@ -88,7 +98,7 @@ ScriptPromise PushManager::getSubscription(ScriptState* script_state) {
 
   PushProvider()->GetSubscription(
       registration_->WebRegistration(),
-      WTF::MakeUnique<PushSubscriptionCallbacks>(resolver, registration_));
+      std::make_unique<PushSubscriptionCallbacks>(resolver, registration_));
   return promise;
 }
 
@@ -111,7 +121,7 @@ ScriptPromise PushManager::permissionState(
   PushProvider()->GetPermissionStatus(
       registration_->WebRegistration(),
       PushSubscriptionOptions::ToWeb(options, exception_state),
-      WTF::MakeUnique<PushPermissionStatusCallbacks>(resolver));
+      std::make_unique<PushPermissionStatusCallbacks>(resolver));
   return promise;
 }
 

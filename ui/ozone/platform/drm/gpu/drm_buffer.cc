@@ -19,8 +19,6 @@ uint32_t GetFourCCCodeForSkColorType(SkColorType type) {
     case kUnknown_SkColorType:
     case kAlpha_8_SkColorType:
       return 0;
-    case kIndex_8_SkColorType:
-      return DRM_FORMAT_C8;
     case kRGB_565_SkColorType:
       return DRM_FORMAT_RGB565;
     case kARGB_4444_SkColorType:
@@ -57,7 +55,7 @@ bool DrmBuffer::Initialize(const SkImageInfo& info,
     return false;
   }
 
-  mmap_size_ = info.getSafeSize(stride_);
+  mmap_size_ = info.computeByteSize(stride_);
   if (!drm_->MapDumbBuffer(handle_, mmap_size_, &mmap_base_)) {
     PLOG(ERROR) << "DrmBuffer: MapDumbBuffer: handle " << handle_;
     return false;

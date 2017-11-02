@@ -5,16 +5,17 @@
 #include "media/audio/android/audio_manager_android.h"
 
 #include "base/android/build_info.h"
-#include "base/android/context_utils.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/bind.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "jni/AudioManagerAndroid_jni.h"
 #include "media/audio/android/audio_record_input.h"
+#include "media/audio/android/audio_track_output_stream.h"
 #include "media/audio/android/opensles_input.h"
 #include "media/audio/android/opensles_output.h"
 #include "media/audio/audio_device_description.h"
@@ -28,6 +29,7 @@ using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace media {
@@ -46,45 +48,43 @@ const int kDefaultOutputBufferSize = 2048;
 
 }  // namespace
 
-ScopedAudioManagerPtr CreateAudioManager(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+std::unique_ptr<AudioManager> CreateAudioManager(
+    std::unique_ptr<AudioThread> audio_thread,
     AudioLogFactory* audio_log_factory) {
-  return ScopedAudioManagerPtr(new AudioManagerAndroid(
-      std::move(task_runner), std::move(worker_task_runner),
-      audio_log_factory));
+  return base::MakeUnique<AudioManagerAndroid>(std::move(audio_thread),
+                                               audio_log_factory);
 }
 
 AudioManagerAndroid::AudioManagerAndroid(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+    std::unique_ptr<AudioThread> audio_thread,
     AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(std::move(task_runner),
-                       std::move(worker_task_runner),
-                       audio_log_factory),
+    : AudioManagerBase(std::move(audio_thread), audio_log_factory),
       communication_mode_is_on_(false),
       output_volume_override_set_(false),
       output_volume_override_(0) {
   SetMaxOutputStreamsAllowed(kMaxOutputStreams);
 }
 
-AudioManagerAndroid::~AudioManagerAndroid() {
-  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
-  Shutdown();
-
-  if (j_audio_manager_.is_null())
-    return;
-  DVLOG(2) << "Destroying Java part of the audio manager";
-  Java_AudioManagerAndroid_close(base::android::AttachCurrentThread(),
-                                 j_audio_manager_);
-  j_audio_manager_.Reset();
-}
+AudioManagerAndroid::~AudioManagerAndroid() = default;
 
 void AudioManagerAndroid::InitializeIfNeeded() {
   GetTaskRunner()->PostTask(
       FROM_HERE,
       base::Bind(base::IgnoreResult(&AudioManagerAndroid::GetJavaAudioManager),
                  base::Unretained(this)));
+}
+
+void AudioManagerAndroid::ShutdownOnAudioThread() {
+  AudioManagerBase::ShutdownOnAudioThread();
+
+  // Destory java android manager here because it can only be accessed on the
+  // audio thread.
+  if (!j_audio_manager_.is_null()) {
+    DVLOG(2) << "Destroying Java part of the audio manager";
+    Java_AudioManagerAndroid_close(base::android::AttachCurrentThread(),
+                                   j_audio_manager_);
+    j_audio_manager_.Reset();
+  }
 }
 
 bool AudioManagerAndroid::HasAudioOutputDevices() {
@@ -173,7 +173,7 @@ AudioOutputStream* AudioManagerAndroid::MakeAudioOutputStream(
   AudioOutputStream* stream = AudioManagerBase::MakeAudioOutputStream(
       params, std::string(), AudioManager::LogCallback());
   if (stream)
-    streams_.insert(static_cast<OpenSLESOutputStream*>(stream));
+    streams_.insert(static_cast<MuteableAudioOutputStream*>(stream));
   return stream;
 }
 
@@ -199,7 +199,7 @@ AudioInputStream* AudioManagerAndroid::MakeAudioInputStream(
 
 void AudioManagerAndroid::ReleaseOutputStream(AudioOutputStream* stream) {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
-  streams_.erase(static_cast<OpenSLESOutputStream*>(stream));
+  streams_.erase(static_cast<MuteableAudioOutputStream*>(stream));
   AudioManagerBase::ReleaseOutputStream(stream);
 }
 
@@ -235,6 +235,14 @@ AudioOutputStream* AudioManagerAndroid::MakeLowLatencyOutputStream(
   const SLint32 stream_type = communication_mode_is_on_ ?
       SL_ANDROID_STREAM_VOICE : SL_ANDROID_STREAM_MEDIA;
   return new OpenSLESOutputStream(this, params, stream_type);
+}
+
+AudioOutputStream* AudioManagerAndroid::MakeBitstreamOutputStream(
+    const AudioParameters& params,
+    const std::string& device_id,
+    const LogCallback& log_callback) {
+  DCHECK(params.IsBitstreamFormat());
+  return new AudioTrackOutputStream(this, params);
 }
 
 AudioInputStream* AudioManagerAndroid::MakeLinearInputStream(
@@ -277,8 +285,9 @@ AudioInputStream* AudioManagerAndroid::MakeLowLatencyInputStream(
 }
 
 // static
-bool AudioManagerAndroid::RegisterAudioManager(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+bool AudioManagerAndroid::SupportsPerformanceModeForOutput() {
+  return base::android::BuildInfo::GetInstance()->sdk_int() >=
+         base::android::SDK_VERSION_NOUGAT_MR1;
 }
 
 void AudioManagerAndroid::SetMute(JNIEnv* env,
@@ -332,8 +341,16 @@ AudioParameters AudioManagerAndroid::GetPreferredOutputStreamParameters(
       channel_layout = input_params.channel_layout();
     }
 
-    buffer_size = GetOptimalOutputFrameSize(
-        sample_rate, ChannelLayoutToChannelCount(channel_layout));
+    // For high latency playback on supported platforms, pass through the
+    // requested buffer size; this provides significant power savings (~25%) and
+    // reduces the potential for glitches under load.
+    if (SupportsPerformanceModeForOutput() &&
+        input_params.latency_tag() == AudioLatency::LATENCY_PLAYBACK) {
+      buffer_size = input_params.frames_per_buffer();
+    } else {
+      buffer_size = GetOptimalOutputFrameSize(
+          sample_rate, ChannelLayoutToChannelCount(channel_layout));
+    }
   }
 
   int user_buffer_size = GetUserBufferSize();
@@ -348,14 +365,13 @@ bool AudioManagerAndroid::HasNoAudioInputStreams() {
   return input_stream_count() == 0;
 }
 
-jobject AudioManagerAndroid::GetJavaAudioManager() {
+const JavaRef<jobject>& AudioManagerAndroid::GetJavaAudioManager() {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
   if (j_audio_manager_.is_null()) {
     // Create the Android audio manager on the audio thread.
     DVLOG(2) << "Creating Java part of the audio manager";
     j_audio_manager_.Reset(Java_AudioManagerAndroid_createAudioManagerAndroid(
         base::android::AttachCurrentThread(),
-        base::android::GetApplicationContext(),
         reinterpret_cast<intptr_t>(this)));
 
     // Prepare the list of audio devices and register receivers for device
@@ -363,7 +379,7 @@ jobject AudioManagerAndroid::GetJavaAudioManager() {
     Java_AudioManagerAndroid_init(base::android::AttachCurrentThread(),
                                   j_audio_manager_);
   }
-  return j_audio_manager_.obj();
+  return j_audio_manager_;
 }
 
 void AudioManagerAndroid::SetCommunicationAudioModeOn(bool on) {

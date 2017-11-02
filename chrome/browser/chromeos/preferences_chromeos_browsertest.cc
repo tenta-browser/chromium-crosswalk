@@ -82,6 +82,7 @@ class PreferencesTest : public LoginManagerTest {
   void SetPrefs(PrefService* prefs, bool variant) {
     prefs->SetBoolean(prefs::kTapToClickEnabled, variant);
     prefs->SetBoolean(prefs::kPrimaryMouseButtonRight, !variant);
+    prefs->SetBoolean(prefs::kMouseReverseScroll, variant);
     prefs->SetBoolean(prefs::kTapDraggingEnabled, variant);
     prefs->SetBoolean(prefs::kEnableTouchpadThreeFingerClick, !variant);
     prefs->SetBoolean(prefs::kNaturalScroll, variant);
@@ -102,6 +103,8 @@ class PreferencesTest : public LoginManagerTest {
     EXPECT_EQ(prefs->GetBoolean(prefs::kPrimaryMouseButtonRight),
               input_settings_->current_mouse_settings()
                   .GetPrimaryButtonRight());
+    EXPECT_EQ(prefs->GetBoolean(prefs::kMouseReverseScroll),
+              input_settings_->current_mouse_settings().GetReverseScroll());
     EXPECT_EQ(prefs->GetBoolean(prefs::kTapDraggingEnabled),
               input_settings_->current_touchpad_settings().GetTapDragging());
     EXPECT_EQ(prefs->GetBoolean(prefs::kEnableTouchpadThreeFingerClick),
@@ -246,23 +249,27 @@ IN_PROC_BROWSER_TEST_F(PreferencesTest, MultiProfiles) {
   // Check that changing prefs of the active user doesn't affect prefs of the
   // inactive user.
   std::unique_ptr<base::DictionaryValue> prefs_backup =
-      prefs1->GetPreferenceValues();
+      prefs1->GetPreferenceValues(PrefService::INCLUDE_DEFAULTS);
   SetPrefs(prefs2, false);
   CheckSettingsCorrespondToPrefs(prefs2);
-  EXPECT_TRUE(prefs_backup->Equals(prefs1->GetPreferenceValues().get()));
+  EXPECT_TRUE(prefs_backup->Equals(
+      prefs1->GetPreferenceValues(PrefService::INCLUDE_DEFAULTS).get()));
   SetPrefs(prefs2, true);
   CheckSettingsCorrespondToPrefs(prefs2);
-  EXPECT_TRUE(prefs_backup->Equals(prefs1->GetPreferenceValues().get()));
+  EXPECT_TRUE(prefs_backup->Equals(
+      prefs1->GetPreferenceValues(PrefService::INCLUDE_DEFAULTS).get()));
 
   // Check that changing prefs of the inactive user doesn't affect prefs of the
   // active user.
-  prefs_backup = prefs2->GetPreferenceValues();
+  prefs_backup = prefs2->GetPreferenceValues(PrefService::INCLUDE_DEFAULTS);
   SetPrefs(prefs1, true);
   CheckSettingsCorrespondToPrefs(prefs2);
-  EXPECT_TRUE(prefs_backup->Equals(prefs2->GetPreferenceValues().get()));
+  EXPECT_TRUE(prefs_backup->Equals(
+      prefs2->GetPreferenceValues(PrefService::INCLUDE_DEFAULTS).get()));
   SetPrefs(prefs1, false);
   CheckSettingsCorrespondToPrefs(prefs2);
-  EXPECT_TRUE(prefs_backup->Equals(prefs2->GetPreferenceValues().get()));
+  EXPECT_TRUE(prefs_backup->Equals(
+      prefs2->GetPreferenceValues(PrefService::INCLUDE_DEFAULTS).get()));
 
   // Check that changing non-owner prefs doesn't change corresponding local
   // state prefs and vice versa.

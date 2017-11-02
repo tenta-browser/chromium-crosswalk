@@ -38,7 +38,8 @@ import org.chromium.chrome.browser.DisableHistogramsRule;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.superviseduser.SupervisedUserContentProvider.SupervisedUserQueryReply;
 import org.chromium.components.signin.AccountManagerDelegate;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerDelegateException;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.webrestrictions.browser.WebRestrictionsContentProvider.WebRestrictionsResult;
 import org.chromium.testing.local.LocalRobolectricTestRunner;
@@ -214,15 +215,15 @@ public class SupervisedUserContentProviderUnitTest {
 
     @SuppressWarnings("unchecked")
     @Test
-    public void testShouldProceed_notSignedIn() throws ProcessInitException {
+    public void testShouldProceed_notSignedIn()
+            throws ProcessInitException, AccountManagerDelegateException {
         // Mock things called during startup
         ChromeBrowserInitializer mockBrowserInitializer = mock(ChromeBrowserInitializer.class);
         ChromeBrowserInitializer.setForTesting(mockBrowserInitializer);
         AccountManagerDelegate mockDelegate = mock(AccountManagerDelegate.class);
-        AccountManagerHelper.overrideAccountManagerHelperForTests(
-                RuntimeEnvironment.application, mockDelegate);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(mockDelegate);
         Account account = new Account("Google", "Dummy");
-        when(mockDelegate.getAccountsByType("Google")).thenReturn(new Account[] {account});
+        when(mockDelegate.getAccountsSync()).thenReturn(new Account[] {account});
 
         WebRestrictionsResult result =
                 mSupervisedUserContentProvider.shouldProceed(DEFAULT_CALLING_PACKAGE, "url");
@@ -237,18 +238,19 @@ public class SupervisedUserContentProviderUnitTest {
                 .nativeShouldProceed(eq(5678L),
                         any(SupervisedUserContentProvider.SupervisedUserQueryReply.class),
                         eq("url"));
+
+        AccountManagerFacade.resetAccountManagerFacadeForTests();
     }
 
     @Test
-    public void testShouldProceed_cannotSignIn() {
+    public void testShouldProceed_cannotSignIn() throws AccountManagerDelegateException {
         // Mock things called during startup
         ChromeBrowserInitializer mockBrowserInitializer = mock(ChromeBrowserInitializer.class);
         ChromeBrowserInitializer.setForTesting(mockBrowserInitializer);
         AccountManagerDelegate mockDelegate = mock(AccountManagerDelegate.class);
-        AccountManagerHelper.overrideAccountManagerHelperForTests(
-                RuntimeEnvironment.application, mockDelegate);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(mockDelegate);
         Account account = new Account("Google", "Dummy");
-        when(mockDelegate.getAccountsByType("Google")).thenReturn(new Account[] {account});
+        when(mockDelegate.getAccountsSync()).thenReturn(new Account[] {account});
 
         // Change the behavior of the forced sign-in processor to not sign in.
         doAnswer(new Answer<Void>() {
@@ -266,6 +268,8 @@ public class SupervisedUserContentProviderUnitTest {
 
         assertThat(result.shouldProceed(), is(false));
         assertThat(result.getErrorInt(0), is(5));
+
+        AccountManagerFacade.resetAccountManagerFacadeForTests();
     }
 
     @Test

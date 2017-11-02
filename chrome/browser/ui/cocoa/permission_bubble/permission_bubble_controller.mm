@@ -16,13 +16,15 @@
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_utils.h"
+#import "chrome/browser/ui/cocoa/bubble_anchor_helper.h"
 #import "chrome/browser/ui/cocoa/chrome_style.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_button.h"
 #import "chrome/browser/ui/cocoa/hover_close_button.h"
 #import "chrome/browser/ui/cocoa/info_bubble_view.h"
 #import "chrome/browser/ui/cocoa/info_bubble_window.h"
-#import "chrome/browser/ui/cocoa/location_bar/location_bar_decoration.h"
+#import "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#import "chrome/browser/ui/cocoa/location_bar/page_info_bubble_decoration.h"
 #include "chrome/browser/ui/cocoa/page_info/page_info_utils_cocoa.h"
 #include "chrome/browser/ui/cocoa/page_info/permission_selector_button.h"
 #include "chrome/browser/ui/cocoa/page_info/split_block_button.h"
@@ -30,7 +32,6 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
-#include "chrome/browser/ui/page_info/permission_menu_model.h"
 #include "chrome/browser/ui/permission_bubble/permission_prompt.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
@@ -42,10 +43,9 @@
 #include "ui/base/cocoa/a11y_util.h"
 #include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/base/cocoa/controls/hyperlink_text_view.h"
-#import "ui/base/cocoa/menu_controller.h"
+#import "ui/base/cocoa/controls/textfield_utils.h"
 #include "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util_mac.h"
-#include "ui/base/models/simple_menu_model.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 #include "ui/gfx/paint_vector_icon.h"
@@ -69,78 +69,7 @@ const CGFloat kTitlePaddingX = 50.0f;
 const CGFloat kBubbleMinWidth = 315.0f;
 const NSSize kPermissionIconSize = {18, 18};
 
-const NSInteger kFullscreenLeftOffset = 40;
-
 }  // namespace
-
-// NSPopUpButton with a menu containing two items: allow and block.
-// One AllowBlockMenuButton is used for each requested permission when there are
-// multiple permissions in the bubble.
-@interface AllowBlockMenuButton : NSPopUpButton {
- @private
-  std::unique_ptr<PermissionMenuModel> menuModel_;
-  base::scoped_nsobject<MenuController> menuController_;
-}
-
-- (id)initForURL:(const GURL&)url
-         allowed:(BOOL)allow
-           index:(int)index
-        delegate:(PermissionPrompt::Delegate*)delegate
-         profile:(Profile*)profile;
-
-// Returns the maximum width of its possible titles.
-- (CGFloat)maximumTitleWidth;
-@end
-
-@implementation AllowBlockMenuButton
-
-- (id)initForURL:(const GURL&)url
-         allowed:(BOOL)allow
-           index:(int)index
-        delegate:(PermissionPrompt::Delegate*)delegate
-         profile:(Profile*)profile {
-  if (self = [super initWithFrame:NSZeroRect pullsDown:NO]) {
-    ContentSetting setting =
-        allow ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK;
-    [self setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
-    [self setBordered:NO];
-
-    __block PermissionPrompt::Delegate* blockDelegate = delegate;
-    __block AllowBlockMenuButton* blockSelf = self;
-    PermissionMenuModel::ChangeCallback changeCallback =
-        base::BindBlock(^(const PageInfoUI::PermissionInfo& permission) {
-          blockDelegate->ToggleAccept(
-              index, permission.setting == CONTENT_SETTING_ALLOW);
-          [blockSelf setFrameSize:SizeForPageInfoButtonTitle(
-                                      blockSelf, [blockSelf title])];
-        });
-
-    menuModel_.reset(
-        new PermissionMenuModel(profile, url, setting, changeCallback));
-    menuController_.reset([[MenuController alloc] initWithModel:menuModel_.get()
-                                         useWithPopUpButtonCell:NO]);
-    [self setMenu:[menuController_ menu]];
-    [self selectItemAtIndex:menuModel_->GetIndexOfCommandId(setting)];
-    // Although the frame is reset, below, this sizes the cell properly.
-    [self sizeToFit];
-    // Adjust the size to fit the current title.  Using only -sizeToFit leaves
-    // an ugly amount of whitespace between the title and the arrows because it
-    // will fit to the largest element in the menu, not just the selected item.
-    [self setFrameSize:SizeForPageInfoButtonTitle(self, [self title])];
-  }
-  return self;
-}
-
-- (CGFloat)maximumTitleWidth {
-  CGFloat maxTitleWidth = 0;
-  for (NSMenuItem* item in [self itemArray]) {
-    NSSize size = SizeForPageInfoButtonTitle(self, [item title]);
-    maxTitleWidth = std::max(maxTitleWidth, size.width);
-  }
-  return maxTitleWidth;
-}
-
-@end
 
 @interface PermissionBubbleController ()
 
@@ -156,12 +85,6 @@ const NSInteger kFullscreenLeftOffset = 40;
 // Returns an autoreleased NSView displaying the title for the bubble
 // requesting settings for |host|.
 - (NSView*)titleWithOrigin:(const GURL&)origin;
-
-// Returns an autoreleased NSView displaying a menu for |request|.  The
-// menu will be initialized as 'allow' if |allow| is YES.
-- (NSView*)menuForRequest:(PermissionRequest*)request
-                  atIndex:(int)index
-                    allow:(BOOL)allow;
 
 // Returns an autoreleased NSView of a button with |title| and |action|.
 - (NSView*)buttonWithTitle:(NSString*)title
@@ -184,10 +107,6 @@ const NSInteger kFullscreenLeftOffset = 40;
 
 // Called when the 'close' button is pressed.
 - (void)onClose:(id)sender;
-
-// Returns the constant offset from the left to use for fullscreen permission
-// bubbles. Only used in tests.
-+ (NSInteger)getFullscreenLeftOffset;
 
 // Sets the width of both |viewA| and |viewB| to be the larger of the
 // two views' widths.  Does not change either view's origin or height.
@@ -220,6 +139,9 @@ const NSInteger kFullscreenLeftOffset = 40;
                        parentWindow:[self getExpectedParentWindow]
                          anchoredAt:NSZeroPoint])) {
     [self setShouldCloseOnResignKey:NO];
+    // The permission bubble should never force a window to activate, but if the
+    // window is already active, it should be made key.
+    [self setShouldActivateOnOpen:NO];
     [self setShouldOpenAsKeyWindow:YES];
     [[self bubble] setArrowLocation:[self getExpectedArrowLocation]];
     bridge_ = bridge;
@@ -233,43 +155,13 @@ const NSInteger kFullscreenLeftOffset = 40;
 }
 
 + (NSPoint)getAnchorPointForBrowser:(Browser*)browser {
-  NSPoint anchor;
-  NSWindow* parentWindow = browser->window()->GetNativeWindow();
-  if ([PermissionBubbleController hasVisibleLocationBarForBrowser:browser]) {
-    LocationBarViewMac* location_bar =
-        [[parentWindow windowController] locationBarBridge];
-    anchor = location_bar->GetPageInfoBubblePoint();
-  } else {
-    // Position the bubble on the left of the screen if there is no page info
-    // button to point at.
-    NSRect contentFrame = [[parentWindow contentView] frame];
-    anchor = NSMakePoint(NSMinX(contentFrame) + kFullscreenLeftOffset,
-                         NSMaxY(contentFrame));
-  }
-
-  return ui::ConvertPointFromWindowToScreen(parentWindow, anchor);
+  return GetPageInfoAnchorPointForBrowser(
+      browser,
+      [PermissionBubbleController hasVisibleLocationBarForBrowser:browser]);
 }
 
 + (bool)hasVisibleLocationBarForBrowser:(Browser*)browser {
-  if (!browser->SupportsWindowFeature(Browser::FEATURE_LOCATIONBAR))
-    return false;
-
-  if (!browser->exclusive_access_manager()->context()->IsFullscreen())
-    return true;
-
-  // If the browser is in browser-initiated full screen, a preference can cause
-  // the toolbar to be hidden.
-  if (browser->exclusive_access_manager()
-          ->fullscreen_controller()
-          ->IsFullscreenForBrowser()) {
-    PrefService* prefs = browser->profile()->GetPrefs();
-    bool show_toolbar = prefs->GetBoolean(prefs::kShowFullscreenToolbar);
-    return show_toolbar;
-  }
-
-  // Otherwise this is fullscreen without a toolbar, so there is no visible
-  // location bar.
-  return false;
+  return HasVisibleLocationBarForBrowser(browser);
 }
 
 - (void)windowWillClose:(NSNotification*)notification {
@@ -285,7 +177,7 @@ const NSInteger kFullscreenLeftOffset = 40;
   LocationBarViewMac* bridge =
       [[self.parentWindow windowController] locationBarBridge];
   if ([self hasVisibleLocationBar] && bridge) {
-    decoration_ = bridge->GetPageInfoDecoration();
+    decoration_ = bridge->page_info_decoration();
     decoration_->SetActive(true);
   }
 
@@ -316,34 +208,21 @@ const NSInteger kFullscreenLeftOffset = 40;
   [self setAnchorPoint:[self getExpectedAnchorPoint]];
 }
 
-- (void)showWithDelegate:(PermissionPrompt::Delegate*)delegate
-             forRequests:(const std::vector<PermissionRequest*>&)requests
-            acceptStates:(const std::vector<bool>&)acceptStates {
-  DCHECK(!requests.empty());
+- (void)showWithDelegate:(PermissionPrompt::Delegate*)delegate {
   DCHECK(delegate);
   delegate_ = delegate;
+
+  const std::vector<PermissionRequest*>& requests = delegate->Requests();
+  DCHECK(!requests.empty());
 
   NSView* contentView = [[self window] contentView];
   [contentView setSubviews:@[]];
 
-  BOOL singlePermission = requests.size() == 1;
-
   // Create one button to use as a guide for the permissions' y-offsets.
-  base::scoped_nsobject<NSView> allowOrOkButton;
-  if (singlePermission) {
-    NSString* allowTitle = l10n_util::GetNSString(IDS_PERMISSION_ALLOW);
-    allowOrOkButton.reset([[self buttonWithTitle:allowTitle
-                                          action:@selector(onAllow:)] retain]);
-  } else {
-    NSString* okTitle = l10n_util::GetNSString(IDS_OK);
-    allowOrOkButton.reset([[self buttonWithTitle:okTitle
-                                          action:@selector(ok:)] retain]);
-  }
-  CGFloat yOffset = 2 * kVerticalPadding + NSMaxY([allowOrOkButton frame]);
-
-  base::scoped_nsobject<NSMutableArray> permissionMenus;
-  if (!singlePermission)
-    permissionMenus.reset([[NSMutableArray alloc] init]);
+  NSString* allowTitle = l10n_util::GetNSString(IDS_PERMISSION_ALLOW);
+  base::scoped_nsobject<NSView> allowButton(
+      [[self buttonWithTitle:allowTitle action:@selector(onAllow:)] retain]);
+  CGFloat yOffset = 2 * kVerticalPadding + NSMaxY([allowButton frame]);
 
   CGFloat maxPermissionLineWidth = 0;
   CGFloat verticalPadding = 0.0f;
@@ -356,19 +235,6 @@ const NSInteger kFullscreenLeftOffset = 40;
     [permissionView setFrameOrigin:origin];
     [contentView addSubview:permissionView];
 
-    if (!singlePermission) {
-      int index = it - requests.begin();
-      base::scoped_nsobject<NSView> menu(
-          [[self menuForRequest:(*it)
-                        atIndex:index
-                          allow:acceptStates[index] ? YES : NO] retain]);
-      // Align vertically.  Horizontal alignment will be adjusted once the
-      // widest permission is know.
-      [PermissionBubbleController alignCenterOf:menu
-                           verticallyToCenterOf:permissionView];
-      [permissionMenus addObject:menu];
-      [contentView addSubview:menu];
-    }
     maxPermissionLineWidth = std::max(
         maxPermissionLineWidth, NSMaxX([permissionView frame]));
     yOffset += NSHeight([permissionView frame]);
@@ -387,33 +253,24 @@ const NSInteger kFullscreenLeftOffset = 40;
   base::scoped_nsobject<NSView> closeButton([[self closeButton] retain]);
 
   // Determine the dimensions of the bubble.
-  // Once the height and width are set, the buttons and permission menus can
-  // be laid out correctly.
+  // Once the height and width are set, the buttons can be laid out correctly.
   NSRect bubbleFrame = NSMakeRect(0, 0, kBubbleMinWidth, 0);
 
   // Fix the height of the bubble relative to the title.
   bubbleFrame.size.height = NSMaxY([titleView frame]) + kVerticalPadding +
                             info_bubble::kBubbleArrowHeight;
 
-  if (!singlePermission) {
-    // Add the maximum menu width to the bubble width.
-    CGFloat maxMenuWidth = 0;
-    for (AllowBlockMenuButton* button in permissionMenus.get()) {
-      maxMenuWidth = std::max(maxMenuWidth, [button maximumTitleWidth]);
-    }
-    maxPermissionLineWidth += maxMenuWidth;
-  }
-
   // The title and 'x' button row must fit within the bubble.
   CGFloat titleRowWidth = NSMaxX([titleView frame]) +
                           NSWidth([closeButton frame]) +
                           chrome_style::kCloseButtonPadding;
 
-  bubbleFrame.size.width = std::max(
-      NSWidth(bubbleFrame), std::max(titleRowWidth, maxPermissionLineWidth));
+  bubbleFrame.size.width =
+      std::max(NSWidth(bubbleFrame),
+               std::max(titleRowWidth, maxPermissionLineWidth)) +
+      kHorizontalPadding;
 
-  // Now that the bubble's dimensions have been set, lay out the buttons and
-  // menus.
+  // Now that the bubble's dimensions have been set, lay out the buttons.
 
   // Place the close button at the upper-right-hand corner of the bubble.
   NSPoint closeButtonOrigin =
@@ -428,32 +285,22 @@ const NSInteger kFullscreenLeftOffset = 40;
   [contentView addSubview:closeButton];
 
   // Position the allow/ok button.
-  CGFloat xOrigin = NSWidth(bubbleFrame) - NSWidth([allowOrOkButton frame]) -
+  CGFloat xOrigin = NSWidth(bubbleFrame) - NSWidth([allowButton frame]) -
                     kButtonRightEdgePadding;
-  [allowOrOkButton setFrameOrigin:NSMakePoint(xOrigin, kVerticalPadding)];
-  [contentView addSubview:allowOrOkButton];
+  [allowButton setFrameOrigin:NSMakePoint(xOrigin, kVerticalPadding)];
+  [contentView addSubview:allowButton];
 
-  if (singlePermission) {
-    base::scoped_nsobject<NSView> blockButton;
-    blockButton.reset([[self blockButton] retain]);
-    CGFloat width = [PermissionBubbleController matchWidthsOf:blockButton
-                                                        andOf:allowOrOkButton];
-    // Ensure the allow/ok button is still in the correct position.
-    xOrigin = NSWidth(bubbleFrame) - width - kHorizontalPadding;
-    [allowOrOkButton setFrameOrigin:NSMakePoint(xOrigin, kVerticalPadding)];
-    // Line up the block button.
-    xOrigin = NSMinX([allowOrOkButton frame]) - width - kBetweenButtonsPadding;
-    [blockButton setFrameOrigin:NSMakePoint(xOrigin, kVerticalPadding)];
-    [contentView addSubview:blockButton];
-  } else {
-    // Adjust the horizontal origin for each menu so that its right edge
-    // lines up with the right edge of the ok button.
-    CGFloat rightEdge = NSMaxX([allowOrOkButton frame]);
-    for (NSView* view in permissionMenus.get()) {
-      [view setFrameOrigin:NSMakePoint(rightEdge - NSWidth([view frame]),
-                                       NSMinY([view frame]))];
-    }
-  }
+  base::scoped_nsobject<NSView> blockButton;
+  blockButton.reset([[self blockButton] retain]);
+  CGFloat width =
+      [PermissionBubbleController matchWidthsOf:blockButton andOf:allowButton];
+  // Ensure the allow/ok button is still in the correct position.
+  xOrigin = NSWidth(bubbleFrame) - width - kHorizontalPadding;
+  [allowButton setFrameOrigin:NSMakePoint(xOrigin, kVerticalPadding)];
+  // Line up the block button.
+  xOrigin = NSMinX([allowButton frame]) - width - kBetweenButtonsPadding;
+  [blockButton setFrameOrigin:NSMakePoint(xOrigin, kVerticalPadding)];
+  [contentView addSubview:blockButton];
 
   bubbleFrame = [[self window] frameRectForContentRect:bubbleFrame];
   if ([[self window] isVisible]) {
@@ -471,8 +318,9 @@ const NSInteger kFullscreenLeftOffset = 40;
     [self setAnchorPoint:[self getExpectedAnchorPoint]];
     [self showWindow:nil];
     [[self window] makeFirstResponder:nil];
-    [[self window] setInitialFirstResponder:allowOrOkButton.get()];
+    [[self window] setInitialFirstResponder:allowButton.get()];
   }
+  cocoa_l10n_util::FlipAllSubviewsIfNecessary(contentView);
 }
 
 - (void)updateAnchorPosition {
@@ -542,42 +390,23 @@ const NSInteger kFullscreenLeftOffset = 40;
   [permissionLabel setFrame:labelFrame];
   [permissionIcon setFrame:iconFrame];
   [permissionView setFrame:unionFrame];
+  cocoa_l10n_util::FlipAllSubviewsIfNecessary(permissionView);
 
   return permissionView.autorelease();
 }
 
 - (NSView*)titleWithOrigin:(const GURL&)origin {
-  base::scoped_nsobject<NSTextField> titleView(
-      [[NSTextField alloc] initWithFrame:NSZeroRect]);
-  [titleView setDrawsBackground:NO];
-  [titleView setBezeled:NO];
-  [titleView setEditable:NO];
-  [titleView setSelectable:NO];
-  [titleView setStringValue:l10n_util::GetNSStringF(
-                                IDS_PERMISSIONS_BUBBLE_PROMPT,
-                                url_formatter::FormatUrlForSecurityDisplay(
-                                    origin, url_formatter::SchemeDisplay::
-                                                OMIT_CRYPTOGRAPHIC))];
-  [titleView setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+  NSTextField* titleView = [TextFieldUtils
+      labelWithString:
+          l10n_util::GetNSStringF(
+              IDS_PERMISSIONS_BUBBLE_PROMPT,
+              url_formatter::FormatUrlForSecurityDisplay(
+                  origin, url_formatter::SchemeDisplay::OMIT_CRYPTOGRAPHIC))];
   [titleView sizeToFit];
   NSRect titleFrame = [titleView frame];
   [titleView setFrameSize:NSMakeSize(NSWidth(titleFrame) + kTitlePaddingX,
                                      NSHeight(titleFrame))];
-  return titleView.autorelease();
-}
-
-- (NSView*)menuForRequest:(PermissionRequest*)request
-                  atIndex:(int)index
-                    allow:(BOOL)allow {
-  DCHECK(request);
-  DCHECK(delegate_);
-  base::scoped_nsobject<AllowBlockMenuButton> button(
-      [[AllowBlockMenuButton alloc] initForURL:request->GetOrigin()
-                                       allowed:allow
-                                         index:index
-                                      delegate:delegate_
-                                       profile:browser_->profile()]);
-  return button.autorelease();
+  return titleView;
 }
 
 - (NSView*)buttonWithTitle:(NSString*)title
@@ -626,10 +455,6 @@ const NSInteger kFullscreenLeftOffset = 40;
 - (void)onClose:(id)sender {
   if (delegate_)
     delegate_->Closing();
-}
-
-+ (NSInteger)getFullscreenLeftOffset {
-  return kFullscreenLeftOffset;
 }
 
 - (void)activateTabWithContents:(content::WebContents*)newContents

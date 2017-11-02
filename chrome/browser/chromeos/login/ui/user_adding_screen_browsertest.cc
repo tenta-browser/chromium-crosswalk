@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker_tester.h"
@@ -27,9 +28,8 @@ using namespace testing;
 
 namespace {
 
-const char* const kTestUsers[] = {"test-user1@gmail.com",
-                                  "test-user2@gmail.com",
-                                  "test-user3@gmail.com"};
+const char* const kTestUsers[] = {
+    "test-user1@gmail.com", "test-user2@gmail.com", "test-user3@gmail.com"};
 
 }  // anonymous namespace
 
@@ -71,16 +71,14 @@ class UserAddingScreenTest : public LoginManagerTest,
   void CheckScreenIsVisible() {
     views::View* web_view =
         LoginDisplayHost::default_host()->GetWebUILoginView()->child_at(0);
-    for (views::View* current_view = web_view;
-         current_view;
+    for (views::View* current_view = web_view; current_view;
          current_view = current_view->parent()) {
       EXPECT_TRUE(current_view->visible());
       if (current_view->layer())
         EXPECT_EQ(current_view->layer()->GetCombinedOpacity(), 1.f);
     }
     for (aura::Window* window = web_view->GetWidget()->GetNativeWindow();
-         window;
-         window = window->parent()) {
+         window; window = window->parent()) {
       EXPECT_TRUE(window->IsVisible());
       EXPECT_EQ(window->layer()->GetCombinedOpacity(), 1.f);
     }

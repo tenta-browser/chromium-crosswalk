@@ -8,8 +8,6 @@
 #include "ash/sticky_keys/sticky_keys_controller.h"
 #include "ash/sticky_keys/sticky_keys_overlay.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
@@ -29,6 +27,7 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/ime/chromeos/fake_ime_keyboard.h"
 #include "ui/chromeos/events/event_rewriter_chromeos.h"
+#include "ui/chromeos/events/modifier_key.h"
 #include "ui/chromeos/events/pref_names.h"
 #include "ui/events/event.h"
 #include "ui/events/event_rewriter.h"
@@ -38,23 +37,11 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/test/events_test_utils.h"
 #include "ui/events/test/test_event_processor.h"
-
-#if defined(USE_X11)
-#include <X11/keysym.h>
-
-#include "ui/events/devices/x11/touch_factory_x11.h"
-#include "ui/events/event_utils.h"
-#include "ui/events/test/events_test_utils_x11.h"
-#include "ui/gfx/x/x11_types.h"
-#endif
+#include "ui/wm/core/window_util.h"
 
 namespace {
 
-// The device id of the test touchpad device.
-#if defined(USE_X11)
-const int kTouchPadDeviceId = 1;
-#endif
-const int kKeyboardDeviceId = 2;
+constexpr int kKeyboardDeviceId = 123;
 
 std::string GetExpectedResultAsString(ui::EventType ui_type,
                                       ui::KeyboardCode ui_keycode,
@@ -80,8 +67,9 @@ std::string GetRewrittenEventAsString(
     ui::DomCode code,
     int ui_flags,  // ui::EventFlags
     ui::DomKey key) {
-  const ui::KeyEvent event(ui_type, ui_keycode, code, ui_flags, key,
-                           ui::EventTimeForNow());
+  ui::KeyEvent event(ui_type, ui_keycode, code, ui_flags, key,
+                     ui::EventTimeForNow());
+  event.set_source_device_id(kKeyboardDeviceId);
   std::unique_ptr<ui::Event> new_event;
   rewriter->RewriteEvent(event, &new_event);
   if (new_event)
@@ -121,7 +109,7 @@ void CheckKeyTestCase(
 
 namespace chromeos {
 
-class EventRewriterTest : public ash::test::AshTestBase {
+class EventRewriterTest : public ash::AshTestBase {
  public:
   EventRewriterTest()
       : fake_user_manager_(new chromeos::FakeChromeUserManager),
@@ -263,7 +251,7 @@ TEST_F(EventRewriterTest, TestRewriteCommandToControlWithControlRemapped) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapControlKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kAltKey);
+  control.SetValue(ui::chromeos::ModifierKey::kAltKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
   rewriter_->set_last_keyboard_device_id_for_testing(kKeyboardDeviceId);
@@ -643,13 +631,13 @@ TEST_F(EventRewriterTest, TestRewriteModifiersDisableSome) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember search;
   search.Init(prefs::kLanguageRemapSearchKeyTo, prefs());
-  search.SetValue(chromeos::input_method::kVoidKey);
+  search.SetValue(ui::chromeos::ModifierKey::kVoidKey);
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapControlKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kVoidKey);
+  control.SetValue(ui::chromeos::ModifierKey::kVoidKey);
   IntegerPrefMember escape;
   escape.Init(prefs::kLanguageRemapEscapeKeyTo, prefs());
-  escape.SetValue(chromeos::input_method::kVoidKey);
+  escape.SetValue(ui::chromeos::ModifierKey::kVoidKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -712,7 +700,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersDisableSome) {
   // Remap Alt to Control.
   IntegerPrefMember alt;
   alt.Init(prefs::kLanguageRemapAltKeyTo, prefs());
-  alt.SetValue(chromeos::input_method::kControlKey);
+  alt.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   KeyTestCase tests[] = {
       // Press left Alt. Confirm the event is now VKEY_CONTROL
@@ -740,7 +728,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapToControl) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember search;
   search.Init(prefs::kLanguageRemapSearchKeyTo, prefs());
-  search.SetValue(chromeos::input_method::kControlKey);
+  search.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -759,7 +747,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapToControl) {
   // Remap Alt to Control too.
   IntegerPrefMember alt;
   alt.Init(prefs::kLanguageRemapAltKeyTo, prefs());
-  alt.SetValue(chromeos::input_method::kControlKey);
+  alt.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   KeyTestCase sa_tests[] = {
       // Press Alt. Confirm the event is now VKEY_CONTROL.
@@ -813,7 +801,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapToEscape) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember search;
   search.Init(prefs::kLanguageRemapSearchKeyTo, prefs());
-  search.SetValue(chromeos::input_method::kEscapeKey);
+  search.SetValue(ui::chromeos::ModifierKey::kEscapeKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -834,7 +822,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapMany) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember escape;
   escape.Init(prefs::kLanguageRemapEscapeKeyTo, prefs());
-  escape.SetValue(chromeos::input_method::kAltKey);
+  escape.SetValue(ui::chromeos::ModifierKey::kAltKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -856,7 +844,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapMany) {
   // Remap Alt to Control.
   IntegerPrefMember alt;
   alt.Init(prefs::kLanguageRemapAltKeyTo, prefs());
-  alt.SetValue(chromeos::input_method::kControlKey);
+  alt.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   KeyTestCase a2c_tests[] = {
       // Press left Alt. Confirm the event is now VKEY_CONTROL.
@@ -886,7 +874,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapMany) {
   // Remap Control to Search.
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapControlKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kSearchKey);
+  control.SetValue(ui::chromeos::ModifierKey::kSearchKey);
 
   KeyTestCase c2s_tests[] = {
       // Press left Control. Confirm the event is now VKEY_LWIN.
@@ -931,7 +919,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapMany) {
   // Remap Search to Backspace.
   IntegerPrefMember search;
   search.Init(prefs::kLanguageRemapSearchKeyTo, prefs());
-  search.SetValue(chromeos::input_method::kBackspaceKey);
+  search.SetValue(ui::chromeos::ModifierKey::kBackspaceKey);
 
   KeyTestCase s2b_tests[] = {
       // Release Control and Escape, as Search and Alt would transform Backspace
@@ -958,7 +946,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapMany) {
   // Remap Backspace to Escape.
   IntegerPrefMember backspace;
   backspace.Init(prefs::kLanguageRemapBackspaceKeyTo, prefs());
-  backspace.SetValue(chromeos::input_method::kEscapeKey);
+  backspace.SetValue(ui::chromeos::ModifierKey::kEscapeKey);
 
   KeyTestCase b2e_tests[] = {
       // Press Backspace. Confirm the event is now VKEY_ESCAPE.
@@ -977,7 +965,7 @@ TEST_F(EventRewriterTest, TestRewriteModifiersRemapToCapsLock) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember search;
   search.Init(prefs::kLanguageRemapSearchKeyTo, prefs());
-  search.SetValue(chromeos::input_method::kCapsLockKey);
+  search.SetValue(ui::chromeos::ModifierKey::kCapsLockKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -1124,7 +1112,7 @@ TEST_F(EventRewriterTest, TestRewriteDiamondKeyWithFlag) {
 
   IntegerPrefMember diamond;
   diamond.Init(prefs::kLanguageRemapDiamondKeyTo, prefs());
-  diamond.SetValue(chromeos::input_method::kVoidKey);
+  diamond.SetValue(ui::chromeos::ModifierKey::kVoidKey);
 
   EXPECT_EQ(GetExpectedResultAsString(ui::ET_KEY_PRESSED, ui::VKEY_UNKNOWN,
                                       ui::DomCode::NONE, ui::EF_NONE,
@@ -1140,7 +1128,7 @@ TEST_F(EventRewriterTest, TestRewriteDiamondKeyWithFlag) {
                                       ui::DomCode::US_A, ui::EF_NONE,
                                       ui::DomKey::Constant<'a'>::Character));
 
-  diamond.SetValue(chromeos::input_method::kControlKey);
+  diamond.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   EXPECT_EQ(GetExpectedResultAsString(ui::ET_KEY_PRESSED, ui::VKEY_CONTROL,
                                       ui::DomCode::CONTROL_LEFT,
@@ -1170,7 +1158,7 @@ TEST_F(EventRewriterTest, TestRewriteDiamondKeyWithFlag) {
                                       ui::DomCode::US_A, ui::EF_NONE,
                                       ui::DomKey::Constant<'a'>::Character));
 
-  diamond.SetValue(chromeos::input_method::kAltKey);
+  diamond.SetValue(ui::chromeos::ModifierKey::kAltKey);
 
   EXPECT_EQ(GetExpectedResultAsString(ui::ET_KEY_PRESSED, ui::VKEY_MENU,
                                       ui::DomCode::ALT_LEFT, ui::EF_ALT_DOWN,
@@ -1200,7 +1188,7 @@ TEST_F(EventRewriterTest, TestRewriteDiamondKeyWithFlag) {
                                       ui::DomCode::US_A, ui::EF_NONE,
                                       ui::DomKey::Constant<'a'>::Character));
 
-  diamond.SetValue(chromeos::input_method::kCapsLockKey);
+  diamond.SetValue(ui::chromeos::ModifierKey::kCapsLockKey);
 
   EXPECT_EQ(GetExpectedResultAsString(
                 ui::ET_KEY_PRESSED, ui::VKEY_CAPITAL, ui::DomCode::CAPS_LOCK,
@@ -1239,7 +1227,7 @@ TEST_F(EventRewriterTest, TestRewriteCapsLockToControl) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapCapsLockKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kControlKey);
+  control.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -1278,7 +1266,7 @@ TEST_F(EventRewriterTest, TestRewriteCapsLockMod3InUse) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapCapsLockKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kControlKey);
+  control.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
   input_method_manager_mock_->set_mod3_used(true);
@@ -1748,12 +1736,174 @@ TEST_F(EventRewriterTest, TestRewriteFunctionKeys) {
     CheckKeyTestCase(rewriter_, test);
 }
 
+TEST_F(EventRewriterTest, TestRewriteFunctionKeysLayout2) {
+  chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
+  rewriter_->KeyboardDeviceAddedForTesting(
+      kKeyboardDeviceId, "PC Keyboard",
+      ui::EventRewriterChromeOS::kKbdTopRowLayout2);
+
+  KeyTestCase tests[] = {
+      // F1 -> Back
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F1, ui::DomCode::F1, ui::EF_NONE, ui::DomKey::F1},
+       {ui::VKEY_BROWSER_BACK, ui::DomCode::BROWSER_BACK, ui::EF_NONE,
+        ui::DomKey::BROWSER_BACK}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F1, ui::DomCode::F1, ui::EF_CONTROL_DOWN, ui::DomKey::F1},
+       {ui::VKEY_BROWSER_BACK, ui::DomCode::BROWSER_BACK, ui::EF_CONTROL_DOWN,
+        ui::DomKey::BROWSER_BACK}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F1, ui::DomCode::F1, ui::EF_ALT_DOWN, ui::DomKey::F1},
+       {ui::VKEY_BROWSER_BACK, ui::DomCode::BROWSER_BACK, ui::EF_ALT_DOWN,
+        ui::DomKey::BROWSER_BACK}},
+      // F2 -> Refresh
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F2, ui::DomCode::F2, ui::EF_NONE, ui::DomKey::F2},
+       {ui::VKEY_BROWSER_REFRESH, ui::DomCode::BROWSER_REFRESH, ui::EF_NONE,
+        ui::DomKey::BROWSER_REFRESH}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F2, ui::DomCode::F2, ui::EF_CONTROL_DOWN, ui::DomKey::F2},
+       {ui::VKEY_BROWSER_REFRESH, ui::DomCode::BROWSER_REFRESH,
+        ui::EF_CONTROL_DOWN, ui::DomKey::BROWSER_REFRESH}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F2, ui::DomCode::F2, ui::EF_ALT_DOWN, ui::DomKey::F2},
+       {ui::VKEY_BROWSER_REFRESH, ui::DomCode::BROWSER_REFRESH, ui::EF_ALT_DOWN,
+        ui::DomKey::BROWSER_REFRESH}},
+      // F3 -> Launch App 2
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F3, ui::DomCode::F3, ui::EF_NONE, ui::DomKey::F3},
+       {ui::VKEY_MEDIA_LAUNCH_APP2, ui::DomCode::ZOOM_TOGGLE, ui::EF_NONE,
+        ui::DomKey::ZOOM_TOGGLE}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F3, ui::DomCode::F3, ui::EF_CONTROL_DOWN, ui::DomKey::F3},
+       {ui::VKEY_MEDIA_LAUNCH_APP2, ui::DomCode::ZOOM_TOGGLE,
+        ui::EF_CONTROL_DOWN, ui::DomKey::ZOOM_TOGGLE}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F3, ui::DomCode::F3, ui::EF_ALT_DOWN, ui::DomKey::F3},
+       {ui::VKEY_MEDIA_LAUNCH_APP2, ui::DomCode::ZOOM_TOGGLE, ui::EF_ALT_DOWN,
+        ui::DomKey::ZOOM_TOGGLE}},
+      // F4 -> Launch App 1
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F4, ui::DomCode::F4, ui::EF_NONE, ui::DomKey::F4},
+       {ui::VKEY_MEDIA_LAUNCH_APP1, ui::DomCode::SELECT_TASK, ui::EF_NONE,
+        ui::DomKey::LAUNCH_MY_COMPUTER}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F4, ui::DomCode::F4, ui::EF_CONTROL_DOWN, ui::DomKey::F4},
+       {ui::VKEY_MEDIA_LAUNCH_APP1, ui::DomCode::SELECT_TASK,
+        ui::EF_CONTROL_DOWN, ui::DomKey::LAUNCH_MY_COMPUTER}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F4, ui::DomCode::F4, ui::EF_ALT_DOWN, ui::DomKey::F4},
+       {ui::VKEY_MEDIA_LAUNCH_APP1, ui::DomCode::SELECT_TASK, ui::EF_ALT_DOWN,
+        ui::DomKey::LAUNCH_MY_COMPUTER}},
+      // F5 -> Brightness down
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F5, ui::DomCode::F5, ui::EF_NONE, ui::DomKey::F5},
+       {ui::VKEY_BRIGHTNESS_DOWN, ui::DomCode::BRIGHTNESS_DOWN, ui::EF_NONE,
+        ui::DomKey::BRIGHTNESS_DOWN}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F5, ui::DomCode::F5, ui::EF_CONTROL_DOWN, ui::DomKey::F5},
+       {ui::VKEY_BRIGHTNESS_DOWN, ui::DomCode::BRIGHTNESS_DOWN,
+        ui::EF_CONTROL_DOWN, ui::DomKey::BRIGHTNESS_DOWN}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F5, ui::DomCode::F5, ui::EF_ALT_DOWN, ui::DomKey::F5},
+       {ui::VKEY_BRIGHTNESS_DOWN, ui::DomCode::BRIGHTNESS_DOWN, ui::EF_ALT_DOWN,
+        ui::DomKey::BRIGHTNESS_DOWN}},
+      // F6 -> Brightness up
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F6, ui::DomCode::F6, ui::EF_NONE, ui::DomKey::F6},
+       {ui::VKEY_BRIGHTNESS_UP, ui::DomCode::BRIGHTNESS_UP, ui::EF_NONE,
+        ui::DomKey::BRIGHTNESS_UP}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F6, ui::DomCode::F6, ui::EF_CONTROL_DOWN, ui::DomKey::F6},
+       {ui::VKEY_BRIGHTNESS_UP, ui::DomCode::BRIGHTNESS_UP, ui::EF_CONTROL_DOWN,
+        ui::DomKey::BRIGHTNESS_UP}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F6, ui::DomCode::F6, ui::EF_ALT_DOWN, ui::DomKey::F6},
+       {ui::VKEY_BRIGHTNESS_UP, ui::DomCode::BRIGHTNESS_UP, ui::EF_ALT_DOWN,
+        ui::DomKey::BRIGHTNESS_UP}},
+      // F7 -> Media Play/Pause
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F7, ui::DomCode::F7, ui::EF_NONE, ui::DomKey::F7},
+       {ui::VKEY_MEDIA_PLAY_PAUSE, ui::DomCode::MEDIA_PLAY_PAUSE, ui::EF_NONE,
+        ui::DomKey::MEDIA_PLAY_PAUSE}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F7, ui::DomCode::F7, ui::EF_CONTROL_DOWN, ui::DomKey::F7},
+       {ui::VKEY_MEDIA_PLAY_PAUSE, ui::DomCode::MEDIA_PLAY_PAUSE,
+        ui::EF_CONTROL_DOWN, ui::DomKey::MEDIA_PLAY_PAUSE}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F7, ui::DomCode::F7, ui::EF_ALT_DOWN, ui::DomKey::F7},
+       {ui::VKEY_MEDIA_PLAY_PAUSE, ui::DomCode::MEDIA_PLAY_PAUSE,
+        ui::EF_ALT_DOWN, ui::DomKey::MEDIA_PLAY_PAUSE}},
+      // F8 -> Volume Mute
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F8, ui::DomCode::F8, ui::EF_NONE, ui::DomKey::F8},
+       {ui::VKEY_VOLUME_MUTE, ui::DomCode::VOLUME_MUTE, ui::EF_NONE,
+        ui::DomKey::AUDIO_VOLUME_MUTE}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F8, ui::DomCode::F8, ui::EF_CONTROL_DOWN, ui::DomKey::F8},
+       {ui::VKEY_VOLUME_MUTE, ui::DomCode::VOLUME_MUTE, ui::EF_CONTROL_DOWN,
+        ui::DomKey::AUDIO_VOLUME_MUTE}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F8, ui::DomCode::F8, ui::EF_ALT_DOWN, ui::DomKey::F8},
+       {ui::VKEY_VOLUME_MUTE, ui::DomCode::VOLUME_MUTE, ui::EF_ALT_DOWN,
+        ui::DomKey::AUDIO_VOLUME_MUTE}},
+      // F9 -> Volume Down
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F9, ui::DomCode::F9, ui::EF_NONE, ui::DomKey::F9},
+       {ui::VKEY_VOLUME_DOWN, ui::DomCode::VOLUME_DOWN, ui::EF_NONE,
+        ui::DomKey::AUDIO_VOLUME_DOWN}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F9, ui::DomCode::F9, ui::EF_CONTROL_DOWN, ui::DomKey::F9},
+       {ui::VKEY_VOLUME_DOWN, ui::DomCode::VOLUME_DOWN, ui::EF_CONTROL_DOWN,
+        ui::DomKey::AUDIO_VOLUME_DOWN}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F9, ui::DomCode::F9, ui::EF_ALT_DOWN, ui::DomKey::F9},
+       {ui::VKEY_VOLUME_DOWN, ui::DomCode::VOLUME_DOWN, ui::EF_ALT_DOWN,
+        ui::DomKey::AUDIO_VOLUME_DOWN}},
+      // F10 -> Volume Up
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F10, ui::DomCode::F10, ui::EF_NONE, ui::DomKey::F10},
+       {ui::VKEY_VOLUME_UP, ui::DomCode::VOLUME_UP, ui::EF_NONE,
+        ui::DomKey::AUDIO_VOLUME_UP}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F10, ui::DomCode::F10, ui::EF_CONTROL_DOWN, ui::DomKey::F10},
+       {ui::VKEY_VOLUME_UP, ui::DomCode::VOLUME_UP, ui::EF_CONTROL_DOWN,
+        ui::DomKey::AUDIO_VOLUME_UP}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F10, ui::DomCode::F10, ui::EF_ALT_DOWN, ui::DomKey::F10},
+       {ui::VKEY_VOLUME_UP, ui::DomCode::VOLUME_UP, ui::EF_ALT_DOWN,
+        ui::DomKey::AUDIO_VOLUME_UP}},
+      // F11 -> F11
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F11, ui::DomCode::F11, ui::EF_NONE, ui::DomKey::F11},
+       {ui::VKEY_F11, ui::DomCode::F11, ui::EF_NONE, ui::DomKey::F11}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F11, ui::DomCode::F11, ui::EF_CONTROL_DOWN, ui::DomKey::F11},
+       {ui::VKEY_F11, ui::DomCode::F11, ui::EF_CONTROL_DOWN, ui::DomKey::F11}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F11, ui::DomCode::F11, ui::EF_ALT_DOWN, ui::DomKey::F11},
+       {ui::VKEY_F11, ui::DomCode::F11, ui::EF_ALT_DOWN, ui::DomKey::F11}},
+      // F12 -> F12
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F12, ui::DomCode::F12, ui::EF_NONE, ui::DomKey::F12},
+       {ui::VKEY_F12, ui::DomCode::F12, ui::EF_NONE, ui::DomKey::F12}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F12, ui::DomCode::F12, ui::EF_CONTROL_DOWN, ui::DomKey::F12},
+       {ui::VKEY_F12, ui::DomCode::F12, ui::EF_CONTROL_DOWN, ui::DomKey::F12}},
+      {ui::ET_KEY_PRESSED,
+       {ui::VKEY_F12, ui::DomCode::F12, ui::EF_ALT_DOWN, ui::DomKey::F12},
+       {ui::VKEY_F12, ui::DomCode::F12, ui::EF_ALT_DOWN, ui::DomKey::F12}}};
+
+  for (const auto& test : tests)
+    CheckKeyTestCase(rewriter_, test);
+}
+
 TEST_F(EventRewriterTest, TestRewriteExtendedKeysWithSearchRemapped) {
   // Remap Search to Control.
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember search;
   search.Init(prefs::kLanguageRemapSearchKeyTo, prefs());
-  search.SetValue(chromeos::input_method::kControlKey);
+  search.SetValue(ui::chromeos::ModifierKey::kControlKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -1781,7 +1931,7 @@ TEST_F(EventRewriterTest, TestRewriteKeyEventSentByXSendEvent) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapControlKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kAltKey);
+  control.SetValue(ui::chromeos::ModifierKey::kAltKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -1796,23 +1946,6 @@ TEST_F(EventRewriterTest, TestRewriteKeyEventSentByXSendEvent) {
               rewriter_->RewriteEvent(keyevent, &new_event));
     EXPECT_FALSE(new_event);
   }
-#if defined(USE_X11)
-  // Send left control press, using XI2 native events.
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitKeyEvent(ui::ET_KEY_PRESSED, ui::VKEY_CONTROL, 0);
-    XEvent* xevent = xev;
-    xevent->xkey.keycode = XKeysymToKeycode(gfx::GetXDisplay(), XK_Control_L);
-    xevent->xkey.send_event = True;  // XSendEvent() always does this.
-    ui::KeyEvent keyevent(xev);
-    std::unique_ptr<ui::Event> new_event;
-    // Control should NOT be remapped to Alt if send_event
-    // flag in the event is True.
-    EXPECT_EQ(ui::EVENT_REWRITE_CONTINUE,
-              rewriter_->RewriteEvent(keyevent, &new_event));
-    EXPECT_FALSE(new_event);
-  }
-#endif
 }
 
 TEST_F(EventRewriterTest, TestRewriteNonNativeEvent) {
@@ -1820,7 +1953,7 @@ TEST_F(EventRewriterTest, TestRewriteNonNativeEvent) {
   chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapControlKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kAltKey);
+  control.SetValue(ui::chromeos::ModifierKey::kAltKey);
 
   rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
 
@@ -1830,9 +1963,6 @@ TEST_F(EventRewriterTest, TestRewriteNonNativeEvent) {
       ui::ET_TOUCH_PRESSED, location, base::TimeTicks(),
       ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, kTouchId));
   press.set_flags(ui::EF_CONTROL_DOWN);
-#if defined(USE_X11)
-  ui::UpdateX11EventForFlags(&press);
-#endif
 
   std::unique_ptr<ui::Event> new_event;
   rewriter_->RewriteEvent(press, &new_event);
@@ -1880,7 +2010,7 @@ class TestEventSource : public ui::EventSource {
 };
 
 // Tests of event rewriting that depend on the Ash window manager.
-class EventRewriterAshTest : public ash::test::AshTestBase {
+class EventRewriterAshTest : public ash::AshTestBase {
  public:
   EventRewriterAshTest()
       : source_(&buffer_),
@@ -1929,9 +2059,6 @@ class EventRewriterAshTest : public ash::test::AshTestBase {
     rewriter_ = base::MakeUnique<ui::EventRewriterChromeOS>(
         delegate_.get(), sticky_keys_controller_);
     chromeos::Preferences::RegisterProfilePrefs(prefs_.registry());
-#if defined(USE_X11)
-    ui::SetUpTouchPadForTest(kTouchPadDeviceId);
-#endif
     source_.AddEventRewriter(rewriter_.get());
     sticky_keys_controller_->Enable(true);
   }
@@ -1960,8 +2087,7 @@ class EventRewriterAshTest : public ash::test::AshTestBase {
 
 TEST_F(EventRewriterAshTest, TopRowKeysAreFunctionKeys) {
   std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(1));
-  ash::wm::WindowState* window_state = ash::wm::GetWindowState(window.get());
-  window_state->Activate();
+  wm::ActivateWindow(window.get());
   std::vector<std::unique_ptr<ui::Event>> events;
 
   // Create a simulated keypress of F1 targetted at the window.
@@ -1995,48 +2121,7 @@ TEST_F(EventRewriterAshTest, TopRowKeysAreFunctionKeys) {
             GetKeyEventAsString(*static_cast<ui::KeyEvent*>(events[0].get())));
 }
 
-TEST_F(EventRewriterTest, TestRewrittenModifierClick) {
-#if defined(USE_X11)
-  std::vector<int> device_list;
-  device_list.push_back(10);
-  ui::TouchFactory::GetInstance()->SetPointerDeviceForTest(device_list);
-
-  // Remap Control to Alt.
-  chromeos::Preferences::RegisterProfilePrefs(prefs()->registry());
-  IntegerPrefMember control;
-  control.Init(prefs::kLanguageRemapControlKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kAltKey);
-
-  rewriter_->KeyboardDeviceAddedForTesting(kKeyboardDeviceId, "PC Keyboard");
-
-  // Check that Control + Left Button is converted (via Alt + Left Button)
-  // to Right Button.
-  ui::ScopedXI2Event xev;
-  xev.InitGenericButtonEvent(10, ui::ET_MOUSE_PRESSED, gfx::Point(),
-                             ui::EF_LEFT_MOUSE_BUTTON | ui::EF_CONTROL_DOWN);
-  ui::MouseEvent press(xev);
-  // Sanity check.
-  EXPECT_EQ(ui::ET_MOUSE_PRESSED, press.type());
-  EXPECT_EQ(ui::EF_LEFT_MOUSE_BUTTON | ui::EF_CONTROL_DOWN, press.flags());
-  std::unique_ptr<ui::Event> new_event;
-  const ui::MouseEvent* result = RewriteMouseButtonEvent(press, &new_event);
-  EXPECT_TRUE(ui::EF_RIGHT_MOUSE_BUTTON & result->flags());
-  EXPECT_FALSE(ui::EF_LEFT_MOUSE_BUTTON & result->flags());
-  EXPECT_FALSE(ui::EF_CONTROL_DOWN & result->flags());
-  EXPECT_FALSE(ui::EF_ALT_DOWN & result->flags());
-  EXPECT_TRUE(ui::EF_RIGHT_MOUSE_BUTTON & result->flags());
-#endif
-}
-
 TEST_F(EventRewriterTest, DontRewriteIfNotRewritten) {
-// TODO(kpschoedel): pending changes for crbug.com/360377
-// to |ui::EventRewriterChromeOS::RewriteLocatedEvent()
-#if defined(USE_X11)
-  std::vector<int> device_list;
-  device_list.push_back(10);
-  device_list.push_back(11);
-  ui::TouchFactory::GetInstance()->SetPointerDeviceForTest(device_list);
-#endif
   const int kLeftAndAltFlag = ui::EF_LEFT_MOUSE_BUTTON | ui::EF_ALT_DOWN;
 
   // Test Alt + Left click.
@@ -2067,34 +2152,6 @@ TEST_F(EventRewriterTest, DontRewriteIfNotRewritten) {
     EXPECT_FALSE(kLeftAndAltFlag & result->flags());
     EXPECT_EQ(ui::EF_RIGHT_MOUSE_BUTTON, result->changed_button_flags());
   }
-#if defined(USE_X11)
-  // Test Alt + Left click, using XI2 native events.
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitGenericButtonEvent(10, ui::ET_MOUSE_PRESSED, gfx::Point(),
-                               kLeftAndAltFlag);
-    ui::MouseEvent press(xev);
-    // Sanity check.
-    EXPECT_EQ(ui::ET_MOUSE_PRESSED, press.type());
-    EXPECT_EQ(kLeftAndAltFlag, press.flags());
-    std::unique_ptr<ui::Event> new_event;
-    const ui::MouseEvent* result = RewriteMouseButtonEvent(press, &new_event);
-    EXPECT_TRUE(ui::EF_RIGHT_MOUSE_BUTTON & result->flags());
-    EXPECT_FALSE(kLeftAndAltFlag & result->flags());
-    EXPECT_EQ(ui::EF_RIGHT_MOUSE_BUTTON, result->changed_button_flags());
-  }
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitGenericButtonEvent(10, ui::ET_MOUSE_RELEASED, gfx::Point(),
-                               kLeftAndAltFlag);
-    ui::MouseEvent release(xev);
-    std::unique_ptr<ui::Event> new_event;
-    const ui::MouseEvent* result = RewriteMouseButtonEvent(release, &new_event);
-    EXPECT_TRUE(ui::EF_RIGHT_MOUSE_BUTTON & result->flags());
-    EXPECT_FALSE(kLeftAndAltFlag & result->flags());
-    EXPECT_EQ(ui::EF_RIGHT_MOUSE_BUTTON, result->changed_button_flags());
-  }
-#endif
 
   // No ALT in frst click.
   {
@@ -2119,29 +2176,6 @@ TEST_F(EventRewriterTest, DontRewriteIfNotRewritten) {
     EXPECT_TRUE((ui::EF_LEFT_MOUSE_BUTTON | ui::EF_ALT_DOWN) & result->flags());
     EXPECT_EQ(ui::EF_LEFT_MOUSE_BUTTON, result->changed_button_flags());
   }
-#if defined(USE_X11)
-  // No ALT in frst click, using XI2 native events.
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitGenericButtonEvent(10, ui::ET_MOUSE_PRESSED, gfx::Point(),
-                               ui::EF_LEFT_MOUSE_BUTTON);
-    ui::MouseEvent press(xev);
-    std::unique_ptr<ui::Event> new_event;
-    const ui::MouseEvent* result = RewriteMouseButtonEvent(press, &new_event);
-    EXPECT_TRUE(ui::EF_LEFT_MOUSE_BUTTON & result->flags());
-    EXPECT_EQ(ui::EF_LEFT_MOUSE_BUTTON, result->changed_button_flags());
-  }
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitGenericButtonEvent(10, ui::ET_MOUSE_RELEASED, gfx::Point(),
-                               kLeftAndAltFlag);
-    ui::MouseEvent release(xev);
-    std::unique_ptr<ui::Event> new_event;
-    const ui::MouseEvent* result = RewriteMouseButtonEvent(release, &new_event);
-    EXPECT_TRUE((ui::EF_LEFT_MOUSE_BUTTON | ui::EF_ALT_DOWN) & result->flags());
-    EXPECT_EQ(ui::EF_LEFT_MOUSE_BUTTON, result->changed_button_flags());
-  }
-#endif
 
   // ALT on different device.
   {
@@ -2179,41 +2213,6 @@ TEST_F(EventRewriterTest, DontRewriteIfNotRewritten) {
     EXPECT_FALSE(kLeftAndAltFlag & result->flags());
     EXPECT_EQ(ui::EF_RIGHT_MOUSE_BUTTON, result->changed_button_flags());
   }
-#if defined(USE_X11)
-  // ALT on different device, using XI2 native events.
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitGenericButtonEvent(11, ui::ET_MOUSE_PRESSED, gfx::Point(),
-                               kLeftAndAltFlag);
-    ui::MouseEvent press(xev);
-    std::unique_ptr<ui::Event> new_event;
-    const ui::MouseEvent* result = RewriteMouseButtonEvent(press, &new_event);
-    EXPECT_TRUE(ui::EF_RIGHT_MOUSE_BUTTON & result->flags());
-    EXPECT_FALSE(kLeftAndAltFlag & result->flags());
-    EXPECT_EQ(ui::EF_RIGHT_MOUSE_BUTTON, result->changed_button_flags());
-  }
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitGenericButtonEvent(10, ui::ET_MOUSE_RELEASED, gfx::Point(),
-                               kLeftAndAltFlag);
-    ui::MouseEvent release(xev);
-    std::unique_ptr<ui::Event> new_event;
-    const ui::MouseEvent* result = RewriteMouseButtonEvent(release, &new_event);
-    EXPECT_TRUE((ui::EF_LEFT_MOUSE_BUTTON | ui::EF_ALT_DOWN) & result->flags());
-    EXPECT_EQ(ui::EF_LEFT_MOUSE_BUTTON, result->changed_button_flags());
-  }
-  {
-    ui::ScopedXI2Event xev;
-    xev.InitGenericButtonEvent(11, ui::ET_MOUSE_RELEASED, gfx::Point(),
-                               kLeftAndAltFlag);
-    ui::MouseEvent release(xev);
-    std::unique_ptr<ui::Event> new_event;
-    const ui::MouseEvent* result = RewriteMouseButtonEvent(release, &new_event);
-    EXPECT_TRUE(ui::EF_RIGHT_MOUSE_BUTTON & result->flags());
-    EXPECT_FALSE(kLeftAndAltFlag & result->flags());
-    EXPECT_EQ(ui::EF_RIGHT_MOUSE_BUTTON, result->changed_button_flags());
-  }
-#endif
 }
 
 TEST_F(EventRewriterAshTest, StickyKeyEventDispatchImpl) {
@@ -2342,7 +2341,7 @@ TEST_F(EventRewriterAshTest, MouseWheelEventModifiersRewritten) {
   // Remap Control to Alt.
   IntegerPrefMember control;
   control.Init(prefs::kLanguageRemapControlKeyTo, prefs());
-  control.SetValue(chromeos::input_method::kAltKey);
+  control.SetValue(ui::chromeos::ModifierKey::kAltKey);
 
   // Generate a mouse wheel event that has a CONTROL_DOWN modifier flag and
   // expect that it will be rewritten to ALT_DOWN.

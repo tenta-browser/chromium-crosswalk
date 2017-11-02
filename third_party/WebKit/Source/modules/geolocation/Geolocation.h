@@ -27,7 +27,7 @@
 #ifndef Geolocation_h
 #define Geolocation_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "bindings/modules/v8/v8_position_callback.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/page/PageVisibilityObserver.h"
 #include "device/geolocation/public/interfaces/geolocation.mojom-blink.h"
@@ -35,15 +35,12 @@
 #include "modules/geolocation/GeoNotifier.h"
 #include "modules/geolocation/GeolocationWatchers.h"
 #include "modules/geolocation/Geoposition.h"
-#include "modules/geolocation/PositionCallback.h"
 #include "modules/geolocation/PositionError.h"
 #include "modules/geolocation/PositionErrorCallback.h"
 #include "modules/geolocation/PositionOptions.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-
-#include "third_party/WebKit/public/platform/modules/permissions/permission.mojom-blink.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom-blink.h"
 
 namespace blink {
 
@@ -63,6 +60,7 @@ class MODULES_EXPORT Geolocation final
   static Geolocation* Create(ExecutionContext*);
   ~Geolocation();
   DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
   // Inherited from ContextLifecycleObserver and PageVisibilityObserver.
   void ContextDestroyed(ExecutionContext*) override;
@@ -72,22 +70,18 @@ class MODULES_EXPORT Geolocation final
 
   // Creates a oneshot and attempts to obtain a position that meets the
   // constraints of the options.
-  void getCurrentPosition(PositionCallback*,
+  void getCurrentPosition(V8PositionCallback*,
                           PositionErrorCallback*,
                           const PositionOptions&);
 
   // Creates a watcher that will be notified whenever a new position is
   // available that meets the constraints of the options.
-  int watchPosition(PositionCallback*,
+  int watchPosition(V8PositionCallback*,
                     PositionErrorCallback*,
                     const PositionOptions&);
 
   // Removes all references to the watcher, it will not be updated again.
   void clearWatch(int watch_id);
-
-  bool IsAllowed() const {
-    return geolocation_permission_ == kPermissionAllowed;
-  }
 
   // Notifies this that a new position is available. Must never be called
   // before permission is granted by the user.
@@ -108,12 +102,10 @@ class MODULES_EXPORT Geolocation final
   void PageVisibilityChanged() override;
 
  private:
-  bool IsDenied() const { return geolocation_permission_ == kPermissionDenied; }
-
   explicit Geolocation(ExecutionContext*);
 
   typedef HeapVector<Member<GeoNotifier>> GeoNotifierVector;
-  typedef HeapHashSet<Member<GeoNotifier>> GeoNotifierSet;
+  typedef HeapHashSet<TraceWrapperMember<GeoNotifier>> GeoNotifierSet;
 
   bool HasListeners() const {
     return !one_shots_.IsEmpty() || !watchers_.IsEmpty();
@@ -150,19 +142,16 @@ class MODULES_EXPORT Geolocation final
   // and also  clears the watchers if the error is fatal.
   void HandleError(PositionError*);
 
-  // Requests permission to share positions with the page.
-  void RequestPermission();
-
   // Connects to the Geolocation mojo service and starts polling for updates.
   void StartUpdating(GeoNotifier*);
 
   void StopUpdating();
 
-  void UpdateGeolocationServiceConnection();
+  void UpdateGeolocationConnection();
   void QueryNextPosition();
 
   // Attempts to obtain a position for the given notifier, either by using
-  // the cached position or by requesting one from the GeolocationService.
+  // the cached position or by requesting one from the Geolocation.
   // Sets a fatal error if permission is denied or no position can be
   // obtained.
   void StartRequest(GeoNotifier*);
@@ -176,41 +165,23 @@ class MODULES_EXPORT Geolocation final
 
   void OnPositionUpdated(device::mojom::blink::GeopositionPtr);
 
-  // Processes the notifiers that were waiting for a permission decision. If
-  // granted then the notifier's timers are started. Otherwise, a fatal error
-  // is set on them.
-  void OnGeolocationPermissionUpdated(mojom::blink::PermissionStatus);
-
   void OnGeolocationConnectionError();
-  void OnPermissionConnectionError();
 
   GeoNotifierSet one_shots_;
   GeolocationWatchers watchers_;
-  GeoNotifierSet pending_for_permission_notifiers_;
   Member<Geoposition> last_position_;
 
-  // States of Geolocation permission as granted by the embedder. Unknown
-  // means that the embedder still has to be asked for the current permission
-  // level; Requested means that the user has yet to make a decision.
-  enum Permission {
-    kPermissionUnknown,
-    kPermissionRequested,
-    kPermissionAllowed,
-    kPermissionDenied
-  };
-
-  Permission geolocation_permission_;
+  device::mojom::blink::GeolocationPtr geolocation_;
   device::mojom::blink::GeolocationServicePtr geolocation_service_;
   bool enable_high_accuracy_ = false;
-  mojom::blink::PermissionServicePtr permission_service_;
 
   // Whether a GeoNotifier is waiting for a position update.
   bool updating_ = false;
 
-  // Set to true when m_geolocationService is disconnected. This is used to
-  // detect when m_geolocationService is disconnected and reconnected while
-  // running callbacks in response to a call to onPositionUpdated().
-  bool disconnected_geolocation_service_ = false;
+  // Set to true when |geolocation_| is disconnected. This is used to
+  // detect when |geolocation_| is disconnected and reconnected while
+  // running callbacks in response to a call to OnPositionUpdated().
+  bool disconnected_geolocation_ = false;
 };
 
 }  // namespace blink

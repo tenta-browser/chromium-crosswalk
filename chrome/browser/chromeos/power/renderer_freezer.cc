@@ -19,6 +19,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -148,9 +149,14 @@ void RendererFreezer::OnScreenLockStateChanged(chromeos::ScreenLocker* locker,
   // RendererFreezer::SuspendImminent(), it is guaranteed that the screen locker
   // renderer will not be frozen at any point.
   if (is_locked) {
-    delegate_->SetShouldFreezeRenderer(
-        locker->web_ui()->GetWebContents()->GetRenderProcessHost()->GetHandle(),
-        false);
+    // |web_contents| is null when using views-based login/lock screen.
+    // TODO(jdufault): Remove this code after webui login/lock is gone. See
+    // crbug.com/719015.
+    content::WebContents* web_contents = locker->delegate()->GetWebContents();
+    if (web_contents) {
+      delegate_->SetShouldFreezeRenderer(
+          web_contents->GetMainFrame()->GetProcess()->GetHandle(), false);
+    }
   }
 }
 

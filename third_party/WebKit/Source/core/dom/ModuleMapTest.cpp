@@ -21,16 +21,15 @@ namespace blink {
 
 namespace {
 
-class TestSingleModuleClient final
-    : public GarbageCollectedFinalized<TestSingleModuleClient>,
-      public SingleModuleClient {
-  USING_GARBAGE_COLLECTED_MIXIN(TestSingleModuleClient);
-
+class TestSingleModuleClient final : public SingleModuleClient {
  public:
   TestSingleModuleClient() = default;
   virtual ~TestSingleModuleClient() {}
 
-  DEFINE_INLINE_TRACE() { visitor->Trace(module_script_); }
+  DEFINE_INLINE_TRACE() {
+    visitor->Trace(module_script_);
+    SingleModuleClient::Trace(visitor);
+  }
 
   void NotifyModuleLoadFinished(ModuleScript* module_script) override {
     was_notify_finished_ = true;
@@ -55,6 +54,10 @@ class TestScriptModuleResolver final : public ScriptModuleResolver {
 
   void RegisterModuleScript(ModuleScript*) override {
     register_module_script_call_count_++;
+  }
+
+  void UnregisterModuleScript(ModuleScript*) override {
+    FAIL() << "UnregisterModuleScript shouldn't be called in ModuleMapTest";
   }
 
   ScriptModule Resolve(const String& specifier,
@@ -131,19 +134,19 @@ void ModuleMapTestModulator::FetchNewSingleModule(
 
 void ModuleMapTestModulator::ResolveFetches() {
   for (const auto& test_request : test_requests_) {
-    ModuleScript* module_script = ModuleScript::Create(
-        ScriptModule(), test_request->url, test_request->nonce, kParserInserted,
-        WebURLRequest::kFetchCredentialsModeOmit);
+    ModuleScript* module_script = ModuleScript::CreateForTest(
+        this, ScriptModule(), test_request->url, test_request->nonce,
+        kParserInserted, WebURLRequest::kFetchCredentialsModeOmit);
     TaskRunner()->PostTask(
         BLINK_FROM_HERE,
         WTF::Bind(&ModuleScriptLoaderClient::NotifyNewSingleModuleFinished,
                   WrapPersistent(test_request->client.Get()),
                   WrapPersistent(module_script)));
   }
-  test_requests_.Clear();
+  test_requests_.clear();
 }
 
-class ModuleMapTest : public testing::Test {
+class ModuleMapTest : public ::testing::Test {
  public:
   void SetUp() override;
 
@@ -165,7 +168,7 @@ TEST_F(ModuleMapTest, sequentialRequests) {
       platform;
   platform->AdvanceClockSeconds(1.);  // For non-zero DocumentParserTimings
 
-  KURL url(KURL(), "https://example.com/foo.js");
+  KURL url(NullURL(), "https://example.com/foo.js");
   ModuleScriptFetchRequest module_request(
       url, String(), kParserInserted, WebURLRequest::kFetchCredentialsModeOmit);
 
@@ -184,8 +187,6 @@ TEST_F(ModuleMapTest, sequentialRequests) {
             1);
   EXPECT_TRUE(client->WasNotifyFinished());
   EXPECT_TRUE(client->GetModuleScript());
-  EXPECT_EQ(client->GetModuleScript()->InstantiationState(),
-            ModuleInstantiationState::kUninstantiated);
 
   // Secondary request
   TestSingleModuleClient* client2 = new TestSingleModuleClient;
@@ -203,8 +204,6 @@ TEST_F(ModuleMapTest, sequentialRequests) {
       << "registerModuleScript sholudn't be called in secondary request.";
   EXPECT_TRUE(client2->WasNotifyFinished());
   EXPECT_TRUE(client2->GetModuleScript());
-  EXPECT_EQ(client2->GetModuleScript()->InstantiationState(),
-            ModuleInstantiationState::kUninstantiated);
 }
 
 TEST_F(ModuleMapTest, concurrentRequestsShouldJoin) {
@@ -212,7 +211,7 @@ TEST_F(ModuleMapTest, concurrentRequestsShouldJoin) {
       platform;
   platform->AdvanceClockSeconds(1.);  // For non-zero DocumentParserTimings
 
-  KURL url(KURL(), "https://example.com/foo.js");
+  KURL url(NullURL(), "https://example.com/foo.js");
   ModuleScriptFetchRequest module_request(
       url, String(), kParserInserted, WebURLRequest::kFetchCredentialsModeOmit);
 
@@ -240,12 +239,8 @@ TEST_F(ModuleMapTest, concurrentRequestsShouldJoin) {
 
   EXPECT_TRUE(client->WasNotifyFinished());
   EXPECT_TRUE(client->GetModuleScript());
-  EXPECT_EQ(client->GetModuleScript()->InstantiationState(),
-            ModuleInstantiationState::kUninstantiated);
   EXPECT_TRUE(client2->WasNotifyFinished());
   EXPECT_TRUE(client2->GetModuleScript());
-  EXPECT_EQ(client2->GetModuleScript()->InstantiationState(),
-            ModuleInstantiationState::kUninstantiated);
 }
 
 }  // namespace blink

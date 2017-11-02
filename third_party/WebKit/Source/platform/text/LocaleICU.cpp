@@ -36,16 +36,13 @@
 #include <limits>
 #include <memory>
 #include "platform/wtf/DateMath.h"
-#include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/text/StringBuffer.h"
 #include "platform/wtf/text/StringBuilder.h"
-
-using namespace icu;
 
 namespace blink {
 
 std::unique_ptr<Locale> Locale::Create(const String& locale) {
-  return LocaleICU::Create(locale.Utf8().Data());
+  return LocaleICU::Create(locale.Utf8().data());
 }
 
 LocaleICU::LocaleICU(const char* locale)
@@ -107,7 +104,7 @@ void LocaleICU::InitializeLocaleData() {
     return;
   did_create_decimal_format_ = true;
   UErrorCode status = U_ZERO_ERROR;
-  number_format_ = unum_open(UNUM_DECIMAL, 0, 0, locale_.Data(), 0, &status);
+  number_format_ = unum_open(UNUM_DECIMAL, 0, 0, locale_.data(), 0, &status);
   if (!U_SUCCESS(status))
     return;
 
@@ -143,7 +140,7 @@ UDateFormat* LocaleICU::OpenDateFormat(UDateFormatStyle time_style,
                                        UDateFormatStyle date_style) const {
   const UChar kGmtTimezone[3] = {'G', 'M', 'T'};
   UErrorCode status = U_ZERO_ERROR;
-  return udat_open(time_style, date_style, locale_.Data(), kGmtTimezone,
+  return udat_open(time_style, date_style, locale_.data(), kGmtTimezone,
                    WTF_ARRAY_LENGTH(kGmtTimezone), 0, -1, &status);
 }
 
@@ -157,7 +154,7 @@ UDateFormat* LocaleICU::OpenDateFormatForStandAloneMonthLabels(
   const UChar kMonthPattern[4] = {'L', 'L', 'L', 'L'};
   UErrorCode status = U_ZERO_ERROR;
   UDateFormat* formatter =
-      udat_open(UDAT_PATTERN, UDAT_PATTERN, locale_.Data(), 0, -1,
+      udat_open(UDAT_PATTERN, UDAT_PATTERN, locale_.data(), 0, -1,
                 kMonthPattern, is_short ? 3 : 4, &status);
   udat_setContext(formatter, UDISPCTX_CAPITALIZATION_FOR_STANDALONE, &status);
   DCHECK(U_SUCCESS(status));
@@ -190,7 +187,7 @@ std::unique_ptr<Vector<String>> LocaleICU::CreateLabelVector(
   if (udat_countSymbols(date_format, type) != start_index + size)
     return std::unique_ptr<Vector<String>>();
 
-  std::unique_ptr<Vector<String>> labels = WTF::MakeUnique<Vector<String>>();
+  std::unique_ptr<Vector<String>> labels = std::make_unique<Vector<String>>();
   labels->ReserveCapacity(size);
   bool is_stand_alone_month = (type == UDAT_STANDALONE_MONTHS) ||
                               (type == UDAT_STANDALONE_SHORT_MONTHS);
@@ -224,7 +221,7 @@ std::unique_ptr<Vector<String>> LocaleICU::CreateLabelVector(
 }
 
 static std::unique_ptr<Vector<String>> CreateFallbackWeekDayShortLabels() {
-  std::unique_ptr<Vector<String>> labels = WTF::MakeUnique<Vector<String>>();
+  std::unique_ptr<Vector<String>> labels = std::make_unique<Vector<String>>();
   labels->ReserveCapacity(7);
   labels->push_back("Sun");
   labels->push_back("Mon");
@@ -256,7 +253,7 @@ void LocaleICU::InitializeCalendar() {
 }
 
 static std::unique_ptr<Vector<String>> CreateFallbackMonthLabels() {
-  std::unique_ptr<Vector<String>> labels = WTF::MakeUnique<Vector<String>>();
+  std::unique_ptr<Vector<String>> labels = std::make_unique<Vector<String>>();
   labels->ReserveCapacity(WTF_ARRAY_LENGTH(WTF::kMonthFullName));
   for (unsigned i = 0; i < WTF_ARRAY_LENGTH(WTF::kMonthFullName); ++i)
     labels->push_back(WTF::kMonthFullName[i]);
@@ -288,12 +285,12 @@ unsigned LocaleICU::FirstDayOfWeek() {
 
 bool LocaleICU::IsRTL() {
   UErrorCode status = U_ZERO_ERROR;
-  return uloc_getCharacterOrientation(locale_.Data(), &status) ==
+  return uloc_getCharacterOrientation(locale_.data(), &status) ==
          ULOC_LAYOUT_RTL;
 }
 
 static std::unique_ptr<Vector<String>> CreateFallbackAMPMLabels() {
-  std::unique_ptr<Vector<String>> labels = WTF::MakeUnique<Vector<String>>();
+  std::unique_ptr<Vector<String>> labels = std::make_unique<Vector<String>>();
   labels->ReserveCapacity(2);
   labels->push_back("AM");
   labels->push_back("PM");
@@ -353,12 +350,12 @@ static String GetFormatForSkeleton(const char* locale, const String& skeleton) {
   Vector<UChar> skeleton_characters;
   skeleton.AppendTo(skeleton_characters);
   int32_t length =
-      udatpg_getBestPattern(pattern_generator, skeleton_characters.Data(),
+      udatpg_getBestPattern(pattern_generator, skeleton_characters.data(),
                             skeleton_characters.size(), 0, 0, &status);
   if (status == U_BUFFER_OVERFLOW_ERROR && length) {
     StringBuffer<UChar> buffer(length);
     status = U_ZERO_ERROR;
-    udatpg_getBestPattern(pattern_generator, skeleton_characters.Data(),
+    udatpg_getBestPattern(pattern_generator, skeleton_characters.data(),
                           skeleton_characters.size(), buffer.Characters(),
                           length, &status);
     if (U_SUCCESS(status))
@@ -373,14 +370,14 @@ String LocaleICU::MonthFormat() {
     return month_format_;
   // Gets a format for "MMMM" because Windows API always provides formats for
   // "MMMM" in some locales.
-  month_format_ = GetFormatForSkeleton(locale_.Data(), "yyyyMMMM");
+  month_format_ = GetFormatForSkeleton(locale_.data(), "yyyyMMMM");
   return month_format_;
 }
 
 String LocaleICU::ShortMonthFormat() {
   if (!short_month_format_.IsNull())
     return short_month_format_;
-  short_month_format_ = GetFormatForSkeleton(locale_.Data(), "yyyyMMM");
+  short_month_format_ = GetFormatForSkeleton(locale_.data(), "yyyyMMM");
   return short_month_format_;
 }
 

@@ -15,10 +15,10 @@ namespace blink {
 class ParentFrameTaskRunners;
 class ThreadedMessagingProxyBase;
 
-// A proxy to talk to the parent object. This object is created and destroyed on
-// the main thread, and used on the worker thread for proxying messages to the
-// ThreadedMessagingProxyBase on the main thread. ThreadedMessagingProxyBase
-// always outlives this proxy.
+// The base proxy class to talk to a DedicatedWorker or *Worklet object on the
+// main thread via the ThreadedMessagingProxyBase from a worker thread. This is
+// created and destroyed on the main thread, and used on the worker thread.
+// ThreadedMessagingProxyBase always outlives this proxy.
 class CORE_EXPORT ThreadedObjectProxyBase : public WorkerReportingProxy {
   USING_FAST_MALLOC(ThreadedObjectProxyBase);
   WTF_MAKE_NONCOPYABLE(ThreadedObjectProxyBase);
@@ -29,19 +29,20 @@ class CORE_EXPORT ThreadedObjectProxyBase : public WorkerReportingProxy {
   void ReportPendingActivity(bool has_pending_activity);
 
   // WorkerReportingProxy overrides.
-  void CountFeature(UseCounter::Feature) override;
-  void CountDeprecation(UseCounter::Feature) override;
+  void CountFeature(WebFeature) override;
+  void CountDeprecation(WebFeature) override;
   void ReportConsoleMessage(MessageSource,
                             MessageLevel,
                             const String& message,
                             SourceLocation*) override;
-  void PostMessageToPageInspector(const String&) override;
+  void PostMessageToPageInspector(int session_id, const String&) override;
   void DidCloseWorkerGlobalScope() override;
   void DidTerminateWorkerThread() override;
 
  protected:
   explicit ThreadedObjectProxyBase(ParentFrameTaskRunners*);
-  virtual WeakPtr<ThreadedMessagingProxyBase> MessagingProxyWeakPtr() = 0;
+  virtual CrossThreadWeakPersistent<ThreadedMessagingProxyBase>
+  MessagingProxyWeakPtr() = 0;
   ParentFrameTaskRunners* GetParentFrameTaskRunners();
 
  private:

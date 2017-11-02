@@ -4,8 +4,10 @@
 
 #include "content/browser/service_worker/foreign_fetch_request_handler.h"
 
+#include "base/bind_helpers.h"
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
@@ -21,10 +23,12 @@
 #include "net/http/http_response_info.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/test_data_directory.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_test_util.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -49,7 +53,9 @@ int kMockProviderId = 1;
 
 const char* kValidUrl = "https://valid.example.com/foo/bar";
 
-void EmptyCallback() {}
+// This timestamp is set to a time after the expiry timestamp of the expired
+// tokens in this test, but before the expiry timestamp of the valid ones.
+double kNowTimestamp = 1500000000;
 
 }  // namespace
 
@@ -71,13 +77,21 @@ class ForeignFetchRequestHandlerTest : public testing::Test {
 
     // Create a registration for the worker which has foreign fetch event
     // handler.
-    registration_ = new ServiceWorkerRegistration(kScope, kRegistrationId,
-                                                  context()->AsWeakPtr());
+    registration_ = new ServiceWorkerRegistration(
+        blink::mojom::ServiceWorkerRegistrationOptions(kScope), kRegistrationId,
+        context()->AsWeakPtr());
     version_ = new ServiceWorkerVersion(registration_.get(), kResource1,
                                         kVersionId, context()->AsWeakPtr());
     version_->set_foreign_fetch_scopes({kScope});
 
-    context()->storage()->LazyInitialize(base::Bind(&EmptyCallback));
+    // Fix the time for testing to kNowTimestamp
+    std::unique_ptr<base::SimpleTestClock> clock =
+        base::MakeUnique<base::SimpleTestClock>();
+    clock->SetNow(base::Time::FromDoubleT(kNowTimestamp));
+    version_->SetClockForTesting(std::move(clock));
+
+    context()->storage()->LazyInitializeForTest(
+        base::BindOnce(&base::DoNothing));
     base::RunLoop().RunUntilIdle();
 
     // Persist the registration data.
@@ -131,7 +145,7 @@ class ForeignFetchRequestHandlerTest : public testing::Test {
     http_info->ssl_info.security_bits = 0x100;
     // SSL3 TLS_DHE_RSA_WITH_AES_256_CBC_SHA
     http_info->ssl_info.connection_status = 0x300039;
-    http_info->headers = make_scoped_refptr(new net::HttpResponseHeaders(""));
+    http_info->headers = base::MakeRefCounted<net::HttpResponseHeaders>("");
     return http_info;
   }
 
@@ -139,26 +153,29 @@ class ForeignFetchRequestHandlerTest : public testing::Test {
                                                 ResourceType resource_type,
                                                 const char* initiator) {
     request_ = url_request_context_.CreateRequest(
-        GURL(url), net::DEFAULT_PRIORITY, &url_request_delegate_);
+        GURL(url), net::DEFAULT_PRIORITY, &url_request_delegate_,
+        TRAFFIC_ANNOTATION_FOR_TESTS);
     if (initiator)
       request_->set_initiator(url::Origin(GURL(initiator)));
     ForeignFetchRequestHandler::InitializeHandler(
         request_.get(), context_wrapper(), &blob_storage_context_,
-        helper_->mock_render_process_id(), kMockProviderId,
+        helper_->mock_render_process_id(), provider_host()->provider_id(),
         ServiceWorkerMode::ALL, FETCH_REQUEST_MODE_CORS,
         FETCH_CREDENTIALS_MODE_OMIT, FetchRedirectMode::FOLLOW_MODE,
-        resource_type, REQUEST_CONTEXT_TYPE_FETCH,
-        REQUEST_CONTEXT_FRAME_TYPE_NONE, nullptr,
+        std::string() /* integrity */, resource_type,
+        REQUEST_CONTEXT_TYPE_FETCH, REQUEST_CONTEXT_FRAME_TYPE_NONE, nullptr,
         true /* initiated_in_secure_context */);
 
     return ForeignFetchRequestHandler::GetHandler(request_.get());
   }
 
   void CreateWindowTypeProviderHost() {
+    remote_endpoints_.emplace_back();
     std::unique_ptr<ServiceWorkerProviderHost> host =
         CreateProviderHostForWindow(
             helper_->mock_render_process_id(), kMockProviderId,
-            true /* is_parent_frame_secure */, helper_->context()->AsWeakPtr());
+            true /* is_parent_frame_secure */, helper_->context()->AsWeakPtr(),
+            &remote_endpoints_.back());
     EXPECT_FALSE(
         context()->GetProviderHost(host->process_id(), host->provider_id()));
     host->SetDocumentUrl(GURL("https://host/scope/"));
@@ -167,20 +184,13 @@ class ForeignFetchRequestHandlerTest : public testing::Test {
   }
 
   void CreateServiceWorkerTypeProviderHost() {
-    std::unique_ptr<ServiceWorkerProviderHost> host =
-        CreateProviderHostForServiceWorkerContext(
-            helper_->mock_render_process_id(), kMockProviderId,
-            true /* is_parent_frame_secure */, helper_->context()->AsWeakPtr());
-    EXPECT_FALSE(
-        context()->GetProviderHost(host->process_id(), host->provider_id()));
-    provider_host_ = host->AsWeakPtr();
-    context()->AddProviderHost(std::move(host));
-
     // Create another worker whose requests will be intercepted by the foreign
     // fetch event handler.
     scoped_refptr<ServiceWorkerRegistration> registration =
-        new ServiceWorkerRegistration(GURL("https://host/scope"), 1L,
-                                      context()->AsWeakPtr());
+        new ServiceWorkerRegistration(
+            blink::mojom::ServiceWorkerRegistrationOptions(
+                GURL("https://host/scope")),
+            1L, context()->AsWeakPtr());
     scoped_refptr<ServiceWorkerVersion> version = new ServiceWorkerVersion(
         registration.get(), GURL("https://host/script.js"), 1L,
         context()->AsWeakPtr());
@@ -198,7 +208,16 @@ class ForeignFetchRequestHandlerTest : public testing::Test {
         base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
     base::RunLoop().RunUntilIdle();
 
-    provider_host_->running_hosted_version_ = version;
+    remote_endpoints_.emplace_back();
+    std::unique_ptr<ServiceWorkerProviderHost> host =
+        CreateProviderHostForServiceWorkerContext(
+            helper_->mock_render_process_id(),
+            true /* is_parent_frame_secure */, version.get(),
+            helper_->context()->AsWeakPtr(), &remote_endpoints_.back());
+    EXPECT_FALSE(
+        context()->GetProviderHost(host->process_id(), host->provider_id()));
+    provider_host_ = host->AsWeakPtr();
+    context()->AddProviderHost(std::move(host));
   }
 
  private:
@@ -233,6 +252,7 @@ class ForeignFetchRequestHandlerTest : public testing::Test {
   base::WeakPtr<ServiceWorkerProviderHost> provider_host_;
   storage::BlobStorageContext blob_storage_context_;
   std::unique_ptr<net::URLRequest> request_;
+  std::vector<ServiceWorkerRemoteProviderEndpoint> remote_endpoints_;
 
   DISALLOW_COPY_AND_ASSIGN(ForeignFetchRequestHandlerTest);
 };
@@ -362,11 +382,11 @@ TEST_F(ForeignFetchRequestHandlerTest,
 
   // Make sure worker has a non-zero timeout.
   version->StartWorker(ServiceWorkerMetrics::EventType::UNKNOWN,
-                       base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+                       base::BindOnce(&ServiceWorkerUtils::NoOpStatusCallback));
   base::RunLoop().RunUntilIdle();
   version->StartRequestWithCustomTimeout(
       ServiceWorkerMetrics::EventType::ACTIVATE,
-      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback),
+      base::BindOnce(&ServiceWorkerUtils::NoOpStatusCallback),
       base::TimeDelta::FromSeconds(10), ServiceWorkerVersion::KILL_ON_TIMEOUT);
 
   // Advance clock by a couple seconds.

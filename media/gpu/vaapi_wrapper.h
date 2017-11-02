@@ -16,6 +16,8 @@
 #include <set>
 #include <vector>
 
+#include <va/va.h>
+
 #include "base/files/file.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -27,12 +29,10 @@
 #include "media/video/jpeg_decode_accelerator.h"
 #include "media/video/video_decode_accelerator.h"
 #include "media/video/video_encode_accelerator.h"
-#include "third_party/libva/va/va.h"
-#include "third_party/libva/va/va_vpp.h"
 #include "ui/gfx/geometry/size.h"
 
 #if defined(USE_X11)
-#include "third_party/libva/va/va_x11.h"
+#include <va/va_x11.h>
 #endif  // USE_X11
 
 #if defined(USE_OZONE)
@@ -119,12 +119,6 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   // CreateSurfaces(), where VaapiWrapper is the owner of the surfaces.
   scoped_refptr<VASurface> CreateVASurfaceForPixmap(
       const scoped_refptr<gfx::NativePixmap>& pixmap);
-
-  // Use VPP to process |source_pixmap| to |target_pixmap| with scaling and
-  // color space conversion.
-  bool ProcessPixmap(const scoped_refptr<gfx::NativePixmap>& source_pixmap,
-                     scoped_refptr<gfx::NativePixmap> target_pixmap);
-
 #endif
 
   // Submit parameters or slice data of |va_buffer_type|, copying them from
@@ -256,9 +250,6 @@ class MEDIA_GPU_EXPORT VaapiWrapper
 #endif  // USE_OZONE
 
    private:
-    // Returns true if the VAAPI version is less than the specified version.
-    bool VAAPIVersionLessThan(int major, int minor);
-
     // Protected by |va_lock_|.
     int refcount_;
 
@@ -289,6 +280,9 @@ class MEDIA_GPU_EXPORT VaapiWrapper
   void Deinitialize();
   bool VaInitialize(const base::Closure& report_error_to_uma_cb);
   bool GetSupportedVaProfiles(std::vector<VAProfile>* profiles);
+
+  // Free all memory allocated in CreateSurfaces.
+  void DestroySurfaces_Locked();
 
   // Check if |va_profile| supports |entrypoint| or not. |va_lock_| must be
   // held on entry.

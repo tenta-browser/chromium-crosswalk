@@ -18,8 +18,8 @@
 #include "base/numerics/safe_math.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread.h"
-#include "base/threading/worker_pool.h"
 #include "build/build_config.h"
 #include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/browser_main_loop.h"
@@ -68,10 +68,6 @@
 #include "url/gurl.h"
 #include "url/origin.h"
 
-#if defined(OS_MACOSX)
-#include "content/common/mac/font_descriptor.h"
-#endif
-
 #if defined(OS_WIN)
 #include "content/common/font_cache_dispatcher_win.h"
 #endif
@@ -81,6 +77,7 @@
 #endif
 
 #if defined(OS_MACOSX)
+#include "content/common/mac/font_loader.h"
 #include "ui/accelerated_widget_mac/window_resize_helper_mac.h"
 #endif
 
@@ -131,8 +128,6 @@ RenderMessageFilter::RenderMessageFilter(
                            arraysize(kFilteredMessageClasses)),
       BrowserAssociatedInterface<mojom::RenderMessageFilter>(this, this),
       resource_dispatcher_host_(ResourceDispatcherHostImpl::Get()),
-      bitmap_manager_client_(
-          display_compositor::HostSharedBitmapManager::current()),
       request_context_(request_context),
       resource_context_(browser_context->GetResourceContext()),
       render_widget_helper_(render_widget_helper),
@@ -156,10 +151,10 @@ bool RenderMessageFilter::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(RenderMessageFilter, message)
 #if defined(OS_MACOSX)
-    // On Mac, ViewHostMsg_UpdateRect needs to be handled in a nested message
-    // loop during resize.
+    // On Mac, ViewHostMsg_ResizeOrRepaint_ACK needs to be handled in a nested
+    // message loop during resize.
     IPC_MESSAGE_HANDLER_GENERIC(
-        ViewHostMsg_UpdateRect,
+        ViewHostMsg_ResizeOrRepaint_ACK,
         ResizeHelperPostMsgToUIThread(render_process_id_, message))
 #endif
     IPC_MESSAGE_HANDLER_DELAY_REPLY(ChildProcessHostMsg_HasGpuProcess,
@@ -195,91 +190,45 @@ void RenderMessageFilter::OverrideThreadForMessage(const IPC::Message& message,
 }
 
 void RenderMessageFilter::GenerateRoutingID(
-    const GenerateRoutingIDCallback& callback) {
-  callback.Run(render_widget_helper_->GetNextRoutingID());
+    GenerateRoutingIDCallback callback) {
+  std::move(callback).Run(render_widget_helper_->GetNextRoutingID());
 }
 
-void RenderMessageFilter::CreateNewWindow(
-    mojom::CreateNewWindowParamsPtr params,
-    const CreateNewWindowCallback& callback) {
-  bool no_javascript_access;
-  bool can_create_window = GetContentClient()->browser()->CanCreateWindow(
-      render_process_id_, params->opener_render_frame_id, params->opener_url,
-      params->opener_top_level_frame_url, params->opener_security_origin,
-      params->window_container_type, params->target_url, params->referrer,
-      params->frame_name, params->disposition, *params->features,
-      params->user_gesture, params->opener_suppressed, resource_context_,
-      &no_javascript_access);
-
-  mojom::CreateNewWindowReplyPtr reply = mojom::CreateNewWindowReply::New();
-  if (!can_create_window) {
-    reply->route_id = MSG_ROUTING_NONE;
-    reply->main_frame_route_id = MSG_ROUTING_NONE;
-    reply->main_frame_widget_route_id = MSG_ROUTING_NONE;
-    reply->cloned_session_storage_namespace_id = 0;
-    return callback.Run(std::move(reply));
-  }
-
-  // This will clone the sessionStorage for namespace_id_to_clone.
-  scoped_refptr<SessionStorageNamespaceImpl> cloned_namespace =
-      new SessionStorageNamespaceImpl(dom_storage_context_.get(),
-                                      params->session_storage_namespace_id);
-  reply->cloned_session_storage_namespace_id = cloned_namespace->id();
-
-  render_widget_helper_->CreateNewWindow(
-      std::move(params), no_javascript_access, &reply->route_id,
-      &reply->main_frame_route_id, &reply->main_frame_widget_route_id,
-      cloned_namespace.get());
-  callback.Run(std::move(reply));
-}
-
-void RenderMessageFilter::CreateNewWidget(
-    int32_t opener_id,
-    blink::WebPopupType popup_type,
-    const CreateNewWidgetCallback& callback) {
+void RenderMessageFilter::CreateNewWidget(int32_t opener_id,
+                                          blink::WebPopupType popup_type,
+                                          mojom::WidgetPtr widget,
+                                          CreateNewWidgetCallback callback) {
   int route_id = MSG_ROUTING_NONE;
-  render_widget_helper_->CreateNewWidget(opener_id, popup_type, &route_id);
-  callback.Run(route_id);
+  render_widget_helper_->CreateNewWidget(opener_id, popup_type,
+                                         std::move(widget), &route_id);
+  std::move(callback).Run(route_id);
 }
 
 void RenderMessageFilter::CreateFullscreenWidget(
     int opener_id,
-    const CreateFullscreenWidgetCallback& callback) {
+    mojom::WidgetPtr widget,
+    CreateFullscreenWidgetCallback callback) {
   int route_id = 0;
-  render_widget_helper_->CreateNewFullscreenWidget(opener_id, &route_id);
-  callback.Run(route_id);
-}
-
-void RenderMessageFilter::GetSharedBitmapManager(
-    cc::mojom::SharedBitmapManagerAssociatedRequest request) {
-  bitmap_manager_client_.Bind(std::move(request));
+  render_widget_helper_->CreateNewFullscreenWidget(opener_id, std::move(widget),
+                                                   &route_id);
+  std::move(callback).Run(route_id);
 }
 
 #if defined(OS_MACOSX)
 
 void RenderMessageFilter::OnLoadFont(const FontDescriptor& font,
-                                          IPC::Message* reply_msg) {
-  FontLoader::Result* result = new FontLoader::Result;
-
-  BrowserThread::PostTaskAndReply(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&FontLoader::LoadFont, font, result),
-      base::Bind(&RenderMessageFilter::SendLoadFontReply, this, reply_msg,
-                 base::Owned(result)));
+                                     IPC::Message* reply_msg) {
+  FontLoader::LoadFont(
+      font,
+      base::BindOnce(&RenderMessageFilter::SendLoadFontReply, this, reply_msg));
 }
 
 void RenderMessageFilter::SendLoadFontReply(IPC::Message* reply,
-                                                 FontLoader::Result* result) {
-  base::SharedMemoryHandle handle;
-  if (result->font_data_size == 0 || result->font_id == 0) {
-    result->font_data_size = 0;
-    result->font_id = 0;
-    handle = base::SharedMemory::NULLHandle();
-  } else {
-    result->font_data.GiveToProcess(base::GetCurrentProcessHandle(), &handle);
-  }
-  RenderProcessHostMsg_LoadFont::WriteReplyParams(
-      reply, result->font_data_size, handle, result->font_id);
+                                            uint32_t data_size,
+                                            base::SharedMemoryHandle handle,
+                                            uint32_t font_id) {
+  RenderProcessHostMsg_LoadFont::WriteReplyParams(reply, data_size, handle,
+                                                  font_id);
   Send(reply);
 }
 
@@ -307,10 +256,13 @@ void RenderMessageFilter::SetThreadPriorityOnFileThread(
 
 void RenderMessageFilter::OnSetThreadPriority(base::PlatformThreadId ns_tid,
                                               base::ThreadPriority priority) {
-  BrowserThread::PostTask(
-      BrowserThread::FILE_USER_BLOCKING, FROM_HERE,
-      base::Bind(&RenderMessageFilter::SetThreadPriorityOnFileThread, this,
-                 ns_tid, priority));
+  constexpr base::TaskTraits kTraits = {
+      base::MayBlock(), base::TaskPriority::USER_BLOCKING,
+      base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN};
+  base::PostTaskWithTraits(
+      FROM_HERE, kTraits,
+      base::BindOnce(&RenderMessageFilter::SetThreadPriorityOnFileThread, this,
+                     ns_tid, priority));
 }
 #endif
 
@@ -348,9 +300,9 @@ void RenderMessageFilter::OnCacheableMetadataAvailableForCacheStorage(
 
   cache_storage_context_->cache_manager()->OpenCache(
       cache_storage_origin.GetURL(), cache_storage_cache_name,
-      base::Bind(&RenderMessageFilter::OnCacheStorageOpenCallback,
-                 weak_ptr_factory_.GetWeakPtr(), url, expected_response_time,
-                 buf, data.size()));
+      base::BindOnce(&RenderMessageFilter::OnCacheStorageOpenCallback,
+                     weak_ptr_factory_.GetWeakPtr(), url,
+                     expected_response_time, buf, data.size()));
 }
 
 void RenderMessageFilter::OnCacheStorageOpenCallback(
@@ -365,8 +317,8 @@ void RenderMessageFilter::OnCacheStorageOpenCallback(
   CacheStorageCache* cache = cache_handle->value();
   if (!cache)
     return;
-  cache->WriteSideData(base::Bind(&NoOpCacheStorageErrorCallback,
-                                  base::Passed(std::move(cache_handle))),
+  cache->WriteSideData(base::BindOnce(&NoOpCacheStorageErrorCallback,
+                                      base::Passed(std::move(cache_handle))),
                        url, expected_response_time, buf, buf_len);
 }
 

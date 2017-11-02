@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/webui/settings/search_engines_handler.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
@@ -70,12 +72,6 @@ bool GetHotwordAlwaysOn(Profile* profile) {
          HotwordServiceFactory::IsAlwaysOnAvailable();
 }
 
-bool IsGoogleNowAvailable(Profile* profile) {
-  std::string group = base::FieldTrialList::FindFullName("GoogleNowExtension");
-  bool has_field_trial = !group.empty() && group != "Disabled";
-  return has_field_trial && IsGoogleDefaultSearch(profile);
-}
-
 }  // namespace
 
 namespace settings {
@@ -126,10 +122,6 @@ void SearchEnginesHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "setHotwordSearchEnabled",
       base::Bind(&SearchEnginesHandler::HandleSetHotwordSearchEnabled,
-                 base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "getGoogleNowAvailability",
-      base::Bind(&SearchEnginesHandler::HandleGetGoogleNowAvailability,
                  base::Unretained(this)));
 }
 
@@ -185,22 +177,15 @@ SearchEnginesHandler::GetSearchEnginesList() {
 
   std::unique_ptr<base::DictionaryValue> search_engines_info(
       new base::DictionaryValue);
-  search_engines_info->Set("defaults", base::WrapUnique(defaults.release()));
-  search_engines_info->Set("others", base::WrapUnique(others.release()));
-  search_engines_info->Set("extensions",
-                           base::WrapUnique(extensions.release()));
+  search_engines_info->Set("defaults", std::move(defaults));
+  search_engines_info->Set("others", std::move(others));
+  search_engines_info->Set("extensions", std::move(extensions));
   return search_engines_info;
 }
 
 void SearchEnginesHandler::OnModelChanged() {
   AllowJavascript();
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("search-engines-changed"),
-                         *GetSearchEnginesList());
-  // Google Now availability may have changed.
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("google-now-availability-changed"),
-                         base::Value(IsGoogleNowAvailable(profile_)));
+  FireWebUIListener("search-engines-changed", *GetSearchEnginesList());
 }
 
 void SearchEnginesHandler::OnItemsChanged(int start, int length) {
@@ -262,7 +247,7 @@ SearchEnginesHandler::CreateDictionaryForEngine(int index, bool is_default) {
                            !extensions::ExtensionSystem::Get(profile)
                                 ->management_policy()
                                 ->MustRemainEnabled(extension, nullptr));
-      dict->Set("extension", ext_info.release());
+      dict->Set("extension", std::move(ext_info));
     }
   }
   return dict;
@@ -444,16 +429,6 @@ void SearchEnginesHandler::HandleGetHotwordInfo(const base::ListValue* args) {
                      base::Passed(&status)));
 }
 
-void SearchEnginesHandler::HandleGetGoogleNowAvailability(
-    const base::ListValue* args) {
-  CHECK_EQ(1U, args->GetSize());
-  const base::Value* callback_id;
-  CHECK(args->Get(0, &callback_id));
-  AllowJavascript();
-  ResolveJavascriptCallback(*callback_id,
-                            base::Value(IsGoogleNowAvailable(profile_)));
-}
-
 std::unique_ptr<base::DictionaryValue> SearchEnginesHandler::GetHotwordInfo() {
   auto status = base::MakeUnique<base::DictionaryValue>();
   if (!IsGoogleDefaultSearch(profile_)) {
@@ -512,12 +487,10 @@ void SearchEnginesHandler::OnGetHotwordAudioHistoryEnabled(
 void SearchEnginesHandler::HotwordInfoComplete(
     const base::Value* callback_id,
     const base::DictionaryValue& status) {
-  if (callback_id) {
+  if (callback_id)
     ResolveJavascriptCallback(*callback_id, status);
-  } else {
-    CallJavascriptFunction("cr.webUIListenerCallback",
-                           base::Value("hotword-info-update"), status);
-  }
+  else
+    FireWebUIListener("hotword-info-update", status);
 }
 
 void SearchEnginesHandler::SendHotwordInfo() {

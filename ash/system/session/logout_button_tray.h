@@ -5,52 +5,63 @@
 #ifndef ASH_SYSTEM_SESSION_LOGOUT_BUTTON_TRAY_H_
 #define ASH_SYSTEM_SESSION_LOGOUT_BUTTON_TRAY_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
-#include "ash/login_status.h"
-#include "ash/system/session/logout_button_observer.h"
-#include "ash/system/tray/tray_background_view.h"
+#include "ash/session/session_observer.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/view.h"
+
+class PrefChangeRegistrar;
+class PrefRegistrySimple;
 
 namespace views {
-class LabelButton;
+class MdTextButton;
 }
 
 namespace ash {
+class Shelf;
+class TrayContainer;
 
 // Adds a logout button to the launcher's status area if enabled by the
 // kShowLogoutButtonInTray pref.
-// TODO(mohsen): This is not using much of the TrayBackgroundView functionality.
-// Consider making this a regular View. See https://crbug.com/698134.
-class ASH_EXPORT LogoutButtonTray : public TrayBackgroundView,
-                                    public LogoutButtonObserver {
+class ASH_EXPORT LogoutButtonTray : public views::View,
+                                    public views::ButtonListener,
+                                    public SessionObserver {
  public:
-  explicit LogoutButtonTray(WmShelf* wm_shelf);
+  explicit LogoutButtonTray(Shelf* shelf);
   ~LogoutButtonTray() override;
 
-  // TrayBackgroundView:
-  void SetShelfAlignment(ShelfAlignment alignment) override;
-  base::string16 GetAccessibleNameForTray() override;
-  void HideBubbleWithView(const views::TrayBubbleView* bubble_view) override;
-  void ClickedOutsideBubble() override;
+  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
+
+  void UpdateAfterLoginStatusChange();
+  void UpdateAfterShelfAlignmentChange();
+
+  // views::View:
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+
+  // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
-  // LogoutButtonObserver:
-  void OnShowLogoutButtonInTrayChanged(bool show) override;
-  void OnLogoutDialogDurationChanged(base::TimeDelta duration) override;
-
-  void UpdateAfterLoginStatusChange(LoginStatus login_status);
+  // SessionObserver:
+  void OnActiveUserPrefServiceChanged(PrefService* prefs) override;
 
  private:
+  void UpdateShowLogoutButtonInTray();
+  void UpdateLogoutDialogDuration();
   void UpdateVisibility();
-  void UpdateButtonTextAndImage(LoginStatus login_status,
-                                ShelfAlignment alignment);
+  void UpdateButtonTextAndImage();
 
-  views::LabelButton* button_;
-  LoginStatus login_status_;
+  Shelf* const shelf_;
+  TrayContainer* const container_;
+  views::MdTextButton* const button_;
   bool show_logout_button_in_tray_;
   base::TimeDelta dialog_duration_;
+
+  // Observes user profile prefs.
+  std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
 
   DISALLOW_COPY_AND_ASSIGN(LogoutButtonTray);
 };

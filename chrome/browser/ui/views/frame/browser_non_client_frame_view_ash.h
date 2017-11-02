@@ -10,6 +10,7 @@
 #include "ash/shell_observer.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "chrome/browser/ui/ash/tablet_mode_client_observer.h"
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
 #include "chrome/browser/ui/views/tab_icon_view_model.h"
 
@@ -20,8 +21,10 @@ class FrameCaptionButtonContainerView;
 class HeaderPainter;
 }
 
+// Provides the BrowserNonClientFrameView for Chrome OS.
 class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
                                      public ash::ShellObserver,
+                                     public TabletModeClientObserver,
                                      public TabIconViewModel {
  public:
   BrowserNonClientFrameViewAsh(BrowserFrame* frame, BrowserView* browser_view);
@@ -34,6 +37,7 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   int GetTopInset(bool restored) const override;
   int GetThemeBackgroundXInset() const override;
   void UpdateThrobber(bool running) override;
+  void UpdateMinimumSize() override;
 
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
@@ -57,8 +61,9 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   // ash::ShellObserver:
   void OnOverviewModeStarting() override;
   void OnOverviewModeEnded() override;
-  void OnMaximizeModeStarted() override;
-  void OnMaximizeModeEnded() override;
+
+  // TabletModeClientObserver:
+  void OnTabletModeToggled(bool enabled) override;
 
   // TabIconViewModel:
   bool ShouldTabIconViewAnimate() const override;
@@ -75,9 +80,12 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
                            ImmersiveFullscreen);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
-                           ToggleMaximizeModeRelayout);
+                           ToggleTabletModeRelayout);
   FRIEND_TEST_ALL_PREFIXES(BrowserNonClientFrameViewAshTest,
                            AvatarDisplayOnTeleportedWindow);
+  FRIEND_TEST_ALL_PREFIXES(ImmersiveModeControllerAshHostedAppBrowserTest,
+                           FrameLayout);
+
   friend class BrowserHeaderPainterAsh;
 
   // Distance between the left edge of the NonClientFrameView and the tab strip.
@@ -97,8 +105,6 @@ class BrowserNonClientFrameViewAsh : public BrowserNonClientFrameView,
   // Returns true if there is anything to paint. Some fullscreen windows do not
   // need their frames painted.
   bool ShouldPaint() const;
-
-  void PaintToolbarBackground(gfx::Canvas* canvas);
 
   // View which contains the window controls.
   ash::FrameCaptionButtonContainerView* caption_button_container_;

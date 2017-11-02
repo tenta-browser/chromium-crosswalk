@@ -13,9 +13,10 @@ namespace ash {
 namespace mus {
 class WindowManager;
 }
-}
+}  // namespace ash
 
 // Creates and owns ash.
+// TODO(jamescook): Fold this into ChromeBrowserMainExtraPartsAsh.
 class AshInit {
  public:
   AshInit();
@@ -24,6 +25,8 @@ class AshInit {
  private:
   // Only created when running in ash::Config::MUS.
   std::unique_ptr<ash::mus::WindowManager> window_manager_;
+
+  // NOTE: Please add new code to ChromeBrowserMainExtraPartsAsh.
 
   DISALLOW_COPY_AND_ASSIGN(AshInit);
 };

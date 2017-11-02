@@ -31,14 +31,16 @@
 #ifndef WebContextMenuData_h
 #define WebContextMenuData_h
 
-#include "../platform/WebPoint.h"
-#include "../platform/WebReferrerPolicy.h"
-#include "../platform/WebString.h"
-#include "../platform/WebURL.h"
-#include "../platform/WebURLResponse.h"
-#include "../platform/WebVector.h"
 #include "WebHistoryItem.h"
 #include "WebMenuItemInfo.h"
+#include "public/platform/WebMenuSourceType.h"
+#include "public/platform/WebPoint.h"
+#include "public/platform/WebRect.h"
+#include "public/platform/WebReferrerPolicy.h"
+#include "public/platform/WebString.h"
+#include "public/platform/WebURL.h"
+#include "public/platform/WebURLResponse.h"
+#include "public/platform/WebVector.h"
 
 #define WEBCONTEXT_MEDIATYPEFILE_DEFINED
 
@@ -46,6 +48,9 @@ namespace blink {
 
 // This struct is passed to WebViewClient::ShowContextMenu.
 struct WebContextMenuData {
+  // A Java counterpart will be generated for this enum.
+  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.blink_public.web
+  // GENERATED_JAVA_CLASS_NAME_OVERRIDE: WebContextMenuMediaType
   enum MediaType {
     // No special node is in context.
     kMediaTypeNone,
@@ -77,6 +82,9 @@ struct WebContextMenuData {
 
   // Whether the image in context is a null.
   bool has_image_contents;
+
+  // Whether the image in context is a Client-side Lo-Fi placeholder image.
+  bool is_placeholder_image;
 
   // If |media_type| is MediaTypeImage and |has_image_contents| is true, then
   // this contains the image's WebURLResponse.
@@ -177,6 +185,7 @@ struct WebContextMenuData {
     kCanDelete = 0x20,
     kCanSelectAll = 0x40,
     kCanTranslate = 0x80,
+    kCanEditRichly = 0x100,
   };
 
   // Which edit operations are available in the context.
@@ -188,9 +197,14 @@ struct WebContextMenuData {
   // Custom context menu items provided by the WebCore internals.
   WebVector<WebMenuItemInfo> custom_items;
 
+  // Selection in viewport coordinates.
+  WebRect selection_rect;
+
+  WebMenuSourceType source_type;
+
   WebContextMenuData()
       : media_type(kMediaTypeNone),
-        has_image_contents(true),
+        has_image_contents(false),
         media_flags(kMediaNone),
         is_spell_checking_enabled(false),
         is_editable(false),

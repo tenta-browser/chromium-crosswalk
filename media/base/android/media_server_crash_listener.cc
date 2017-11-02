@@ -4,17 +4,11 @@
 
 #include "media/base/android/media_server_crash_listener.h"
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/memory/singleton.h"
 #include "jni/MediaServerCrashListener_jni.h"
 
 namespace media {
-
-// static
-bool MediaServerCrashListener::RegisterMediaServerCrashListener(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
 
 MediaServerCrashListener::MediaServerCrashListener(
     const OnMediaServerCrashCB& on_server_crash_cb,
@@ -25,8 +19,7 @@ MediaServerCrashListener::MediaServerCrashListener(
   CHECK(env);
 
   j_crash_listener_.Reset(Java_MediaServerCrashListener_create(
-      env, base::android::GetApplicationContext(),
-      reinterpret_cast<intptr_t>(this)));
+      env, reinterpret_cast<intptr_t>(this)));
   Java_MediaServerCrashListener_startListening(env, j_crash_listener_);
 }
 

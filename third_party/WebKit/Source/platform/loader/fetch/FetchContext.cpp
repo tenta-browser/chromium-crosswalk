@@ -58,7 +58,7 @@ void FetchContext::AddAdditionalRequestHeaders(ResourceRequest&,
                                                FetchResourceType) {}
 
 WebCachePolicy FetchContext::ResourceRequestCachePolicy(
-    ResourceRequest&,
+    const ResourceRequest&,
     Resource::Type,
     FetchParameters::DeferOption defer) const {
   return WebCachePolicy::kUseProtocolCachePolicy;
@@ -69,6 +69,7 @@ void FetchContext::PrepareRequest(ResourceRequest&, RedirectType) {}
 void FetchContext::DispatchWillSendRequest(unsigned long,
                                            ResourceRequest&,
                                            const ResourceResponse&,
+                                           Resource::Type,
                                            const FetchInitiatorInfo&) {}
 
 void FetchContext::DispatchDidLoadResourceFromMemoryCache(
@@ -111,8 +112,9 @@ void FetchContext::AddResourceTiming(const ResourceTimingInfo&) {}
 
 void FetchContext::SendImagePing(const KURL&) {}
 
-void FetchContext::AddConsoleMessage(const String&,
-                                     FetchContext::LogMessageType) const {}
+void FetchContext::AddWarningConsoleMessage(const String&, LogSource) const {}
+
+void FetchContext::AddErrorConsoleMessage(const String&, LogSource) const {}
 
 void FetchContext::PopulateResourceRequest(
     Resource::Type,

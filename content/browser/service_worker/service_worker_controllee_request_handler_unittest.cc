@@ -11,26 +11,31 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
+#include "components/offline_pages/features/features.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_provider_host.h"
 #include "content/browser/service_worker/service_worker_registration.h"
+#include "content/browser/service_worker/service_worker_response_type.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/browser/service_worker/service_worker_url_request_job.h"
-#include "content/common/resource_request_body_impl.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
+#include "content/public/common/resource_request_body.h"
 #include "content/public/common/resource_type.h"
+#include "content/public/common/service_worker_modes.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/test/test_content_browser_client.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 
 namespace content {
 
@@ -39,23 +44,6 @@ namespace {
 int kMockProviderId = 1;
 
 }
-
-class FailureHelper : public EmbeddedWorkerTestHelper {
- public:
-  FailureHelper() : EmbeddedWorkerTestHelper(base::FilePath()) {}
-  ~FailureHelper() override {}
-
- protected:
-  void OnStartWorker(
-      int embedded_worker_id,
-      int64_t service_worker_version_id,
-      const GURL& scope,
-      const GURL& script_url,
-      bool pause_after_download,
-      mojom::ServiceWorkerEventDispatcherRequest request) override {
-    SimulateWorkerStopped(embedded_worker_id);
-  }
-};
 
 class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
  public:
@@ -70,7 +58,8 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
           request_(test->url_request_context_.CreateRequest(
               url,
               net::DEFAULT_PRIORITY,
-              &test->url_request_delegate_)),
+              &test->url_request_delegate_,
+              TRAFFIC_ANNOTATION_FOR_TESTS)),
           handler_(new ServiceWorkerControlleeRequestHandler(
               test->context()->AsWeakPtr(),
               test->provider_host_,
@@ -78,10 +67,11 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
               fetch_type,
               FETCH_CREDENTIALS_MODE_OMIT,
               FetchRedirectMode::FOLLOW_MODE,
+              std::string() /* integrity */,
               type,
               REQUEST_CONTEXT_TYPE_HYPERLINK,
               REQUEST_CONTEXT_FRAME_TYPE_TOP_LEVEL,
-              scoped_refptr<ResourceRequestBodyImpl>())),
+              scoped_refptr<ResourceRequestBody>())),
           job_(nullptr) {}
 
     ServiceWorkerURLRequestJob* MaybeCreateJob() {
@@ -91,6 +81,8 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
     }
 
     void ResetHandler() { handler_.reset(nullptr); }
+
+    net::URLRequest* request() const { return request_.get(); }
 
    private:
     ServiceWorkerControlleeRequestHandlerTest* test_;
@@ -113,7 +105,8 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
     scope_ = GURL("https://host/scope/");
     script_url_ = GURL("https://host/script.js");
     registration_ = new ServiceWorkerRegistration(
-        scope_, 1L, context()->AsWeakPtr());
+        blink::mojom::ServiceWorkerRegistrationOptions(scope_), 1L,
+        context()->AsWeakPtr());
     version_ = new ServiceWorkerVersion(
         registration_.get(), script_url_, 1L, context()->AsWeakPtr());
 
@@ -125,14 +118,17 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
         EmbeddedWorkerTestHelper::CreateHttpResponseInfo());
 
     // An empty host.
+    remote_endpoints_.emplace_back();
     std::unique_ptr<ServiceWorkerProviderHost> host =
         CreateProviderHostForWindow(
             helper_->mock_render_process_id(), kMockProviderId,
-            true /* is_parent_frame_secure */, helper_->context()->AsWeakPtr());
+            true /* is_parent_frame_secure */, helper_->context()->AsWeakPtr(),
+            &remote_endpoints_.back());
     provider_host_ = host->AsWeakPtr();
     context()->AddProviderHost(std::move(host));
 
-    context()->storage()->LazyInitialize(base::Bind(&base::DoNothing));
+    context()->storage()->LazyInitializeForTest(
+        base::BindOnce(&base::DoNothing));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -155,6 +151,7 @@ class ServiceWorkerControlleeRequestHandlerTest : public testing::Test {
   MockResourceContext mock_resource_context_;
   GURL scope_;
   GURL script_url_;
+  std::vector<ServiceWorkerRemoteProviderEndpoint> remote_endpoints_;
 };
 
 class ServiceWorkerTestContentBrowserClient : public TestContentBrowserClient {
@@ -260,7 +257,7 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, InstallingRegistration) {
   EXPECT_EQ(registration_.get(), provider_host_->associated_registration());
   EXPECT_EQ(version_.get(), provider_host_->installing_version());
   EXPECT_FALSE(version_->HasControllee());
-  EXPECT_FALSE(provider_host_->controlling_version());
+  EXPECT_FALSE(provider_host_->controller());
 }
 
 // Test to not regress crbug/414118.
@@ -317,14 +314,14 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, LostActiveVersion) {
   main_test_resources.MaybeCreateJob();
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(version_->HasControllee());
-  EXPECT_EQ(version_, provider_host_->controlling_version());
+  EXPECT_EQ(version_, provider_host_->controller());
   EXPECT_EQ(version_, provider_host_->active_version());
 
   // Unset the active version.
   provider_host_->NotifyControllerLost();
   registration_->SetActiveVersion(nullptr);
   EXPECT_FALSE(version_->HasControllee());
-  EXPECT_FALSE(provider_host_->controlling_version());
+  EXPECT_FALSE(provider_host_->controller());
   EXPECT_FALSE(provider_host_->active_version());
 
   // Conduct a subresource load.
@@ -334,9 +331,8 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, LostActiveVersion) {
   base::RunLoop().RunUntilIdle();
 
   // Verify that the job errored.
-  EXPECT_EQ(
-      ServiceWorkerURLRequestJob::ResponseType::FAIL_DUE_TO_LOST_CONTROLLER,
-      sub_job->response_type_);
+  EXPECT_EQ(ServiceWorkerResponseType::FAIL_DUE_TO_LOST_CONTROLLER,
+            sub_job->response_type_);
 }
 
 TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithNoFetchHandler) {
@@ -362,7 +358,7 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithNoFetchHandler) {
   EXPECT_TRUE(main_job->ShouldFallbackToNetwork());
   EXPECT_FALSE(main_job->ShouldForwardToServiceWorker());
   EXPECT_TRUE(version_->HasControllee());
-  EXPECT_EQ(version_, provider_host_->controlling_version());
+  EXPECT_EQ(version_, provider_host_->controller());
 
   ServiceWorkerRequestTestResources sub_test_resources(
       this, GURL("https://host/scope/doc/subresource"), RESOURCE_TYPE_IMAGE);
@@ -388,5 +384,51 @@ TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithNoFetchHandler) {
   EXPECT_FALSE(sub_cors_job->ShouldFallbackToNetwork());
   EXPECT_FALSE(sub_cors_job->ShouldForwardToServiceWorker());
 }
+
+#if BUILDFLAG(ENABLE_OFFLINE_PAGES)
+TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithOfflineHeader) {
+  version_->set_fetch_handler_existence(
+      ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
+  registration_->SetActiveVersion(version_);
+  context()->storage()->StoreRegistration(
+      registration_.get(), version_.get(),
+      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  base::RunLoop().RunUntilIdle();
+  version_ = NULL;
+  registration_ = NULL;
+
+  ServiceWorkerRequestTestResources test_resources(
+      this, GURL("https://host/scope/doc"), RESOURCE_TYPE_MAIN_FRAME);
+  // Sets an offline header to indicate force loading offline page.
+  test_resources.request()->SetExtraRequestHeaderByName(
+      "X-Chrome-offline", "reason=download", true);
+  ServiceWorkerURLRequestJob* sw_job = test_resources.MaybeCreateJob();
+
+  EXPECT_FALSE(sw_job);
+}
+
+TEST_F(ServiceWorkerControlleeRequestHandlerTest, FallbackWithNoOfflineHeader) {
+  version_->set_fetch_handler_existence(
+      ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+  version_->SetStatus(ServiceWorkerVersion::ACTIVATED);
+  registration_->SetActiveVersion(version_);
+  context()->storage()->StoreRegistration(
+      registration_.get(), version_.get(),
+      base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
+  base::RunLoop().RunUntilIdle();
+  version_ = NULL;
+  registration_ = NULL;
+
+  ServiceWorkerRequestTestResources test_resources(
+      this, GURL("https://host/scope/doc"), RESOURCE_TYPE_MAIN_FRAME);
+  // Empty offline header value should not cause fallback.
+  test_resources.request()->SetExtraRequestHeaderByName("X-Chrome-offline", "",
+                                                        true);
+  ServiceWorkerURLRequestJob* sw_job = test_resources.MaybeCreateJob();
+
+  EXPECT_TRUE(sw_job);
+}
+#endif  // BUILDFLAG(ENABLE_OFFLINE_PAGE
 
 }  // namespace content

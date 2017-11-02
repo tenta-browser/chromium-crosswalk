@@ -6,6 +6,7 @@
 #define SANDBOX_SRC_WIN_PROCESS_MITIGATIONS_H_
 
 #include <windows.h>
+
 #include <stddef.h>
 
 #include "sandbox/win/src/security_level.h"
@@ -15,6 +16,10 @@ namespace sandbox {
 // Sets the mitigation policy for the current process, ignoring any settings
 // that are invalid for the current version of Windows.
 bool ApplyProcessMitigationsToCurrentProcess(MitigationFlags flags);
+
+// Sets the mitigation policy for the current thread, ignoring any settings
+// that are invalid for the current version of Windows.
+bool ApplyMitigationsToCurrentThread(MitigationFlags flags);
 
 // Returns the flags that must be enforced after startup for the current OS
 // version.
@@ -39,7 +44,9 @@ bool CanSetProcessMitigationsPostStartup(MitigationFlags flags);
 // Returns true if all the supplied flags can be set before a process starts.
 bool CanSetProcessMitigationsPreStartup(MitigationFlags flags);
 
+// Returns true if all the supplied flags can be set on the current thread.
+bool CanSetMitigationsPerThread(MitigationFlags flags);
+
 }  // namespace sandbox
 
 #endif  // SANDBOX_SRC_WIN_PROCESS_MITIGATIONS_H_
-

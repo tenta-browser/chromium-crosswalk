@@ -8,7 +8,6 @@ IdlTypeBase
  IdlType
  IdlUnionType
  IdlArrayOrSequenceType
-  IdlArrayType
   IdlSequenceType
   IdlFrozenArrayType
  IdlNullableType
@@ -144,12 +143,13 @@ class IdlType(IdlTypeBase):
     dictionaries = set()
     enums = {}  # name -> values
 
-    def __init__(self, base_type, is_unrestricted=False):
+    def __init__(self, base_type, is_unrestricted=False, extended_attributes=None):
         super(IdlType, self).__init__()
         if is_unrestricted:
             self.base_type = 'unrestricted %s' % base_type
         else:
             self.base_type = base_type
+        self.extended_attributes = extended_attributes
 
     def __str__(self):
         return self.base_type
@@ -157,10 +157,15 @@ class IdlType(IdlTypeBase):
     def __getstate__(self):
         return {
             'base_type': self.base_type,
+            'extended_attributes': self.extended_attributes,
         }
 
     def __setstate__(self, state):
         self.base_type = state['base_type']
+        self.extended_attributes = state['extended_attributes']
+
+    def set_extended_attributes(self, extended_attributes):
+        self.extended_attributes = extended_attributes
 
     @property
     def is_basic_type(self):
@@ -224,7 +229,7 @@ class IdlType(IdlTypeBase):
         # Anything that is not another type is an interface type.
         # http://www.w3.org/TR/WebIDL/#idl-types
         # http://www.w3.org/TR/WebIDL/#idl-interface
-        # In C++ these are RefPtr or PassRefPtr types.
+        # In C++ these are RefPtr types.
         return not(self.is_basic_type or
                    self.is_callback_function or
                    self.is_dictionary or
@@ -391,7 +396,7 @@ class IdlUnionType(IdlTypeBase):
 
 
 ################################################################################
-# IdlArrayOrSequenceType, IdlArrayType, IdlSequenceType, IdlFrozenArrayType
+# IdlArrayOrSequenceType, IdlSequenceType, IdlFrozenArrayType
 ################################################################################
 
 # TODO(bashi): Rename this like "IdlArrayTypeBase" or something.
@@ -419,10 +424,6 @@ class IdlArrayOrSequenceType(IdlTypeBase):
         return True
 
     @property
-    def is_array_type(self):
-        return False
-
-    @property
     def is_sequence_type(self):
         return False
 
@@ -442,22 +443,6 @@ class IdlArrayOrSequenceType(IdlTypeBase):
         yield self
         for idl_type in self.element_type.idl_types():
             yield idl_type
-
-
-class IdlArrayType(IdlArrayOrSequenceType):
-    def __init__(self, element_type):
-        super(IdlArrayType, self).__init__(element_type)
-
-    def __str__(self):
-        return '%s[]' % self.element_type
-
-    @property
-    def name(self):
-        return self.element_type.name + 'Array'
-
-    @property
-    def is_array_type(self):
-        return True
 
 
 class IdlSequenceType(IdlArrayOrSequenceType):

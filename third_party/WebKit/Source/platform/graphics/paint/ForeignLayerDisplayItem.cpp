@@ -23,7 +23,7 @@ ForeignLayerDisplayItem::ForeignLayerDisplayItem(
       layer_(std::move(layer)),
       location_(location),
       bounds_(bounds) {
-  DCHECK(RuntimeEnabledFeatures::slimmingPaintV2Enabled());
+  DCHECK(RuntimeEnabledFeatures::SlimmingPaintV2Enabled());
   DCHECK(IsForeignLayerType(type));
   DCHECK(layer_);
 }
@@ -35,7 +35,7 @@ void ForeignLayerDisplayItem::Replay(GraphicsContext&) const {
 }
 
 void ForeignLayerDisplayItem::AppendToWebDisplayItemList(
-    const IntRect&,
+    const LayoutSize&,
     WebDisplayItemList*) const {
   NOTREACHED();
 }
@@ -50,10 +50,9 @@ bool ForeignLayerDisplayItem::Equals(const DisplayItem& other) const {
 }
 
 #ifndef NDEBUG
-void ForeignLayerDisplayItem::DumpPropertiesAsDebugString(
-    StringBuilder& string_builder) const {
-  DisplayItem::DumpPropertiesAsDebugString(string_builder);
-  string_builder.Append(String::Format(", layer: %d", layer_->id()));
+void ForeignLayerDisplayItem::PropertiesAsJSON(JSONObject& json) const {
+  DisplayItem::PropertiesAsJSON(json);
+  json.SetInteger("layer", layer_->id());
 }
 #endif  // NDEBUG
 

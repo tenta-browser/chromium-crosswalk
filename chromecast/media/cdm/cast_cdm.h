@@ -16,6 +16,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/threading/thread_checker.h"
+#include "base/time/time.h"
 #include "chromecast/media/base/media_resource_tracker.h"
 #include "chromecast/media/cdm/cast_cdm_context.h"
 #include "chromecast/public/media/cast_key_status.h"
@@ -71,17 +72,23 @@ class CastCdm : public ::media::ContentDecryptionModule {
   // ::media::ContentDecryptionModule implementation.
   ::media::CdmContext* GetCdmContext() override;
 
+  // Cast video products always provide HDCP or equivalent content protection.
+  void GetStatusForPolicy(
+      ::media::HdcpVersion min_hdcp_version,
+      std::unique_ptr<::media::KeyStatusCdmPromise> promise) final;
+
  protected:
   ~CastCdm() override;
 
-  void OnSessionMessage(
-      const std::string& session_id,
-      const std::vector<uint8_t>& message,
-      ::media::ContentDecryptionModule::MessageType message_type);
+  void OnSessionMessage(const std::string& session_id,
+                        const std::vector<uint8_t>& message,
+                        ::media::CdmMessageType message_type);
   void OnSessionClosed(const std::string& session_id);
   void OnSessionKeysChange(const std::string& session_id,
                            bool newly_usable_keys,
                            ::media::CdmKeysInfo keys_info);
+  void OnSessionExpirationUpdate(const std::string& session_id,
+                                 base::Time new_expiry_time);
 
   void KeyIdAndKeyPairsToInfo(const ::media::KeyIdAndKeyPairs& keys,
                               ::media::CdmKeysInfo* key_info);

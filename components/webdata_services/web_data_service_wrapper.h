@@ -23,6 +23,12 @@ class WebDatabaseService;
 class PasswordWebDataService;
 #endif
 
+#if !defined(OS_IOS)
+namespace payments {
+class PaymentManifestWebDataService;
+}  // namespace payments
+#endif
+
 namespace autofill {
 class AutofillWebDataService;
 }  // namespace autofill
@@ -42,6 +48,7 @@ class WebDataServiceWrapper : public KeyedService {
     ERROR_LOADING_KEYWORD,
     ERROR_LOADING_TOKEN,
     ERROR_LOADING_PASSWORD,
+    ERROR_LOADING_PAYMENT_MANIFEST,
   };
 
   // Shows an error message if a loading error occurs.
@@ -62,8 +69,7 @@ class WebDataServiceWrapper : public KeyedService {
   WebDataServiceWrapper(
       const base::FilePath& context_path,
       const std::string& application_locale,
-      const scoped_refptr<base::SingleThreadTaskRunner>& ui_thread,
-      const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
+      const scoped_refptr<base::SingleThreadTaskRunner>& ui_task_runner,
       const syncer::SyncableService::StartSyncFlare& flare,
       const ShowErrorCallback& show_error_callback);
   ~WebDataServiceWrapper() override;
@@ -79,6 +85,10 @@ class WebDataServiceWrapper : public KeyedService {
 #if defined(OS_WIN)
   virtual scoped_refptr<PasswordWebDataService> GetPasswordWebData();
 #endif
+#if !defined(OS_IOS)
+  virtual scoped_refptr<payments::PaymentManifestWebDataService>
+  GetPaymentManifestWebData();
+#endif
 
  protected:
   // For testing.
@@ -93,6 +103,11 @@ class WebDataServiceWrapper : public KeyedService {
 
 #if defined(OS_WIN)
   scoped_refptr<PasswordWebDataService> password_web_data_;
+#endif
+
+#if !defined(OS_IOS)
+  scoped_refptr<payments::PaymentManifestWebDataService>
+      payment_manifest_web_data_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(WebDataServiceWrapper);

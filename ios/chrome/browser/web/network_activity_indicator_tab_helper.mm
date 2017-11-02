@@ -4,8 +4,13 @@
 
 #import "ios/chrome/browser/web/network_activity_indicator_tab_helper.h"
 
+#include "base/memory/ptr_util.h"
 #import "ios/chrome/browser/ui/network_activity_indicator_manager.h"
 #import "ios/web/public/web_state/web_state.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 DEFINE_WEB_STATE_USER_DATA_KEY(NetworkActivityIndicatorTabHelper);
 
@@ -15,8 +20,9 @@ void NetworkActivityIndicatorTabHelper::CreateForWebState(
     NSString* tab_id) {
   DCHECK(web_state);
   if (!FromWebState(web_state)) {
-    web_state->SetUserData(UserDataKey(), new NetworkActivityIndicatorTabHelper(
-                                              web_state, tab_id));
+    web_state->SetUserData(
+        UserDataKey(), base::WrapUnique(new NetworkActivityIndicatorTabHelper(
+                           web_state, tab_id)));
   }
 }
 

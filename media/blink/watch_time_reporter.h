@@ -5,14 +5,21 @@
 #ifndef MEDIA_BLINK_WATCH_TIME_REPORTER_H_
 #define MEDIA_BLINK_WATCH_TIME_REPORTER_H_
 
+#include <vector>
+
 #include "base/callback.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "media/base/audio_codecs.h"
 #include "media/base/media_log.h"
 #include "media/base/timestamp_constants.h"
+#include "media/base/video_codecs.h"
 #include "media/blink/media_blink_export.h"
+#include "media/mojo/interfaces/watch_time_recorder.mojom.h"
+#include "third_party/WebKit/public/platform/WebMediaPlayer.h"
 #include "ui/gfx/geometry/size.h"
+#include "url/origin.h"
 
 namespace media {
 
@@ -43,32 +50,30 @@ namespace media {
 // old metric finalized as accurately as possible.
 class MEDIA_BLINK_EXPORT WatchTimeReporter : base::PowerObserver {
  public:
-  using GetMediaTimeCB = base::Callback<base::TimeDelta(void)>;
+  using GetMediaTimeCB = base::RepeatingCallback<base::TimeDelta(void)>;
 
   // Constructor for the reporter; all requested metadata should be fully known
   // before attempting construction as incorrect values will result in the wrong
   // watch time metrics being reported.
   //
-  // |media_log| is used to continuously log the watch time values for eventual
-  // recording to a histogram upon finalization.
-  //
-  // |initial_video_size| required to ensure that the video track has sufficient
-  // size for watch time reporting.
+  // |properties| Properties describing the playback; these are considered
+  // immutable over the lifetime of the reporter. If any of them change a new
+  // WatchTimeReporter should be created with updated properties.
   //
   // |get_media_time_cb| must return the current playback time in terms of media
   // time, not wall clock time! Using media time instead of wall clock time
   // allows us to avoid a whole class of issues around clock changes during
   // suspend and resume.
+  //
+  // |provider| A provider of mojom::WatchTimeRecorder instances which will be
+  // created and used to handle caching of metrics outside of the current
+  // process.
+  //
   // TODO(dalecurtis): Should we only report when rate == 1.0? Should we scale
   // the elapsed media time instead?
-  WatchTimeReporter(bool has_audio,
-                    bool has_video,
-                    bool is_mse,
-                    bool is_encrypted,
-                    bool is_embedded_media_experience_enabled,
-                    scoped_refptr<MediaLog> media_log,
-                    const gfx::Size& initial_video_size,
-                    const GetMediaTimeCB& get_media_time_cb);
+  WatchTimeReporter(mojom::PlaybackPropertiesPtr properties,
+                    GetMediaTimeCB get_media_time_cb,
+                    mojom::WatchTimeRecorderProvider* provider);
   ~WatchTimeReporter() override;
 
   // These methods are used to ensure that watch time is only reported for
@@ -103,9 +108,24 @@ class MEDIA_BLINK_EXPORT WatchTimeReporter : base::PowerObserver {
   void OnShown();
   void OnHidden();
 
-  // Returns true if the current size is large enough that watch time will be
-  // recorded for playback.
-  bool IsSizeLargeEnoughToReportWatchTime() const;
+  // Called when a playback ends in error.
+  void OnError(PipelineStatus status);
+
+  // Indicates a rebuffering event occurred during playback. When watch time is
+  // finalized the total watch time for a given category will be divided by the
+  // number of rebuffering events. Reset to zero after a finalize event.
+  void OnUnderflow();
+
+  // These methods are used to ensure that the watch time is reported relative
+  // to whether the media is using native controls.
+  void OnNativeControlsEnabled();
+  void OnNativeControlsDisabled();
+
+  // These methods are used to ensure that the watch time is reported relative
+  // to the display type of the media.
+  void OnDisplayTypeInline();
+  void OnDisplayTypeFullscreen();
+  void OnDisplayTypePictureInPicture();
 
   // Setup the reporting interval to be immediate to avoid spinning real time
   // within the unit test.
@@ -125,15 +145,10 @@ class MEDIA_BLINK_EXPORT WatchTimeReporter : base::PowerObserver {
   friend class WatchTimeReporterTest;
 
   // Internal constructor for marking background status.
-  WatchTimeReporter(bool has_audio,
-                    bool has_video,
-                    bool is_mse,
-                    bool is_encrypted,
-                    bool is_embedded_media_experience_enabled,
-                    scoped_refptr<MediaLog> media_log,
-                    const gfx::Size& initial_video_size,
-                    const GetMediaTimeCB& get_media_time_cb,
-                    bool is_background);
+  WatchTimeReporter(mojom::PlaybackPropertiesPtr properties,
+                    bool is_background,
+                    GetMediaTimeCB get_media_time_cb,
+                    mojom::WatchTimeRecorderProvider* provider);
 
   // base::PowerObserver implementation.
   //
@@ -147,17 +162,13 @@ class MEDIA_BLINK_EXPORT WatchTimeReporter : base::PowerObserver {
   enum class FinalizeTime { IMMEDIATELY, ON_NEXT_UPDATE };
   void MaybeFinalizeWatchTime(FinalizeTime finalize_time);
   void UpdateWatchTime();
+  void OnDisplayTypeChanged(blink::WebMediaPlayer::DisplayType display_type);
 
   // Initialized during construction.
-  const bool has_audio_;
-  const bool has_video_;
-  const bool is_mse_;
-  const bool is_encrypted_;
-  const bool is_embedded_media_experience_enabled_;
-  scoped_refptr<MediaLog> media_log_;
-  const gfx::Size initial_video_size_;
-  const GetMediaTimeCB get_media_time_cb_;
+  const mojom::PlaybackPropertiesPtr properties_;
   const bool is_background_;
+  const GetMediaTimeCB get_media_time_cb_;
+  mojom::WatchTimeRecorderPtr recorder_;
 
   // The amount of time between each UpdateWatchTime(); this is the frequency by
   // which the watch times are updated. In the event of a process crash or kill
@@ -170,11 +181,20 @@ class MEDIA_BLINK_EXPORT WatchTimeReporter : base::PowerObserver {
   bool is_on_battery_power_ = false;
   bool is_playing_ = false;
   bool is_visible_ = true;
+  bool has_native_controls_ = false;
   double volume_ = 1.0;
+  int underflow_count_ = 0;
+  std::vector<base::TimeDelta> pending_underflow_events_;
+  blink::WebMediaPlayer::DisplayType display_type_ =
+      blink::WebMediaPlayer::DisplayType::kInline;
+  blink::WebMediaPlayer::DisplayType display_type_for_recording_ =
+      blink::WebMediaPlayer::DisplayType::kInline;
 
   // The last media timestamp seen by UpdateWatchTime().
   base::TimeDelta last_media_timestamp_ = kNoTimestamp;
   base::TimeDelta last_media_power_timestamp_ = kNoTimestamp;
+  base::TimeDelta last_media_controls_timestamp_ = kNoTimestamp;
+  base::TimeDelta last_media_display_type_timestamp_ = kNoTimestamp;
 
   // The starting and ending timestamps used for reporting watch time.
   base::TimeDelta start_timestamp_;
@@ -184,6 +204,16 @@ class MEDIA_BLINK_EXPORT WatchTimeReporter : base::PowerObserver {
   // battery or AC power is being used.
   base::TimeDelta start_timestamp_for_power_;
   base::TimeDelta end_timestamp_for_power_ = kNoTimestamp;
+
+  // Similar to the above but tracks watch time relative to whether or not
+  // native controls are being used.
+  base::TimeDelta start_timestamp_for_controls_;
+  base::TimeDelta end_timestamp_for_controls_ = kNoTimestamp;
+
+  // Similar to the above but tracks watch time relative to whether the display
+  // type is inline, fullscreen or picture-in-picture.
+  base::TimeDelta start_timestamp_for_display_type_;
+  base::TimeDelta end_timestamp_for_display_type_ = kNoTimestamp;
 
   // Special case reporter for handling background video watch time. Configured
   // as an audio only WatchTimeReporter with |is_background_| set to true.

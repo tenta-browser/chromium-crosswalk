@@ -4,22 +4,23 @@
 
 #import <XCTest/XCTest.h>
 
+#include "base/ios/ios_util.h"
 #include "base/memory/ptr_util.h"
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/ui/browser_view_controller_dependency_factory.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
+#import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/third_party/material_components_ios/src/components/Snackbar/src/MaterialSnackbar.h"
-#import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
-#import "ios/web/public/test/http_server.h"
-#import "ios/web/public/test/http_server_util.h"
-#include "ios/web/public/test/response_providers/error_page_response_provider.h"
-#include "ios/web/public/test/response_providers/response_provider.h"
+#include "ios/web/public/test/http_server/error_page_response_provider.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
+#include "ios/web/public/test/http_server/response_provider.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -66,6 +67,12 @@ id<GREYMatcher> PrintButton() {
   EARL_GREY_TEST_DISABLED(@"Test disabled on device.");
 #endif
 
+  // TODO(crbug.com/747622): re-enable this test on iOS 11 once earl grey can
+  // interact with the share menu.
+  if (base::ios::IsRunningOnIOS11OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Disabled on iOS 11.");
+  }
+
   std::map<GURL, std::string> responses;
   const GURL regularPageURL = web::test::HttpServer::MakeUrl("http://choux");
   responses[regularPageURL] = "fleur";
@@ -89,12 +96,17 @@ id<GREYMatcher> PrintButton() {
                                           @"This page cannot be printed.")]
       assertWithMatcher:grey_interactable()];
 
-  // Dismiss the snackbar.
-  [MDCSnackbarManager dismissAndCallCompletionBlocksWithCategory:
-                          kBrowserViewControllerSnackbarCategory];
+  // Dismiss the snackbar (nil dismisses all snackbar messages).
+  [MDCSnackbarManager dismissAndCallCompletionBlocksWithCategory:nil];
 }
 
 - (void)testActivityServiceControllerCantPrintUnprintablePages {
+  // TODO(crbug.com/747622): re-enable this test on iOS 11 once earl grey can
+  // interact with the share menu.
+  if (base::ios::IsRunningOnIOS11OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Disabled on iOS 11.");
+  }
+
   std::unique_ptr<web::DataResponseProvider> provider(
       new ErrorPageResponseProvider());
   web::test::SetUpHttpServer(std::move(provider));
@@ -124,6 +136,12 @@ id<GREYMatcher> PrintButton() {
 }
 
 - (void)testOpenActivityServiceControllerAndCopy {
+  // TODO(crbug.com/747622): re-enable this test on iOS 11 once earl grey can
+  // interact with the share menu.
+  if (base::ios::IsRunningOnIOS11OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Disabled on iOS 11.");
+  }
+
   // Set up mock http server.
   std::map<GURL, std::string> responses;
   GURL url = web::test::HttpServer::MakeUrl("http://potato");

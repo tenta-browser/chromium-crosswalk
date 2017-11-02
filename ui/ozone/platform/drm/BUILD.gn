@@ -11,12 +11,11 @@ source_set("gbm") {
   sources = [
     "client_native_pixmap_factory_gbm.cc",
     "client_native_pixmap_factory_gbm.h",
+    "common/display_types.h",
     "common/drm_util.cc",
     "common/drm_util.h",
     "common/scoped_drm_types.cc",
     "common/scoped_drm_types.h",
-    "cursor_proxy_mojo.cc",
-    "cursor_proxy_mojo.h",
     "gpu/crtc_controller.cc",
     "gpu/crtc_controller.h",
     "gpu/drm_buffer.cc",
@@ -49,8 +48,6 @@ source_set("gbm") {
     "gpu/drm_window_proxy.h",
     "gpu/gbm_buffer.cc",
     "gpu/gbm_buffer.h",
-    "gpu/gbm_buffer_base.cc",
-    "gpu/gbm_buffer_base.h",
     "gpu/gbm_device.cc",
     "gpu/gbm_device.h",
     "gpu/gbm_surface.cc",
@@ -104,8 +101,10 @@ source_set("gbm") {
     "host/drm_window_host_manager.h",
     "host/gpu_thread_adapter.h",
     "host/gpu_thread_observer.h",
-    "mus_thread_proxy.cc",
-    "mus_thread_proxy.h",
+    "host/host_cursor_proxy.cc",
+    "host/host_cursor_proxy.h",
+    "host/host_drm_device.cc",
+    "host/host_drm_device.h",
     "ozone_platform_gbm.cc",
     "ozone_platform_gbm.h",
   ]
@@ -114,7 +113,7 @@ source_set("gbm") {
     "//base",
     "//ipc",
     "//mojo/common:common_base",
-    "//services/service_manager/public/cpp:sources",
+    "//services/service_manager/public/cpp",
     "//services/ui/public/interfaces:constants",
     "//skia",
     "//third_party/libdrm",
@@ -146,6 +145,7 @@ source_set("gbm") {
 source_set("gbm_unittests") {
   testonly = true
   sources = [
+    "common/drm_util_unittest.cc",
     "gpu/drm_overlay_validator_unittest.cc",
     "gpu/drm_window_unittest.cc",
     "gpu/fake_plane_info.cc",
@@ -162,6 +162,7 @@ source_set("gbm_unittests") {
     "gpu/mock_scanout_buffer.h",
     "gpu/mock_scanout_buffer_generator.cc",
     "gpu/mock_scanout_buffer_generator.h",
+    "gpu/proxy_helpers_unittest.cc",
     "gpu/screen_manager_unittest.cc",
   ]
 

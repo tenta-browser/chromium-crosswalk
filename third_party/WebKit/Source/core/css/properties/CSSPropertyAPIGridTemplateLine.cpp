@@ -4,4 +4,17 @@
 
 #include "core/css/properties/CSSPropertyAPIGridTemplateLine.h"
 
-namespace blink {}  // namespace blink
+#include "core/css/parser/CSSParserContext.h"
+#include "core/css/properties/CSSPropertyGridUtils.h"
+
+namespace blink {
+
+const CSSValue* CSSPropertyAPIGridTemplateLine::ParseSingleValue(
+    CSSParserTokenRange& range,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return CSSPropertyGridUtils::ConsumeGridTemplatesRowsOrColumns(
+      range, context.Mode());
+}
+
+}  // namespace blink

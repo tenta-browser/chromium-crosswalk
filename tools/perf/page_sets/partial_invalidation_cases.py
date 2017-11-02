@@ -14,7 +14,7 @@ class PartialInvalidationCasesPage(page_module.Page):
 
   def __init__(self, url, page_set):
     super(PartialInvalidationCasesPage, self).__init__(
-        url=url, page_set=page_set)
+        url=url, page_set=page_set, name=url.split('/')[-1])
 
 
 class PartialInvalidationCasesPageSet(story.StorySet):

@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "cc/input/touch_action.h"
 #include "cc/layers/layer_collections.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -46,11 +47,21 @@ enum DebugRectType {
 };
 
 struct DebugRect {
+  DebugRect(DebugRectType new_type,
+            const gfx::Rect& new_rect,
+            TouchAction new_touch_action)
+      : type(new_type), rect(new_rect), touch_action(new_touch_action) {
+    if (type != TOUCH_EVENT_HANDLER_RECT_TYPE)
+      DCHECK_EQ(touch_action, kTouchActionNone);
+  }
   DebugRect(DebugRectType new_type, const gfx::Rect& new_rect)
-      : type(new_type), rect(new_rect) {}
+      : DebugRect(new_type, new_rect, kTouchActionNone) {}
 
   DebugRectType type;
   gfx::Rect rect;
+  // Valid when |type| is |TOUCH_EVENT_HANDLER_RECT_TYPE|, otherwise default to
+  // |kTouchActionNone|.
+  TouchAction touch_action;
 };
 
 // This class maintains a history of rects of various types that can be used
@@ -67,7 +78,7 @@ class DebugRectHistory {
   void SaveDebugRectsForCurrentFrame(
       LayerTreeImpl* tree_impl,
       LayerImpl* hud_layer,
-      const LayerImplList& render_surface_layer_list,
+      const RenderSurfaceList& render_surface_list,
       const LayerTreeDebugState& debug_state);
 
   const std::vector<DebugRect>& debug_rects() { return debug_rects_; }
@@ -76,10 +87,9 @@ class DebugRectHistory {
   DebugRectHistory();
 
   void SavePaintRects(LayerTreeImpl* tree_impl);
-  void SavePropertyChangedRects(const LayerImplList& render_surface_layer_list,
-                                LayerImpl* hud_layer);
-  void SaveSurfaceDamageRects(const LayerImplList& render_surface_layer_list);
-  void SaveScreenSpaceRects(const LayerImplList& render_surface_layer_list);
+  void SavePropertyChangedRects(LayerTreeImpl* tree_impl, LayerImpl* hud_layer);
+  void SaveSurfaceDamageRects(const RenderSurfaceList& render_surface_list);
+  void SaveScreenSpaceRects(const RenderSurfaceList& render_surface_list);
   void SaveTouchEventHandlerRects(LayerTreeImpl* layer);
   void SaveTouchEventHandlerRectsCallback(LayerImpl* layer);
   void SaveWheelEventHandlerRects(LayerTreeImpl* tree_impl);
@@ -87,7 +97,6 @@ class DebugRectHistory {
   void SaveScrollEventHandlerRectsCallback(LayerImpl* layer);
   void SaveNonFastScrollableRects(LayerTreeImpl* layer);
   void SaveNonFastScrollableRectsCallback(LayerImpl* layer);
-  void SaveLayerAnimationBoundsRects(LayerTreeImpl* tree_impl);
 
   std::vector<DebugRect> debug_rects_;
 

@@ -474,6 +474,9 @@ int EventFlagsFromXEvent(const XEvent& xev) {
       return flags;
     }
     case EnterNotify:
+      // EnterNotify creates ET_MOUSE_MOVED. Mark as synthesized as this is not
+      // a real mouse move event.
+      return GetEventFlagsFromXState(xev.xcrossing.state) | EF_IS_SYNTHESIZED;
     case LeaveNotify:
       return GetEventFlagsFromXState(xev.xcrossing.state);
     case MotionNotify:
@@ -740,6 +743,13 @@ float GetTouchForceFromXEvent(const XEvent& xev) {
   return force;
 }
 
+EventPointerType GetTouchPointerTypeFromXEvent(const XEvent& xev) {
+  XIDeviceEvent* event = static_cast<XIDeviceEvent*>(xev.xcookie.data);
+  DCHECK(ui::TouchFactory::GetInstance()->IsTouchDevice(event->sourceid));
+  return ui::TouchFactory::GetInstance()->GetTouchDevicePointerType(
+      event->sourceid);
+}
+
 bool GetScrollOffsetsFromXEvent(const XEvent& xev,
                                 float* x_offset,
                                 float* y_offset,
@@ -806,6 +816,10 @@ bool GetFlingDataFromXEvent(const XEvent& xev,
   DeviceDataManagerX11::GetInstance()->GetFlingData(xev, vx, vy, vx_ordinal,
                                                     vy_ordinal, is_cancel);
   return true;
+}
+
+bool IsAltPressed() {
+  return XModifierStateWatcher::GetInstance()->state() & Mod1Mask;
 }
 
 void ResetTimestampRolloverCountersForTesting(

@@ -8,10 +8,12 @@
 #include <memory>
 #include <vector>
 
+#include "chrome/browser/permissions/permission_request.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
+#include "chrome/browser/ui/permission_bubble/permission_prompt.h"
+#include "url/gurl.h"
 
 class MockPermissionPrompt;
-class PermissionPrompt;
 
 namespace content {
 class WebContents;
@@ -28,7 +30,9 @@ class MockPermissionPromptFactory {
   ~MockPermissionPromptFactory();
 
   // Create method called by the PBM to show a bubble.
-  std::unique_ptr<PermissionPrompt> Create(content::WebContents* web_contents);
+  std::unique_ptr<PermissionPrompt> Create(
+      content::WebContents* web_contents,
+      PermissionPrompt::Delegate* delegate);
 
   void SetCanUpdateUi(bool can_update_ui);
 
@@ -51,7 +55,11 @@ class MockPermissionPromptFactory {
   // Number of requests seen by the last |Show|.
   int request_count() { return requests_count_; }
   // Number of requests seen.
-  int total_request_count() { return total_requests_count_; }
+  int TotalRequestCount();
+  // Whether the specified permission was shown in a prompt.
+  bool RequestTypeSeen(PermissionRequestType type);
+  // Whether a prompt with the given origin was shown.
+  bool RequestOriginSeen(const GURL& origin);
 
   void WaitForPermissionBubble();
 
@@ -61,16 +69,17 @@ class MockPermissionPromptFactory {
   // This shouldn't be called. Is here to fail tests that try to create a bubble
   // after the factory has been destroyed.
   static std::unique_ptr<PermissionPrompt> DoNotCreate(
-      content::WebContents* web_contents);
+      content::WebContents* web_contents,
+      PermissionPrompt::Delegate* delegate);
 
-  void UpdateResponseType();
-  void ShowView(MockPermissionPrompt* view);
   void HideView(MockPermissionPrompt* view);
 
   bool can_update_ui_;
   int show_count_;
   int requests_count_;
-  int total_requests_count_;
+  std::vector<PermissionRequestType> request_types_seen_;
+  std::vector<GURL> request_origins_seen_;
+
   std::vector<MockPermissionPrompt*> prompts_;
   PermissionRequestManager::AutoResponseType response_type_;
 

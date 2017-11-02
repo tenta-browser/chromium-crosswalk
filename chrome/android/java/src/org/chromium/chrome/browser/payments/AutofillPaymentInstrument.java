@@ -5,10 +5,10 @@
 package org.chromium.chrome.browser.payments;
 
 import android.content.Context;
+import android.support.v7.content.res.AppCompatResources;
 import android.text.TextUtils;
 import android.util.JsonWriter;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.autofill.PersonalDataManager;
@@ -36,6 +36,7 @@ import javax.annotation.Nullable;
 public class AutofillPaymentInstrument extends PaymentInstrument
         implements FullCardRequestDelegate, NormalizedAddressRequestDelegate {
     private final WebContents mWebContents;
+    private final boolean mIsMatchingMerchantsRequestedCardType;
     private CreditCard mCard;
     private String mSecurityCode;
     @Nullable private AutofillProfile mBillingAddress;
@@ -48,26 +49,33 @@ public class AutofillPaymentInstrument extends PaymentInstrument
     /**
      * Builds a payment instrument for the given credit card.
      *
-     * @param webContents    The web contents where PaymentRequest was invoked.
-     * @param card           The autofill card that can be used for payment.
-     * @param billingAddress The billing address for the card.
-     * @param methodName     The payment method name, e.g., "basic-card", "visa", amex", or null.
+     * @param webContents                    The web contents where PaymentRequest was invoked.
+     * @param card                           The autofill card that can be used for payment.
+     * @param billingAddress                 The billing address for the card.
+     * @param methodName                     The payment method name, e.g., "basic-card", "visa",
+     *                                       amex", or null.
+     * @param matchesMerchantCardTypeExactly Whether the card type (credit, debit, prepaid) matches
+     *                                       the type that the merchant has requested exactly. This
+     *                                       should be false for unknown card types, if the merchant
+     *                                       cannot accept some card types.
      */
     public AutofillPaymentInstrument(WebContents webContents, CreditCard card,
-            @Nullable AutofillProfile billingAddress, @Nullable String methodName) {
+            @Nullable AutofillProfile billingAddress, @Nullable String methodName,
+            boolean matchesMerchantCardTypeExactly) {
         super(card.getGUID(), card.getObfuscatedNumber(), card.getName(), null);
         mWebContents = webContents;
         mCard = card;
         mBillingAddress = billingAddress;
         mIsEditable = true;
         mMethodName = methodName;
+        mIsMatchingMerchantsRequestedCardType = matchesMerchantCardTypeExactly;
 
         Context context = ChromeActivity.fromWebContents(mWebContents);
         if (context == null) return;
 
         if (card.getIssuerIconDrawableId() != 0) {
-            updateDrawableIcon(ApiCompatibilityUtils.getDrawable(
-                    context.getResources(), card.getIssuerIconDrawableId()));
+            updateDrawableIcon(
+                    AppCompatResources.getDrawable(context, card.getIssuerIconDrawableId()));
         }
 
         checkAndUpateCardCompleteness(context);
@@ -81,8 +89,39 @@ public class AutofillPaymentInstrument extends PaymentInstrument
     }
 
     @Override
-    public void invokePaymentApp(String unusedMerchantName, String unusedOrigin,
-            String unusedIFrameOrigin, byte[][] unusedCertificateChain,
+    public boolean isAutofillInstrument() {
+        return true;
+    }
+
+    @Override
+    public boolean isServerAutofillInstrument() {
+        return !mCard.getIsLocal();
+    }
+
+    @Override
+    public boolean isExactlyMatchingMerchantRequest() {
+        return mIsMatchingMerchantsRequestedCardType;
+    }
+
+    @Override
+    @Nullable
+    public String getCountryCode() {
+        return AutofillAddress.getCountryCode(mBillingAddress);
+    }
+
+    @Override
+    public boolean canMakePayment() {
+        return mHasValidNumberAndName; // Ignore absence of billing address.
+    }
+
+    @Override
+    public boolean canPreselect() {
+        return mIsComplete && mIsMatchingMerchantsRequestedCardType;
+    }
+
+    @Override
+    public void invokePaymentApp(String unusedRequestId, String unusedMerchantName,
+            String unusedOrigin, String unusedIFrameOrigin, byte[][] unusedCertificateChain,
             Map<String, PaymentMethodData> unusedMethodDataMap, PaymentItem unusedTotal,
             List<PaymentItem> unusedDisplayItems,
             Map<String, PaymentDetailsModifier> unusedModifiers,
@@ -224,14 +263,6 @@ public class AutofillPaymentInstrument extends PaymentInstrument
     }
 
     /**
-     * @return Whether the card number is valid and name on card is non-empty. Billing address is
-     * not taken into consideration.
-     */
-    public boolean isValidCard() {
-        return mHasValidNumberAndName;
-    }
-
-    /**
      * Updates the instrument and marks it "complete." Called after the user has edited this
      * instrument.
      *
@@ -261,8 +292,7 @@ public class AutofillPaymentInstrument extends PaymentInstrument
         if (context == null) return;
 
         updateIdentifierLabelsAndIcon(card.getGUID(), card.getObfuscatedNumber(), card.getName(),
-                null, ApiCompatibilityUtils.getDrawable(
-                        context.getResources(), card.getIssuerIconDrawableId()));
+                null, AppCompatResources.getDrawable(context, card.getIssuerIconDrawableId()));
         checkAndUpateCardCompleteness(context);
         assert mIsComplete;
         assert mHasValidNumberAndName;
@@ -304,7 +334,7 @@ public class AutofillPaymentInstrument extends PaymentInstrument
                 invalidFieldsCount++;
             }
 
-            if (PersonalDataManager.getInstance().getBasicCardPaymentType(
+            if (PersonalDataManager.getInstance().getBasicCardIssuerNetwork(
                         mCard.getNumber().toString(), true)
                     == null) {
                 mHasValidNumberAndName = false;
@@ -327,11 +357,6 @@ public class AutofillPaymentInstrument extends PaymentInstrument
     /** @return The credit card represented by this payment instrument. */
     public CreditCard getCard() {
         return mCard;
-    }
-
-    /** @return The billing address associated with this credit card. */
-    public AutofillProfile getBillingAddress() {
-        return mBillingAddress;
     }
 
     @Override

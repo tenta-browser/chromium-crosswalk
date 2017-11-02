@@ -5,15 +5,19 @@
 #ifndef SpellCheckTestBase_h
 #define SpellCheckTestBase_h
 
-#include "core/editing/EditingTestBase.h"
+#include "core/editing/testing/EditingTestBase.h"
 #include "core/loader/EmptyClients.h"
 #include "core/testing/DummyPageHolder.h"
 
 namespace blink {
 
+class SpellChecker;
+
 class SpellCheckTestBase : public EditingTestBase {
  protected:
   void SetUp() override;
+
+  SpellChecker& GetSpellChecker() const;
 
  private:
   class DummySpellCheckerClient : public EmptySpellCheckerClient {

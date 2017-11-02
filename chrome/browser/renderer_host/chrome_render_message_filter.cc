@@ -18,6 +18,9 @@
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/net/predictor.h"
+#include "chrome/browser/predictors/loading_predictor.h"
+#include "chrome/browser/predictors/loading_predictor_factory.h"
+#include "chrome/browser/predictors/preconnect_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/render_messages.h"
@@ -53,7 +56,14 @@ ChromeRenderMessageFilter::ChromeRenderMessageFilter(int render_process_id,
       render_process_id_(render_process_id),
       profile_(profile),
       predictor_(profile_->GetNetworkPredictor()),
-      cookie_settings_(CookieSettingsFactory::GetForProfile(profile)) {}
+      preconnect_manager_(nullptr),
+      cookie_settings_(CookieSettingsFactory::GetForProfile(profile)) {
+  auto* loading_predictor =
+      predictors::LoadingPredictorFactory::GetForProfile(profile);
+  if (loading_predictor) {
+    preconnect_manager_ = loading_predictor->preconnect_manager();
+  }
+}
 
 ChromeRenderMessageFilter::~ChromeRenderMessageFilter() {
 }
@@ -63,8 +73,6 @@ bool ChromeRenderMessageFilter::OnMessageReceived(const IPC::Message& message) {
   IPC_BEGIN_MESSAGE_MAP(ChromeRenderMessageFilter, message)
     IPC_MESSAGE_HANDLER(NetworkHintsMsg_DNSPrefetch, OnDnsPrefetch)
     IPC_MESSAGE_HANDLER(NetworkHintsMsg_Preconnect, OnPreconnect)
-    IPC_MESSAGE_HANDLER(ChromeViewHostMsg_UpdatedCacheStats,
-                        OnUpdatedCacheStats)
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_AllowDatabase, OnAllowDatabase)
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_AllowDOMStorage, OnAllowDOMStorage)
     IPC_MESSAGE_HANDLER_DELAY_REPLY(
@@ -85,21 +93,22 @@ bool ChromeRenderMessageFilter::OnMessageReceived(const IPC::Message& message) {
 
 void ChromeRenderMessageFilter::OverrideThreadForMessage(
     const IPC::Message& message, BrowserThread::ID* thread) {
-  switch (message.type()) {
 #if BUILDFLAG(ENABLE_PLUGINS)
+  switch (message.type()) {
     case ChromeViewHostMsg_IsCrashReportingEnabled::ID:
-#endif
-    case ChromeViewHostMsg_UpdatedCacheStats::ID:
       *thread = BrowserThread::UI;
       break;
     default:
       break;
   }
+#endif
 }
 
 void ChromeRenderMessageFilter::OnDnsPrefetch(
     const network_hints::LookupRequest& request) {
-  if (predictor_)
+  if (preconnect_manager_)
+    preconnect_manager_->StartPreresolveHosts(request.hostname_list);
+  else if (predictor_)
     predictor_->DnsPrefetchList(request.hostname_list);
 }
 
@@ -111,18 +120,19 @@ void ChromeRenderMessageFilter::OnPreconnect(const GURL& url,
                  << count;
     return;
   }
-  if (predictor_ && url.is_valid() && url.has_host() && url.has_scheme() &&
-      url.SchemeIsHTTPOrHTTPS()) {
+
+  if (!url.is_valid() || !url.has_host() || !url.has_scheme() ||
+      !url.SchemeIsHTTPOrHTTPS()) {
+    return;
+  }
+
+  if (preconnect_manager_) {
+    preconnect_manager_->StartPreconnectUrl(url, allow_credentials);
+  } else if (predictor_) {
     predictor_->PreconnectUrl(url, GURL(),
                               chrome_browser_net::UrlInfo::EARLY_LOAD_MOTIVATED,
                               allow_credentials, count);
   }
-}
-
-void ChromeRenderMessageFilter::OnUpdatedCacheStats(uint64_t capacity,
-                                                    uint64_t size) {
-  web_cache::WebCacheManager::GetInstance()->ObserveStats(render_process_id_,
-                                                          capacity, size);
 }
 
 void ChromeRenderMessageFilter::OnAllowDatabase(
@@ -162,11 +172,9 @@ void ChromeRenderMessageFilter::OnRequestFileSystemAccessSync(
     const GURL& top_origin_url,
     IPC::Message* reply_msg) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  base::Callback<void(bool)> callback =
-      base::Bind(&ChromeRenderMessageFilter::
-                 OnRequestFileSystemAccessSyncResponse,
-                 make_scoped_refptr(this),
-                 reply_msg);
+  base::Callback<void(bool)> callback = base::Bind(
+      &ChromeRenderMessageFilter::OnRequestFileSystemAccessSyncResponse,
+      base::WrapRefCounted(this), reply_msg);
   OnRequestFileSystemAccess(render_frame_id,
                             origin_url,
                             top_origin_url,
@@ -181,38 +189,15 @@ void ChromeRenderMessageFilter::OnRequestFileSystemAccessSyncResponse(
   Send(reply_msg);
 }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-void ChromeRenderMessageFilter::FileSystemAccessedSyncOnUIThread(
-    int render_process_id,
-    int render_frame_id,
-    const GURL& url,
-    bool blocked_by_policy,
-    IPC::Message* reply_msg) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  extensions::WebViewPermissionHelper* web_view_permission_helper =
-      extensions::WebViewPermissionHelper::FromFrameID(
-          render_process_id, render_frame_id);
-  // Between the time the permission request is made and the time it is handled
-  // by the UI thread, the extensions::WebViewPermissionHelper might be gone.
-  if (!web_view_permission_helper)
-    return;
-  web_view_permission_helper->FileSystemAccessedSync(
-      render_process_id, render_frame_id, url, blocked_by_policy, reply_msg);
-}
-#endif
-
 void ChromeRenderMessageFilter::OnRequestFileSystemAccessAsync(
     int render_frame_id,
     int request_id,
     const GURL& origin_url,
     const GURL& top_origin_url) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  base::Callback<void(bool)> callback =
-      base::Bind(&ChromeRenderMessageFilter::
-                 OnRequestFileSystemAccessAsyncResponse,
-                 make_scoped_refptr(this),
-                 render_frame_id,
-                 request_id);
+  base::Callback<void(bool)> callback = base::Bind(
+      &ChromeRenderMessageFilter::OnRequestFileSystemAccessAsyncResponse,
+      base::WrapRefCounted(this), render_frame_id, request_id);
   OnRequestFileSystemAccess(render_frame_id,
                             origin_url,
                             top_origin_url,

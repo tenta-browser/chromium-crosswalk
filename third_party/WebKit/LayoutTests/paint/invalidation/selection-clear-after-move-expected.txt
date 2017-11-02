@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutImage IMG",
@@ -17,6 +17,10 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutImage IMG",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutText #text",
       "reason": "selection"
     }
   ]

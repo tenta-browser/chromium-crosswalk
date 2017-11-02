@@ -4,6 +4,7 @@
 
 #include "core/paint/PaintLayerClipper.h"
 
+#include "build/build_config.h"
 #include "core/layout/LayoutBoxModelObject.h"
 #include "core/layout/LayoutTestHelper.h"
 #include "core/layout/LayoutView.h"
@@ -14,13 +15,9 @@
 
 namespace blink {
 
-class PaintLayerClipperTest : public ::testing::WithParamInterface<bool>,
-                              private ScopedSlimmingPaintInvalidationForTest,
-                              public RenderingTest {
+class PaintLayerClipperTest : public RenderingTest {
  public:
-  PaintLayerClipperTest()
-      : ScopedSlimmingPaintInvalidationForTest(GetParam()),
-        RenderingTest(EmptyLocalFrameClient::Create()) {}
+  PaintLayerClipperTest() : RenderingTest(EmptyLocalFrameClient::Create()) {}
 
   void SetUp() override {
     LayoutTestSupport::SetMockThemeEnabledForTest(true);
@@ -33,18 +30,14 @@ class PaintLayerClipperTest : public ::testing::WithParamInterface<bool>,
   }
 };
 
-INSTANTIATE_TEST_CASE_P(All,
-                        PaintLayerClipperTest,
-                        ::testing::ValuesIn(std::vector<bool>{false, true}));
-
-TEST_P(PaintLayerClipperTest, LayoutSVGRoot) {
+TEST_F(PaintLayerClipperTest, BackgroundClipRectSubpixelAccumulation) {
   SetBodyInnerHTML(
       "<!DOCTYPE html>"
       "<svg id=target width=200 height=300 style='position: relative'>"
       "  <rect width=400 height=500 fill='blue'/>"
       "</svg>");
 
-  Element* target = GetDocument().GetElementById("target");
+  Element* target = GetDocument().getElementById("target");
   PaintLayer* target_paint_layer =
       ToLayoutBoxModelObject(target->GetLayoutObject())->Layer();
   ClipRectsContext context(
@@ -52,55 +45,73 @@ TEST_P(PaintLayerClipperTest, LayoutSVGRoot) {
       kIgnorePlatformOverlayScrollbarSize, LayoutSize(FloatSize(0.25, 0.35)));
   // When RLS is enabled, the LayoutView will have a composited scrolling layer,
   // so don't apply an overflow clip.
-  if (RuntimeEnabledFeatures::rootLayerScrollingEnabled())
+  if (RuntimeEnabledFeatures::RootLayerScrollingEnabled())
+    context.SetIgnoreOverflowClip();
+  ClipRect background_rect;
+
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateBackgroundClipRect(context, background_rect);
+
+  EXPECT_EQ(LayoutRect(FloatRect(8.25, 8.35, 200, 300)),
+            background_rect.Rect());
+}
+
+TEST_F(PaintLayerClipperTest, LayoutSVGRoot) {
+  SetBodyInnerHTML(
+      "<!DOCTYPE html>"
+      "<svg id=target width=200 height=300 style='position: relative'>"
+      "  <rect width=400 height=500 fill='blue'/>"
+      "</svg>");
+
+  Element* target = GetDocument().getElementById("target");
+  PaintLayer* target_paint_layer =
+      ToLayoutBoxModelObject(target->GetLayoutObject())->Layer();
+  ClipRectsContext context(
+      GetDocument().GetLayoutView()->Layer(), kUncachedClipRects,
+      kIgnorePlatformOverlayScrollbarSize, LayoutSize(FloatSize(0.25, 0.35)));
+  // When RLS is enabled, the LayoutView will have a composited scrolling layer,
+  // so don't apply an overflow clip.
+  if (RuntimeEnabledFeatures::RootLayerScrollingEnabled())
     context.SetIgnoreOverflowClip();
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  target_paint_layer->Clipper(option).CalculateRects(
-      context, LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
-      background_rect, foreground_rect);
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context,
+                      target_paint_layer->GetLayoutObject().FirstFragment(),
+                      LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+                      background_rect, foreground_rect);
 
   EXPECT_EQ(LayoutRect(FloatRect(8.25, 8.35, 200, 300)),
             background_rect.Rect());
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled()) {
-    EXPECT_EQ(LayoutRect(FloatRect(8.25, 8.35, 199.75, 299.66)),
-              foreground_rect.Rect());
-  } else {
-    // TODO(chrishtr): this is off by 0.25px because
-    // LayoutSVGRoot::OverflowClipRect incorrectly does pixel-snapping.
-    EXPECT_EQ(LayoutRect(FloatRect(8, 8, 200, 300)), foreground_rect.Rect());
-  }
+  EXPECT_EQ(LayoutRect(FloatRect(8.25, 8.35, 200, 300)),
+            foreground_rect.Rect());
   EXPECT_EQ(LayoutRect(FloatRect(8.25, 8.35, 200, 300)), layer_bounds);
 }
 
-TEST_P(PaintLayerClipperTest, ControlClip) {
+TEST_F(PaintLayerClipperTest, ControlClip) {
   SetBodyInnerHTML(
       "<!DOCTYPE html>"
       "<input id=target style='position:absolute; width: 200px; height: 300px'"
       "    type=button>");
-  Element* target = GetDocument().GetElementById("target");
+  Element* target = GetDocument().getElementById("target");
   PaintLayer* target_paint_layer =
       ToLayoutBoxModelObject(target->GetLayoutObject())->Layer();
   ClipRectsContext context(GetDocument().GetLayoutView()->Layer(),
                            kUncachedClipRects);
   // When RLS is enabled, the LayoutView will have a composited scrolling layer,
   // so don't apply an overflow clip.
-  if (RuntimeEnabledFeatures::rootLayerScrollingEnabled())
+  if (RuntimeEnabledFeatures::RootLayerScrollingEnabled())
     context.SetIgnoreOverflowClip();
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  target_paint_layer->Clipper(option).CalculateRects(
-      context, LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
-      background_rect, foreground_rect);
-#if OS(MACOSX)
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context,
+                      target_paint_layer->GetLayoutObject().FirstFragment(),
+                      LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+                      background_rect, foreground_rect);
+#if defined(OS_MACOSX)
   // If the PaintLayer clips overflow, the background rect is intersected with
   // the PaintLayer bounds...
   EXPECT_EQ(LayoutRect(3, 4, 210, 28), background_rect.Rect());
@@ -117,32 +128,31 @@ TEST_P(PaintLayerClipperTest, ControlClip) {
 #endif
 }
 
-TEST_P(PaintLayerClipperTest, RoundedClip) {
+TEST_F(PaintLayerClipperTest, RoundedClip) {
   SetBodyInnerHTML(
       "<!DOCTYPE html>"
       "<div id='target' style='position:absolute; width: 200px; height: 300px;"
       "    overflow: hidden; border-radius: 1px'>"
       "</div>");
 
-  Element* target = GetDocument().GetElementById("target");
+  Element* target = GetDocument().getElementById("target");
   PaintLayer* target_paint_layer =
       ToLayoutBoxModelObject(target->GetLayoutObject())->Layer();
   ClipRectsContext context(GetDocument().GetLayoutView()->Layer(),
                            kUncachedClipRects);
   // When RLS is enabled, the LayoutView will have a composited scrolling layer,
   // so don't apply an overflow clip.
-  if (RuntimeEnabledFeatures::rootLayerScrollingEnabled())
+  if (RuntimeEnabledFeatures::RootLayerScrollingEnabled())
     context.SetIgnoreOverflowClip();
 
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  target_paint_layer->Clipper(option).CalculateRects(
-      context, LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
-      background_rect, foreground_rect);
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context,
+                      target_paint_layer->GetLayoutObject().FirstFragment(),
+                      LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+                      background_rect, foreground_rect);
 
   // Only the foreground rect gets hasRadius set for overflow clipping
   // of descendants.
@@ -153,7 +163,7 @@ TEST_P(PaintLayerClipperTest, RoundedClip) {
   EXPECT_EQ(LayoutRect(8, 8, 200, 300), layer_bounds);
 }
 
-TEST_P(PaintLayerClipperTest, RoundedClipNested) {
+TEST_F(PaintLayerClipperTest, RoundedClipNested) {
   SetBodyInnerHTML(
       "<!DOCTYPE html>"
       "<div id='parent' style='position:absolute; width: 200px; height: 300px;"
@@ -163,11 +173,11 @@ TEST_P(PaintLayerClipperTest, RoundedClipNested) {
       "  </div>"
       "</div>");
 
-  Element* parent = GetDocument().GetElementById("parent");
+  Element* parent = GetDocument().getElementById("parent");
   PaintLayer* parent_paint_layer =
       ToLayoutBoxModelObject(parent->GetLayoutObject())->Layer();
 
-  Element* child = GetDocument().GetElementById("child");
+  Element* child = GetDocument().getElementById("child");
   PaintLayer* child_paint_layer =
       ToLayoutBoxModelObject(child->GetLayoutObject())->Layer();
 
@@ -176,12 +186,11 @@ TEST_P(PaintLayerClipperTest, RoundedClipNested) {
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  child_paint_layer->Clipper(option).CalculateRects(
-      context, LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
-      background_rect, foreground_rect);
+  child_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context,
+                      child_paint_layer->GetLayoutObject().FirstFragment(),
+                      LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+                      background_rect, foreground_rect);
 
   EXPECT_EQ(LayoutRect(0, 0, 200, 300), background_rect.Rect());
   EXPECT_TRUE(background_rect.HasRadius());
@@ -190,7 +199,7 @@ TEST_P(PaintLayerClipperTest, RoundedClipNested) {
   EXPECT_EQ(LayoutRect(0, 0, 500, 500), layer_bounds);
 }
 
-TEST_P(PaintLayerClipperTest, ControlClipSelect) {
+TEST_F(PaintLayerClipperTest, ControlClipSelect) {
   SetBodyInnerHTML(
       "<select id='target' style='position: relative; width: 100px; "
       "    background: none; border: none; padding: 0px 15px 0px 5px;'>"
@@ -198,35 +207,34 @@ TEST_P(PaintLayerClipperTest, ControlClipSelect) {
       "    Test long texttttttttttttttttttttttttttttttt"
       "  </option>"
       "</select>");
-  Element* target = GetDocument().GetElementById("target");
+  Element* target = GetDocument().getElementById("target");
   PaintLayer* target_paint_layer =
       ToLayoutBoxModelObject(target->GetLayoutObject())->Layer();
   ClipRectsContext context(GetDocument().GetLayoutView()->Layer(),
                            kUncachedClipRects);
   // When RLS is enabled, the LayoutView will have a composited scrolling layer,
   // so don't apply an overflow clip.
-  if (RuntimeEnabledFeatures::rootLayerScrollingEnabled())
+  if (RuntimeEnabledFeatures::RootLayerScrollingEnabled())
     context.SetIgnoreOverflowClip();
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  target_paint_layer->Clipper(option).CalculateRects(
-      context, LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
-      background_rect, foreground_rect);
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context,
+                      target_paint_layer->GetLayoutObject().FirstFragment(),
+                      LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+                      background_rect, foreground_rect);
 // The control clip for a select excludes the area for the down arrow.
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   EXPECT_EQ(LayoutRect(16, 9, 79, 13), foreground_rect.Rect());
-#elif OS(WIN)
+#elif defined(OS_WIN)
   EXPECT_EQ(LayoutRect(17, 9, 60, 16), foreground_rect.Rect());
 #else
   EXPECT_EQ(LayoutRect(17, 9, 60, 15), foreground_rect.Rect());
 #endif
 }
 
-TEST_P(PaintLayerClipperTest, LayoutSVGRootChild) {
+TEST_F(PaintLayerClipperTest, LayoutSVGRootChild) {
   SetBodyInnerHTML(
       "<svg width=200 height=300 style='position: relative'>"
       "  <foreignObject width=400 height=500>"
@@ -235,7 +243,7 @@ TEST_P(PaintLayerClipperTest, LayoutSVGRootChild) {
       "  </foreignObject>"
       "</svg>");
 
-  Element* target = GetDocument().GetElementById("target");
+  Element* target = GetDocument().getElementById("target");
   PaintLayer* target_paint_layer =
       ToLayoutBoxModelObject(target->GetLayoutObject())->Layer();
   ClipRectsContext context(GetDocument().GetLayoutView()->Layer(),
@@ -243,18 +251,17 @@ TEST_P(PaintLayerClipperTest, LayoutSVGRootChild) {
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  target_paint_layer->Clipper(option).CalculateRects(
-      context, LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
-      background_rect, foreground_rect);
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context,
+                      target_paint_layer->GetLayoutObject().FirstFragment(),
+                      LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+                      background_rect, foreground_rect);
   EXPECT_EQ(LayoutRect(8, 8, 200, 300), background_rect.Rect());
   EXPECT_EQ(LayoutRect(8, 8, 200, 300), foreground_rect.Rect());
   EXPECT_EQ(LayoutRect(8, 8, 400, 0), layer_bounds);
 }
 
-TEST_P(PaintLayerClipperTest, ContainPaintClip) {
+TEST_F(PaintLayerClipperTest, ContainPaintClip) {
   SetBodyInnerHTML(
       "<div id='target'"
       "    style='contain: paint; width: 200px; height: 200px; overflow: auto'>"
@@ -268,27 +275,27 @@ TEST_P(PaintLayerClipperTest, ContainPaintClip) {
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  layer->Clipper(option).CalculateRects(context, infinite_rect, layer_bounds,
-                                        background_rect, foreground_rect);
+  layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context, layer->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
   EXPECT_GE(background_rect.Rect().Size().Width().ToInt(), 33554422);
   EXPECT_GE(background_rect.Rect().Size().Height().ToInt(), 33554422);
   EXPECT_EQ(background_rect.Rect(), foreground_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 200, 200), layer_bounds);
 
-  ClipRectsContext context_clip(layer, kPaintingClipRects);
+  ClipRectsContext context_clip(layer, kUncachedClipRects);
 
-  layer->Clipper(option).CalculateRects(context_clip, infinite_rect,
-                                        layer_bounds, background_rect,
-                                        foreground_rect);
+  layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context_clip, layer->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
   EXPECT_EQ(LayoutRect(0, 0, 200, 200), background_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 200, 200), foreground_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 200, 200), layer_bounds);
 }
 
-TEST_P(PaintLayerClipperTest, NestedContainPaintClip) {
+TEST_F(PaintLayerClipperTest, NestedContainPaintClip) {
   SetBodyInnerHTML(
       "<div style='contain: paint; width: 200px; height: 200px; overflow: "
       "auto'>"
@@ -304,26 +311,26 @@ TEST_P(PaintLayerClipperTest, NestedContainPaintClip) {
   LayoutRect layer_bounds;
   ClipRect background_rect, foreground_rect;
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  layer->Clipper(option).CalculateRects(context, infinite_rect, layer_bounds,
-                                        background_rect, foreground_rect);
+  layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context, layer->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
   EXPECT_EQ(LayoutRect(0, 0, 200, 400), background_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 200, 400), foreground_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 200, 400), layer_bounds);
 
-  ClipRectsContext context_clip(layer->Parent(), kPaintingClipRects);
+  ClipRectsContext context_clip(layer->Parent(), kUncachedClipRects);
 
-  layer->Clipper(option).CalculateRects(context_clip, infinite_rect,
-                                        layer_bounds, background_rect,
-                                        foreground_rect);
+  layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context_clip, layer->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
   EXPECT_EQ(LayoutRect(0, 0, 200, 200), background_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 200, 200), foreground_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 200, 400), layer_bounds);
 }
 
-TEST_P(PaintLayerClipperTest, LocalClipRectFixedUnderTransform) {
+TEST_F(PaintLayerClipperTest, LocalClipRectFixedUnderTransform) {
   SetBodyInnerHTML(
       "<div id='transformed'"
       "    style='will-change: transform; width: 100px; height: 100px;"
@@ -341,19 +348,18 @@ TEST_P(PaintLayerClipperTest, LocalClipRectFixedUnderTransform) {
   PaintLayer* fixed =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("fixed"))->Layer();
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
   EXPECT_EQ(LayoutRect(0, 0, 100, 100),
-            transformed->Clipper(option).LocalClipRect(*transformed));
+            transformed->Clipper(PaintLayer::kUseGeometryMapper)
+                .LocalClipRect(*transformed));
   EXPECT_EQ(LayoutRect(0, 50, 100, 100),
-            fixed->Clipper(option).LocalClipRect(*transformed));
+            fixed->Clipper(PaintLayer::kUseGeometryMapper)
+                .LocalClipRect(*transformed));
 }
 
-TEST_P(PaintLayerClipperTest, ClearClipRectsRecursive) {
+TEST_F(PaintLayerClipperTest, ClearClipRectsRecursive) {
   // SPv2 will re-use a global GeometryMapper, so this
   // logic does not apply.
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return;
 
   SetBodyInnerHTML(
@@ -377,19 +383,17 @@ TEST_P(PaintLayerClipperTest, ClearClipRectsRecursive) {
   EXPECT_TRUE(parent->GetClipRectsCache());
   EXPECT_TRUE(child->GetClipRectsCache());
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  parent->Clipper(option).ClearClipRectsIncludingDescendants();
+  parent->Clipper(PaintLayer::kUseGeometryMapper)
+      .ClearClipRectsIncludingDescendants();
 
   EXPECT_FALSE(parent->GetClipRectsCache());
   EXPECT_FALSE(child->GetClipRectsCache());
 }
 
-TEST_P(PaintLayerClipperTest, ClearClipRectsRecursiveChild) {
+TEST_F(PaintLayerClipperTest, ClearClipRectsRecursiveChild) {
   // SPv2 will re-use a global GeometryMapper, so this
   // logic does not apply.
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return;
 
   SetBodyInnerHTML(
@@ -413,57 +417,14 @@ TEST_P(PaintLayerClipperTest, ClearClipRectsRecursiveChild) {
   EXPECT_TRUE(parent->GetClipRectsCache());
   EXPECT_TRUE(child->GetClipRectsCache());
 
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  child->Clipper(option).ClearClipRectsIncludingDescendants();
+  child->Clipper(PaintLayer::kUseGeometryMapper)
+      .ClearClipRectsIncludingDescendants();
 
   EXPECT_TRUE(parent->GetClipRectsCache());
   EXPECT_FALSE(child->GetClipRectsCache());
 }
 
-TEST_P(PaintLayerClipperTest, ClearClipRectsRecursiveOneType) {
-  // SPv2 will re-use a global GeometryMapper, so this
-  // logic does not apply.
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    return;
-
-  SetBodyInnerHTML(
-      "<style>"
-      "div { "
-      "  width: 5px; height: 5px; background: blue;"
-      "  position: relative;"
-      "}"
-      "</style>"
-      "<div id='parent'>"
-      "  <div id='child'>"
-      "    <div id='grandchild'></div>"
-      "  </div>"
-      "</div>");
-
-  PaintLayer* parent =
-      ToLayoutBoxModelObject(GetLayoutObjectByElementId("parent"))->Layer();
-  PaintLayer* child =
-      ToLayoutBoxModelObject(GetLayoutObjectByElementId("child"))->Layer();
-
-  EXPECT_TRUE(parent->GetClipRectsCache());
-  EXPECT_TRUE(child->GetClipRectsCache());
-  EXPECT_TRUE(parent->GetClipRectsCache()->Get(kAbsoluteClipRects).root);
-  EXPECT_TRUE(child->GetClipRectsCache()->Get(kAbsoluteClipRects).root);
-
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
-  parent->Clipper(option).ClearClipRectsIncludingDescendants(
-      kAbsoluteClipRects);
-
-  EXPECT_TRUE(parent->GetClipRectsCache());
-  EXPECT_TRUE(child->GetClipRectsCache());
-  EXPECT_FALSE(parent->GetClipRectsCache()->Get(kAbsoluteClipRects).root);
-  EXPECT_FALSE(parent->GetClipRectsCache()->Get(kAbsoluteClipRects).root);
-}
-
-TEST_P(PaintLayerClipperTest, CSSClip) {
+TEST_F(PaintLayerClipperTest, CSSClip) {
   SetBodyInnerHTML(
       "<style>"
       "  #target { "
@@ -476,46 +437,247 @@ TEST_P(PaintLayerClipperTest, CSSClip) {
   PaintLayer* target =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
   ClipRectsContext context(target, kUncachedClipRects);
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
   LayoutRect infinite_rect(LayoutRect::InfiniteIntRect());
   LayoutRect layer_bounds(infinite_rect);
   ClipRect background_rect(infinite_rect);
   ClipRect foreground_rect(infinite_rect);
-  target->Clipper(option).CalculateRects(context, infinite_rect, layer_bounds,
-                                         background_rect, foreground_rect);
+  target->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context, target->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
 
   EXPECT_EQ(LayoutRect(0, 0, 50, 100), background_rect.Rect());
   EXPECT_EQ(LayoutRect(0, 0, 50, 100), foreground_rect.Rect());
 }
 
-TEST_P(PaintLayerClipperTest, Filter) {
+TEST_F(PaintLayerClipperTest, Filter) {
   SetBodyInnerHTML(
       "<style>"
       "  * { margin: 0 }"
       "  #target { "
       "    filter: drop-shadow(0 3px 4px #333); overflow: hidden;"
-      "    width: 100px; height: 200px;"
+      "    width: 100px; height: 200px; border: 40px solid blue; margin: 50px;"
       "  }"
       "</style>"
       "<div id='target'></div>");
 
   PaintLayer* target =
       ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+
+  // First test clip rects in the target layer itself.
   ClipRectsContext context(target, kUncachedClipRects);
-  PaintLayer::GeometryMapperOption option = PaintLayer::kDoNotUseGeometryMapper;
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    option = PaintLayer::kUseGeometryMapper;
   LayoutRect infinite_rect(LayoutRect::InfiniteIntRect());
   LayoutRect layer_bounds(infinite_rect);
   ClipRect background_rect(infinite_rect);
   ClipRect foreground_rect(infinite_rect);
-  target->Clipper(option).CalculateRects(context, infinite_rect, layer_bounds,
-                                         background_rect, foreground_rect);
+  target->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context, target->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
 
-  EXPECT_EQ(LayoutRect(-12, -9, 124, 224), background_rect.Rect());
-  EXPECT_EQ(LayoutRect(0, 0, 100, 200), foreground_rect.Rect());
+  // The background rect is used to clip stacking context (layer) output.
+  // In this case, nothing is above us, thus the infinite rect. However we do
+  // clip to the layer's after-filter visual rect as an optimization.
+  EXPECT_EQ(LayoutRect(-12, -9, 204, 304), background_rect.Rect());
+  // The foreground rect is used to clip the normal flow contents of the
+  // stacking context (layer) thus including the overflow clip.
+  EXPECT_EQ(LayoutRect(40, 40, 100, 200), foreground_rect.Rect());
+
+  // Test without GeometryMapper.
+  background_rect = infinite_rect;
+  foreground_rect = infinite_rect;
+  target->Clipper(PaintLayer::kDoNotUseGeometryMapper)
+      .CalculateRects(context, nullptr, infinite_rect, layer_bounds,
+                      background_rect, foreground_rect);
+  // The non-GeometryMapper path applies the immediate filter effect in
+  // background rect.
+  EXPECT_EQ(LayoutRect(-12, -9, 204, 304), background_rect.Rect());
+  EXPECT_EQ(LayoutRect(40, 40, 100, 200), foreground_rect.Rect());
+
+  // Test mapping to the root layer.
+  ClipRectsContext root_context(GetLayoutView().Layer(), kUncachedClipRects);
+  background_rect = infinite_rect;
+  foreground_rect = infinite_rect;
+  target->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(root_context, target->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
+  // This includes the filter effect because it's applied before mapping the
+  // background rect to the root layer.
+  EXPECT_EQ(LayoutRect(38, 41, 204, 304), background_rect.Rect());
+  EXPECT_EQ(LayoutRect(90, 90, 100, 200), foreground_rect.Rect());
+
+  // Test mapping to the root layer without GeometryMapper.
+  background_rect = infinite_rect;
+  foreground_rect = infinite_rect;
+  target->Clipper(PaintLayer::kDoNotUseGeometryMapper)
+      .CalculateRects(root_context, nullptr, infinite_rect, layer_bounds,
+                      background_rect, foreground_rect);
+  EXPECT_EQ(LayoutRect(38, 41, 204, 304), background_rect.Rect());
+  EXPECT_EQ(LayoutRect(90, 90, 100, 200), foreground_rect.Rect());
+}
+
+// Computed infinite clip rects may not match LayoutRect::InfiniteIntRect()
+// due to floating point errors.
+static bool IsInfinite(const LayoutRect& rect) {
+  return rect.X().Round() < -10000000 && rect.MaxX().Round() > 10000000
+      && rect.Y().Round() < -10000000 && rect.MaxY().Round() > 10000000;
+}
+
+TEST_F(PaintLayerClipperTest, IgnoreRootLayerClipWithCSSClip) {
+  SetBodyInnerHTML(
+      "<style>"
+      "  #root { "
+      "    width: 400px; height: 400px;"
+      "    position: absolute; clip: rect(0, 50px, 100px, 0);"
+      "  }"
+      "  #target {"
+      "    position: relative;"
+      "  }"
+      "</style>"
+      "<div id='root'>"
+      "  <div id='target'></div>"
+      "</div>");
+
+  PaintLayer* root =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("root"))->Layer();
+  PaintLayer* target =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+  ClipRectsContext context(root, kPaintingClipRectsIgnoringOverflowClip);
+  LayoutRect infinite_rect(LayoutRect::InfiniteIntRect());
+  LayoutRect layer_bounds(infinite_rect);
+  ClipRect background_rect(infinite_rect);
+  ClipRect foreground_rect(infinite_rect);
+  target->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context, target->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
+
+  EXPECT_TRUE(IsInfinite(background_rect.Rect()));
+  EXPECT_TRUE(IsInfinite(foreground_rect.Rect()));
+}
+
+TEST_F(PaintLayerClipperTest, IgnoreRootLayerClipWithOverflowClip) {
+  SetBodyInnerHTML(
+      "<style>"
+      "  #root { "
+      "    width: 400px; height: 400px;"
+      "    overflow: hidden;"
+      "  }"
+      "  #target {"
+      "    position: relative;"
+      "  }"
+      "</style>"
+      "<div id='root'>"
+      "  <div id='target'></div>"
+      "</div>");
+
+  PaintLayer* root =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("root"))->Layer();
+  PaintLayer* target =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+  ClipRectsContext context(root, kPaintingClipRectsIgnoringOverflowClip);
+  LayoutRect infinite_rect(LayoutRect::InfiniteIntRect());
+  LayoutRect layer_bounds(infinite_rect);
+  ClipRect background_rect(infinite_rect);
+  ClipRect foreground_rect(infinite_rect);
+  target->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context, target->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
+
+  EXPECT_TRUE(IsInfinite(background_rect.Rect()));
+  EXPECT_TRUE(IsInfinite(foreground_rect.Rect()));
+}
+
+TEST_F(PaintLayerClipperTest, IgnoreRootLayerClipWithBothClip) {
+  SetBodyInnerHTML(
+      "<style>"
+      "  #root { "
+      "    width: 400px; height: 400px;"
+      "    position: absolute; clip: rect(0, 50px, 100px, 0);"
+      "    overflow: hidden;"
+      "  }"
+      "  #target {"
+      "    position: relative;"
+      "  }"
+      "</style>"
+      "<div id='root'>"
+      "  <div id='target'></div>"
+      "</div>");
+
+  PaintLayer* root =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("root"))->Layer();
+  PaintLayer* target =
+      ToLayoutBoxModelObject(GetLayoutObjectByElementId("target"))->Layer();
+  ClipRectsContext context(root, kPaintingClipRectsIgnoringOverflowClip);
+  LayoutRect infinite_rect(LayoutRect::InfiniteIntRect());
+  LayoutRect layer_bounds(infinite_rect);
+  ClipRect background_rect(infinite_rect);
+  ClipRect foreground_rect(infinite_rect);
+  target->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context, target->GetLayoutObject().FirstFragment(),
+                      infinite_rect, layer_bounds, background_rect,
+                      foreground_rect);
+
+  EXPECT_TRUE(IsInfinite(background_rect.Rect()));
+  EXPECT_TRUE(IsInfinite(foreground_rect.Rect()));
+}
+
+TEST_F(PaintLayerClipperTest, Fragmentation) {
+  SetBodyInnerHTML(
+      "<!DOCTYPE html>"
+      "<div id=root style='width: 200px; height: 100px; columns: 2; "
+      "column-gap: 0'>"
+      "  <div id=target style='width: 100px; height: 200px; "
+      "      background: lightblue; position: relative'>"
+      "  </div"
+      "</div>");
+
+  Element* root = GetDocument().getElementById("root");
+  PaintLayer* root_paint_layer =
+      ToLayoutBoxModelObject(root->GetLayoutObject())->Layer();
+  ClipRectsContext context(root_paint_layer, kUncachedClipRects,
+                           kIgnorePlatformOverlayScrollbarSize);
+  LayoutRect layer_bounds;
+  ClipRect background_rect, foreground_rect;
+
+  Element* target = GetDocument().getElementById("target");
+  PaintLayer* target_paint_layer =
+      ToLayoutBoxModelObject(target->GetLayoutObject())->Layer();
+  EXPECT_TRUE(target_paint_layer->GetLayoutObject().FirstFragment());
+  EXPECT_TRUE(
+      target_paint_layer->GetLayoutObject().FirstFragment()->NextFragment());
+  EXPECT_FALSE(target_paint_layer->GetLayoutObject()
+                   .FirstFragment()
+                   ->NextFragment()
+                   ->NextFragment());
+
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(context,
+                      target_paint_layer->GetLayoutObject().FirstFragment(),
+                      LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+                      background_rect, foreground_rect);
+
+  EXPECT_EQ(LayoutRect(FloatRect(-1.0e6, -1.0e6, 1.0001e6, 1.0001e6)),
+            background_rect.Rect());
+  EXPECT_EQ(LayoutRect(FloatRect(-1.0e6, -1.0e6, 1.0001e6, 1.0001e6)),
+            foreground_rect.Rect());
+  EXPECT_EQ(LayoutRect(FloatRect(0, 0, 100, 200)), layer_bounds);
+
+  target_paint_layer->Clipper(PaintLayer::kUseGeometryMapper)
+      .CalculateRects(
+          context,
+          target_paint_layer->GetLayoutObject().FirstFragment()->NextFragment(),
+          LayoutRect(LayoutRect::InfiniteIntRect()), layer_bounds,
+          background_rect, foreground_rect);
+
+  EXPECT_EQ(LayoutRect(FloatRect(100, 0, 1000000, 999900)),
+            background_rect.Rect());
+  EXPECT_EQ(LayoutRect(FloatRect(100, 0, 1000000, 999900)),
+            foreground_rect.Rect());
+  // Layer bounds adjusted for pagination offset of second fragment.
+  EXPECT_EQ(LayoutRect(FloatRect(100, -100, 100, 200)), layer_bounds);
 }
 
 }  // namespace blink

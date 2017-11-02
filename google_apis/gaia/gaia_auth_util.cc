@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -26,8 +27,7 @@ namespace {
 const char kGmailDomain[] = "gmail.com";
 const char kGooglemailDomain[] = "googlemail.com";
 
-const void* kURLRequestUserDataKey =
-    static_cast<const void*>(&kURLRequestUserDataKey);
+const void* const kURLRequestUserDataKey = &kURLRequestUserDataKey;
 
 std::string CanonicalizeEmailImpl(const std::string& email_address,
                                   bool change_googlemail_to_gmail) {
@@ -52,8 +52,8 @@ std::string CanonicalizeEmailImpl(const std::string& email_address,
 
 class GaiaURLRequestUserData : public base::SupportsUserData::Data {
  public:
-  static base::SupportsUserData::Data* Create() {
-    return new GaiaURLRequestUserData();
+  static std::unique_ptr<base::SupportsUserData::Data> Create() {
+    return base::MakeUnique<GaiaURLRequestUserData>();
   }
 };
 

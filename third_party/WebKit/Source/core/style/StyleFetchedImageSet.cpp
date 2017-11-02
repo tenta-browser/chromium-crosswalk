@@ -81,7 +81,7 @@ bool StyleFetchedImageSet::ErrorOccurred() const {
 }
 
 LayoutSize StyleFetchedImageSet::ImageSize(
-    const LayoutObject&,
+    const Document&,
     float multiplier,
     const LayoutSize& default_object_size) const {
   if (best_fit_image_->GetImage() && best_fit_image_->GetImage()->IsSVGImage())
@@ -107,29 +107,30 @@ bool StyleFetchedImageSet::UsesImageContainerSize() const {
   return best_fit_image_->UsesImageContainerSize();
 }
 
-void StyleFetchedImageSet::AddClient(LayoutObject* layout_object) {
-  best_fit_image_->AddObserver(layout_object);
+void StyleFetchedImageSet::AddClient(ImageResourceObserver* observer) {
+  best_fit_image_->AddObserver(observer);
 }
 
-void StyleFetchedImageSet::RemoveClient(LayoutObject* layout_object) {
-  best_fit_image_->RemoveObserver(layout_object);
+void StyleFetchedImageSet::RemoveClient(ImageResourceObserver* observer) {
+  best_fit_image_->RemoveObserver(observer);
 }
 
-PassRefPtr<Image> StyleFetchedImageSet::GetImage(const LayoutObject&,
-                                                 const IntSize& container_size,
-                                                 float zoom) const {
+RefPtr<Image> StyleFetchedImageSet::GetImage(
+    const ImageResourceObserver&,
+    const Document&,
+    const ComputedStyle& style,
+    const IntSize& container_size,
+    const LayoutSize* logical_size) const {
   if (!best_fit_image_->GetImage()->IsSVGImage())
     return best_fit_image_->GetImage();
 
   return SVGImageForContainer::Create(ToSVGImage(best_fit_image_->GetImage()),
-                                      container_size, zoom, url_);
+                                      container_size, style.EffectiveZoom(),
+                                      url_);
 }
 
-bool StyleFetchedImageSet::KnownToBeOpaque(
-    const LayoutObject& layout_object) const {
-  TRACE_EVENT1(
-      TRACE_DISABLED_BY_DEFAULT("devtools.timeline"), "PaintImage", "data",
-      InspectorPaintImageEvent::Data(&layout_object, *best_fit_image_.Get()));
+bool StyleFetchedImageSet::KnownToBeOpaque(const Document&,
+                                           const ComputedStyle&) const {
   return best_fit_image_->GetImage()->CurrentFrameKnownToBeOpaque(
       Image::kPreCacheMetadata);
 }

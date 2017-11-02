@@ -13,13 +13,14 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/optional.h"
 #include "chrome/common/extensions/api/enterprise_platform_keys_private.h"
 #include "chromeos/attestation/attestation_constants.h"
 #include "chromeos/attestation/attestation_flow.h"
 #include "chromeos/dbus/cryptohome_client.h"
-#include "chromeos/dbus/dbus_method_call_status.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "extensions/browser/extension_function.h"
+#include "extensions/common/extension.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 class Profile;
@@ -117,7 +118,7 @@ class EPKPChallengeKeyBase {
       default_attestation_flow_;
   ChallengeKeyCallback callback_;
   Profile* profile_;
-  std::string extension_id_;
+  scoped_refptr<const Extension> extension_;
 
  private:
   // Holds the context of a PrepareKey() operation.
@@ -140,14 +141,10 @@ class EPKPChallengeKeyBase {
     const base::Callback<void(PrepareKeyResult)> callback;
   };
 
-  void IsAttestationPreparedCallback(
-      const PrepareKeyContext& context,
-      chromeos::DBusMethodCallStatus status,
-      bool result);
-  void DoesKeyExistCallback(
-      const PrepareKeyContext& context,
-      chromeos::DBusMethodCallStatus status,
-      bool result);
+  void IsAttestationPreparedCallback(const PrepareKeyContext& context,
+                                     base::Optional<bool> result);
+  void DoesKeyExistCallback(const PrepareKeyContext& context,
+                            base::Optional<bool> result);
   void AskForUserConsent(const base::Callback<void(bool)>& callback) const;
   void AskForUserConsentCallback(
       const PrepareKeyContext& context,
@@ -208,6 +205,7 @@ class EPKPChallengeUserKey : public EPKPChallengeKeyBase {
  public:
   static const char kGetCertificateFailedError[];
   static const char kKeyRegistrationFailedError[];
+  static const char kUserKeyNotAvailable[];
   static const char kUserPolicyDisabledError[];
 
   EPKPChallengeUserKey();

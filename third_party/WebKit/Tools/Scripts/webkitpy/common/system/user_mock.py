@@ -33,9 +33,8 @@ _log = logging.getLogger(__name__)
 
 class MockUser(object):
 
-    @classmethod
-    def prompt(cls, message, repeat=1, raw_input=raw_input):
-        return 'Mock user response'
+    DEFAULT_YES = 'y'
+    DEFAULT_NO = 'n'
 
     @classmethod
     def prompt_with_list(cls, list_title, list_items, can_choose_multiple=False, raw_input=raw_input):
@@ -43,12 +42,13 @@ class MockUser(object):
 
     def __init__(self):
         self.opened_urls = []
+        self._canned_responses = ['Mock user response']
 
-    def edit(self, files):
-        pass
+    def prompt(self, message, repeat=1, raw_input=raw_input):
+        return self._canned_responses.pop(0)
 
-    def page(self, message):
-        pass
+    def set_canned_responses(self, responses):
+        self._canned_responses = responses
 
     def confirm(self, message=None, default='y'):
         _log.info(message)

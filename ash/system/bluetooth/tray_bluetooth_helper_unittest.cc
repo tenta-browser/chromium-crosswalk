@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/test/ash_test_base.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_adapter_client.h"
@@ -17,9 +16,9 @@ using bluez::FakeBluetoothAdapterClient;
 namespace ash {
 namespace {
 
-using TrayBluetoothHelperTest = test::AshTestBase;
+using TrayBluetoothHelperTest = AshTestBase;
 
-// Tests basic functionality like turning Bluetooth on and off.
+// Tests basic functionality.
 TEST_F(TrayBluetoothHelperTest, Basics) {
   // Set Bluetooth discovery simulation delay to 0 so the test doesn't have to
   // wait or use timers.
@@ -39,11 +38,6 @@ TEST_F(TrayBluetoothHelperTest, Basics) {
   // The devices are fake in tests, so don't assume any particular number.
   EXPECT_FALSE(devices.empty());
 
-  // Turn Bluetooth on.
-  helper.ToggleBluetoothEnabled();
-  RunAllPendingInMessageLoop();
-  EXPECT_TRUE(helper.GetBluetoothEnabled());
-
   helper.StartBluetoothDiscovering();
   RunAllPendingInMessageLoop();
   EXPECT_TRUE(helper.HasBluetoothDiscoverySession());
@@ -51,11 +45,6 @@ TEST_F(TrayBluetoothHelperTest, Basics) {
   helper.StopBluetoothDiscovering();
   RunAllPendingInMessageLoop();
   EXPECT_FALSE(helper.HasBluetoothDiscoverySession());
-
-  // Turn Bluetooth off.
-  helper.ToggleBluetoothEnabled();
-  RunAllPendingInMessageLoop();
-  EXPECT_FALSE(helper.GetBluetoothEnabled());
 }
 
 }  // namespace

@@ -176,8 +176,8 @@ inline StyleGeometryData::StyleGeometryData(const StyleGeometryData& other)
       rx(other.rx),
       ry(other.ry) {}
 
-PassRefPtr<StyleGeometryData> StyleGeometryData::Copy() const {
-  return AdoptRef(new StyleGeometryData(*this));
+RefPtr<StyleGeometryData> StyleGeometryData::Copy() const {
+  return WTF::AdoptRef(new StyleGeometryData(*this));
 }
 
 bool StyleGeometryData::operator==(const StyleGeometryData& other) const {

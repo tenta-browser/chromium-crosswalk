@@ -28,13 +28,13 @@
 
 #include "core/layout/LayoutImage.h"
 
-#include "core/HTMLNames.h"
 #include "core/dom/PseudoElement.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLAreaElement.h"
 #include "core/html/HTMLImageElement.h"
+#include "core/html_names.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutView.h"
 #include "core/loader/resource/ImageResourceContent.h"
@@ -69,9 +69,9 @@ void LayoutImage::StyleDidChange(StyleDifference diff,
                                  const ComputedStyle* old_style) {
   LayoutReplaced::StyleDidChange(diff, old_style);
 
-  RespectImageOrientationEnum old_orientation =
-      old_style ? old_style->RespectImageOrientation()
-                : ComputedStyle::InitialRespectImageOrientation();
+  bool old_orientation = old_style
+                             ? old_style->RespectImageOrientation()
+                             : ComputedStyle::InitialRespectImageOrientation();
   if (Style() && Style()->RespectImageOrientation() != old_orientation)
     IntrinsicSizeChanged();
 }
@@ -98,9 +98,9 @@ void LayoutImage::ImageChanged(WrappedImagePtr new_image, const IntRect* rect) {
   if (new_image != image_resource_->ImagePtr())
     return;
 
-  if (IsGeneratedContent() && isHTMLImageElement(GetNode()) &&
+  if (IsGeneratedContent() && IsHTMLImageElement(GetNode()) &&
       image_resource_->ErrorOccurred()) {
-    toHTMLImageElement(GetNode())->EnsureFallbackForGeneratedContent();
+    ToHTMLImageElement(GetNode())->EnsureFallbackForGeneratedContent();
     return;
   }
 
@@ -110,7 +110,7 @@ void LayoutImage::ImageChanged(WrappedImagePtr new_image, const IntRect* rect) {
   if (image_resource_->CachedImage() &&
       image_resource_->CachedImage()->HasDevicePixelRatioHeaderValue()) {
     UseCounter::Count(&(View()->GetFrameView()->GetFrame()),
-                      UseCounter::kClientHintsContentDPR);
+                      WebFeature::kClientHintsContentDPR);
     image_device_pixel_ratio_ =
         1 / image_resource_->CachedImage()->DevicePixelRatioHeaderValue();
   }
@@ -145,8 +145,6 @@ void LayoutImage::InvalidatePaintAndMarkForLayoutIfNeeded() {
     return;
 
   bool image_source_has_changed_size = old_intrinsic_size != new_intrinsic_size;
-  if (image_source_has_changed_size)
-    SetPreferredLogicalWidthsDirty();
 
   // If the actual area occupied by the image has changed and it is not
   // constrained by style then a layout is required.
@@ -162,18 +160,18 @@ void LayoutImage::InvalidatePaintAndMarkForLayoutIfNeeded() {
       Style()->LogicalMaxWidth().IsPercentOrCalc() ||
       Style()->LogicalMinWidth().IsPercentOrCalc();
 
-  if (image_source_has_changed_size &&
-      (!image_size_is_constrained ||
-       containing_block_needs_to_recompute_preferred_size)) {
+  if ((image_source_has_changed_size && !image_size_is_constrained) ||
+      containing_block_needs_to_recompute_preferred_size) {
+    SetPreferredLogicalWidthsDirty();
     SetNeedsLayoutAndFullPaintInvalidation(
         LayoutInvalidationReason::kSizeChanged);
     return;
   }
 
-  if (ImageResource() && ImageResource()->MaybeAnimated())
-    SetShouldDoFullPaintInvalidation(kPaintInvalidationDelayedFull);
-  else
-    SetShouldDoFullPaintInvalidation(kPaintInvalidationFull);
+  SetShouldDoFullPaintInvalidationWithoutGeometryChange(
+      ImageResource() && ImageResource()->MaybeAnimated()
+          ? PaintInvalidationReason::kDelayedFull
+          : PaintInvalidationReason::kImage);
 
   // Tell any potential compositing layers that the image needs updating.
   ContentChanged(kImageChanged);
@@ -239,8 +237,8 @@ bool LayoutImage::ForegroundIsKnownToBeOpaqueInRect(
   if (Style()->ObjectPosition() != ComputedStyle::InitialObjectPosition())
     return false;
   // Object-fit may leave parts of the content box empty.
-  ObjectFit object_fit = Style()->GetObjectFit();
-  if (object_fit != kObjectFitFill && object_fit != kObjectFitCover)
+  EObjectFit object_fit = Style()->GetObjectFit();
+  if (object_fit != EObjectFit::kFill && object_fit != EObjectFit::kCover)
     return false;
   // Check for image with alpha.
   TRACE_EVENT1(
@@ -267,8 +265,7 @@ LayoutUnit LayoutImage::MinimumReplacedHeight() const {
 }
 
 HTMLMapElement* LayoutImage::ImageMap() const {
-  HTMLImageElement* i =
-      isHTMLImageElement(GetNode()) ? toHTMLImageElement(GetNode()) : 0;
+  HTMLImageElement* i = ToHTMLImageElementOrNull(GetNode());
   return i ? i->GetTreeScope().GetImageMap(i->FastGetAttribute(usemapAttr)) : 0;
 }
 

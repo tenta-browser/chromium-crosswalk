@@ -6,34 +6,76 @@
 
 #include <algorithm>
 
-#include "base/memory/ptr_util.h"
+#include "chrome/browser/notifications/notification_handler.h"
+#include "chrome/browser/profiles/profile.h"
 
 // static
 std::unique_ptr<KeyedService> StubNotificationDisplayService::FactoryForTests(
-    content::BrowserContext* /* browser_context */) {
-  return base::MakeUnique<StubNotificationDisplayService>();
+    content::BrowserContext* context) {
+  return std::make_unique<StubNotificationDisplayService>(
+      Profile::FromBrowserContext(context));
 }
 
-StubNotificationDisplayService::StubNotificationDisplayService() = default;
+StubNotificationDisplayService::StubNotificationDisplayService(Profile* profile)
+    : NotificationDisplayService(profile), profile_(profile) {}
 
 StubNotificationDisplayService::~StubNotificationDisplayService() = default;
+
+void StubNotificationDisplayService::SetNotificationAddedClosure(
+    base::RepeatingClosure closure) {
+  notification_added_closure_ = std::move(closure);
+}
+
+std::vector<Notification>
+StubNotificationDisplayService::GetDisplayedNotificationsForType(
+    NotificationCommon::Type type) const {
+  std::vector<Notification> notifications;
+  for (const auto& data : notifications_) {
+    if (data.type != type)
+      continue;
+
+    notifications.push_back(data.notification);
+  }
+
+  return notifications;
+}
+
+const NotificationCommon::Metadata*
+StubNotificationDisplayService::GetMetadataForNotification(
+    const Notification& notification) {
+  auto iter = std::find_if(notifications_.begin(), notifications_.end(),
+                           [notification](const NotificationData& data) {
+                             return data.notification.id() == notification.id();
+                           });
+
+  if (iter == notifications_.end())
+    return nullptr;
+
+  return iter->metadata.get();
+}
 
 void StubNotificationDisplayService::RemoveNotification(
     NotificationCommon::Type notification_type,
     const std::string& notification_id,
-    bool by_user) {
+    bool by_user,
+    bool silent) {
   auto iter = std::find_if(
       notifications_.begin(), notifications_.end(),
       [notification_type, notification_id](const NotificationData& data) {
-        return data.first == notification_type &&
-               data.second.delegate_id() == notification_id;
+        return data.type == notification_type &&
+               data.notification.id() == notification_id;
       });
 
   if (iter == notifications_.end())
     return;
 
-  // TODO(peter): Invoke the handlers when that has been generalized.
-  iter->second.delegate()->Close(by_user);
+  if (!silent) {
+    NotificationHandler* handler = GetNotificationHandler(notification_type);
+    DCHECK(handler);
+
+    handler->OnClose(profile_, iter->notification.origin_url().spec(),
+                     notification_id, by_user);
+  }
 
   notifications_.erase(iter);
 }
@@ -41,11 +83,12 @@ void StubNotificationDisplayService::RemoveNotification(
 void StubNotificationDisplayService::RemoveAllNotifications(
     NotificationCommon::Type notification_type,
     bool by_user) {
+  NotificationHandler* handler = GetNotificationHandler(notification_type);
+  DCHECK(handler);
   for (auto iter = notifications_.begin(); iter != notifications_.end();) {
-    if (iter->first == notification_type) {
-      // TODO(peter): Invoke the handlers when that has been generalized.
-      iter->second.delegate()->Close(by_user);
-
+    if (iter->type == notification_type) {
+      handler->OnClose(profile_, iter->notification.origin_url().spec(),
+                       iter->notification.id(), by_user);
       iter = notifications_.erase(iter);
     } else {
       iter++;
@@ -56,12 +99,21 @@ void StubNotificationDisplayService::RemoveAllNotifications(
 void StubNotificationDisplayService::Display(
     NotificationCommon::Type notification_type,
     const std::string& notification_id,
-    const Notification& notification) {
+    const Notification& notification,
+    std::unique_ptr<NotificationCommon::Metadata> metadata) {
   // This mimics notification replacement behaviour; the Close() method on a
   // notification's delegate is not meant to be invoked in this situation.
   Close(notification_type, notification_id);
 
-  notifications_.emplace_back(notification_type, notification);
+  NotificationHandler* handler = GetNotificationHandler(notification_type);
+  DCHECK(handler);
+
+  handler->OnShow(profile_, notification_id);
+  if (notification_added_closure_)
+    notification_added_closure_.Run();
+
+  notifications_.emplace_back(notification_type, notification,
+                              std::move(metadata));
 }
 
 void StubNotificationDisplayService::Close(
@@ -71,8 +123,8 @@ void StubNotificationDisplayService::Close(
       std::remove_if(
           notifications_.begin(), notifications_.end(),
           [notification_type, notification_id](const NotificationData& data) {
-            return data.first == notification_type &&
-                   data.second.delegate_id() == notification_id;
+            return data.type == notification_type &&
+                   data.notification.id() == notification_id;
           }),
       notifications_.end());
 }
@@ -80,10 +132,33 @@ void StubNotificationDisplayService::Close(
 void StubNotificationDisplayService::GetDisplayed(
     const DisplayedNotificationsCallback& callback) {
   std::unique_ptr<std::set<std::string>> notifications =
-      base::MakeUnique<std::set<std::string>>();
+      std::make_unique<std::set<std::string>>();
 
   for (const auto& notification_data : notifications_)
-    notifications->insert(notification_data.second.delegate_id());
+    notifications->insert(notification_data.notification.id());
 
   callback.Run(std::move(notifications), true /* supports_synchronization */);
+}
+
+StubNotificationDisplayService::NotificationData::NotificationData(
+    NotificationCommon::Type type,
+    const Notification& notification,
+    std::unique_ptr<NotificationCommon::Metadata> metadata)
+    : type(type), notification(notification), metadata(std::move(metadata)) {}
+
+StubNotificationDisplayService::NotificationData::NotificationData(
+    NotificationData&& other)
+    : type(other.type),
+      notification(other.notification),
+      metadata(std::move(other.metadata)) {}
+
+StubNotificationDisplayService::NotificationData::~NotificationData() {}
+
+StubNotificationDisplayService::NotificationData&
+StubNotificationDisplayService::NotificationData::operator=(
+    NotificationData&& other) {
+  type = other.type;
+  notification = std::move(other.notification);
+  metadata = std::move(other.metadata);
+  return *this;
 }

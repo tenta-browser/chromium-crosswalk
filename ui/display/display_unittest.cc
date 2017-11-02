@@ -64,21 +64,25 @@ TEST(DisplayTest, ForcedDeviceScaleFactorByCommandLine) {
   Display::ResetForceDeviceScaleFactorForTesting();
 }
 
-TEST(DisplayTest, DisplayHDRValues) {
-  base::test::ScopedCommandLine scoped_command_line;
-  base::CommandLine* command_line = scoped_command_line.GetProcessCommandLine();
-  {
-    Display display;
-    EXPECT_EQ(24, display.color_depth());
-    EXPECT_EQ(8, display.depth_per_component());
-  }
+TEST(DisplayTest, ForcedDeviceScaleFactor) {
+  Display::SetForceDeviceScaleFactor(2);
 
-  command_line->AppendSwitch(switches::kEnableHDR);
-  {
-    Display display;
-    EXPECT_EQ(48, display.color_depth());
-    EXPECT_EQ(16, display.depth_per_component());
-  }
+  EXPECT_EQ(2, Display::GetForcedDeviceScaleFactor());
+  Display::ResetForceDeviceScaleFactorForTesting();
+}
+
+TEST(DisplayTest, DisplayHDRValues) {
+  Display display;
+  EXPECT_EQ(24, display.color_depth());
+  EXPECT_EQ(8, display.depth_per_component());
+
+  display.SetColorSpaceAndDepth(gfx::ColorSpace::CreateSCRGBLinear());
+  EXPECT_EQ(48, display.color_depth());
+  EXPECT_EQ(16, display.depth_per_component());
+
+  display.SetColorSpaceAndDepth(gfx::ColorSpace::CreateSRGB());
+  EXPECT_EQ(24, display.color_depth());
+  EXPECT_EQ(8, display.depth_per_component());
 }
 
 }  // namespace display

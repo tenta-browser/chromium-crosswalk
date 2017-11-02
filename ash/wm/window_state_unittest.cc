@@ -8,7 +8,6 @@
 
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_state_util.h"
 #include "ash/wm/window_util.h"
 #include "ash/wm/wm_event.h"
@@ -17,6 +16,8 @@
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/display/screen.h"
+
+using ash::mojom::WindowStateType;
 
 namespace ash {
 namespace wm {
@@ -36,9 +37,9 @@ class AlwaysMaximizeTestState : public WindowState::State {
   void AttachState(WindowState* window_state,
                    WindowState::State* previous_state) override {
     // We always maximize.
-    if (state_type_ != WINDOW_STATE_TYPE_MAXIMIZED) {
+    if (state_type_ != mojom::WindowStateType::MAXIMIZED) {
       window_state->Maximize();
-      state_type_ = WINDOW_STATE_TYPE_MAXIMIZED;
+      state_type_ = mojom::WindowStateType::MAXIMIZED;
     }
   }
   void DetachState(WindowState* window_state) override {}
@@ -51,7 +52,7 @@ class AlwaysMaximizeTestState : public WindowState::State {
 
 }  // namespace
 
-using WindowStateTest = test::AshTestBase;
+using WindowStateTest = AshTestBase;
 
 // Test that a window gets properly snapped to the display's edges in a
 // multi monitor environment.
@@ -194,7 +195,7 @@ TEST_F(WindowStateTest, SnapWindowSetBounds) {
   WindowState* window_state = GetWindowState(window.get());
   const WMEvent snap_left(WM_EVENT_SNAP_LEFT);
   window_state->OnWMEvent(&snap_left);
-  EXPECT_EQ(WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
+  EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED, window_state->GetStateType());
   gfx::Rect expected =
       gfx::Rect(kWorkAreaBounds.x(), kWorkAreaBounds.y(),
                 kWorkAreaBounds.width() / 2, kWorkAreaBounds.height());
@@ -204,7 +205,7 @@ TEST_F(WindowStateTest, SnapWindowSetBounds) {
   expected.set_width(500);
   window->SetBounds(gfx::Rect(10, 10, 500, 300));
   EXPECT_EQ(expected.ToString(), window->GetBoundsInScreen().ToString());
-  EXPECT_EQ(WINDOW_STATE_TYPE_LEFT_SNAPPED, window_state->GetStateType());
+  EXPECT_EQ(mojom::WindowStateType::LEFT_SNAPPED, window_state->GetStateType());
 }
 
 // Test that snapping left/right preserves the restore bounds.

@@ -38,7 +38,7 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting:
             "Users can enable or disable this feature by disabling "
             "'Automatically send usage statistics and crash reports to Google' "
@@ -76,7 +76,7 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting:
             "Users can enable or disable this feature by disabling "
             "'Automatically send usage statistics and crash reports to Google' "
@@ -114,8 +114,15 @@ NetMetricsLogUploader::~NetMetricsLogUploader() {
 
 void NetMetricsLogUploader::UploadLog(const std::string& compressed_log_data,
                                       const std::string& log_hash) {
+  UploadLogToURL(compressed_log_data, log_hash, GURL(server_url_));
+}
+
+void NetMetricsLogUploader::UploadLogToURL(
+    const std::string& compressed_log_data,
+    const std::string& log_hash,
+    const GURL& url) {
   current_fetch_ =
-      net::URLFetcher::Create(GURL(server_url_), net::URLFetcher::POST, this,
+      net::URLFetcher::Create(url, net::URLFetcher::POST, this,
                               GetNetworkTrafficAnnotation(service_type_));
 
   auto service = data_use_measurement::DataUseUserData::UMA;

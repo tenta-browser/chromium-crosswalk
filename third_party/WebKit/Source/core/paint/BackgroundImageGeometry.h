@@ -19,16 +19,27 @@ class LayoutBoxModelObject;
 class LayoutObject;
 class LayoutRect;
 class LayoutTableCell;
+class LayoutView;
+class Document;
+class ComputedStyle;
+class ImageResourceObserver;
 
 class BackgroundImageGeometry {
   DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
 
  public:
-  BackgroundImageGeometry() : has_non_local_geometry_(false) {}
+  // Constructor for LayoutView where the coordinate space is different.
+  BackgroundImageGeometry(const LayoutView&);
 
-  void Calculate(const LayoutBoxModelObject&,
-                 const LayoutObject* background_object,
-                 const LayoutBoxModelObject* paint_container,
+  // Constructor for table cells where background_object may be the row or
+  // column the background image is attached to.
+  BackgroundImageGeometry(const LayoutTableCell&,
+                          const LayoutObject* background_object);
+
+  // Generic constructor for all other elements.
+  BackgroundImageGeometry(const LayoutBoxModelObject&);
+
+  void Calculate(const LayoutBoxModelObject* container,
                  const GlobalPaintFlags,
                  const FillLayer&,
                  const LayoutRect& paint_rect);
@@ -44,6 +55,10 @@ class BackgroundImageGeometry {
   // that tile region. This may happen because of CSS background-size and
   // background-repeat requirements.
   const LayoutSize& TileSize() const { return tile_size_; }
+  // The tile_size_ is set in the Calculate() function after calling the
+  // ApplySubPixelHeuristicToImageSize(). The logical_tile_size_ is similar to
+  // the tile_size_, but without applying any subpixel heuristic.
+  const LayoutSize& LogicalTileSize() { return logical_tile_size_; }
   // phase() represents the point in the image that will appear at (0,0) in the
   // destination space. The point is defined in tileSize() coordinates.
   const LayoutPoint& Phase() const { return phase_; }
@@ -53,11 +68,23 @@ class BackgroundImageGeometry {
   // Has background-attachment: fixed. Implies that we can't always cheaply
   // compute destRect.
   bool HasNonLocalGeometry() const { return has_non_local_geometry_; }
+  // Whether the background needs to be positioned relative to a container
+  // element. Only used for tables.
+  bool CellUsingContainerBackground() const {
+    return cell_using_container_background_;
+  }
+
+  const ImageResourceObserver& ImageClient() const;
+  const Document& ImageDocument() const;
+  const ComputedStyle& ImageStyle() const;
 
  private:
   void SetDestRect(const LayoutRect& dest_rect) { dest_rect_ = dest_rect; }
   void SetPhase(const LayoutPoint& phase) { phase_ = phase; }
   void SetTileSize(const LayoutSize& tile_size) { tile_size_ = tile_size; }
+  void SetLogicalTileSize(const LayoutSize& logical_tile_size) {
+    logical_tile_size_ = logical_tile_size;
+  }
   void SetSpaceSize(const LayoutSize& repeat_spacing) {
     repeat_spacing_ = repeat_spacing;
   }
@@ -87,12 +114,20 @@ class BackgroundImageGeometry {
   LayoutSize GetBackgroundObjectDimensions(const LayoutTableCell&,
                                            const LayoutBox&);
 
+  const LayoutBoxModelObject& box_;
+  const LayoutBoxModelObject& positioning_box_;
+  LayoutSize positioning_size_override_;
+  LayoutPoint offset_in_background_;
+
   // TODO(schenney): Convert these to IntPoints for values that we snap
   LayoutRect dest_rect_;
   LayoutPoint phase_;
   LayoutSize tile_size_;
+  LayoutSize logical_tile_size_;
   LayoutSize repeat_spacing_;
   bool has_non_local_geometry_;
+  bool coordinate_offset_by_paint_rect_;
+  bool cell_using_container_background_;
 };
 
 }  // namespace blink

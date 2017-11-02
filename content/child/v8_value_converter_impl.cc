@@ -175,8 +175,8 @@ class V8ValueConverterImpl::ScopedUniquenessGuard {
   DISALLOW_COPY_AND_ASSIGN(ScopedUniquenessGuard);
 };
 
-V8ValueConverter* V8ValueConverter::create() {
-  return new V8ValueConverterImpl();
+std::unique_ptr<V8ValueConverter> V8ValueConverter::Create() {
+  return base::MakeUnique<V8ValueConverterImpl>();
 }
 
 V8ValueConverterImpl::V8ValueConverterImpl()
@@ -234,7 +234,7 @@ v8::Local<v8::Value> V8ValueConverterImpl::ToV8ValueImpl(
     v8::Local<v8::Object> creation_context,
     const base::Value* value) const {
   CHECK(value);
-  switch (value->GetType()) {
+  switch (value->type()) {
     case base::Value::Type::NONE:
       return v8::Null(isolate);
 
@@ -277,7 +277,7 @@ v8::Local<v8::Value> V8ValueConverterImpl::ToV8ValueImpl(
       return ToArrayBuffer(isolate, creation_context, value);
 
     default:
-      LOG(ERROR) << "Unexpected value type: " << value->GetType();
+      LOG(ERROR) << "Unexpected value type: " << value->type();
       return v8::Null(isolate);
   }
 }
@@ -342,8 +342,9 @@ v8::Local<v8::Value> V8ValueConverterImpl::ToArrayBuffer(
     const base::Value* value) const {
   DCHECK(creation_context->CreationContext() == isolate->GetCurrentContext());
   v8::Local<v8::ArrayBuffer> buffer =
-      v8::ArrayBuffer::New(isolate, value->GetSize());
-  memcpy(buffer->GetContents().Data(), value->GetBuffer(), value->GetSize());
+      v8::ArrayBuffer::New(isolate, value->GetBlob().size());
+  memcpy(buffer->GetContents().Data(), value->GetBlob().data(),
+         value->GetBlob().size());
   return buffer;
 }
 

@@ -29,6 +29,7 @@
 #include <libxml/tree.h>
 #include <memory>
 #include "core/dom/ParserContentPolicy.h"
+#include "core/dom/PendingScript.h"
 #include "core/dom/ScriptableDocumentParser.h"
 #include "core/loader/resource/ScriptResource.h"
 #include "core/xml/parser/XMLErrors.h"
@@ -44,19 +45,20 @@
 namespace blink {
 
 class ContainerNode;
-class DocumentFragment;
 class Document;
+class DocumentFragment;
 class Element;
-class FrameView;
+class LocalFrameView;
+class ScriptElementBase;
 class Text;
 
 class XMLParserContext : public RefCounted<XMLParserContext> {
  public:
-  static PassRefPtr<XMLParserContext> CreateMemoryParser(xmlSAXHandlerPtr,
-                                                         void* user_data,
-                                                         const CString& chunk);
-  static PassRefPtr<XMLParserContext> CreateStringParser(xmlSAXHandlerPtr,
-                                                         void* user_data);
+  static RefPtr<XMLParserContext> CreateMemoryParser(xmlSAXHandlerPtr,
+                                                     void* user_data,
+                                                     const CString& chunk);
+  static RefPtr<XMLParserContext> CreateStringParser(xmlSAXHandlerPtr,
+                                                     void* user_data);
   ~XMLParserContext();
   xmlParserCtxtPtr Context() const { return context_; }
 
@@ -67,11 +69,11 @@ class XMLParserContext : public RefCounted<XMLParserContext> {
 };
 
 class XMLDocumentParser final : public ScriptableDocumentParser,
-                                public ScriptResourceClient {
+                                public PendingScriptClient {
   USING_GARBAGE_COLLECTED_MIXIN(XMLDocumentParser);
 
  public:
-  static XMLDocumentParser* Create(Document& document, FrameView* view) {
+  static XMLDocumentParser* Create(Document& document, LocalFrameView* view) {
     return new XMLDocumentParser(document, view);
   }
   static XMLDocumentParser* Create(DocumentFragment* fragment,
@@ -95,7 +97,7 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
   static bool ParseDocumentFragment(
       const String&,
       DocumentFragment*,
-      Element* parent = 0,
+      Element* parent = nullptr,
       ParserContentPolicy = kAllowScriptingContent);
 
   // Used by the XMLHttpRequest to check if the responseXML was well formed.
@@ -116,7 +118,7 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
   void SetScriptStartPosition(TextPosition);
 
  private:
-  explicit XMLDocumentParser(Document&, FrameView* = 0);
+  explicit XMLDocumentParser(Document&, LocalFrameView* = nullptr);
   XMLDocumentParser(DocumentFragment*, Element*, ParserContentPolicy);
 
   // From DocumentParser
@@ -129,9 +131,8 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
   OrdinalNumber LineNumber() const override;
   OrdinalNumber ColumnNumber() const;
 
-  // from ResourceClient
-  void NotifyFinished(Resource*) override;
-  String DebugName() const override { return "XMLDocumentParser"; }
+  // from PendingScriptClient
+  void PendingScriptFinished(PendingScript*) override;
 
   void end();
 
@@ -208,10 +209,9 @@ class XMLDocumentParser final : public ScriptableDocumentParser,
 
   XMLErrors xml_errors_;
 
-  Member<ScriptResource> pending_script_;
-  Member<Element> script_element_;
+  Member<PendingScript> pending_script_;
+  Member<ScriptElementBase> script_element_;
   TextPosition script_start_position_;
-  double parser_blocking_pending_script_load_start_time_;
 
   bool parsing_fragment_;
   AtomicString default_namespace_uri_;

@@ -8,10 +8,14 @@
 
 #include <algorithm>
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "testing/platform_test.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace net {
 
@@ -36,10 +40,12 @@ bool AreHeadersEqual(NSHTTPURLResponse* http_response,
   return all_headers_present;
 }
 
+using HttpResponseHeadersUtilTest = PlatformTest;
+
 // Tests that HttpResponseHeaders created from NSHTTPURLResponses successfully
 // copy over the status code and the header names and values.
-TEST(HttpResponseHeadersUtilTest, CreateHeadersFromNSHTTPURLResponse) {
-  base::scoped_nsobject<NSHTTPURLResponse> http_response(
+TEST_F(HttpResponseHeadersUtilTest, CreateHeadersFromNSHTTPURLResponse) {
+  NSHTTPURLResponse* http_response =
       [[NSHTTPURLResponse alloc] initWithURL:[NSURL URLWithString:@"test.com"]
                                   statusCode:200
                                  HTTPVersion:@"HTTP/1.1"
@@ -47,11 +53,10 @@ TEST(HttpResponseHeadersUtilTest, CreateHeadersFromNSHTTPURLResponse) {
                                   @"headerName1" : @"headerValue1",
                                   @"headerName2" : @"headerValue2",
                                   @"headerName3" : @"headerValue3",
-                                }]);
+                                }];
   scoped_refptr<HttpResponseHeaders> http_response_headers =
       CreateHeadersFromNSHTTPURLResponse(http_response);
-  EXPECT_TRUE(
-      AreHeadersEqual(http_response.get(), http_response_headers.get()));
+  EXPECT_TRUE(AreHeadersEqual(http_response, http_response_headers.get()));
 }
 
 }  // namespace net.

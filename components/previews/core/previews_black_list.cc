@@ -6,8 +6,9 @@
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram.h"
 #include "base/optional.h"
+#include "base/strings/stringprintf.h"
 #include "base/time/clock.h"
 #include "components/previews/core/previews_black_list_item.h"
 #include "components/previews/core/previews_experiments.h"
@@ -69,51 +70,55 @@ PreviewsBlackList::PreviewsBlackList(
 
 PreviewsBlackList::~PreviewsBlackList() {}
 
-void PreviewsBlackList::AddPreviewNavigation(const GURL& url,
-                                             bool opt_out,
-                                             PreviewsType type) {
+base::Time PreviewsBlackList::AddPreviewNavigation(const GURL& url,
+                                                   bool opt_out,
+                                                   PreviewsType type) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(url.has_host());
-  switch (type) {
-    case PreviewsType::OFFLINE:
-      UMA_HISTOGRAM_BOOLEAN("Previews.OptOut.UserOptedOut.Offline", opt_out);
-      break;
-    default:
-      NOTREACHED();
-  }
+
+  base::BooleanHistogram::FactoryGet(
+      base::StringPrintf("Previews.OptOut.UserOptedOut.%s",
+                         GetStringNameForType(type).c_str()),
+      base::HistogramBase::kUmaTargetedHistogramFlag)
+      ->Add(opt_out);
+
+  base::Time now = clock_->Now();
   if (opt_out) {
-    last_opt_out_time_ = clock_->Now();
+    last_opt_out_time_ = now;
   }
   // If the |black_list_item_map_| has been loaded from |opt_out_store_|,
   // synchronous operations will be accurate. Otherwise, queue the task to run
   // asynchronously.
   if (loaded_) {
-    AddPreviewNavigationSync(url, opt_out, type);
+    AddPreviewNavigationSync(url, opt_out, type, now);
   } else {
     QueuePendingTask(base::Bind(&PreviewsBlackList::AddPreviewNavigationSync,
-                                base::Unretained(this), url, opt_out, type));
+                                base::Unretained(this), url, opt_out, type,
+                                now));
   }
+
+  return now;
 }
 
 void PreviewsBlackList::AddPreviewNavigationSync(const GURL& url,
                                                  bool opt_out,
-                                                 PreviewsType type) {
+                                                 PreviewsType type,
+                                                 base::Time time) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(url.has_host());
   DCHECK(loaded_);
   DCHECK(host_indifferent_black_list_item_);
   DCHECK(black_list_item_map_);
   std::string host_name = url.host();
-  base::Time now = clock_->Now();
   PreviewsBlackListItem* item =
       GetOrCreateBlackListItemForMap(black_list_item_map_.get(), host_name);
-  item->AddPreviewNavigation(opt_out, now);
+  item->AddPreviewNavigation(opt_out, time);
   DCHECK_LE(black_list_item_map_->size(),
             params::MaxInMemoryHostsInBlackList());
-  host_indifferent_black_list_item_->AddPreviewNavigation(opt_out, now);
+  host_indifferent_black_list_item_->AddPreviewNavigation(opt_out, time);
   if (!opt_out_store_)
     return;
-  opt_out_store_->AddPreviewNavigation(opt_out, host_name, type, now);
+  opt_out_store_->AddPreviewNavigation(opt_out, host_name, type, time);
 }
 
 PreviewsEligibilityReason PreviewsBlackList::IsLoadedAndAllowed(
@@ -158,6 +163,14 @@ void PreviewsBlackList::ClearBlackListSync(base::Time begin_time,
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(loaded_);
   DCHECK_LE(begin_time, end_time);
+
+  // Clear last_opt_out_time_ if the period being cleared is larger than the
+  // short black list timeout and the last time the user opted out was before
+  // |end_time|.
+  if (end_time - begin_time > params::SingleOptOutDuration() &&
+      last_opt_out_time_ && last_opt_out_time_.value() < end_time) {
+    last_opt_out_time_.reset();
+  }
   black_list_item_map_.reset();
   host_indifferent_black_list_item_.reset();
   loaded_ = false;

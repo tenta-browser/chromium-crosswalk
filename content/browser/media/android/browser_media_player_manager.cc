@@ -31,7 +31,7 @@
 #include "media/base/media_content_type.h"
 
 #if !defined(USE_AURA)
-#include "content/browser/android/content_view_core_impl.h"
+#include "content/browser/android/content_view_core.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #endif
 
@@ -79,7 +79,7 @@ BrowserMediaPlayerManager* BrowserMediaPlayerManager::Create(
 
 #if !defined(USE_AURA)
 ContentViewCore* BrowserMediaPlayerManager::GetContentViewCore() const {
-  return ContentViewCoreImpl::FromWebContents(web_contents());
+  return ContentViewCore::FromWebContents(web_contents());
 }
 #endif
 
@@ -93,8 +93,7 @@ BrowserMediaPlayerManager::CreateMediaPlayer(
       const std::string user_agent = GetContentClient()->GetUserAgent();
       auto media_player_bridge = base::MakeUnique<MediaPlayerBridge>(
           media_player_params.player_id, media_player_params.url,
-          media_player_params.first_party_for_cookies, user_agent, hide_url_log,
-          this,
+          media_player_params.site_for_cookies, user_agent, hide_url_log, this,
           base::Bind(&BrowserMediaPlayerManager::OnDecoderResourcesReleased,
                      weak_ptr_factory_.GetWeakPtr()),
           media_player_params.frame_url, media_player_params.allow_credentials);
@@ -260,7 +259,7 @@ void BrowserMediaPlayerManager::OnVideoSizeChanged(
 media::MediaResourceGetter*
 BrowserMediaPlayerManager::GetMediaResourceGetter() {
   if (!media_resource_getter_.get()) {
-    RenderProcessHost* host = web_contents()->GetRenderProcessHost();
+    RenderProcessHost* host = web_contents()->GetMainFrame()->GetProcess();
     BrowserContext* context = host->GetBrowserContext();
     StoragePartition* partition = host->GetStoragePartition();
     storage::FileSystemContext* file_system_context =
@@ -359,11 +358,9 @@ void BrowserMediaPlayerManager::OnInitialize(
     const MediaPlayerHostMsg_Initialize_Params& media_player_params) {
   DestroyPlayer(media_player_params.player_id);
 
-  RenderProcessHostImpl* host = static_cast<RenderProcessHostImpl*>(
-      web_contents()->GetRenderProcessHost());
-  auto player = CreateMediaPlayer(media_player_params,
-                                  host->GetBrowserContext()->IsOffTheRecord());
-
+  bool is_off_the_record =
+      web_contents()->GetBrowserContext()->IsOffTheRecord();
+  auto player = CreateMediaPlayer(media_player_params, is_off_the_record);
   if (!player)
     return;
 

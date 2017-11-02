@@ -39,7 +39,8 @@ public class JavaBridgeCoercionTest {
     private static final double ASSERTION_DELTA = 0;
 
     @Rule
-    public JavaBridgeActivityTestRule mActivityTestRule = new JavaBridgeActivityTestRule();
+    public JavaBridgeActivityTestRule mActivityTestRule =
+            new JavaBridgeActivityTestRule().shouldSetUp(true);
 
     @SuppressFBWarnings("CHROMIUM_SYNCHRONIZED_METHOD")
     private static class TestObject extends Controller {
@@ -708,7 +709,7 @@ public class JavaBridgeCoercionTest {
         mActivityTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                mActivityTestRule.getContentViewCore().addPossiblyUnsafeJavascriptInterface(
+                mActivityTestRule.getWebContents().addPossiblyUnsafeJavascriptInterface(
                         selfConsuming, "selfConsuming", null);
             }
         });

@@ -20,17 +20,11 @@ class Browser;
 
 class PermissionBubbleCocoa : public PermissionPrompt {
  public:
-  explicit PermissionBubbleCocoa(Browser* browser);
+  PermissionBubbleCocoa(Browser* browser, Delegate* delegate);
   ~PermissionBubbleCocoa() override;
 
   // PermissionPrompt:
-  void Show(const std::vector<PermissionRequest*>& requests,
-            const std::vector<bool>& accept_state) override;
-  void Hide() override;
-  bool IsVisible() override;
-  void SetDelegate(Delegate* delegate) override;
   bool CanAcceptRequestUpdate() override;
-  bool HidesAutomatically() override;
   void UpdateAnchorPosition() override;
   gfx::NativeWindow GetNativeWindow() override;
 

@@ -10,7 +10,6 @@
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/shadow_value.h"
 #include "ui/native_theme/native_theme.h"
-#include "ui/resources/grit/ui_resources.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/label_button_border.h"
@@ -36,29 +35,21 @@ const SkColor kStyleButtonShadowColor = SK_ColorWHITE;
 
 #if !defined(OS_MACOSX)
 
-const int PlatformStyle::kComboboxNormalArrowPadding = 7;
 const int PlatformStyle::kMinLabelButtonWidth = 70;
 const int PlatformStyle::kMinLabelButtonHeight = 33;
 const bool PlatformStyle::kDefaultLabelButtonHasBoldFont = true;
 const bool PlatformStyle::kDialogDefaultButtonCanBeCancel = true;
 const bool PlatformStyle::kSelectWordOnRightClick = false;
 const bool PlatformStyle::kSelectAllOnRightClickWhenUnfocused = false;
-const CustomButton::NotifyAction PlatformStyle::kMenuNotifyActivationAction =
-    CustomButton::NOTIFY_ON_RELEASE;
-const CustomButton::KeyClickAction PlatformStyle::kKeyClickActionOnSpace =
-    CustomButton::CLICK_ON_KEY_RELEASE;
+const Button::NotifyAction PlatformStyle::kMenuNotifyActivationAction =
+    Button::NOTIFY_ON_RELEASE;
+const Button::KeyClickAction PlatformStyle::kKeyClickActionOnSpace =
+    Button::CLICK_ON_KEY_RELEASE;
 const bool PlatformStyle::kReturnClicksFocusedControl = true;
 const bool PlatformStyle::kTreeViewSelectionPaintsEntireRow = false;
-const bool PlatformStyle::kTreeViewUsesOpenIcon = true;
 const bool PlatformStyle::kUseRipples = true;
 const bool PlatformStyle::kMirrorBubbleArrowInRTLByDefault = true;
-
-// static
-gfx::ImageSkia PlatformStyle::CreateComboboxArrow(bool is_enabled,
-                                                  Combobox::Style style) {
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  return *rb.GetImageSkiaNamed(IDR_MENU_DROPARROW);
-}
+const bool PlatformStyle::kTextfieldScrollsToStartOnFocusChange = false;
 
 // static
 std::unique_ptr<ScrollBar> PlatformStyle::CreateScrollBar(bool is_horizontal) {

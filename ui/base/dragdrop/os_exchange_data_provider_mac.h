@@ -51,11 +51,15 @@ class UI_BASE_EXPORT OSExchangeDataProviderMac
   bool HasCustomFormat(const Clipboard::FormatType& format) const override;
   void SetDragImage(const gfx::ImageSkia& image,
                     const gfx::Vector2d& cursor_offset) override;
-  const gfx::ImageSkia& GetDragImage() const override;
-  const gfx::Vector2d& GetDragImageOffset() const override;
+  gfx::ImageSkia GetDragImage() const override;
+  gfx::Vector2d GetDragImageOffset() const override;
 
   // Returns the data for the specified type in the pasteboard.
   NSData* GetNSDataForType(NSString* type) const;
+
+  // Returns the union of SupportedPasteboardTypes() and the types in the
+  // current pasteboard.
+  NSArray* GetAvailableTypes() const;
 
   // Creates an OSExchangeData object from the given NSPasteboard object.
   static std::unique_ptr<OSExchangeData> CreateDataFromPasteboard(

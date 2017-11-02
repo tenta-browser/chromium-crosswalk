@@ -23,18 +23,18 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/CSSPropertyNames.h"
 #include "core/CSSValueKeywords.h"
-#include "core/HTMLNames.h"
 #include "core/dom/ElementTraversal.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/ShadowRoot.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLContentElement.h"
 #include "core/html/HTMLDivElement.h"
 #include "core/html/HTMLSummaryElement.h"
 #include "core/html/shadow/DetailsMarkerControl.h"
 #include "core/html/shadow/ShadowElementNames.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "platform/text/PlatformLocale.h"
 
@@ -75,7 +75,7 @@ HTMLDetailsElement* HTMLDetailsElement::Create(Document& document) {
 
 HTMLDetailsElement::HTMLDetailsElement(Document& document)
     : HTMLElement(detailsTag, document), is_open_(false) {
-  UseCounter::Count(document, UseCounter::kDetailsElement);
+  UseCounter::Count(document, WebFeature::kDetailsElement);
 }
 
 HTMLDetailsElement::~HTMLDetailsElement() {}
@@ -114,10 +114,10 @@ Element* HTMLDetailsElement::FindMainSummary() const {
     return summary;
 
   HTMLContentElement* content =
-      toHTMLContentElementOrDie(UserAgentShadowRoot()->FirstChild());
-  DCHECK(content->FirstChild());
-  CHECK(isHTMLSummaryElement(*content->FirstChild()));
-  return ToElement(content->FirstChild());
+      ToHTMLContentElementOrDie(UserAgentShadowRoot()->firstChild());
+  DCHECK(content->firstChild());
+  CHECK(IsHTMLSummaryElement(*content->firstChild()));
+  return ToElement(content->firstChild());
 }
 
 void HTMLDetailsElement::ParseAttribute(
@@ -136,7 +136,7 @@ void HTMLDetailsElement::ParseAttribute(
                 WTF::Bind(&HTMLDetailsElement::DispatchPendingEvent,
                           WrapPersistent(this)));
 
-    Element* content = EnsureUserAgentShadowRoot().GetElementById(
+    Element* content = EnsureUserAgentShadowRoot().getElementById(
         ShadowElementNames::DetailsContent());
     DCHECK(content);
     if (is_open_)
@@ -149,7 +149,7 @@ void HTMLDetailsElement::ParseAttribute(
     Element* summary = FindMainSummary();
     DCHECK(summary);
 
-    Element* control = toHTMLSummaryElement(summary)->MarkerControl();
+    Element* control = ToHTMLSummaryElement(summary)->MarkerControl();
     if (control && control->GetLayoutObject())
       control->GetLayoutObject()->SetShouldDoFullPaintInvalidation();
 

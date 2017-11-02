@@ -45,6 +45,7 @@
 #include "core/html/parser/TextResourceDecoder.h"
 #include "core/html/parser/XSSAuditor.h"
 #include "core/html/parser/XSSAuditorDelegate.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/wtf/Deque.h"
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/WeakPtr.h"
@@ -66,7 +67,6 @@ class HTMLResourcePreloader;
 class HTMLTreeBuilder;
 class SegmentedString;
 class TokenizedChunkQueue;
-class DocumentWriteEvaluator;
 
 class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
                                        private HTMLParserScriptRunnerHost {
@@ -81,6 +81,7 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   }
   ~HTMLDocumentParser() override;
   DECLARE_VIRTUAL_TRACE();
+  DECLARE_TRACE_WRAPPERS();
 
   // TODO(alexclarke): Remove when background parser goes away.
   void Dispose();
@@ -108,7 +109,7 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   void SuspendScheduledTasks() final;
   void ResumeScheduledTasks() final;
 
-  HTMLParserReentryPermit* ReentryPermit() { return reentry_permit_.Get(); }
+  HTMLParserReentryPermit* ReentryPermit() { return reentry_permit_.get(); }
 
   struct TokenizedChunk {
     USING_FAST_MALLOC(TokenizedChunk);
@@ -123,8 +124,6 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
     HTMLInputCheckpoint input_checkpoint;
     TokenPreloadScannerCheckpoint preload_scanner_checkpoint;
     bool starting_script;
-    // Indices into |tokens|.
-    Vector<int> likely_document_write_script_indices;
     // Index into |tokens| of the last <meta> csp tag in |tokens|. Preloads will
     // be deferred until this token is parsed. Will be noPendingToken if there
     // are no csp tokens.
@@ -231,8 +230,6 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   void ScanAndPreload(HTMLPreloadScanner*);
   void FetchQueuedPreloads();
 
-  void EvaluateAndPreloadScriptForDocumentWrite(const String& source);
-
   HTMLToken& Token() { return *token_; }
 
   HTMLParserOptions options_;
@@ -241,7 +238,7 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
 
   std::unique_ptr<HTMLToken> token_;
   std::unique_ptr<HTMLTokenizer> tokenizer_;
-  Member<HTMLParserScriptRunner> script_runner_;
+  TraceWrapperMember<HTMLParserScriptRunner> script_runner_;
   Member<HTMLTreeBuilder> tree_builder_;
 
   std::unique_ptr<HTMLPreloadScanner> preload_scanner_;
@@ -260,13 +257,14 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   // and passed between threads together.
   std::unique_ptr<TokenizedChunk> last_chunk_before_pause_;
   Deque<std::unique_ptr<TokenizedChunk>> speculations_;
+  // Using WeakPtr for GarbageCollected is discouraged. But in this case this is
+  // ok because HTMLDocumentParser guarantees to revoke all WeakPtrs in the pre
+  // finalizer.
   WeakPtrFactory<HTMLDocumentParser> weak_factory_;
   WeakPtr<BackgroundHTMLParser> background_parser_;
   Member<HTMLResourcePreloader> preloader_;
   PreloadRequestStream queued_preloads_;
-  Vector<String> queued_document_write_scripts_;
   RefPtr<TokenizedChunkQueue> tokenized_chunk_queue_;
-  std::unique_ptr<DocumentWriteEvaluator> evaluator_;
 
   // If this is non-null, then there is a meta CSP token somewhere in the
   // speculation buffer. Preloads will be deferred until a token matching this

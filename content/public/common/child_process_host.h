@@ -12,7 +12,6 @@
 #include "content/common/content_export.h"
 #include "content/public/common/bind_interface_helpers.h"
 #include "ipc/ipc_channel_proxy.h"
-#include "mojo/edk/embedder/pending_process_connection.h"
 
 namespace base {
 class FilePath;
@@ -35,7 +34,7 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
 
   // This is a value never returned as the unique id of any child processes of
   // any kind, including the values returned by RenderProcessHost::GetID().
-  static int kInvalidUniqueID;
+  enum : int { kInvalidUniqueID = -1 };
 
   // Used to create a child process host. The delegate must outlive this object.
   static ChildProcessHost* Create(ChildProcessHostDelegate* delegate);
@@ -72,14 +71,6 @@ class CONTENT_EXPORT ChildProcessHost : public IPC::Sender {
   // Send the shutdown message to the child process.
   // Does not check with the delegate's CanShutdown.
   virtual void ForceShutdown() = 0;
-
-  // Creates the IPC channel on top of Mojo. Returns the Mojo channel token if
-  // succeeded, or an empty string on failure.
-  //
-  // DEPRECATED: Don't use this. Instead implement GetRemoteInterfaces() in the
-  // delegate and use the CreateChannelMojo() version below.
-  virtual std::string CreateChannelMojo(
-      mojo::edk::PendingProcessConnection* connection) = 0;
 
   // Creates the IPC channel over a Mojo message pipe. The pipe connection is
   // brokered through the Service Manager like any other service connection.

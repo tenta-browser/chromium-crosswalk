@@ -5,9 +5,10 @@
 #ifndef CHROMEOS_DBUS_FAKE_POWER_MANAGER_CLIENT_H_
 #define CHROMEOS_DBUS_FAKE_POWER_MANAGER_CLIENT_H_
 
-#include <deque>
 #include <string>
 
+#include "base/callback_forward.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -39,6 +40,7 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   bool have_video_activity_report() const {
     return !video_activity_reports_.empty();
   }
+  bool backlights_forced_off() const { return backlights_forced_off_; }
   int num_set_backlights_forced_off_calls() const {
     return num_set_backlights_forced_off_calls_;
   }
@@ -60,8 +62,10 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   void IncreaseKeyboardBrightness() override;
   void RequestStatusUpdate() override;
   void RequestSuspend() override;
-  void RequestRestart() override;
-  void RequestShutdown() override;
+  void RequestRestart(power_manager::RequestRestartReason reason,
+                      const std::string& description) override;
+  void RequestShutdown(power_manager::RequestShutdownReason reason,
+                       const std::string& description) override;
   void NotifyUserActivity(power_manager::UserActivityType type) override;
   void NotifyVideoActivity(bool is_fullscreen) override;
   void SetPolicy(const power_manager::PowerManagementPolicy& policy) override;
@@ -85,8 +89,12 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   void SendDarkSuspendImminent();
 
   // Emulates the power manager announcing that the system is changing
-  // brightness to |level|.
+  // display brightness to |level|.
   void SendBrightnessChanged(int level, bool user_initiated);
+
+  // Emulates the power manager announcing that the system is changing
+  // keyboard brightness to |level|.
+  void SendKeyboardBrightnessChanged(int level, bool user_initiated);
 
   // Notifies observers that the power button has been pressed or released.
   void SendPowerButtonEvent(bool down, const base::TimeTicks& timestamp);
@@ -97,6 +105,11 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   // Updates |props_| and notifies observers of its changes.
   void UpdatePowerProperties(
       const power_manager::PowerSupplyProperties& power_props);
+
+  // The PowerAPI requests system wake lock asynchronously. Test can run a
+  // RunLoop and set the quit closure by this function to make sure the wake
+  // lock has been created.
+  void SetPowerPolicyQuitClosure(base::OnceClosure quit_closure);
 
  private:
   // Callback that will be run by asynchronous suspend delays to report
@@ -137,10 +150,13 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
 
   // Video activity reports that we were requested to send, in the order they
   // were requested. True if fullscreen.
-  std::deque<bool> video_activity_reports_;
+  base::circular_deque<bool> video_activity_reports_;
 
   // Delegate for managing power consumption of Chrome's renderer processes.
   base::WeakPtr<RenderProcessManagerDelegate> render_process_manager_delegate_;
+
+  // If non-empty, called by SetPowerPolicy().
+  base::OnceClosure power_policy_quit_closure_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.

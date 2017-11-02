@@ -9,8 +9,11 @@
 #include <unordered_map>
 #include <utility>
 
+#include "base/containers/queue.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -37,10 +40,11 @@ using device::UsbConfigDescriptor;
 using device::UsbDevice;
 using device::UsbDeviceHandle;
 using device::UsbEndpointDescriptor;
-using device::UsbEndpointDirection;
 using device::UsbInterfaceDescriptor;
 using device::UsbService;
 using device::UsbSynchronizationType;
+using device::UsbTransferDirection;
+using device::UsbTransferStatus;
 using device::UsbTransferType;
 using device::UsbUsageType;
 
@@ -136,15 +140,17 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
     return device_;
   }
 
-  void Close() override { device_ = nullptr; }
+  void Close() override {
+    device_->set_open(false);
+    device_ = nullptr;
+  }
 
   void SetConfiguration(int configuration_value,
-                        const ResultCallback& callback) override {
+                        ResultCallback callback) override {
     NOTIMPLEMENTED();
   }
 
-  void ClaimInterface(int interface_number,
-                      const ResultCallback& callback) override {
+  void ClaimInterface(int interface_number, ResultCallback callback) override {
     bool success = false;
     if (device_->claimed_interfaces_.find(interface_number) ==
         device_->claimed_interfaces_.end()) {
@@ -153,11 +159,11 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
     }
 
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, success));
+        FROM_HERE, base::BindOnce(std::move(callback), success));
   }
 
   void ReleaseInterface(int interface_number,
-                        const ResultCallback& callback) override {
+                        ResultCallback callback) override {
     bool success = false;
     if (device_->claimed_interfaces_.find(interface_number) ==
         device_->claimed_interfaces_.end())
@@ -165,42 +171,40 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
 
     device_->claimed_interfaces_.erase(interface_number);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, success));
+        FROM_HERE, base::BindOnce(std::move(callback), success));
   }
 
   void SetInterfaceAlternateSetting(int interface_number,
                                     int alternate_setting,
-                                    const ResultCallback& callback) override {
+                                    ResultCallback callback) override {
     NOTIMPLEMENTED();
   }
 
-  void ResetDevice(const ResultCallback& callback) override {
-    NOTIMPLEMENTED();
-  }
+  void ResetDevice(ResultCallback callback) override { NOTIMPLEMENTED(); }
 
-  void ClearHalt(uint8_t endpoint, const ResultCallback& callback) override {
+  void ClearHalt(uint8_t endpoint, ResultCallback callback) override {
     NOTIMPLEMENTED();
   }
 
   // Async IO. Can be called on any thread.
-  void ControlTransfer(UsbEndpointDirection direction,
-                       TransferRequestType request_type,
-                       TransferRecipient recipient,
+  void ControlTransfer(UsbTransferDirection direction,
+                       device::UsbControlTransferType request_type,
+                       device::UsbControlTransferRecipient recipient,
                        uint8_t request,
                        uint16_t value,
                        uint16_t index,
                        scoped_refptr<net::IOBuffer> buffer,
                        size_t length,
                        unsigned int timeout,
-                       const TransferCallback& callback) override {}
+                       TransferCallback callback) override {}
 
-  void GenericTransfer(UsbEndpointDirection direction,
+  void GenericTransfer(UsbTransferDirection direction,
                        uint8_t endpoint,
                        scoped_refptr<net::IOBuffer> buffer,
                        size_t length,
                        unsigned int timeout,
-                       const TransferCallback& callback) override {
-    if (direction == device::USB_DIRECTION_OUTBOUND) {
+                       TransferCallback callback) override {
+    if (direction == device::UsbTransferDirection::OUTBOUND) {
       if (remaining_body_length_ == 0) {
         std::vector<uint32_t> header(6);
         memcpy(&header[0], buffer->data(), length);
@@ -222,13 +226,14 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
         ProcessIncoming();
       }
 
-      device::UsbTransferStatus status =
-          broken_ ? device::USB_TRANSFER_ERROR : device::USB_TRANSFER_COMPLETED;
+      device::UsbTransferStatus status = broken_
+                                             ? UsbTransferStatus::TRANSFER_ERROR
+                                             : UsbTransferStatus::COMPLETED;
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(callback, status, nullptr, 0));
+          FROM_HERE, base::BindOnce(std::move(callback), status, nullptr, 0));
       ProcessQueries();
-    } else if (direction == device::USB_DIRECTION_INBOUND) {
-      queries_.push(Query(callback, buffer, length));
+    } else if (direction == device::UsbTransferDirection::INBOUND) {
+      queries_.push(Query(std::move(callback), buffer, length));
       ProcessQueries();
     }
   }
@@ -334,16 +339,20 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
   void ProcessQueries() {
     if (queries_.empty())
       return;
-    Query query = queries_.front();
     if (broken_) {
+      Query query = std::move(queries_.front());
+      queries_.pop();
       base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
-          base::Bind(query.callback, device::USB_TRANSFER_ERROR, nullptr, 0));
+          base::BindOnce(std::move(query.callback),
+                         UsbTransferStatus::TRANSFER_ERROR, nullptr, 0));
+      return;
     }
 
-    if (query.size > output_buffer_.size())
+    if (queries_.front().size > output_buffer_.size())
       return;
 
+    Query query = std::move(queries_.front());
     queries_.pop();
     std::copy(output_buffer_.begin(),
               output_buffer_.begin() + query.size,
@@ -351,22 +360,21 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
     output_buffer_.erase(output_buffer_.begin(),
                          output_buffer_.begin() + query.size);
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(query.callback, device::USB_TRANSFER_COMPLETED,
-                              query.buffer, query.size));
+        FROM_HERE,
+        base::BindOnce(std::move(query.callback), UsbTransferStatus::COMPLETED,
+                       query.buffer, query.size));
   }
 
-  void IsochronousTransferIn(
-      uint8_t endpoint_number,
-      const std::vector<uint32_t>& packet_lengths,
-      unsigned int timeout,
-      const IsochronousTransferCallback& callback) override {}
+  void IsochronousTransferIn(uint8_t endpoint_number,
+                             const std::vector<uint32_t>& packet_lengths,
+                             unsigned int timeout,
+                             IsochronousTransferCallback callback) override {}
 
-  void IsochronousTransferOut(
-      uint8_t endpoint_number,
-      scoped_refptr<net::IOBuffer> buffer,
-      const std::vector<uint32_t>& packet_lengths,
-      unsigned int timeout,
-      const IsochronousTransferCallback& callback) override {}
+  void IsochronousTransferOut(uint8_t endpoint_number,
+                              scoped_refptr<net::IOBuffer> buffer,
+                              const std::vector<uint32_t>& packet_lengths,
+                              unsigned int timeout,
+                              IsochronousTransferCallback callback) override {}
 
  protected:
   virtual ~MockUsbDeviceHandle() {}
@@ -379,14 +387,14 @@ class MockUsbDeviceHandle : public UsbDeviceHandle {
     Query(TransferCallback callback,
           scoped_refptr<net::IOBuffer> buffer,
           int size)
-        : callback(callback), buffer(buffer), size(size) {}
+        : callback(std::move(callback)), buffer(buffer), size(size) {}
   };
 
   scoped_refptr<MockUsbDevice<T> > device_;
   uint32_t remaining_body_length_;
   std::unique_ptr<AdbMessage> current_message_;
   std::vector<char> output_buffer_;
-  std::queue<Query> queries_;
+  base::queue<Query> queries_;
   std::unordered_map<int, std::unique_ptr<MockLocalSocket>> local_sockets_;
   int last_local_socket_;
   bool broken_;
@@ -417,12 +425,22 @@ class MockUsbDevice : public UsbDevice {
       ActiveConfigurationChanged(1);
   }
 
-  void Open(const OpenCallback& callback) override {
+  void Open(OpenCallback callback) override {
+    // While most operating systems allow multiple applications to open a
+    // device simultaneously so that they may claim separate interfaces DevTools
+    // will always be trying to claim the same interface and so multiple
+    // connections are more likely to cause problems. https://crbug.com/725320
+    EXPECT_FALSE(open_);
+    open_ = true;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, make_scoped_refptr(
-                                            new MockUsbDeviceHandle<T>(this))));
+        FROM_HERE,
+        base::BindOnce(std::move(callback),
+                       base::WrapRefCounted(new MockUsbDeviceHandle<T>(this))));
   }
 
+  void set_open(bool open) { open_ = open; }
+
+  bool open_ = false;
   std::set<int> claimed_interfaces_;
 
  protected:
@@ -608,7 +626,7 @@ class MockCountListener : public DevToolsAndroidBridge::DeviceCountListener {
     Shutdown();
   }
 
-  void Shutdown() { base::MessageLoop::current()->QuitWhenIdle(); }
+  void Shutdown() { base::RunLoop::QuitCurrentWhenIdleDeprecated(); }
 
   DevToolsAndroidBridge* adb_bridge_;
   int invoked_;
@@ -651,8 +669,9 @@ class MockCountListenerWithReAddWhileQueued : public MockCountListener {
     if (!readded_) {
       readded_ = true;
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&MockCountListenerWithReAddWhileQueued::ReAdd,
-                                base::Unretained(this)));
+          FROM_HERE,
+          base::BindOnce(&MockCountListenerWithReAddWhileQueued::ReAdd,
+                         base::Unretained(this)));
     } else {
       adb_bridge_->RemoveDeviceCountListener(this);
       Shutdown();

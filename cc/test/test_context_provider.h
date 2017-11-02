@@ -15,16 +15,21 @@
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
-#include "cc/output/context_provider.h"
 #include "cc/test/test_context_support.h"
+#include "components/viz/common/gpu/context_provider.h"
 #include "gpu/command_buffer/client/gles2_interface_stub.h"
+#include "gpu/config/gpu_feature_info.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
+
+namespace skia_bindings {
+class GrContextForGLES2Interface;
+}
 
 namespace cc {
 class TestWebGraphicsContext3D;
 class TestGLES2Interface;
 
-class TestContextProvider : public ContextProvider {
+class TestContextProvider : public viz::ContextProvider {
  public:
   typedef base::Callback<std::unique_ptr<TestWebGraphicsContext3D>(void)>
       CreateCallback;
@@ -43,11 +48,12 @@ class TestContextProvider : public ContextProvider {
 
   bool BindToCurrentThread() override;
   void DetachFromThread() override;
-  gpu::Capabilities ContextCapabilities() override;
+  const gpu::Capabilities& ContextCapabilities() const override;
+  const gpu::GpuFeatureInfo& GetGpuFeatureInfo() const override;
   gpu::gles2::GLES2Interface* ContextGL() override;
   gpu::ContextSupport* ContextSupport() override;
   class GrContext* GrContext() override;
-  ContextCacheController* CacheController() override;
+  viz::ContextCacheController* CacheController() override;
   void InvalidateGrContext(uint32_t state) override;
   base::Lock* GetLock() override;
   void SetLostContextCallback(const LostContextCallback& cb) override;
@@ -75,9 +81,11 @@ class TestContextProvider : public ContextProvider {
   std::unique_ptr<TestContextSupport> support_;
   std::unique_ptr<TestWebGraphicsContext3D> context3d_;
   std::unique_ptr<TestGLES2Interface> context_gl_;
-  sk_sp<class GrContext> gr_context_;
-  std::unique_ptr<ContextCacheController> cache_controller_;
+  std::unique_ptr<skia_bindings::GrContextForGLES2Interface> gr_context_;
+  std::unique_ptr<viz::ContextCacheController> cache_controller_;
   bool bound_ = false;
+
+  gpu::GpuFeatureInfo gpu_feature_info_;
 
   base::ThreadChecker main_thread_checker_;
   base::ThreadChecker context_thread_checker_;
@@ -94,4 +102,3 @@ class TestContextProvider : public ContextProvider {
 }  // namespace cc
 
 #endif  // CC_TEST_TEST_CONTEXT_PROVIDER_H_
-

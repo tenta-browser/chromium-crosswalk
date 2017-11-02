@@ -25,16 +25,16 @@
 #include "core/html/PluginDocument.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
 #include "core/dom/RawDataDocumentParser.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLBodyElement.h"
 #include "core/html/HTMLEmbedElement.h"
 #include "core/html/HTMLHtmlElement.h"
 #include "core/html/HTMLPlugInElement.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutEmbeddedObject.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/FrameLoader.h"
@@ -119,7 +119,7 @@ void PluginDocumentParser::CreateDocumentStructure() {
     return;
   }
 
-  ToPluginDocument(GetDocument())->SetPluginNode(embed_element_.Get());
+  ToPluginDocument(GetDocument())->SetPluginNode(embed_element_);
 
   GetDocument()->UpdateStyleAndLayout();
 
@@ -166,9 +166,9 @@ PluginDocument::PluginDocument(const DocumentInit& initializer)
     : HTMLDocument(initializer, kPluginDocumentClass) {
   SetCompatibilityMode(kQuirksMode);
   LockCompatibilityMode();
-  UseCounter::Count(*this, UseCounter::kPluginDocument);
+  UseCounter::Count(*this, WebFeature::kPluginDocument);
   if (!IsInMainFrame())
-    UseCounter::Count(*this, UseCounter::kPluginDocumentInFrame);
+    UseCounter::Count(*this, WebFeature::kPluginDocumentInFrame);
 }
 
 DocumentParser* PluginDocument::CreateParser() {
@@ -176,13 +176,7 @@ DocumentParser* PluginDocument::CreateParser() {
 }
 
 PluginView* PluginDocument::GetPluginView() {
-  return plugin_node_ && IsHTMLPlugInElement(plugin_node_)
-             ? ToHTMLPlugInElement(plugin_node_)->Plugin()
-             : nullptr;
-}
-
-Node* PluginDocument::PluginNode() {
-  return plugin_node_.Get();
+  return plugin_node_ ? plugin_node_->OwnedPlugin() : nullptr;
 }
 
 void PluginDocument::Shutdown() {

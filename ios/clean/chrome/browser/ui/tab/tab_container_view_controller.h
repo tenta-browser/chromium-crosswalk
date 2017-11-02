@@ -7,8 +7,10 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/clean/chrome/browser/ui/animators/zoom_transition_delegate.h"
-#import "ios/clean/chrome/browser/ui/presenters/menu_presentation_delegate.h"
+#import "ios/clean/chrome/browser/ui/transitions/animators/zoom_transition_delegate.h"
+#import "ios/clean/chrome/browser/ui/transitions/presenters/menu_presentation_delegate.h"
+
+@protocol ContainmentTransitioningDelegate;
 
 // Abstract base class for a view controller that contains several views,
 // each managed by their own view controllers.
@@ -26,24 +28,22 @@
 // width of the tab.
 @property(nonatomic, strong) UIViewController* toolbarViewController;
 
-// View controller showing the tab strip. It will be of a fixed
-// height (determined internally by the tab container), but will span the
-// width of the tab.
-@property(nonatomic, strong) UIViewController* tabStripViewController;
-
 // View controller showing the find bar.  The location of this controller's view
 // is determined by size class and device type.  May be nil if the find bar is
 // currently closed.
 @property(nonatomic, strong) UIViewController* findBarViewController;
 
-@end
+// Transitioning delegate for containment animations. By default it's the
+// tab container view controller itself.
+@property(nonatomic, weak) id<ContainmentTransitioningDelegate>
+    containmentTransitioningDelegate;
 
-// Tab container which positions the toolbar at the top.
-@interface TopToolbarTabViewController : TabContainerViewController
-@end
+// By default, this view controller displays a toolbar at the top of the screen.
+// When |usesBottomToolbar| is set to YES, the toolbar is shown at the bottom
+// of the screen. This property cannot be changed after the view has been
+// loaded.
+@property(nonatomic, assign) BOOL usesBottomToolbar;
 
-// Tab container which positions the toolbar at the bottom.
-@interface BottomToolbarTabViewController : TabContainerViewController
 @end
 
 #endif  // IOS_CLEAN_CHROME_BROWSER_UI_TAB_TAB_CONTAINER_VIEW_CONTROLLER_H_

@@ -45,7 +45,7 @@ ScriptProcessorHandler::ScriptProcessorHandler(
     size_t buffer_size,
     unsigned number_of_input_channels,
     unsigned number_of_output_channels)
-    : AudioHandler(kNodeTypeJavaScript, node, sample_rate),
+    : AudioHandler(kNodeTypeScriptProcessor, node, sample_rate),
       double_buffer_index_(0),
       buffer_size_(buffer_size),
       buffer_read_write_index_(0),
@@ -70,15 +70,15 @@ ScriptProcessorHandler::ScriptProcessorHandler(
   Initialize();
 }
 
-PassRefPtr<ScriptProcessorHandler> ScriptProcessorHandler::Create(
+RefPtr<ScriptProcessorHandler> ScriptProcessorHandler::Create(
     AudioNode& node,
     float sample_rate,
     size_t buffer_size,
     unsigned number_of_input_channels,
     unsigned number_of_output_channels) {
-  return AdoptRef(new ScriptProcessorHandler(node, sample_rate, buffer_size,
-                                             number_of_input_channels,
-                                             number_of_output_channels));
+  return WTF::AdoptRef(new ScriptProcessorHandler(
+      node, sample_rate, buffer_size, number_of_input_channels,
+      number_of_output_channels));
 }
 
 ScriptProcessorHandler::~ScriptProcessorHandler() {
@@ -216,10 +216,10 @@ void ScriptProcessorHandler::Process(size_t frames_to_process) {
         // index.
         TaskRunnerHelper::Get(TaskType::kMediaElementEvent,
                               Context()->GetExecutionContext())
-            ->PostTask(BLINK_FROM_HERE,
-                       CrossThreadBind(
-                           &ScriptProcessorHandler::FireProcessEvent,
-                           CrossThreadUnretained(this), double_buffer_index_));
+            ->PostTask(
+                BLINK_FROM_HERE,
+                CrossThreadBind(&ScriptProcessorHandler::FireProcessEvent,
+                                WrapRefPtr(this), double_buffer_index_));
       } else {
         // If this node is in the offline audio context, use the
         // waitable event to synchronize to the offline rendering thread.
@@ -228,12 +228,12 @@ void ScriptProcessorHandler::Process(size_t frames_to_process) {
 
         TaskRunnerHelper::Get(TaskType::kMediaElementEvent,
                               Context()->GetExecutionContext())
-            ->PostTask(BLINK_FROM_HERE,
-                       CrossThreadBind(
-                           &ScriptProcessorHandler::
-                               FireProcessEventForOfflineAudioContext,
-                           CrossThreadUnretained(this), double_buffer_index_,
-                           CrossThreadUnretained(waitable_event.get())));
+            ->PostTask(
+                BLINK_FROM_HERE,
+                CrossThreadBind(&ScriptProcessorHandler::
+                                    FireProcessEventForOfflineAudioContext,
+                                WrapRefPtr(this), double_buffer_index_,
+                                CrossThreadUnretained(waitable_event.get())));
 
         // Okay to block the offline audio rendering thread since it is
         // not the actual audio device thread.
@@ -318,7 +318,7 @@ double ScriptProcessorHandler::LatencyTime() const {
 void ScriptProcessorHandler::SetChannelCount(unsigned long channel_count,
                                              ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(Context());
+  BaseAudioContext::GraphAutoLocker locker(Context());
 
   if (channel_count != channel_count_) {
     exception_state.ThrowDOMException(
@@ -332,7 +332,7 @@ void ScriptProcessorHandler::SetChannelCountMode(
     const String& mode,
     ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(Context());
+  BaseAudioContext::GraphAutoLocker locker(Context());
 
   if ((mode == "max") || (mode == "clamped-max")) {
     exception_state.ThrowDOMException(

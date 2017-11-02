@@ -3,23 +3,23 @@
 // found in the LICENSE file.
 
 (function() {
-  'use strict';
+'use strict';
 
-  Polymer({
-    is: 'extensions-drop-overlay',
-    created: function() {
+Polymer({
+  is: 'extensions-drop-overlay',
+  created: function() {
+    this.hidden = true;
+    const dragTarget = document.documentElement;
+    this.dragWrapperHandler_ =
+        new extensions.DragAndDropHandler(true, dragTarget);
+    dragTarget.addEventListener('extension-drag-started', () => {
+      this.hidden = false;
+    });
+    dragTarget.addEventListener('extension-drag-ended', () => {
       this.hidden = true;
-      var dragTarget = document.documentElement;
-      this.dragWrapperHandler_ =
-          new extensions.DragAndDropHandler(true, dragTarget);
-      dragTarget.addEventListener('extension-drag-started', function() {
-        this.hidden = false;
-      }.bind(this));
-      dragTarget.addEventListener('extension-drag-ended', function() {
-        this.hidden = true;
-      }.bind(this));
-      this.dragWrapper_ =
-          new cr.ui.DragWrapper(dragTarget, this.dragWrapperHandler_);
-    },
-  });
+    });
+    this.dragWrapper_ =
+        new cr.ui.DragWrapper(dragTarget, this.dragWrapperHandler_);
+  },
+});
 })();

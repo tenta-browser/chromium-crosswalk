@@ -9,8 +9,8 @@
 
 #include <map>
 #include <memory>
-#include <queue>
 
+#include "base/containers/queue.h"
 #include "base/file_descriptor_posix.h"
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
@@ -28,6 +28,7 @@ class DrmDeviceHandle;
 class DrmDisplayHost;
 class DrmDisplayHostManager;
 class DrmNativeDisplayDelegate;
+class DrmOverlayManager;
 class GpuThreadAdapter;
 
 struct DisplaySnapshot_Params;
@@ -39,6 +40,7 @@ class DrmDisplayHostManager : public DeviceEventObserver, GpuThreadObserver {
  public:
   DrmDisplayHostManager(GpuThreadAdapter* proxy,
                         DeviceManager* device_manager,
+                        DrmOverlayManager* overlay_manager,
                         InputControllerEvdev* input_controller);
   ~DrmDisplayHostManager() override;
 
@@ -100,6 +102,7 @@ class DrmDisplayHostManager : public DeviceEventObserver, GpuThreadObserver {
 
   GpuThreadAdapter* proxy_;                 // Not owned.
   DeviceManager* device_manager_;           // Not owned.
+  DrmOverlayManager* overlay_manager_;      // Not owned.
   InputControllerEvdev* input_controller_;  // Not owned.
 
   DrmNativeDisplayDelegate* delegate_ = nullptr;  // Not owned.
@@ -126,7 +129,7 @@ class DrmDisplayHostManager : public DeviceEventObserver, GpuThreadObserver {
   // opening/closing DRM devices cannot be done on the UI thread and are handled
   // on a worker thread. Thus, we need to queue events in order to process them
   // in the correct order.
-  std::queue<DisplayEvent> event_queue_;
+  base::queue<DisplayEvent> event_queue_;
 
   // True if a display event is currently being processed on a worker thread.
   bool task_pending_ = false;

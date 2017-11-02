@@ -9,7 +9,6 @@
 #include "base/memory/ref_counted.h"
 #include "cc/blink/cc_blink_export.h"
 #include "cc/paint/display_item_list.h"
-#include "cc/paint/paint_record.h"
 #include "third_party/WebKit/public/platform/WebDisplayItemList.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/skia/include/core/SkBlendMode.h"
@@ -28,20 +27,21 @@ struct WebRect;
 
 namespace cc {
 class FilterOperations;
+class PaintOpBuffer;
 }
 
 namespace cc_blink {
 
-class WebDisplayItemListImpl : public blink::WebDisplayItemList {
+class CC_BLINK_EXPORT WebDisplayItemListImpl
+    : public blink::WebDisplayItemList {
  public:
-  CC_BLINK_EXPORT WebDisplayItemListImpl();
-  CC_BLINK_EXPORT explicit WebDisplayItemListImpl(
-      cc::DisplayItemList* display_list);
+  WebDisplayItemListImpl();
+  explicit WebDisplayItemListImpl(cc::DisplayItemList* display_list);
   ~WebDisplayItemListImpl() override;
 
   // blink::WebDisplayItemList implementation.
   void AppendDrawingItem(const blink::WebRect& visual_rect,
-                         sk_sp<const cc::PaintRecord> record) override;
+                         sk_sp<const cc::PaintOpBuffer> record) override;
   void AppendClipItem(
       const blink::WebRect& clip_rect,
       const blink::WebVector<SkRRect>& rounded_clip_rects) override;
@@ -64,10 +64,11 @@ class WebDisplayItemListImpl : public blink::WebDisplayItemList {
   void AppendScrollItem(const blink::WebSize& scrollOffset,
                         ScrollContainerId) override;
   void AppendEndScrollItem() override;
-
-  void SetIsSuitableForGpuRasterization(bool isSuitable) override;
+  cc::DisplayItemList* GetCcDisplayItemList() override;
 
  private:
+  void AppendRestore();
+
   scoped_refptr<cc::DisplayItemList> display_item_list_;
 
   DISALLOW_COPY_AND_ASSIGN(WebDisplayItemListImpl);

@@ -55,8 +55,6 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
     // Public Layout constants.
     public static final float CLOSE_BUTTON_WIDTH_DP = 36.f;
 
-    // Layout constants.
-    private static final float SHADOW_OPACITY = 1.f;
     // TODO(dtrainor): Investigate removing this.
     private static final float BORDER_THICKNESS_DP = 4.f;
 
@@ -103,6 +101,7 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
     private boolean mInsetBorderVertical;
     private float mToolbarYOffset;
     private float mSideBorderScale;
+    private boolean mForceDefaultThemeColor;
 
     private final RectF mBounds = new RectF(); // Pre-allocated to avoid in-frame allocations.
     private final RectF mClosePlacement = new RectF();
@@ -274,6 +273,21 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
      */
     public boolean isInitFromHostNeeded() {
         return !mInitFromHostCalled;
+    }
+
+    /**
+     * @return Whether or not the object rendering this LayoutTab should force default theme colors.
+     */
+    public boolean getForceDefaultThemeColor() {
+        return mForceDefaultThemeColor;
+    }
+
+    /**
+     * @param force Whether or not the object rendering this LayoutTab should force default theme
+     *              colors.
+     */
+    public void setForceDefaultThemeColor(boolean force) {
+        mForceDefaultThemeColor = force;
     }
 
     /**
@@ -557,13 +571,6 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
     }
 
     /**
-     * @return The opactiy of the tab's shadow.
-     */
-    public float getShadowOpacity() {
-        return SHADOW_OPACITY;
-    }
-
-    /**
      * Set the saturation value for the tab contents.
      *
      * @param f The saturation value for the contents.
@@ -590,14 +597,14 @@ public class LayoutTab implements ChromeAnimation.Animatable<LayoutTab.Property>
      * @return The current alpha value at which the tab border is drawn.
      */
     public float getBorderAlpha() {
-        return mBorderAlpha;
+        return Math.min(mBorderAlpha, mAlpha);
     }
 
     /**
      * @return The current alpha value at which the tab border inner shadow is drawn.
      */
     public float getBorderInnerShadowAlpha() {
-        return mBorderAlpha * (1.0f - mToolbarAlpha);
+        return Math.min(mBorderAlpha * (1.0f - mToolbarAlpha), mAlpha);
     }
 
     /**

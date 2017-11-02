@@ -12,6 +12,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/resource/resource_bundle.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 WebTestSuite::WebTestSuite(int argc, char** argv)
@@ -38,12 +42,12 @@ void WebTestSuite::Initialize() {
   base::PathService::Get(base::DIR_MODULE, &resources_pack_path);
   resources_pack_path =
       resources_pack_path.Append(FILE_PATH_LITERAL("resources.pak"));
-  ResourceBundle::GetSharedInstance().AddDataPackFromPath(
+  ui::ResourceBundle::GetSharedInstance().AddDataPackFromPath(
       resources_pack_path, ui::SCALE_FACTOR_NONE);
 }
 
 void WebTestSuite::Shutdown() {
-  ResourceBundle::CleanupSharedInstance();
+  ui::ResourceBundle::CleanupSharedInstance();
   base::TestSuite::Shutdown();
 }
 

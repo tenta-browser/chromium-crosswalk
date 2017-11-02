@@ -6,6 +6,7 @@
 
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_dialogs.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "extensions/browser/extension_system.h"
@@ -14,16 +15,17 @@
 #include "extensions/common/extension.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/event.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/layout/box_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
-#if defined(USE_ASH)
-#include "ash/shelf/shelf_delegate.h"  // nogncheck
-#include "ash/shell.h"                        // nogncheck
-#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_util.h"  // nogncheck
+#if defined(OS_CHROMEOS)
+// gn check complains on Linux Ozone.
+#include "ash/public/cpp/shelf_model.h"  // nogncheck
+#include "ash/shell.h"
+#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_util.h"
 #endif
 
 AppInfoFooterPanel::AppInfoFooterPanel(gfx::NativeWindow parent_window,
@@ -38,10 +40,12 @@ AppInfoFooterPanel::AppInfoFooterPanel(gfx::NativeWindow parent_window,
       weak_ptr_factory_(this) {
   CreateButtons();
 
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal,
-                                        views::kButtonHEdgeMargin,
-                                        views::kButtonVEdgeMargin,
-                                        views::kRelatedButtonHSpacing));
+  ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
+
+  SetLayoutManager(new views::BoxLayout(
+      views::BoxLayout::kHorizontal,
+      provider->GetInsetsMetric(views::INSETS_DIALOG_SUBSECTION),
+      provider->GetDistanceMetric(views::DISTANCE_RELATED_BUTTON_HORIZONTAL)));
 
   LayoutButtons();
 }
@@ -56,7 +60,7 @@ void AppInfoFooterPanel::CreateButtons() {
                   IDS_APPLICATION_INFO_CREATE_SHORTCUTS_BUTTON_TEXT));
   }
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   if (CanSetPinnedToShelf()) {
     pin_to_shelf_button_ = views::MdTextButton::CreateSecondaryUiButton(
         this, l10n_util::GetStringUTF16(IDS_APP_LIST_CONTEXT_MENU_PIN));
@@ -87,10 +91,9 @@ void AppInfoFooterPanel::LayoutButtons() {
 }
 
 void AppInfoFooterPanel::UpdatePinButtons(bool focus_visible_button) {
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   if (pin_to_shelf_button_ && unpin_from_shelf_button_) {
-    bool is_pinned =
-        !ash::Shell::Get()->shelf_delegate()->IsAppPinned(app_->id());
+    bool is_pinned = !ash::Shell::Get()->shelf_model()->IsAppPinned(app_->id());
     pin_to_shelf_button_->SetVisible(is_pinned);
     unpin_from_shelf_button_->SetVisible(!is_pinned);
 
@@ -107,7 +110,7 @@ void AppInfoFooterPanel::ButtonPressed(views::Button* sender,
                                        const ui::Event& event) {
   if (sender == create_shortcuts_button_) {
     CreateShortcuts();
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   } else if (sender == pin_to_shelf_button_) {
     SetPinnedToShelf(true);
   } else if (sender == unpin_from_shelf_button_) {
@@ -140,24 +143,24 @@ void AppInfoFooterPanel::CreateShortcuts() {
 }
 
 bool AppInfoFooterPanel::CanCreateShortcuts() const {
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   // Ash platforms can't create shortcuts.
   return false;
 #else
   // Extensions and the Chrome component app can't have shortcuts.
   return app_->id() != extension_misc::kChromeAppId && !app_->is_extension();
-#endif  // USE_ASH
+#endif  // OS_CHROMEOS
 }
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
 void AppInfoFooterPanel::SetPinnedToShelf(bool value) {
   DCHECK(CanSetPinnedToShelf());
-  ash::ShelfDelegate* shelf_delegate = ash::Shell::Get()->shelf_delegate();
-  DCHECK(shelf_delegate);
+  ash::ShelfModel* shelf_model = ash::Shell::Get()->shelf_model();
+  DCHECK(shelf_model);
   if (value)
-    shelf_delegate->PinAppWithID(app_->id());
+    shelf_model->PinAppWithID(app_->id());
   else
-    shelf_delegate->UnpinAppWithID(app_->id());
+    shelf_model->UnpinAppWithID(app_->id());
 
   UpdatePinButtons(true);
   Layout();
@@ -173,7 +176,7 @@ bool AppInfoFooterPanel::CanSetPinnedToShelf() const {
          (GetPinnableForAppID(app_->id(), profile_) ==
           AppListControllerDelegate::PIN_EDITABLE);
 }
-#endif  // USE_ASH
+#endif  // OS_CHROMEOS
 
 void AppInfoFooterPanel::UninstallApp() {
   DCHECK(CanUninstallApp());

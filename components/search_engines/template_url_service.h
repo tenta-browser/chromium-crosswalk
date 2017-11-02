@@ -118,10 +118,6 @@ class TemplateURLService : public WebDataServiceConsumer,
   // Register Profile preferences in |registry|.
   static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
 
-  // Removes any unnecessary characters from a user input keyword.
-  // This removes the leading scheme, "www." and any trailing slash.
-  static base::string16 CleanUserInputKeyword(const base::string16& keyword);
-
   // Returns true if there is no TemplateURL that conflicts with the
   // keyword/url pair, or there is one but it can be replaced. If there is an
   // existing keyword that can be replaced and template_url_to_replace is
@@ -167,15 +163,19 @@ class TemplateURLService : public WebDataServiceConsumer,
   // The caller should not try to delete the returned pointer; the data store
   // retains ownership of it.
   TemplateURL* GetTemplateURLForKeyword(const base::string16& keyword);
+  const TemplateURL* GetTemplateURLForKeyword(
+      const base::string16& keyword) const;
 
   // Returns that TemplateURL with the specified GUID, or NULL if not found.
   // The caller should not try to delete the returned pointer; the data store
   // retains ownership of it.
   TemplateURL* GetTemplateURLForGUID(const std::string& sync_guid);
+  const TemplateURL* GetTemplateURLForGUID(const std::string& sync_guid) const;
 
   // Returns the first TemplateURL found with a URL using the specified |host|,
   // or NULL if there are no such TemplateURLs
   TemplateURL* GetTemplateURLForHost(const std::string& host);
+  const TemplateURL* GetTemplateURLForHost(const std::string& host) const;
 
   // Adds |template_url| to this model.  Returns a raw pointer to |template_url|
   // if the addition succeeded, or null on failure.  (Many callers need still
@@ -188,11 +188,6 @@ class TemplateURLService : public WebDataServiceConsumer,
                                 const base::string16& short_name,
                                 const base::string16& keyword,
                                 const std::string& url);
-
-  // Adds a search engine with the specified info for extensions.
-  TemplateURL* AddExtensionControlledTURL(
-      std::unique_ptr<TemplateURL> template_url,
-      std::unique_ptr<TemplateURL::AssociatedExtensionInfo> info);
 
   // Removes the keyword from the model. This deletes the supplied TemplateURL.
   // This fails if the supplied template_url is the default search provider.
@@ -258,10 +253,9 @@ class TemplateURLService : public WebDataServiceConsumer,
   // Returns the default search provider. If the TemplateURLService hasn't been
   // loaded, the default search provider is pulled from preferences.
   //
-  // NOTE: At least in unittest mode, this may return NULL.
-  // TODO(blundell): See if all callers can be converted to take in const
-  // pointers and eliminate this version of the method.
-  TemplateURL* GetDefaultSearchProvider();
+  // NOTE: This may return null in certain circumstances such as:
+  //       1.) Unit test mode
+  //       2.) The default search engine is disabled by policy.
   const TemplateURL* GetDefaultSearchProvider() const;
 
   // Returns true if the |url| is a search results page from the default search
@@ -349,7 +343,7 @@ class TemplateURLService : public WebDataServiceConsumer,
   // data. This may send notifications if local search engines are added,
   // updated or removed.
   syncer::SyncError ProcessSyncChanges(
-      const tracked_objects::Location& from_here,
+      const base::Location& from_here,
       const syncer::SyncChangeList& change_list) override;
   // Merge initial search engine data from Sync and push any local changes up
   // to Sync. This may send notifications if local search engines are added,
@@ -366,7 +360,7 @@ class TemplateURLService : public WebDataServiceConsumer,
   // This may send a new SyncChange to the cloud. If our model has not yet been
   // associated with Sync, or if this is triggered by a Sync change, then this
   // does nothing.
-  void ProcessTemplateURLChange(const tracked_objects::Location& from_here,
+  void ProcessTemplateURLChange(const base::Location& from_here,
                                 const TemplateURL* turl,
                                 syncer::SyncChange::SyncChangeType type);
 
@@ -393,7 +387,7 @@ class TemplateURLService : public WebDataServiceConsumer,
       TemplateURLServiceClient* client,
       PrefService* prefs,
       const SearchTermsData& search_terms_data,
-      TemplateURL* existing_turl,
+      const TemplateURL* existing_turl,
       const syncer::SyncData& sync_data,
       syncer::SyncChangeList* change_list);
 

@@ -19,11 +19,21 @@ class AppListPresenterService : public app_list::mojom::AppListPresenter {
   AppListPresenterService();
   ~AppListPresenterService() override;
 
+  // Initialize service and mojo bindings.
+  void Init();
+
   // app_list::mojom::AppListPresenter:
   void Show(int64_t display_id) override;
   void Dismiss() override;
   void ToggleAppList(int64_t display_id) override;
   void StartVoiceInteractionSession() override;
+  void ToggleVoiceInteractionSession() override;
+  void UpdateYPositionAndOpacity(int y_position_in_screen,
+                                 float background_opacity) override;
+  void EndDragFromShelf(app_list::mojom::AppListState app_list_state) override;
+  void ProcessMouseWheelOffset(int y_scroll_offset) override;
+
+  void FlushForTesting();
 
  private:
   app_list::AppListPresenterImpl* GetPresenter();

@@ -6,12 +6,14 @@
 #define IOS_CHROME_TEST_APP_CHROME_TEST_UTIL_H_
 
 #import "base/ios/block_types.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/web/public/web_state/web_state.h"
 
 namespace ios {
 class ChromeBrowserState;
 }
 
+@protocol ApplicationCommands;
 @class DeviceSharingManager;
 @class GenericChromeCommand;
 @class MainController;
@@ -41,17 +43,18 @@ ios::ChromeBrowserState* GetCurrentIncognitoBrowserState();
 // Returns the number of key commands currently registered with the main BVC.
 NSUInteger GetRegisteredKeyCommandsCount();
 
-// Runs |command| using the active view controller.
-void RunCommandWithActiveViewController(GenericChromeCommand* command);
+// Returns the dispatcher for the main BVC.
+// TODO(crbug.com/738881): Use DispatcherForActiveViewController() instead.
+id<BrowserCommands> BrowserCommandDispatcherForMainBVC();
+
+// Returns the dispatcher for the active view controller.
+id<ApplicationCommands, BrowserCommands> DispatcherForActiveViewController();
 
 // Removes all presented infobars.
 void RemoveAllInfoBars();
 
 // Dismisses all presented views and modal dialogs.
 void ClearPresentedState();
-
-// Purges and recreates all web views.
-void ResetAllWebViews();
 
 // Sets the value of a boolean local state pref.
 // TODO(crbug.com/647022): Clean up other tests that use this helper function.

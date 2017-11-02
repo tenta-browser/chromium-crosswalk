@@ -31,18 +31,19 @@
 #ifndef WebWidget_h
 #define WebWidget_h
 
-#include "../platform/WebBrowserControlsState.h"
-#include "../platform/WebCanvas.h"
-#include "../platform/WebCommon.h"
-#include "../platform/WebFloatSize.h"
-#include "../platform/WebInputEventResult.h"
-#include "../platform/WebPoint.h"
-#include "../platform/WebRect.h"
-#include "../platform/WebSize.h"
-#include "../platform/WebTextInputInfo.h"
-#include "WebCompositionUnderline.h"
-#include "WebRange.h"
-#include "WebTextDirection.h"
+#include "public/platform/WebBrowserControlsState.h"
+#include "public/platform/WebCanvas.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebFloatSize.h"
+#include "public/platform/WebInputEventResult.h"
+#include "public/platform/WebMenuSourceType.h"
+#include "public/platform/WebPoint.h"
+#include "public/platform/WebRect.h"
+#include "public/platform/WebSize.h"
+#include "public/platform/WebTextInputInfo.h"
+#include "public/web/WebImeTextSpan.h"
+#include "public/web/WebRange.h"
+#include "public/web/WebTextDirection.h"
 
 namespace blink {
 
@@ -167,11 +168,11 @@ class WebWidget {
   // (i.e its anchor is its start).
   virtual bool IsSelectionAnchorFirst() const { return false; }
 
-  // Fetch the current selection range of this WebWidget.
-  virtual WebRange CaretOrSelectionRange() { return WebRange(); }
-
   // Changes the text direction of the selected input node.
   virtual void SetTextDirection(WebTextDirection) {}
+
+  // Returns true if the WebWidget is currently animating a GestureFling.
+  virtual bool IsFlinging() const { return false; }
 
   // Returns true if the WebWidget uses GPU accelerated compositing
   // to render its contents.
@@ -223,6 +224,9 @@ class WebWidget {
   virtual bool GetCompositionCharacterBounds(WebVector<WebRect>& bounds) {
     return false;
   }
+
+  // Called by client to request showing the context menu.
+  virtual void ShowContextMenu(WebMenuSourceType) {}
 
  protected:
   ~WebWidget() {}

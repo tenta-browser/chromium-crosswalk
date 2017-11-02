@@ -16,6 +16,7 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/notification.h"
+#include "ui/message_center/notification_delegate.h"
 #include "ui/message_center/views/slide_out_controller.h"
 #include "ui/views/view.h"
 
@@ -26,13 +27,9 @@ class ScrollView;
 
 namespace message_center {
 
+class Notification;
+class NotificationControlButtonsView;
 class MessageCenterController;
-
-// Individual notifications constants.
-const int kPaddingBetweenItems = 10;
-const int kPaddingHorizontal = 18;
-const int kWebNotificationButtonWidth = 32;
-const int kWebNotificationIconSize = 40;
 
 // An base class for a notification entry. Contains background and other
 // elements shared by derived notification views.
@@ -53,12 +50,16 @@ class MESSAGE_CENTER_EXPORT MessageView
   // Creates a shadow around the notification and changes slide-out behavior.
   void SetIsNested();
 
+  virtual NotificationControlButtonsView* GetControlButtonsView() const = 0;
   virtual bool IsCloseButtonFocused() const = 0;
   virtual void RequestFocusOnCloseButton() = 0;
-  virtual bool IsPinned() const = 0;
   virtual void UpdateControlButtonsVisibility() = 0;
 
+  virtual void SetExpanded(bool expanded);
+  virtual bool IsExpanded() const;
+
   void OnCloseButtonPressed();
+  void OnSettingsButtonPressed();
 
   // views::View
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
@@ -76,14 +77,18 @@ class MESSAGE_CENTER_EXPORT MessageView
   void OnSlideChanged() override;
   void OnSlideOut() override;
 
-  void set_scroller(views::ScrollView* scroller) { scroller_ = scroller; }
-  std::string notification_id() { return notification_id_; }
-  NotifierId notifier_id() { return notifier_id_; }
-  const base::string16& display_source() const { return display_source_; }
+  bool GetPinned() const;
 
+  void set_scroller(views::ScrollView* scroller) { scroller_ = scroller; }
+  std::string notification_id() const { return notification_id_; }
   void set_controller(MessageCenterController* controller) {
     controller_ = controller;
   }
+
+#if defined(OS_CHROMEOS)
+  // By calling this, all notifications are treated as non-pinned forcibly.
+  void set_force_disable_pinned() { force_disable_pinned_ = true; }
+#endif
 
  protected:
   // Creates and add close button to view hierarchy when necessary. Derived
@@ -102,13 +107,16 @@ class MESSAGE_CENTER_EXPORT MessageView
  private:
   MessageCenterController* controller_;  // Weak, lives longer then views.
   std::string notification_id_;
-  NotifierId notifier_id_;
   views::View* background_view_ = nullptr;  // Owned by views hierarchy.
   views::ScrollView* scroller_ = nullptr;
 
   base::string16 accessible_name_;
 
-  base::string16 display_source_;
+  // Flag if the notification is set to pinned or not.
+  bool pinned_ = false;
+  // Flag if pin is forcibly disabled on this view. If true, the view is never
+  // pinned regardless of the value of |pinned_|.
+  bool force_disable_pinned_ = false;
 
   std::unique_ptr<views::Painter> focus_painter_;
 

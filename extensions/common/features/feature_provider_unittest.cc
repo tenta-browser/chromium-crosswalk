@@ -9,12 +9,14 @@
 #include <string>
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/features/simple_feature.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/value_builder.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -45,16 +47,9 @@ TEST(FeatureProviderTest, ManifestFeatureAvailability) {
   const FeatureProvider* provider = FeatureProvider::GetByName("manifest");
 
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder()
-          .SetManifest(DictionaryBuilder()
-                           .Set("name", "test extension")
-                           .Set("version", "1")
-                           .Set("description", "hello there")
-                           .Build())
-          .Build();
-  ASSERT_TRUE(extension.get());
+      ExtensionBuilder("test extension").Build();
 
-  Feature* feature = provider->GetFeature("description");
+  const Feature* feature = provider->GetFeature("description");
   EXPECT_EQ(Feature::IS_AVAILABLE,
             feature
                 ->IsAvailableToContext(extension.get(),
@@ -102,28 +97,13 @@ TEST(FeatureProviderTest, PermissionFeatureAvailability) {
   const FeatureProvider* provider = FeatureProvider::GetByName("permission");
 
   scoped_refptr<const Extension> app =
-      ExtensionBuilder()
-          .SetManifest(
-              DictionaryBuilder()
-                  .Set("name", "test app")
-                  .Set("version", "1")
-                  .Set("app",
-                       DictionaryBuilder()
-                           .Set("background",
-                                DictionaryBuilder()
-                                    .Set("scripts", ListBuilder()
-                                                        .Append("background.js")
-                                                        .Build())
-                                    .Build())
-                           .Build())
-                  .Set("permissions", ListBuilder().Append("power").Build())
-                  .Build())
+      ExtensionBuilder("test app", ExtensionBuilder::Type::PLATFORM_APP)
+          .AddPermission("power")
           .Build();
-  ASSERT_TRUE(app.get());
   ASSERT_TRUE(app->is_platform_app());
 
   // A permission requested in the manifest is available.
-  Feature* feature = provider->GetFeature("power");
+  const Feature* feature = provider->GetFeature("power");
   EXPECT_EQ(Feature::IS_AVAILABLE,
             feature
                 ->IsAvailableToContext(app.get(), Feature::UNSPECIFIED_CONTEXT,
@@ -148,6 +128,34 @@ TEST(FeatureProviderTest, PermissionFeatureAvailability) {
                 ->IsAvailableToContext(app.get(), Feature::UNSPECIFIED_CONTEXT,
                                        GURL())
                 .result());
+}
+
+TEST(FeatureProviderTest, GetChildren) {
+  FeatureProvider provider;
+
+  auto add_feature = [&provider](base::StringPiece name,
+                                 bool no_parent = false) {
+    auto feature = std::make_unique<SimpleFeature>();
+    feature->set_name(name);
+    feature->set_noparent(no_parent);
+    provider.AddFeature(name, std::move(feature));
+  };
+
+  add_feature("parent");
+  add_feature("parent.child");
+  add_feature("parent.child.grandchild");
+  add_feature("parent.other_child.other_grandchild");
+  add_feature("parent.unparented_child", true);
+
+  const Feature* parent = provider.GetFeature("parent");
+  ASSERT_TRUE(parent);
+  std::vector<const Feature*> children = provider.GetChildren(*parent);
+  std::set<std::string> children_names;
+  for (const Feature* child : children)
+    children_names.insert(child->name());
+  EXPECT_THAT(children_names, testing::UnorderedElementsAre(
+                                  "parent.child", "parent.child.grandchild",
+                                  "parent.other_child.other_grandchild"));
 }
 
 }  // namespace extensions

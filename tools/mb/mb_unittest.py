@@ -220,6 +220,28 @@ GYP_HACKS_CONFIG = """\
 }
 """
 
+TRYSERVER_CONFIG = """\
+{
+  'masters': {
+    'not_a_tryserver': {
+      'fake_builder': 'fake_config',
+    },
+    'tryserver.chromium.linux': {
+      'try_builder': 'fake_config',
+    },
+    'tryserver.chromium.mac': {
+      'try_builder2': 'fake_config',
+    },
+  },
+  'luci_tryservers': {
+    'luci_tryserver1': ['luci_builder1'],
+    'luci_tryserver2': ['luci_builder2'],
+  },
+  'configs': {},
+  'mixins': {},
+}
+"""
+
 
 class UnitTest(unittest.TestCase):
   def fake_mbw(self, files=None, win32=False):
@@ -555,28 +577,21 @@ class UnitTest(unittest.TestCase):
                     "LLVM_FORCE_HEAD_REVISION=1\n"
                     "python build/gyp_chromium -G output_dir=_path_\n"))
 
-
-if __name__ == '__main__':
-  unittest.main()
-
-  def test_validate(self):
+  def test_buildbucket(self):
     mbw = self.fake_mbw()
-    self.check(['validate'], mbw=mbw, ret=0)
-
-  def test_bad_validate(self):
-    mbw = self.fake_mbw()
-    mbw.files[mbw.default_config] = TEST_BAD_CONFIG
-    self.check(['validate'], mbw=mbw, ret=1)
-
-  def test_gyp_env_hacks(self):
-    mbw = self.fake_mbw()
-    mbw.files[mbw.default_config] = GYP_HACKS_CONFIG
-    self.check(['lookup', '-c', 'fake_config'], mbw=mbw,
+    mbw.files[mbw.default_config] = TRYSERVER_CONFIG
+    self.check(['gerrit-buildbucket-config'], mbw=mbw,
                ret=0,
-               out=("GYP_DEFINES='foo=bar baz=1'\n"
-                    "GYP_LINK_CONCURRENCY=1\n"
-                    "LLVM_FORCE_HEAD_REVISION=1\n"
-                    "python build/gyp_chromium -G output_dir=_path_\n"))
+               out=('# This file was generated using '
+                    '"tools/mb/mb.py gerrit-buildbucket-config".\n'
+                    '[bucket "luci.luci_tryserver1"]\n'
+                    '\tbuilder = luci_builder1\n'
+                    '[bucket "luci.luci_tryserver2"]\n'
+                    '\tbuilder = luci_builder2\n'
+                    '[bucket "master.tryserver.chromium.linux"]\n'
+                    '\tbuilder = try_builder\n'
+                    '[bucket "master.tryserver.chromium.mac"]\n'
+                    '\tbuilder = try_builder2\n'))
 
 
 if __name__ == '__main__':

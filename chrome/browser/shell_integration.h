@@ -64,13 +64,21 @@ bool IsElevationNeededForSettingDefaultProtocolClient();
 // Returns an empty string on failure.
 base::string16 GetApplicationNameForProtocol(const GURL& url);
 
-// On Linux, it may not be possible to determine or set the default browser
-// on some desktop environments or configurations. So, we use this enum and
-// not a plain bool.
+// Chrome's default web client state as a browser as a protocol client. If the
+// current install mode is not default, the brand's other modes are
+// checked. This allows callers to take specific action in case the current mode
+// (e.g., Chrome Dev) is not the default handler, but another of the brand's
+// modes (e.g., stable Chrome) is.
 enum DefaultWebClientState {
+  // No install mode for the brand is the default client.
   NOT_DEFAULT,
+  // The current install mode is the default client.
   IS_DEFAULT,
+  // An error occurred while attempting to check the default client.
   UNKNOWN_DEFAULT,
+  // The current install mode is not default, although one of the brand's
+  // other install modes is.
+  OTHER_MODE_IS_DEFAULT,
   NUM_DEFAULT_STATES
 };
 
@@ -129,9 +137,9 @@ using DefaultWebClientWorkerCallback =
 
 //  Helper objects that handle checking if Chrome is the default browser
 //  or application for a url protocol on Windows and Linux, and also setting
-//  it as the default. These operations are performed asynchronously on the
-//  file thread since registry access (on Windows) or the preference database
-//  (on Linux) are involved and this can be slow.
+//  it as the default. These operations are performed asynchronously on a
+//  blocking sequence since registry access (on Windows) or the preference
+//  database (on Linux) are involved and this can be slow.
 //  By default, the worker will present the user with an interactive flow if
 //  required by the platform. This can be suppressed via
 //  set_interactive_permitted(), in which case an attempt to set Chrome as
@@ -174,12 +182,14 @@ class DefaultWebClientWorker
   bool interactive_permitted_ = true;
 
  private:
-  // Checks whether Chrome is the default web client. Always called on the
-  // FILE thread. When |is_following_set_as_default| is true, The default state
-  // will be reported to UMA as the result of the set-as-default operation.
+  // Checks whether Chrome is the default web client. Always called on a
+  // blocking sequence. When |is_following_set_as_default| is true, The default
+  // state will be reported to UMA as the result of the set-as-default
+  // operation.
   void CheckIsDefault(bool is_following_set_as_default);
 
-  // Sets Chrome as the default web client. Always called on the FILE thread.
+  // Sets Chrome as the default web client. Always called on a blocking
+  // sequence.
   void SetAsDefault();
 
   // Implementation of CheckIsDefault() and SetAsDefault() for subclasses.

@@ -13,7 +13,6 @@
 #include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "ios/chrome/browser/net/net_types.h"
 #include "ios/web/public/browser_state.h"
 #include "net/url_request/url_request_job_factory.h"
@@ -128,23 +127,18 @@ class ChromeBrowserState : public web::BrowserState {
   virtual net::URLRequestContextGetter* CreateIsolatedRequestContext(
       const base::FilePath& partition_path) = 0;
 
-  // Returns the current ChromeBrowserState casted as a TestChromeBrowserState
-  // or null if it is not a TestChromeBrowserState.
-  // TODO(crbug.com/583682): This method should not be used. It is there for
-  // supporting a legacy test, and will be removed as soon as the deprecated
-  // test is removed.
-  virtual TestChromeBrowserState* AsTestChromeBrowserState();
-
   // web::BrowserState
   net::URLRequestContextGetter* GetRequestContext() override;
 
  protected:
-  ChromeBrowserState();
+  explicit ChromeBrowserState(
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner);
 
  private:
   friend class ::TestChromeBrowserState;
   friend class ::TestChromeBrowserStateManager;
 
+  scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserState);

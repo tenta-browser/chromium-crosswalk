@@ -4,8 +4,8 @@
 
 #include "core/css/MediaValuesDynamic.h"
 
-#include "core/css/CSSHelper.h"
 #include "core/css/CSSPrimitiveValue.h"
+#include "core/css/CSSResolutionUnits.h"
 #include "core/css/CSSToLengthConversionData.h"
 #include "core/css/MediaValuesCached.h"
 #include "core/dom/Document.h"
@@ -15,7 +15,7 @@
 namespace blink {
 
 MediaValues* MediaValuesDynamic::Create(Document& document) {
-  return MediaValuesDynamic::Create(FrameFrom(document));
+  return MediaValuesDynamic::Create(document.GetFrameOfMasterDocument());
 }
 
 MediaValues* MediaValuesDynamic::Create(LocalFrame* frame) {

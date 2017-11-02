@@ -12,5 +12,7 @@ test(function() {
         testRunner.setMockSpellCheckerEnabled(true);
     window.getSelection().selectAllChildren(document.getElementById('foo'));
     document.execCommand('insertParagraph');
+
+    internals.runIdleTimeSpellChecker(document);
 }, 'spelling');
 </script>

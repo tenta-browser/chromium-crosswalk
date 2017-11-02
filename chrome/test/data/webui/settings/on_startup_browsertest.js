@@ -7,9 +7,9 @@
 GEN_INCLUDE(['settings_page_browsertest.js']);
 
 /**
-  * Radio button enum values for restore on startup.
-  * @enum
-  */
+ * Radio button enum values for restore on startup.
+ * @enum
+ */
 var RestoreOnStartupEnum = {
   CONTINUE: 1,
   OPEN_NEW_TAB: 5,
@@ -36,12 +36,6 @@ OnStartupSettingsBrowserTest.prototype = {
     assertTrue(!!result);
     return result;
   },
-
-  /** @override */
-  preLoad: function() {
-    SettingsPageBrowserTest.prototype.preLoad.call(this);
-    settingsHidePagesByDefaultForTest = true;
-  },
 };
 
 TEST_F('OnStartupSettingsBrowserTest', 'uiTests', function() {
@@ -53,8 +47,9 @@ TEST_F('OnStartupSettingsBrowserTest', 'uiTests', function() {
   var self = this;
 
   var restoreOnStartup = function() {
-    return self.getPageElement('#onStartupRadioGroup').querySelector(
-        '.iron-selected').label;
+    return self.getPageElement('#onStartupRadioGroup')
+        .querySelector('.iron-selected')
+        .label;
   };
 
   suite('OnStartupHandler', function() {
@@ -62,26 +57,29 @@ TEST_F('OnStartupSettingsBrowserTest', 'uiTests', function() {
       self.basicPage.set('pageVisibility.onStartup', true);
       Polymer.dom.flush();
 
-      settingsPrefs = document.querySelector('settings-ui').$$(
-          'settings-prefs');
+      settingsPrefs =
+          document.querySelector('settings-ui').$$('settings-prefs');
       assertTrue(!!settingsPrefs);
       return CrSettingsPrefs.initialized;
     });
 
     test('open-continue', function() {
-      settingsPrefs.set('prefs.session.restore_on_startup.value',
+      settingsPrefs.set(
+          'prefs.session.restore_on_startup.value',
           RestoreOnStartupEnum.CONTINUE);
       assertEquals('Continue where you left off', restoreOnStartup());
     });
 
     test('open-ntp', function() {
-      settingsPrefs.set('prefs.session.restore_on_startup.value',
+      settingsPrefs.set(
+          'prefs.session.restore_on_startup.value',
           RestoreOnStartupEnum.OPEN_NEW_TAB);
       assertEquals('Open the New Tab page', restoreOnStartup());
     });
 
     test('open-specific', function() {
-      settingsPrefs.set('prefs.session.restore_on_startup.value',
+      settingsPrefs.set(
+          'prefs.session.restore_on_startup.value',
           RestoreOnStartupEnum.OPEN_SPECIFIC);
       assertEquals('Open a specific page or set of pages', restoreOnStartup());
     });

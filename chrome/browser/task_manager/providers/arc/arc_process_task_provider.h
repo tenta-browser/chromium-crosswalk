@@ -14,7 +14,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "chrome/browser/chromeos/arc/process/arc_process.h"
-#include "chrome/browser/task_manager/providers/arc/arc_process_filter.h"
 #include "chrome/browser/task_manager/providers/arc/arc_process_task.h"
 #include "chrome/browser/task_manager/providers/task_provider.h"
 
@@ -50,8 +49,8 @@ class ArcProcessTaskProvider : public TaskProvider {
 
   void UpdateProcessList(ArcTaskMap* pid_to_task,
                          const std::vector<arc::ArcProcess>& processes);
-  void OnUpdateAppProcessList(const std::vector<arc::ArcProcess>& processes);
-  void OnUpdateSystemProcessList(const std::vector<arc::ArcProcess>& processes);
+  void OnUpdateAppProcessList(std::vector<arc::ArcProcess> processes);
+  void OnUpdateSystemProcessList(std::vector<arc::ArcProcess> processes);
 
   // task_manager::TaskProvider:
   void StartUpdating() override;
@@ -65,10 +64,6 @@ class ArcProcessTaskProvider : public TaskProvider {
 
   // Whether to continue the periodical polling.
   bool is_updating_;
-
-  // Filters out ARC processes that are not useful to display.
-  // See crbug.com/654564
-  const ArcProcessFilter process_filter_;
 
   // Always keep this the last member of this class to make sure it's the
   // first thing to be destructed.

@@ -32,19 +32,23 @@
 #define WebServiceWorkerProviderClient_h
 
 #include "public/platform/WebCommon.h"
-#include "public/platform/WebMessagePortChannel.h"
+#include "public/platform/WebVector.h"
 #include "public/platform/modules/serviceworker/WebServiceWorker.h"
 
 #include <memory>
 
 namespace blink {
 
+class MessagePortChannel;
 class WebServiceWorker;
 class WebString;
 
-// This class is the interface for embedders to talk to
-// ServiceWorkerContainer.
-class BLINK_PLATFORM_EXPORT WebServiceWorkerProviderClient {
+// See WebServiceWorkerProvider for full documentation.
+//
+// WebServiceWorkerProviderClient is implemented by ServiceWorkerContainer.
+// We probably wouldn't need this abstract class, except we also make a
+// MockServiceWorkerProviderClient for unit tests.
+class WebServiceWorkerProviderClient {
  public:
   virtual ~WebServiceWorkerProviderClient() {}
 
@@ -53,7 +57,7 @@ class BLINK_PLATFORM_EXPORT WebServiceWorkerProviderClient {
 
   virtual void DispatchMessageEvent(std::unique_ptr<WebServiceWorker::Handle>,
                                     const WebString& message,
-                                    WebMessagePortChannelArray channels) = 0;
+                                    WebVector<MessagePortChannel>) = 0;
   virtual void CountFeature(uint32_t feature) = 0;
 };
 

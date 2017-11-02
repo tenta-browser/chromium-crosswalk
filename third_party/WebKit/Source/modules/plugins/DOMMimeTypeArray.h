@@ -21,20 +21,23 @@
 #ifndef DOMMimeTypeArray_h
 #define DOMMimeTypeArray_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
+#include "core/page/PluginsChangedObserver.h"
 #include "modules/plugins/DOMMimeType.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 
 namespace blink {
 
+class ExceptionState;
 class LocalFrame;
 class PluginData;
 
 class DOMMimeTypeArray final : public GarbageCollected<DOMMimeTypeArray>,
                                public ScriptWrappable,
-                               public ContextClient {
+                               public ContextLifecycleObserver,
+                               public PluginsChangedObserver {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(DOMMimeTypeArray);
 
@@ -42,16 +45,25 @@ class DOMMimeTypeArray final : public GarbageCollected<DOMMimeTypeArray>,
   static DOMMimeTypeArray* Create(LocalFrame* frame) {
     return new DOMMimeTypeArray(frame);
   }
+  void UpdatePluginData();
 
   unsigned length() const;
   DOMMimeType* item(unsigned index);
   DOMMimeType* namedItem(const AtomicString& property_name);
+  void NamedPropertyEnumerator(Vector<String>&, ExceptionState&) const;
+  bool NamedPropertyQuery(const AtomicString&, ExceptionState&) const;
+
+  // PluginsChangedObserver implementation.
+  void PluginsChanged();
 
   DECLARE_VIRTUAL_TRACE();
 
  private:
   explicit DOMMimeTypeArray(LocalFrame*);
   PluginData* GetPluginData() const;
+  void ContextDestroyed(ExecutionContext*) override;
+
+  HeapVector<Member<DOMMimeType>> dom_mime_types_;
 };
 
 }  // namespace blink

@@ -84,27 +84,25 @@ void MockDemuxerStream::set_liveness(DemuxerStream::Liveness liveness) {
   liveness_ = liveness;
 }
 
-VideoRotation MockDemuxerStream::video_rotation() {
-  return VIDEO_ROTATION_0;
-}
-
-std::string MockVideoDecoder::GetDisplayName() const {
-  return "MockVideoDecoder";
-}
-
-MockVideoDecoder::MockVideoDecoder() {
+MockVideoDecoder::MockVideoDecoder(const std::string& decoder_name)
+    : decoder_name_(decoder_name) {
   ON_CALL(*this, CanReadWithoutStalling()).WillByDefault(Return(true));
-}
-
-std::string MockAudioDecoder::GetDisplayName() const {
-  return "MockAudioDecoder";
 }
 
 MockVideoDecoder::~MockVideoDecoder() {}
 
-MockAudioDecoder::MockAudioDecoder() {}
+std::string MockVideoDecoder::GetDisplayName() const {
+  return decoder_name_;
+}
+
+MockAudioDecoder::MockAudioDecoder(const std::string& decoder_name)
+    : decoder_name_(decoder_name) {}
 
 MockAudioDecoder::~MockAudioDecoder() {}
+
+std::string MockAudioDecoder::GetDisplayName() const {
+  return decoder_name_;
+}
 
 MockRendererClient::MockRendererClient() {}
 
@@ -181,11 +179,15 @@ MockCdmSessionPromise::~MockCdmSessionPromise() {
   MarkPromiseSettled();
 }
 
-MockCdm::MockCdm(const SessionMessageCB& session_message_cb,
+MockCdm::MockCdm(const std::string& key_system,
+                 const url::Origin& security_origin,
+                 const SessionMessageCB& session_message_cb,
                  const SessionClosedCB& session_closed_cb,
                  const SessionKeysChangeCB& session_keys_change_cb,
                  const SessionExpirationUpdateCB& session_expiration_update_cb)
-    : session_message_cb_(session_message_cb),
+    : key_system_(key_system),
+      security_origin_(security_origin),
+      session_message_cb_(session_message_cb),
       session_closed_cb_(session_closed_cb),
       session_keys_change_cb_(session_keys_change_cb),
       session_expiration_update_cb_(session_expiration_update_cb) {}
@@ -228,10 +230,9 @@ void MockCdm::RemoveSession(const std::string& session_id,
   OnRemoveSession(session_id, promise);
 }
 
-void MockCdm::CallSessionMessageCB(
-    const std::string& session_id,
-    ContentDecryptionModule::MessageType message_type,
-    const std::vector<uint8_t>& message) {
+void MockCdm::CallSessionMessageCB(const std::string& session_id,
+                                   CdmMessageType message_type,
+                                   const std::vector<uint8_t>& message) {
   session_message_cb_.Run(session_id, message_type, message);
 }
 
@@ -257,8 +258,8 @@ MockCdmFactory::~MockCdmFactory() {}
 
 void MockCdmFactory::Create(
     const std::string& key_system,
-    const GURL& security_origin,
-    const CdmConfig& cdm_config,
+    const url::Origin& security_origin,
+    const CdmConfig& /* cdm_config */,
     const SessionMessageCB& session_message_cb,
     const SessionClosedCB& session_closed_cb,
     const SessionKeysChangeCB& session_keys_change_cb,
@@ -277,8 +278,8 @@ void MockCdmFactory::Create(
   // Create and return a new MockCdm. Keep a pointer to the created CDM so
   // that tests can access it. Calls to GetCdmContext() can be ignored.
   scoped_refptr<MockCdm> cdm = new StrictMock<MockCdm>(
-      session_message_cb, session_closed_cb, session_keys_change_cb,
-      session_expiration_update_cb);
+      key_system, security_origin, session_message_cb, session_closed_cb,
+      session_keys_change_cb, session_expiration_update_cb);
   created_cdm_ = cdm.get();
   EXPECT_CALL(*created_cdm_.get(), GetCdmContext());
   cdm_created_cb.Run(std::move(cdm), "");

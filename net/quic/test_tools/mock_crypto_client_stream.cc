@@ -8,7 +8,7 @@
 #include "net/quic/core/crypto/null_encrypter.h"
 #include "net/quic/core/crypto/quic_decrypter.h"
 #include "net/quic/core/crypto/quic_encrypter.h"
-#include "net/quic/core/quic_client_session_base.h"
+#include "net/quic/core/quic_spdy_client_session_base.h"
 #include "net/quic/test_tools/quic_config_peer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -18,7 +18,7 @@ namespace net {
 
 MockCryptoClientStream::MockCryptoClientStream(
     const QuicServerId& server_id,
-    QuicClientSessionBase* session,
+    QuicSpdyClientSessionBase* session,
     ProofVerifyContext* verify_context,
     const QuicConfig& config,
     QuicCryptoClientConfig* crypto_config,
@@ -29,7 +29,11 @@ MockCryptoClientStream::MockCryptoClientStream(
                              verify_context,
                              crypto_config,
                              session),
+      QuicCryptoHandshaker(this, session),
       handshake_mode_(handshake_mode),
+      encryption_established_(false),
+      handshake_confirmed_(false),
+      crypto_negotiated_params_(new QuicCryptoNegotiatedParameters),
       server_id_(server_id),
       proof_verify_details_(proof_verify_details),
       config_(config) {}
@@ -62,7 +66,7 @@ bool MockCryptoClientStream::CryptoConnect() {
       crypto_negotiated_params_->key_exchange = kC255;
       crypto_negotiated_params_->aead = kAESG;
       if (proof_verify_details_) {
-        reinterpret_cast<QuicClientSessionBase*>(session())
+        reinterpret_cast<QuicSpdyClientSessionBase*>(session())
             ->OnProofVerifyDetailsAvailable(*proof_verify_details_);
       }
       session()->connection()->SetDecrypter(
@@ -81,7 +85,7 @@ bool MockCryptoClientStream::CryptoConnect() {
       crypto_negotiated_params_->key_exchange = kC255;
       crypto_negotiated_params_->aead = kAESG;
       if (proof_verify_details_) {
-        reinterpret_cast<QuicClientSessionBase*>(session())
+        reinterpret_cast<QuicSpdyClientSessionBase*>(session())
             ->OnProofVerifyDetailsAvailable(*proof_verify_details_);
       }
       SetConfigNegotiated();
@@ -108,6 +112,23 @@ bool MockCryptoClientStream::CryptoConnect() {
   }
 
   return session()->connection()->connected();
+}
+
+bool MockCryptoClientStream::encryption_established() const {
+  return encryption_established_;
+}
+
+bool MockCryptoClientStream::handshake_confirmed() const {
+  return handshake_confirmed_;
+}
+
+const QuicCryptoNegotiatedParameters&
+MockCryptoClientStream::crypto_negotiated_params() const {
+  return *crypto_negotiated_params_;
+}
+
+CryptoMessageParser* MockCryptoClientStream::crypto_message_parser() {
+  return &crypto_framer_;
 }
 
 void MockCryptoClientStream::SendOnCryptoHandshakeEvent(

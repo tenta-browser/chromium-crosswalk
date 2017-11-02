@@ -13,7 +13,6 @@
 #include "base/base64.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_restrictions.h"
@@ -200,7 +199,7 @@ std::unique_ptr<HttpResponse> HandleFileRequest(
     if (!base::ReadFileToString(headers_path, &headers_contents))
       return nullptr;
 
-    return base::MakeUnique<RawHttpResponse>(headers_contents, file_contents);
+    return std::make_unique<RawHttpResponse>(headers_contents, file_contents);
   }
 
   std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse);

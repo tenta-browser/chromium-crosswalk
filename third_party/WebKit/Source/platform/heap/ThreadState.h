@@ -53,13 +53,16 @@ class Isolate;
 namespace blink {
 
 class BasePage;
-class GarbageCollectedMixinConstructorMarker;
+class GarbageCollectedMixinConstructorMarkerBase;
 class PersistentNode;
 class PersistentRegion;
 class BaseArena;
 class ThreadHeap;
 class ThreadState;
 class Visitor;
+
+template <ThreadAffinity affinity>
+class ThreadStateFor;
 
 // Declare that a class has a pre-finalizer. The pre-finalizer is called
 // before any object gets swept, so it is safe to touch on-heap objects
@@ -90,9 +93,9 @@ class Visitor;
 // private:
 //     void dispose()
 //     {
-//         m_bar->...; // It is safe to touch other on-heap objects.
+//         bar_->...; // It is safe to touch other on-heap objects.
 //     }
-//     Member<Bar> m_bar;
+//     Member<Bar> bar_;
 // };
 #define USING_PRE_FINALIZER(Class, preFinalizer)                           \
  public:                                                                   \
@@ -108,6 +111,24 @@ class Visitor;
   ThreadState::PrefinalizerRegistration<Class> prefinalizer_dummy_ = this; \
   using UsingPreFinalizerMacroNeedsTrailingSemiColon = char
 
+class PLATFORM_EXPORT BlinkGCObserver {
+ public:
+  // The constructor automatically register this object to ThreadState's
+  // observer lists. The argument must not be null.
+  explicit BlinkGCObserver(ThreadState*);
+
+  // The destructor automatically unregister this object from ThreadState's
+  // observer lists.
+  virtual ~BlinkGCObserver();
+
+  virtual void OnCompleteSweepDone() = 0;
+
+ private:
+  // As a ThreadState must live when a BlinkGCObserver lives, holding a raw
+  // pointer is safe.
+  ThreadState* thread_state_;
+};
+
 class PLATFORM_EXPORT ThreadState {
   USING_FAST_MALLOC(ThreadState);
   WTF_MAKE_NONCOPYABLE(ThreadState);
@@ -117,6 +138,9 @@ class PLATFORM_EXPORT ThreadState {
   enum GCState {
     kNoGCScheduled,
     kIdleGCScheduled,
+    kIncrementalMarkingStartScheduled,
+    kIncrementalMarkingStepScheduled,
+    kIncrementalMarkingFinalizeScheduled,
     kPreciseGCScheduled,
     kFullGCScheduled,
     kPageNavigationGCScheduled,
@@ -146,11 +170,11 @@ class PLATFORM_EXPORT ThreadState {
 
    public:
     explicit SweepForbiddenScope(ThreadState* state) : state_(state) {
-      ASSERT(!state_->sweep_forbidden_);
+      DCHECK(!state_->sweep_forbidden_);
       state_->sweep_forbidden_ = true;
     }
     ~SweepForbiddenScope() {
-      ASSERT(state_->sweep_forbidden_);
+      DCHECK(state_->sweep_forbidden_);
       state_->sweep_forbidden_ = false;
     }
 
@@ -230,6 +254,22 @@ class PLATFORM_EXPORT ThreadState {
            GcState() == kSweepingAndIdleGCScheduled;
   }
 
+  // Incremental GC.
+
+  void ScheduleIncrementalMarkingStart();
+  void ScheduleIncrementalMarkingStep();
+  void ScheduleIncrementalMarkingFinalize();
+
+  void IncrementalMarkingStart();
+  void IncrementalMarkingStep();
+  void IncrementalMarkingFinalize();
+
+  bool IsIncrementalMarkingInProgress() const {
+    return GcState() == kIncrementalMarkingStartScheduled ||
+           GcState() == kIncrementalMarkingStepScheduled ||
+           GcState() == kIncrementalMarkingFinalizeScheduled;
+  }
+
   // A GC runs in the following sequence.
   //
   // 1) preGC() is called.
@@ -247,8 +287,12 @@ class PLATFORM_EXPORT ThreadState {
   // - isSweepingInProgress() returns true while any sweeping operation is
   //   running.
   void MakeConsistentForGC();
-  void PreGC();
-  void PostGC(BlinkGC::GCType);
+  void MarkPhasePrologue(BlinkGC::StackState,
+                         BlinkGC::GCType,
+                         BlinkGC::GCReason);
+  void MarkPhaseVisitRoots();
+  bool MarkPhaseAdvanceMarking(double deadline_seconds);
+  void MarkPhaseEpilogue();
   void CompleteSweep();
   void PreSweep(BlinkGC::GCType);
   void PostSweep();
@@ -290,6 +334,11 @@ class PLATFORM_EXPORT ThreadState {
   void LeaveObjectResurrectionForbiddenScope() {
     DCHECK(object_resurrection_forbidden_);
     object_resurrection_forbidden_ = false;
+  }
+
+  bool WrapperTracingInProgress() const { return wrapper_tracing_in_progress_; }
+  void SetWrapperTracingInProgress(bool value) {
+    wrapper_tracing_in_progress_ = value;
   }
 
   class MainThreadGCForbiddenScope final {
@@ -358,8 +407,8 @@ class PLATFORM_EXPORT ThreadState {
   // The thread heap is split into multiple heap parts based on object types
   // and object sizes.
   BaseArena* Arena(int arena_index) const {
-    ASSERT(0 <= arena_index);
-    ASSERT(arena_index < BlinkGC::kNumberOfArenas);
+    DCHECK_LE(0, arena_index);
+    DCHECK_LT(arena_index, BlinkGC::kNumberOfArenas);
     return arenas_[arena_index];
   }
 
@@ -431,16 +480,16 @@ class PLATFORM_EXPORT ThreadState {
   // fully should a GC be allowed while its subclasses are being
   // constructed.
   void EnterGCForbiddenScopeIfNeeded(
-      GarbageCollectedMixinConstructorMarker* gc_mixin_marker) {
-    ASSERT(CheckThread());
+      GarbageCollectedMixinConstructorMarkerBase* gc_mixin_marker) {
+    DCHECK(CheckThread());
     if (!gc_mixin_marker_) {
       EnterMixinConstructionScope();
       gc_mixin_marker_ = gc_mixin_marker;
     }
   }
   void LeaveGCForbiddenScopeIfNeeded(
-      GarbageCollectedMixinConstructorMarker* gc_mixin_marker) {
-    ASSERT(CheckThread());
+      GarbageCollectedMixinConstructorMarkerBase* gc_mixin_marker) {
+    DCHECK(CheckThread());
     if (gc_mixin_marker_ == gc_mixin_marker) {
       LeaveMixinConstructionScope();
       gc_mixin_marker_ = nullptr;
@@ -474,11 +523,11 @@ class PLATFORM_EXPORT ThreadState {
   //       freed since the last GC.
   //
   BaseArena* VectorBackingArena(size_t gc_info_index) {
-    ASSERT(CheckThread());
+    DCHECK(CheckThread());
     size_t entry_index = gc_info_index & kLikelyToBePromptlyFreedArrayMask;
     --likely_to_be_promptly_freed_[entry_index];
     int arena_index = vector_backing_arena_index_;
-    // If m_likelyToBePromptlyFreed[entryIndex] > 0, that means that
+    // If likely_to_be_promptly_freed_[entryIndex] > 0, that means that
     // more than 33% of vectors of the type have been promptly freed
     // since the last GC.
     if (likely_to_be_promptly_freed_[entry_index] > 0) {
@@ -487,7 +536,7 @@ class PLATFORM_EXPORT ThreadState {
           ArenaIndexOfVectorArenaLeastRecentlyExpanded(
               BlinkGC::kVector1ArenaIndex, BlinkGC::kVector4ArenaIndex);
     }
-    ASSERT(IsVectorArenaIndex(arena_index));
+    DCHECK(IsVectorArenaIndex(arena_index));
     return arenas_[arena_index];
   }
   BaseArena* ExpandedVectorBackingArena(size_t gc_info_index);
@@ -514,11 +563,6 @@ class PLATFORM_EXPORT ThreadState {
   void leaveStaticReferenceRegistrationDisabledScope();
 #endif
 
-  void ResetHeapCounters();
-  void IncreaseAllocatedObjectSize(size_t);
-  void DecreaseAllocatedObjectSize(size_t);
-  void IncreaseMarkedObjectSize(size_t);
-
   v8::Isolate* GetIsolate() const { return isolate_; }
 
   BlinkGC::StackState GetStackState() const { return stack_state_; }
@@ -534,7 +578,8 @@ class PLATFORM_EXPORT ThreadState {
     PrefinalizerRegistration(T* self) {
       static_assert(sizeof(&T::InvokePreFinalizer) > 0,
                     "USING_PRE_FINALIZER(T) must be defined.");
-      ThreadState* state = ThreadState::Current();
+      ThreadState* state =
+          ThreadStateFor<ThreadingTrait<T>::kAffinity>::GetState();
 #if DCHECK_IS_ON()
       DCHECK(state->CheckThread());
 #endif
@@ -557,6 +602,8 @@ class PLATFORM_EXPORT ThreadState {
     return &FromObject(object)->Heap() == &Heap();
   }
 
+  int GcAge() const { return gc_age_; }
+
  private:
   template <typename T>
   friend class PrefinalizerRegistration;
@@ -566,7 +613,7 @@ class PLATFORM_EXPORT ThreadState {
   ~ThreadState();
 
   void ClearSafePointScopeMarker() {
-    safe_point_stack_copy_.Clear();
+    safe_point_stack_copy_.clear();
     safe_point_scope_marker_ = nullptr;
   }
 
@@ -581,6 +628,7 @@ class PLATFORM_EXPORT ThreadState {
   bool ShouldScheduleIdleGC();
   bool ShouldSchedulePreciseGC();
   bool ShouldForceConservativeGC();
+  bool ShouldScheduleIncrementalMarking() const;
   // V8 minor or major GC is likely to drop a lot of references to objects
   // on Oilpan's heap. We give a chance to schedule a GC.
   bool ShouldScheduleV8FollowupGC();
@@ -630,6 +678,18 @@ class PLATFORM_EXPORT ThreadState {
 
   friend class SafePointScope;
 
+  friend class BlinkGCObserver;
+
+  // Adds the given observer to the ThreadState's observer list. This doesn't
+  // take ownership of the argument. The argument must not be null. The argument
+  // must not be registered before calling this.
+  void AddObserver(BlinkGCObserver*);
+
+  // Removes the given observer from the ThreadState's observer list. This
+  // doesn't take ownership of the argument. The argument must not be null.
+  // The argument must be registered before calling this.
+  void RemoveObserver(BlinkGCObserver*);
+
   static WTF::ThreadSpecific<ThreadState*>* thread_specific_;
 
   // We can't create a static member of type ThreadState here
@@ -662,7 +722,7 @@ class PLATFORM_EXPORT ThreadState {
   size_t arena_ages_[BlinkGC::kNumberOfArenas];
   size_t current_arena_ages_;
 
-  GarbageCollectedMixinConstructorMarker* gc_mixin_marker_;
+  GarbageCollectedMixinConstructorMarkerBase* gc_mixin_marker_;
 
   bool should_flush_heap_does_not_contain_cache_;
   GCState gc_state_;
@@ -672,17 +732,20 @@ class PLATFORM_EXPORT ThreadState {
 
   // Pre-finalizers are called in the reverse order in which they are
   // registered by the constructors (including constructors of Mixin objects)
-  // for an object, by processing the m_orderedPreFinalizers back-to-front.
+  // for an object, by processing the ordered_pre_finalizers_ back-to-front.
   ListHashSet<PreFinalizer> ordered_pre_finalizers_;
 
   v8::Isolate* isolate_;
   void (*trace_dom_wrappers_)(v8::Isolate*, Visitor*);
   void (*invalidate_dead_objects_in_wrappers_marking_deque_)(v8::Isolate*);
   void (*perform_cleanup_)(v8::Isolate*);
+  bool wrapper_tracing_in_progress_;
 
 #if defined(ADDRESS_SANITIZER)
   void* asan_fake_stack_;
 #endif
+
+  HashSet<BlinkGCObserver*> observers_;
 
   // PersistentNodes that are stored in static references;
   // references that either have to be cleared upon the thread
@@ -692,7 +755,7 @@ class PLATFORM_EXPORT ThreadState {
 
 #if defined(LEAK_SANITIZER)
   // Count that controls scoped disabling of persistent registration.
-  size_t m_disabledStaticPersistentsRegistration;
+  size_t disabled_static_persistent_registration_;
 #endif
 
   // Ideally we want to allocate an array of size |gcInfoTableMax| but it will
@@ -704,14 +767,20 @@ class PLATFORM_EXPORT ThreadState {
       kLikelyToBePromptlyFreedArraySize - 1;
   std::unique_ptr<int[]> likely_to_be_promptly_freed_;
 
-  // Stats for heap memory of this thread.
-  size_t allocated_object_size_;
-  size_t marked_object_size_;
   size_t reported_memory_to_v8_;
-};
 
-template <ThreadAffinity affinity>
-class ThreadStateFor;
+  int gc_age_ = 0;
+
+  struct GCData {
+    BlinkGC::StackState stack_state;
+    BlinkGC::GCType gc_type;
+    BlinkGC::GCReason reason;
+    double marking_time_in_milliseconds;
+    size_t marked_object_size;
+    std::unique_ptr<Visitor> visitor;
+  };
+  GCData current_gc_data_;
+};
 
 template <>
 class ThreadStateFor<kMainThreadOnly> {
@@ -720,7 +789,7 @@ class ThreadStateFor<kMainThreadOnly> {
  public:
   static ThreadState* GetState() {
     // This specialization must only be used from the main thread.
-    ASSERT(ThreadState::Current()->IsMainThread());
+    DCHECK(ThreadState::Current()->IsMainThread());
     return ThreadState::MainThreadState();
   }
 };

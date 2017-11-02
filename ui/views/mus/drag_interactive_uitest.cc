@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "services/ui/public/interfaces/window_server_test.mojom.h"
 #include "services/ui/public/interfaces/window_tree_constants.mojom.h"
@@ -123,9 +124,9 @@ void DragTest_Part2(int64_t display_id,
   if (!result)
     quit_closure.Run();
 
-  ui::mojom::WindowServerTest* server_test =
-      MusClient::Get()->GetTestingInterface();
-  server_test->DispatchEvent(
+  ui::mojom::RemoteEventDispatcher* dispatcher =
+      MusClient::Get()->GetTestingEventDispater();
+  dispatcher->DispatchEvent(
       display_id, CreateMouseUpEvent(30, 30),
       base::Bind(&DragTest_Part3, display_id, quit_closure));
 }
@@ -137,9 +138,9 @@ void DragTest_Part1(int64_t display_id,
   if (!result)
     quit_closure.Run();
 
-  ui::mojom::WindowServerTest* server_test =
-      MusClient::Get()->GetTestingInterface();
-  server_test->DispatchEvent(
+  ui::mojom::RemoteEventDispatcher* dispatcher =
+      MusClient::Get()->GetTestingEventDispater();
+  dispatcher->DispatchEvent(
       display_id, CreateMouseMoveEvent(30, 30),
       base::Bind(&DragTest_Part2, display_id, quit_closure));
 }
@@ -153,7 +154,7 @@ TEST_F(DragTestInteractive, DragTest) {
   aura::test::ChangeCompletionWaiter source_waiter(
       MusClient::Get()->window_tree_client(), aura::ChangeType::BOUNDS, false);
   source_widget->SetBounds(gfx::Rect(0, 0, 20, 20));
-  source_waiter.Wait();
+  ASSERT_TRUE(source_waiter.Wait());
 
   Widget* target_widget = CreateTopLevelFramelessPlatformWidget();
   TargetView* target_view = new TargetView;
@@ -163,7 +164,7 @@ TEST_F(DragTestInteractive, DragTest) {
   aura::test::ChangeCompletionWaiter target_waiter(
       MusClient::Get()->window_tree_client(), aura::ChangeType::BOUNDS, false);
   target_widget->SetBounds(gfx::Rect(20, 20, 20, 20));
-  target_waiter.Wait();
+  ASSERT_TRUE(target_waiter.Wait());
 
   auto* dnwa =
       static_cast<DesktopNativeWidgetAura*>(source_widget->native_widget());
@@ -174,9 +175,9 @@ TEST_F(DragTestInteractive, DragTest) {
 
   {
     base::RunLoop run_loop;
-    ui::mojom::WindowServerTest* server_test =
-        MusClient::Get()->GetTestingInterface();
-    server_test->DispatchEvent(
+    ui::mojom::RemoteEventDispatcher* dispatcher =
+        MusClient::Get()->GetTestingEventDispater();
+    dispatcher->DispatchEvent(
         display_id, CreateMouseDownEvent(10, 10),
         base::Bind(&DragTest_Part1, display_id, run_loop.QuitClosure()));
 

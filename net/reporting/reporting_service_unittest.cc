@@ -12,7 +12,6 @@
 #include "base/values.h"
 #include "net/reporting/reporting_cache.h"
 #include "net/reporting/reporting_context.h"
-#include "net/reporting/reporting_delegate.h"
 #include "net/reporting/reporting_policy.h"
 #include "net/reporting/reporting_report.h"
 #include "net/reporting/reporting_service.h"
@@ -45,7 +44,7 @@ class ReportingServiceTest : public ::testing::Test {
 
 TEST_F(ReportingServiceTest, QueueReport) {
   service()->QueueReport(kUrl_, kGroup_, kType_,
-                         base::MakeUnique<base::DictionaryValue>());
+                         std::make_unique<base::DictionaryValue>());
 
   std::vector<const ReportingReport*> reports;
   context()->cache()->GetReports(&reports);

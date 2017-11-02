@@ -4,6 +4,8 @@
 
 #include "ash/shell/content/client/shell_browser_main_parts.h"
 
+#include <memory>
+
 #include "ash/content/shell_content_state.h"
 #include "ash/login_status.h"
 #include "ash/shell.h"
@@ -11,6 +13,8 @@
 #include "ash/shell/example_app_list_presenter.h"
 #include "ash/shell/example_session_controller_client.h"
 #include "ash/shell/shell_delegate_impl.h"
+#include "ash/shell/shell_views_delegate.h"
+#include "ash/shell/window_type_launcher.h"
 #include "ash/shell/window_watcher.h"
 #include "ash/shell_init_params.h"
 #include "base/bind.h"
@@ -23,7 +27,6 @@
 #include "base/threading/thread_restrictions.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_factory.h"
 #include "content/public/common/content_switches.h"
 #include "content/shell/browser/shell_browser_context.h"
@@ -37,49 +40,12 @@
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/compositor/compositor.h"
-#include "ui/display/screen.h"
 #include "ui/message_center/message_center.h"
-#include "ui/views/test/test_views_delegate.h"
+#include "ui/views/examples/examples_window_with_content.h"
 #include "ui/wm/core/wm_state.h"
-
-#if defined(USE_X11)
-#include "ui/events/devices/x11/touch_factory_x11.h"  // nogncheck
-#endif
 
 namespace ash {
 namespace shell {
-void InitWindowTypeLauncher();
-
-namespace {
-
-class ShellViewsDelegate : public views::TestViewsDelegate {
- public:
-  ShellViewsDelegate() {}
-  ~ShellViewsDelegate() override {}
-
-  // Overridden from views::TestViewsDelegate:
-  views::NonClientFrameView* CreateDefaultNonClientFrameView(
-      views::Widget* widget) override {
-    return ash::Shell::Get()->CreateDefaultNonClientFrameView(widget);
-  }
-  void OnBeforeWidgetInit(
-      views::Widget::InitParams* params,
-      views::internal::NativeWidgetDelegate* delegate) override {
-    if (params->opacity == views::Widget::InitParams::INFER_OPACITY)
-      params->opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
-
-    if (params->native_widget)
-      return;
-
-    if (!params->parent && !params->context && !params->child)
-      params->context = Shell::GetPrimaryRootWindow();
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(ShellViewsDelegate);
-};
-
-}  // namespace
 
 ShellBrowserMainParts::ShellBrowserMainParts(
     const content::MainFunctionParams& parameters)
@@ -87,11 +53,7 @@ ShellBrowserMainParts::ShellBrowserMainParts(
 
 ShellBrowserMainParts::~ShellBrowserMainParts() {}
 
-void ShellBrowserMainParts::PreMainMessageLoopStart() {
-#if defined(USE_X11)
-  ui::TouchFactory::SetTouchDeviceListFromCommandLine();
-#endif
-}
+void ShellBrowserMainParts::PreMainMessageLoopStart() {}
 
 void ShellBrowserMainParts::PostMainMessageLoopStart() {
   chromeos::DBusThreadManager::Initialize(
@@ -129,23 +91,24 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
   init_params.delegate = delegate_;
   init_params.context_factory = content::GetContextFactory();
   init_params.context_factory_private = content::GetContextFactoryPrivate();
-  init_params.blocking_pool = content::BrowserThread::GetBlockingPool();
   ash::Shell::CreateInstance(init_params);
 
   // Initialize session controller client and create fake user sessions. The
   // fake user sessions makes ash into the logged in state.
   example_session_controller_client_ =
-      base::MakeUnique<ExampleSessionControllerClient>(
+      std::make_unique<ExampleSessionControllerClient>(
           Shell::Get()->session_controller());
   example_session_controller_client_->Initialize();
 
-  window_watcher_.reset(new ash::shell::WindowWatcher);
-  display::Screen::GetScreen()->AddObserver(window_watcher_.get());
+  window_watcher_ = std::make_unique<WindowWatcher>();
 
-  ash::shell::InitWindowTypeLauncher();
+  ash::shell::InitWindowTypeLauncher(base::Bind(
+      &views::examples::ShowExamplesWindowWithContent,
+      views::examples::DO_NOTHING_ON_CLOSE,
+      ShellContentState::GetInstance()->GetActiveBrowserContext(), nullptr));
 
   // Initialize the example app list presenter.
-  example_app_list_presenter_ = base::MakeUnique<ExampleAppListPresenter>();
+  example_app_list_presenter_ = std::make_unique<ExampleAppListPresenter>();
   Shell::Get()->app_list()->SetAppListPresenter(
       example_app_list_presenter_->CreateInterfacePtrAndBind());
 
@@ -153,8 +116,6 @@ void ShellBrowserMainParts::PreMainMessageLoopRun() {
 }
 
 void ShellBrowserMainParts::PostMainMessageLoopRun() {
-  display::Screen::GetScreen()->RemoveObserver(window_watcher_.get());
-
   window_watcher_.reset();
   delegate_ = nullptr;
   ash::Shell::DeleteInstance();

@@ -4,8 +4,9 @@
 
 #include "content/renderer/internal_document_state_data.h"
 
+#include "base/memory/ptr_util.h"
 #include "content/public/renderer/document_state.h"
-#include "third_party/WebKit/public/web/WebDataSource.h"
+#include "third_party/WebKit/public/web/WebDocumentLoader.h"
 
 namespace content {
 
@@ -24,9 +25,10 @@ InternalDocumentStateData::InternalDocumentStateData()
       cache_policy_override_(blink::WebCachePolicy::kUseProtocolCachePolicy) {}
 
 // static
-InternalDocumentStateData* InternalDocumentStateData::FromDataSource(
-    blink::WebDataSource* ds) {
-  return FromDocumentState(static_cast<DocumentState*>(ds->GetExtraData()));
+InternalDocumentStateData* InternalDocumentStateData::FromDocumentLoader(
+    blink::WebDocumentLoader* document_loader) {
+  return FromDocumentState(
+      static_cast<DocumentState*>(document_loader->GetExtraData()));
 }
 
 // static
@@ -38,7 +40,7 @@ InternalDocumentStateData* InternalDocumentStateData::FromDocumentState(
       ds->GetUserData(&kUserDataKey));
   if (!data) {
     data = new InternalDocumentStateData;
-    ds->SetUserData(&kUserDataKey, data);
+    ds->SetUserData(&kUserDataKey, base::WrapUnique(data));
   }
   return data;
 }

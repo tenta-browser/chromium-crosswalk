@@ -21,11 +21,12 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/task_runner.h"
-#include "base/threading/worker_pool.h"
 #include "base/time/time.h"
 #include "base/trace_event/memory_usage_estimator.h"
 #include "net/base/net_errors.h"
+#include "net/disk_cache/backend_cleanup_tracker.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
+#include "net/disk_cache/simple/simple_experiment.h"
 #include "net/disk_cache/simple/simple_histogram_macros.h"
 #include "net/disk_cache/simple/simple_index_delegate.h"
 #include "net/disk_cache/simple/simple_index_file.h"
@@ -50,18 +51,31 @@ const uint32_t kEvictionMarginDivisor = 20;
 
 const uint32_t kBytesInKb = 1024;
 
+// This is added to the size of each entry before using the size
+// to determine which entries to evict first. It's basically an
+// estimate of the filesystem overhead, but it also serves to flatten
+// the curve so that 1-byte entries and 2-byte entries are basically
+// treated the same.
+static const int kEstimatedEntryOverhead = 512;
+
 }  // namespace
 
 namespace disk_cache {
 
+const base::Feature kSimpleCacheEvictionWithSize = {
+    "SimpleCacheEvictionWithSize", base::FEATURE_ENABLED_BY_DEFAULT};
+
 EntryMetadata::EntryMetadata()
-  : last_used_time_seconds_since_epoch_(0),
-    entry_size_(0) {
-}
+    : last_used_time_seconds_since_epoch_(0),
+      entry_size_256b_chunks_(0),
+      in_memory_data_(0) {}
 
 EntryMetadata::EntryMetadata(base::Time last_used_time,
                              base::StrictNumeric<uint32_t> entry_size)
-    : last_used_time_seconds_since_epoch_(0), entry_size_(entry_size) {
+    : last_used_time_seconds_since_epoch_(0),
+      entry_size_256b_chunks_(0),
+      in_memory_data_(0) {
+  SetEntrySize(entry_size);  // to round/pack properly.
   SetLastUsedTime(last_used_time);
 }
 
@@ -89,38 +103,53 @@ void EntryMetadata::SetLastUsedTime(const base::Time& last_used_time) {
 }
 
 uint32_t EntryMetadata::GetEntrySize() const {
-  return entry_size_;
+  return entry_size_256b_chunks_ << 8;
 }
 
 void EntryMetadata::SetEntrySize(base::StrictNumeric<uint32_t> entry_size) {
-  entry_size_ = entry_size;
+  // This should not overflow since we limit entries to 1/8th of the cache.
+  entry_size_256b_chunks_ = (static_cast<uint32_t>(entry_size) + 255) >> 8;
 }
 
 void EntryMetadata::Serialize(base::Pickle* pickle) const {
   DCHECK(pickle);
   int64_t internal_last_used_time = GetLastUsedTime().ToInternalValue();
+  // If you modify the size of the size of the pickle, be sure to update
+  // kOnDiskSizeBytes.
+  uint32_t packed_entry_info = (entry_size_256b_chunks_ << 8) | in_memory_data_;
   pickle->WriteInt64(internal_last_used_time);
-  pickle->WriteUInt64(entry_size_);
+  pickle->WriteUInt64(packed_entry_info);
 }
 
-bool EntryMetadata::Deserialize(base::PickleIterator* it) {
+bool EntryMetadata::Deserialize(base::PickleIterator* it,
+                                bool has_entry_in_memory_data) {
   DCHECK(it);
   int64_t tmp_last_used_time;
   uint64_t tmp_entry_size;
   if (!it->ReadInt64(&tmp_last_used_time) || !it->ReadUInt64(&tmp_entry_size) ||
-      tmp_entry_size > std::numeric_limits<decltype(entry_size_)>::max())
+      tmp_entry_size > std::numeric_limits<uint32_t>::max())
     return false;
   SetLastUsedTime(base::Time::FromInternalValue(tmp_last_used_time));
-  entry_size_ = static_cast<uint32_t>(tmp_entry_size);
+  if (has_entry_in_memory_data) {
+    // tmp_entry_size actually packs entry_size_256b_chunks_ and
+    // in_memory_data_.
+    SetEntrySize(static_cast<uint32_t>(tmp_entry_size & 0xFFFFFF00));
+    SetInMemoryData(static_cast<uint8_t>(tmp_entry_size & 0xFF));
+  } else {
+    SetEntrySize(static_cast<uint32_t>(tmp_entry_size));
+    SetInMemoryData(0);
+  }
   return true;
 }
 
 SimpleIndex::SimpleIndex(
     const scoped_refptr<base::SingleThreadTaskRunner>& io_thread,
+    scoped_refptr<BackendCleanupTracker> cleanup_tracker,
     SimpleIndexDelegate* delegate,
     net::CacheType cache_type,
     std::unique_ptr<SimpleIndexFile> index_file)
-    : delegate_(delegate),
+    : cleanup_tracker_(std::move(cleanup_tracker)),
+      delegate_(delegate),
       cache_type_(cache_type),
       cache_size_(0),
       max_size_(0),
@@ -280,6 +309,22 @@ bool SimpleIndex::Has(uint64_t hash) const {
   return !initialized_ || entries_set_.count(hash) > 0;
 }
 
+uint8_t SimpleIndex::GetEntryInMemoryData(uint64_t entry_hash) const {
+  DCHECK(io_thread_checker_.CalledOnValidThread());
+  EntrySet::const_iterator it = entries_set_.find(entry_hash);
+  if (it == entries_set_.end())
+    return 0;
+  return it->second.GetInMemoryData();
+}
+
+void SimpleIndex::SetEntryInMemoryData(uint64_t entry_hash, uint8_t value) {
+  DCHECK(io_thread_checker_.CalledOnValidThread());
+  EntrySet::iterator it = entries_set_.find(entry_hash);
+  if (it == entries_set_.end())
+    return;
+  return it->second.SetInMemoryData(value);
+}
+
 bool SimpleIndex::UseIfExists(uint64_t entry_hash) {
   DCHECK(io_thread_checker_.CalledOnValidThread());
   // Always update the last used time, even if it is during initialization.
@@ -308,34 +353,35 @@ void SimpleIndex::StartEvictionIfNeeded() {
       static_cast<base::HistogramBase::Sample>(max_size_ / kBytesInKb));
 
   // Flatten for sorting.
-  std::vector<const std::pair<const uint64_t, EntryMetadata>*> entries;
+  std::vector<std::pair<uint64_t, const EntrySet::value_type*>> entries;
   entries.reserve(entries_set_.size());
+  uint32_t now = (base::Time::Now() - base::Time::UnixEpoch()).InSeconds();
+  bool use_size = base::FeatureList::IsEnabled(kSimpleCacheEvictionWithSize);
   for (EntrySet::const_iterator i = entries_set_.begin();
        i != entries_set_.end(); ++i) {
-    entries.push_back(&*i);
+    uint64_t sort_value = now - i->second.RawTimeForSorting();
+    if (use_size) {
+      // Will not overflow since we're multiplying two 32-bit values and storing
+      // them in a 64-bit variable.
+      sort_value *= i->second.GetEntrySize() + kEstimatedEntryOverhead;
+    }
+    // Subtract so we don't need a custom comparator.
+    entries.emplace_back(std::numeric_limits<uint64_t>::max() - sort_value,
+                         &*i);
   }
 
-  std::sort(entries.begin(), entries.end(),
-            [](const std::pair<const uint64_t, EntryMetadata>* a,
-               const std::pair<const uint64_t, EntryMetadata>* b) -> bool {
-              return a->second.RawTimeForSorting() <
-                     b->second.RawTimeForSorting();
-            });
-
-  // Remove as many entries from the index to get below |low_watermark_|,
-  // collecting least recently used hashes into |entry_hashes|.
-  std::vector<uint64_t> entry_hashes;
-  std::vector<const std::pair<const uint64_t, EntryMetadata>*>::iterator it =
-      entries.begin();
   uint64_t evicted_so_far_size = 0;
-  while (evicted_so_far_size < cache_size_ - low_watermark_) {
-    DCHECK(it != entries.end());
-    entry_hashes.push_back((*it)->first);
-    evicted_so_far_size += (*it)->second.GetEntrySize();
-    ++it;
+  const uint64_t amount_to_evict = cache_size_ - low_watermark_;
+  std::vector<uint64_t> entry_hashes;
+  std::sort(entries.begin(), entries.end());
+  for (const auto& score_metadata_pair : entries) {
+    if (evicted_so_far_size >= amount_to_evict)
+      break;
+    evicted_so_far_size += score_metadata_pair.second->second.GetEntrySize();
+    entry_hashes.push_back(score_metadata_pair.second->first);
   }
 
-  SIMPLE_CACHE_UMA(COUNTS,
+  SIMPLE_CACHE_UMA(COUNTS_1M,
                    "Eviction.EntryCount", cache_type_, entry_hashes.size());
   SIMPLE_CACHE_UMA(TIMES,
                    "Eviction.TimeToSelectEntries", cache_type_,
@@ -409,14 +455,14 @@ void SimpleIndex::UpdateEntryIteratorSize(
   DCHECK(io_thread_checker_.CalledOnValidThread());
   DCHECK_GE(cache_size_, (*it)->second.GetEntrySize());
   cache_size_ -= (*it)->second.GetEntrySize();
-  cache_size_ += static_cast<uint32_t>(entry_size);
   (*it)->second.SetEntrySize(entry_size);
+  // We use GetEntrySize to get consistent rounding.
+  cache_size_ += (*it)->second.GetEntrySize();
 }
 
 void SimpleIndex::MergeInitializingSet(
     std::unique_ptr<SimpleIndexLoadResult> load_result) {
   DCHECK(io_thread_checker_.CalledOnValidThread());
-  DCHECK(load_result->did_load);
 
   EntrySet* index_file_entries = &load_result->entries;
 
@@ -515,8 +561,16 @@ void SimpleIndex::WriteToDisk(IndexWriteToDiskReason reason) {
   }
   last_write_to_disk_ = start;
 
+  base::Closure after_write;
+  if (cleanup_tracker_) {
+    // Make anyone synchronizing with our cleanup wait for the index to be
+    // written back.
+    after_write = base::Bind([](scoped_refptr<BackendCleanupTracker>) {},
+                             cleanup_tracker_);
+  }
+
   index_file_->WriteToDisk(reason, entries_set_, cache_size_, start,
-                           app_on_background_, base::Closure());
+                           app_on_background_, after_write);
 }
 
 }  // namespace disk_cache

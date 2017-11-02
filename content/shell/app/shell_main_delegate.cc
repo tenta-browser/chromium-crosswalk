@@ -12,6 +12,7 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/path_service.h"
+#include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
 #include "cc/base/switches.h"
 #include "content/common/content_constants_internal.h"
@@ -30,10 +31,12 @@
 #include "content/shell/common/layout_test/layout_test_switches.h"
 #include "content/shell/common/shell_content_client.h"
 #include "content/shell/common/shell_switches.h"
+#include "content/shell/gpu/shell_content_gpu_client.h"
 #include "content/shell/renderer/layout_test/layout_test_content_renderer_client.h"
 #include "content/shell/renderer/shell_content_renderer_client.h"
 #include "content/shell/utility/shell_content_utility_client.h"
 #include "gpu/config/gpu_switches.h"
+#include "ipc/ipc_features.h"
 #include "media/base/media_switches.h"
 #include "media/base/mime_util.h"
 #include "net/cookies/cookie_monster.h"
@@ -45,9 +48,7 @@
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_switches.h"
 
-#include "ipc/ipc_message.h"  // For IPC_MESSAGE_LOG_ENABLED.
-
-#if defined(IPC_MESSAGE_LOG_ENABLED)
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
 #define IPC_MESSAGE_MACROS_LOG_ENABLED
 #include "content/public/common/content_ipc_logging.h"
 #define IPC_LOG_TABLE_ADD_ENTRY(msg_id, logger) \
@@ -102,10 +103,16 @@ const GUID kContentShellProviderName = {
         { 0x84, 0x13, 0xec, 0x94, 0xd8, 0xc2, 0xa4, 0xb6 } };
 #endif
 
-void InitLogging() {
+void InitLogging(const base::CommandLine& command_line) {
   base::FilePath log_filename;
-  PathService::Get(base::DIR_EXE, &log_filename);
-  log_filename = log_filename.AppendASCII("content_shell.log");
+  std::string filename = command_line.GetSwitchValueASCII(switches::kLogFile);
+  if (filename.empty()) {
+    PathService::Get(base::DIR_EXE, &log_filename);
+    log_filename = log_filename.AppendASCII("content_shell.log");
+  } else {
+    log_filename = base::FilePath::FromUTF8Unsafe(filename);
+  }
+
   logging::LoggingSettings settings;
   settings.logging_dest = logging::LOG_TO_ALL;
   settings.log_file = log_filename.value().c_str();
@@ -136,15 +143,19 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
 
   v8_breakpad_support::SetUp();
 #endif
+#if defined(OS_LINUX) && !defined(OS_ANDROID)
+  breakpad::SetFirstChanceExceptionHandler(v8::V8::TryHandleSignal);
+#endif
 #if defined(OS_MACOSX)
   // Needs to happen before InitializeResourceBundle() and before
   // BlinkTestPlatformInitialize() are called.
   OverrideFrameworkBundlePath();
   OverrideChildProcessPath();
+  OverrideSourceRootPath();
   EnsureCorrectResolutionSettings();
 #endif  // OS_MACOSX
 
-  InitLogging();
+  InitLogging(command_line);
   if (command_line.HasSwitch(switches::kCheckLayoutTestSysDeps)) {
     // If CheckLayoutSystemDeps succeeds, we don't exit early. Instead we
     // continue and try to load the fonts in BlinkTestPlatformInitialize
@@ -165,7 +176,6 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
     }
 #endif
     command_line.AppendSwitch(cc::switches::kEnableGpuBenchmarking);
-    command_line.AppendSwitch(switches::kProcessPerTab);
     command_line.AppendSwitch(switches::kEnableLogging);
     command_line.AppendSwitch(switches::kAllowFileAccessFromFiles);
     // only default to a software GL if the flag isn't already specified.
@@ -181,8 +191,7 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
         switches::kTouchEventFeatureDetectionEnabled);
     if (!command_line.HasSwitch(switches::kForceDeviceScaleFactor))
       command_line.AppendSwitchASCII(switches::kForceDeviceScaleFactor, "1.0");
-    command_line.AppendSwitch(
-        switches::kDisableGestureRequirementForMediaPlayback);
+    command_line.AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
 
     if (!command_line.HasSwitch(switches::kStableReleaseMode)) {
       command_line.AppendSwitch(
@@ -212,6 +221,15 @@ bool ShellMainDelegate::BasicStartupComplete(int* exit_code) {
         !command_line.HasSwitch(switches::kEnableGpuRasterization)) {
       command_line.AppendSwitch(switches::kDisableGpuRasterization);
     }
+
+    // If the virtual test suite didn't specify a color space, then force sRGB.
+    if (!command_line.HasSwitch(switches::kForceColorProfile))
+      command_line.AppendSwitchASCII(switches::kForceColorProfile, "srgb");
+
+    // We want stable/baseline results when running layout tests.
+    command_line.AppendSwitch(switches::kDisableSkiaRuntimeOpts);
+
+    command_line.AppendSwitch(switches::kDisallowNonExactResourceReuse);
 
     // Unless/until WebM files are added to the media layout tests, we need to
     // avoid removing MP4/H264/AAC so that layout tests can run on Android.
@@ -360,6 +378,11 @@ ContentBrowserClient* ShellMainDelegate::CreateContentBrowserClient() {
                             : new ShellContentBrowserClient);
 
   return browser_client_.get();
+}
+
+ContentGpuClient* ShellMainDelegate::CreateContentGpuClient() {
+  gpu_client_.reset(new ShellContentGpuClient);
+  return gpu_client_.get();
 }
 
 ContentRendererClient* ShellMainDelegate::CreateContentRendererClient() {

@@ -21,6 +21,12 @@
 #include "content/public/common/url_constants.h"
 #include "ui/gfx/text_elider.h"
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/test_extension_system.h"
+#include "extensions/common/extension_builder.h"
+#endif
+
 // Test data ------------------------------------------------------------------
 
 namespace {
@@ -29,34 +35,34 @@ struct TestItem {
   GURL url;
   base::string16 expected_text;
 } test_items[] = {
-  {
-    GURL("view-source:http://www.google.com"),
-    base::ASCIIToUTF16("view-source:www.google.com")
-  },
-  {
-    GURL("view-source:chrome://newtab/"),
-    base::ASCIIToUTF16("view-source:chrome://newtab")
-  },
-  {
-    GURL("chrome-extension://foo/bar.html"),
-    base::ASCIIToUTF16("chrome-extension://foo/bar.html")
-  },
-  {
-    GURL(url::kAboutBlankURL),
-    base::ASCIIToUTF16(url::kAboutBlankURL)
-  },
-  {
-    GURL("http://searchurl/?q=tractor+supply"),
-    base::ASCIIToUTF16("searchurl/?q=tractor+supply")
-  },
-  {
-    GURL("http://google.com/search?q=tractor+supply&espv=1"),
-    base::ASCIIToUTF16("google.com/search?q=tractor+supply&espv=1")
-  },
-  {
-    GURL("https://google.ca/search?q=tractor+supply"),
-    base::ASCIIToUTF16("https://google.ca/search?q=tractor+supply")
-  },
+    {
+        GURL("view-source:http://www.google.com"),
+        base::ASCIIToUTF16("view-source:www.google.com"),
+    },
+    {
+        GURL("view-source:chrome://newtab/"),
+        base::ASCIIToUTF16("view-source:chrome://newtab"),
+    },
+    {
+        GURL("chrome-extension://fooooooooooooooooooooooooooooooo/bar.html"),
+        base::ASCIIToUTF16(
+            "chrome-extension://fooooooooooooooooooooooooooooooo/bar.html"),
+    },
+    {
+        GURL(url::kAboutBlankURL), base::ASCIIToUTF16(url::kAboutBlankURL),
+    },
+    {
+        GURL("http://searchurl/?q=tractor+supply"),
+        base::ASCIIToUTF16("searchurl/?q=tractor+supply"),
+    },
+    {
+        GURL("http://google.com/search?q=tractor+supply"),
+        base::ASCIIToUTF16("google.com/search?q=tractor+supply"),
+    },
+    {
+        GURL("https://google.ca/search?q=tractor+supply"),
+        base::ASCIIToUTF16("https://google.ca/search?q=tractor+supply"),
+    },
 };
 
 }  // namespace
@@ -91,6 +97,22 @@ void ToolbarModelTest::SetUp() {
   BrowserWithTestWindowTest::SetUp();
   AutocompleteClassifierFactory::GetInstance()->SetTestingFactoryAndUse(
       profile(), &AutocompleteClassifierFactory::BuildInstanceFor);
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // Install a fake extension so that the ID in the chrome-extension test URL is
+  // valid. Invalid extension URLs may result in error pages (if blocked by
+  // ExtensionNavigationThrottle), which this test doesn't wish to exercise.
+  extensions::TestExtensionSystem* extension_system =
+      static_cast<extensions::TestExtensionSystem*>(
+          extensions::ExtensionSystem::Get(profile()));
+  extension_system->CreateExtensionService(
+      base::CommandLine::ForCurrentProcess(), base::FilePath(), false);
+  scoped_refptr<const extensions::Extension> extension =
+      extensions::ExtensionBuilder("Test")
+          .SetID("fooooooooooooooooooooooooooooooo")
+          .Build();
+  extension_system->extension_service()->AddExtension(extension.get());
+#endif
 }
 
 void ToolbarModelTest::NavigateAndCheckText(

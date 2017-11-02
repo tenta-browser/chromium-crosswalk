@@ -31,7 +31,7 @@ class ChromeHttpAuthHandler {
   void SetObserver(LoginHandler* observer);
 
   // Show the dialog prompting for login credentials.
-  void ShowDialog(jobject window_android);
+  void ShowDialog(const base::android::JavaRef<jobject>& window_android);
 
   // Forwards the autofill data to the Java land object.
   void OnAutofillDataAvailable(
@@ -55,8 +55,6 @@ class ChromeHttpAuthHandler {
   base::android::ScopedJavaLocalRef<jstring> GetMessageBody(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&);
-  // Registers the ChromeHttpAuthHandler native methods.
-  static bool RegisterChromeHttpAuthHandler(JNIEnv* env);
  private:
   LoginHandler* observer_;
   base::android::ScopedJavaGlobalRef<jobject> java_chrome_http_auth_handler_;

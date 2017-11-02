@@ -35,6 +35,8 @@
 
 namespace blink {
 
+class ImageResourceObserver;
+
 // StylePendingImage is a placeholder StyleImage that is entered into the
 // ComputedStyle during style resolution, in order to avoid loading images that
 // are not referenced by the final style.  They should never exist in a
@@ -70,22 +72,26 @@ class StylePendingImage final : public StyleImage {
     return value_->IsImageSetValue() ? ToCSSImageSetValue(value_.Get()) : 0;
   }
 
-  LayoutSize ImageSize(const LayoutObject&,
+  LayoutSize ImageSize(const Document&,
                        float /*multiplier*/,
                        const LayoutSize& /*defaultObjectSize*/) const override {
     return LayoutSize();
   }
   bool ImageHasRelativeSize() const override { return false; }
   bool UsesImageContainerSize() const override { return false; }
-  void AddClient(LayoutObject*) override {}
-  void RemoveClient(LayoutObject*) override {}
-  PassRefPtr<Image> GetImage(const LayoutObject&,
-                             const IntSize&,
-                             float) const override {
+  void AddClient(ImageResourceObserver*) override {}
+  void RemoveClient(ImageResourceObserver*) override {}
+  RefPtr<Image> GetImage(const ImageResourceObserver&,
+                         const Document&,
+                         const ComputedStyle&,
+                         const IntSize& container_size,
+                         const LayoutSize* logical_size) const override {
     NOTREACHED();
     return nullptr;
   }
-  bool KnownToBeOpaque(const LayoutObject&) const override { return false; }
+  bool KnownToBeOpaque(const Document&, const ComputedStyle&) const override {
+    return false;
+  }
 
   DEFINE_INLINE_VIRTUAL_TRACE() {
     visitor->Trace(value_);

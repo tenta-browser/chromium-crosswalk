@@ -29,6 +29,7 @@
 #ifndef Path_h
 #define Path_h
 
+#include "base/macros.h"
 #include "platform/PlatformExport.h"
 #include "platform/geometry/FloatRoundedRect.h"
 #include "platform/graphics/GraphicsTypes.h"
@@ -98,7 +99,7 @@ class PLATFORM_EXPORT Path {
   // vary depending on curvature and number of segments, but should never be
   // worse than that of the state-less method on Path.
   class PLATFORM_EXPORT PositionCalculator {
-    WTF_MAKE_NONCOPYABLE(PositionCalculator);
+    DISALLOW_COPY_AND_ASSIGN(PositionCalculator);
     USING_FAST_MALLOC(PositionCalculator);
 
    public:
@@ -202,9 +203,8 @@ class PLATFORM_EXPORT Path {
   SkPath path_;
 };
 
-#if DCHECK_IS_ON()
+// Only used for DCHECKs
 PLATFORM_EXPORT bool EllipseIsRenderable(float start_angle, float end_angle);
-#endif
 
 }  // namespace blink
 

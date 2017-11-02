@@ -4,11 +4,11 @@
 
 #include "platform/graphics/paint/DrawingRecorder.h"
 
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/graphics/paint/PaintController.h"
 #include "platform/graphics/paint/PaintRecord.h"
+#include "platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -37,7 +37,7 @@ DrawingRecorder::DrawingRecorder(GraphicsContext& context,
 
   // Must check DrawingRecorder::useCachedDrawingIfPossible before creating the
   // DrawingRecorder.
-  DCHECK(RuntimeEnabledFeatures::paintUnderInvalidationCheckingEnabled() ||
+  DCHECK(RuntimeEnabledFeatures::PaintUnderInvalidationCheckingEnabled() ||
          !UseCachedDrawingIfPossible(context_, display_item_client_,
                                      display_item_type_));
 
@@ -51,11 +51,11 @@ DrawingRecorder::DrawingRecorder(GraphicsContext& context,
   // bounds of the object during painting. Potentially expanding the cull rect
   // by a pixel or two also does not affect correctness, and is very unlikely to
   // matter for performance.
-  IntRect cull_rect = EnclosingIntRect(float_cull_rect);
-  context.BeginRecording(cull_rect);
+  recording_bounds_ = EnclosingIntRect(float_cull_rect);
+  context.BeginRecording(recording_bounds_);
 
 #if DCHECK_IS_ON()
-  if (RuntimeEnabledFeatures::slimmingPaintStrictCullRectClippingEnabled()) {
+  if (RuntimeEnabledFeatures::SlimmingPaintStrictCullRectClippingEnabled()) {
     // Skia depends on the cull rect containing all of the display item
     // commands. When strict cull rect clipping is enabled, make this explicit.
     // This allows us to identify potential incorrect cull rects that might
@@ -66,8 +66,9 @@ DrawingRecorder::DrawingRecorder(GraphicsContext& context,
     // TODO(schenney) This is not the best place to do this. Ideally, we would
     // expand by one pixel in device (pixel) space, but to do that we would need
     // to add the verification mode to Skia.
-    cull_rect.Inflate(1);
-    context.ClipRect(cull_rect, kNotAntiAliased, SkClipOp::kIntersect);
+    IntRect clip_rect = recording_bounds_;
+    clip_rect.Inflate(1);
+    context.ClipRect(clip_rect, kNotAntiAliased, SkClipOp::kIntersect);
   }
 #endif
 }
@@ -77,7 +78,7 @@ DrawingRecorder::~DrawingRecorder() {
     return;
 
 #if DCHECK_IS_ON()
-  if (RuntimeEnabledFeatures::slimmingPaintStrictCullRectClippingEnabled())
+  if (RuntimeEnabledFeatures::SlimmingPaintStrictCullRectClippingEnabled())
     context_.Restore();
 
   context_.SetInDrawingRecorder(false);
@@ -91,16 +92,16 @@ DrawingRecorder::~DrawingRecorder() {
   sk_sp<const PaintRecord> picture = context_.EndRecording();
 
 #if DCHECK_IS_ON()
-  if (!RuntimeEnabledFeatures::slimmingPaintStrictCullRectClippingEnabled() &&
+  if (!RuntimeEnabledFeatures::SlimmingPaintStrictCullRectClippingEnabled() &&
       !context_.GetPaintController().IsForPaintRecordBuilder() &&
       display_item_client_.PaintedOutputOfObjectHasNoEffectRegardlessOfSize()) {
-    DCHECK_EQ(0, picture->approximateOpCount())
-        << display_item_client_.DebugName();
+    DCHECK_EQ(0u, picture->size()) << display_item_client_.DebugName();
   }
 #endif
 
   context_.GetPaintController().CreateAndAppend<DrawingDisplayItem>(
-      display_item_client_, display_item_type_, picture, known_to_be_opaque_);
+      display_item_client_, display_item_type_, picture, recording_bounds_,
+      known_to_be_opaque_);
 }
 
 }  // namespace blink

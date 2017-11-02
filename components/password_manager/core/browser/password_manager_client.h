@@ -12,6 +12,7 @@
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/credentials_filter.h"
 #include "components/password_manager/core/browser/password_store.h"
+#include "services/metrics/public/cpp/ukm_recorder.h"
 
 class PrefService;
 
@@ -32,6 +33,7 @@ namespace password_manager {
 class LogManager;
 class PasswordFormManager;
 class PasswordManager;
+class PasswordManagerMetricsRecorder;
 class PasswordStore;
 
 enum PasswordSyncState {
@@ -59,6 +61,9 @@ class PasswordManagerClient {
   // Checks if filling is enabled for the current page. Filling is disabled when
   // password manager is disabled, or in the presence of SSL errors on a page.
   virtual bool IsFillingEnabledForCurrentPage() const;
+
+  // Checks if manual filling fallback is enabled for the current page.
+  virtual bool IsFillingFallbackEnabledForCurrentPage() const;
 
   // Checks asynchronously whether HTTP Strict Transport Security (HSTS) is
   // active for the host of the given origin. Notifies |callback| with the
@@ -92,7 +97,18 @@ class PasswordManagerClient {
   // that was overidden.
   virtual bool PromptUserToSaveOrUpdatePassword(
       std::unique_ptr<PasswordFormManager> form_to_save,
-      bool update_password) = 0;
+      bool is_update) = 0;
+
+  // Informs the embedder that the user started typing a password and a password
+  // prompt should be available on click on the omnibox icon.
+  virtual void ShowManualFallbackForSaving(
+      std::unique_ptr<PasswordFormManager> form_to_save,
+      bool has_generated_password,
+      bool is_update) = 0;
+
+  // Informs the embedder that the user cleared the password field and the
+  // fallback for password saving should be not available.
+  virtual void HideManualFallbackForSaving() = 0;
 
   // Informs the embedder of a password forms that the user should choose from.
   // Returns true if the prompt is indeed displayed. If the prompt is not
@@ -202,7 +218,39 @@ class PasswordManagerClient {
   // Return the PasswordProtectionService associated with this instance.
   virtual safe_browsing::PasswordProtectionService*
   GetPasswordProtectionService() const = 0;
+
+  // Checks the safe browsing reputation of the webpage when the
+  // user focuses on a username/password field. This is used for reporting
+  // only, and won't trigger a warning.
+  virtual void CheckSafeBrowsingReputation(const GURL& form_action,
+                                           const GURL& frame_url) = 0;
+
+  // Checks the safe browsing reputation of the webpage where password reuse
+  // happens. This is called by the PasswordReuseDetectionManager when either
+  // the sync password or a saved password is typed on the wrong domain.
+  // This may trigger a warning dialog if it looks like the page is phishy.
+  virtual void CheckProtectedPasswordEntry(
+      bool matches_sync_password,
+      const std::vector<std::string>& matching_domains,
+      bool password_field_exists) = 0;
+
+  // Records a Chrome Sync event that sync password reuse was detected.
+  virtual void LogPasswordReuseDetectedEvent() = 0;
 #endif
+
+  // Gets the UKM service associated with this client (for metrics).
+  virtual ukm::UkmRecorder* GetUkmRecorder() = 0;
+
+  // Gets a ukm::SourceId that is associated with the WebContents object
+  // and its last committed main frame navigation. Note that the URL binding
+  // has to happen by the caller at a later point.
+  virtual ukm::SourceId GetUkmSourceId() = 0;
+
+  // Gets a metrics recorder for the currently committed navigation.
+  // As PasswordManagerMetricsRecorder submits metrics on destruction, a new
+  // instance will be returned for each committed navigation. A caller must not
+  // hold on to the pointer.
+  virtual PasswordManagerMetricsRecorder& GetMetricsRecorder() = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PasswordManagerClient);

@@ -28,6 +28,7 @@
 #include "core/css/StyleSheet.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
+#include "platform/wtf/text/TextEncoding.h"
 #include "platform/wtf/text/TextPosition.h"
 
 namespace blink {
@@ -56,7 +57,7 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
       Node&,
       const KURL&,
       const TextPosition& start_position = TextPosition::MinimumPosition(),
-      const String& encoding = String());
+      const WTF::TextEncoding& = WTF::TextEncoding());
   static CSSStyleSheet* CreateInline(
       StyleSheetContents*,
       Node& owner_node,
@@ -74,7 +75,6 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
 
   CSSRuleList* cssRules();
   unsigned insertRule(const String& rule, unsigned index, ExceptionState&);
-  unsigned insertRule(const String& rule, ExceptionState&);  // Deprecated.
   void deleteRule(unsigned index, ExceptionState&);
 
   // IE Extensions
@@ -100,9 +100,13 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
 
   void ClearOwnerRule() { owner_rule_ = nullptr; }
   Document* OwnerDocument() const;
-  const MediaQuerySet* MediaQueries() const { return media_queries_.Get(); }
+  const MediaQuerySet* MediaQueries() const { return media_queries_.get(); }
   void SetMediaQueries(RefPtr<MediaQuerySet>);
   bool MatchesMediaQueries(const MediaQueryEvaluator&);
+  bool HasMediaQueryResults() const {
+    return !viewport_dependent_media_query_results_.IsEmpty() ||
+           !device_dependent_media_query_results_.IsEmpty();
+  }
   const MediaQueryResultList& ViewportDependentMediaQueryResults() const {
     return viewport_dependent_media_query_results_;
   }
@@ -112,7 +116,7 @@ class CORE_EXPORT CSSStyleSheet final : public StyleSheet {
   void SetTitle(const String& title) { title_ = title; }
   // Set by LinkStyle iff CORS-enabled fetch of stylesheet succeeded from this
   // origin.
-  void SetAllowRuleAccessFromOrigin(PassRefPtr<SecurityOrigin> allowed_origin);
+  void SetAllowRuleAccessFromOrigin(RefPtr<SecurityOrigin> allowed_origin);
 
   class RuleMutationScope {
     WTF_MAKE_NONCOPYABLE(RuleMutationScope);

@@ -12,6 +12,9 @@
 #include "base/files/memory_mapped_file.h"
 #include "base/location.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/sequenced_task_runner_handle.h"
+#include "components/update_client/out_of_process_patcher.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
 #include "components/update_client/utils.h"
@@ -56,15 +59,12 @@ DeltaUpdateOp::DeltaUpdateOp() {
 DeltaUpdateOp::~DeltaUpdateOp() {
 }
 
-void DeltaUpdateOp::Run(
-    const base::DictionaryValue* command_args,
-    const base::FilePath& input_dir,
-    const base::FilePath& unpack_dir,
-    const scoped_refptr<CrxInstaller>& installer,
-    const ComponentPatcher::Callback& callback,
-    const scoped_refptr<base::SequencedTaskRunner>& task_runner) {
+void DeltaUpdateOp::Run(const base::DictionaryValue* command_args,
+                        const base::FilePath& input_dir,
+                        const base::FilePath& unpack_dir,
+                        const scoped_refptr<CrxInstaller>& installer,
+                        const ComponentPatcher::Callback& callback) {
   callback_ = callback;
-  task_runner_ = task_runner;
   std::string output_rel_path;
   if (!command_args->GetString(kOutput, &output_rel_path) ||
       !command_args->GetString(kSha256, &output_sha256_)) {
@@ -96,8 +96,8 @@ void DeltaUpdateOp::Run(
 void DeltaUpdateOp::DoneRunning(UnpackerError error, int extended_error) {
   if (error == UnpackerError::kNone)
     error = CheckHash();
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(callback_, error, extended_error));
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(callback_, error, extended_error));
   callback_.Reset();
 }
 
@@ -107,10 +107,6 @@ UnpackerError DeltaUpdateOp::CheckHash() {
   return VerifyFileHash256(output_abs_path_, output_sha256_)
              ? UnpackerError::kNone
              : UnpackerError::kDeltaVerificationFailure;
-}
-
-scoped_refptr<base::SequencedTaskRunner> DeltaUpdateOp::GetTaskRunner() {
-  return task_runner_;
 }
 
 DeltaUpdateOpCopy::DeltaUpdateOpCopy() {
@@ -169,7 +165,7 @@ void DeltaUpdateOpCreate::DoRun(const ComponentPatcher::Callback& callback) {
 
 DeltaUpdateOpPatch::DeltaUpdateOpPatch(
     const std::string& operation,
-    scoped_refptr<OutOfProcessPatcher> out_of_process_patcher)
+    const scoped_refptr<OutOfProcessPatcher>& out_of_process_patcher)
     : operation_(operation), out_of_process_patcher_(out_of_process_patcher) {
   DCHECK(operation == kBsdiff || operation == kCourgette);
 }
@@ -199,8 +195,7 @@ UnpackerError DeltaUpdateOpPatch::DoParseArguments(
 void DeltaUpdateOpPatch::DoRun(const ComponentPatcher::Callback& callback) {
   if (out_of_process_patcher_.get()) {
     out_of_process_patcher_->Patch(
-        operation_, GetTaskRunner(), input_abs_path_, patch_abs_path_,
-        output_abs_path_,
+        operation_, input_abs_path_, patch_abs_path_, output_abs_path_,
         base::Bind(&DeltaUpdateOpPatch::DonePatching, this, callback));
     return;
   }

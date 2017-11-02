@@ -96,8 +96,8 @@ unsigned StringBuilder::Capacity() const {
   if (!HasBuffer())
     return 0;
   if (is8_bit_)
-    return buffer8_->Capacity();
-  return buffer16_->Capacity();
+    return buffer8_->capacity();
+  return buffer16_->capacity();
 }
 
 void StringBuilder::ReserveCapacity(unsigned new_capacity) {
@@ -113,9 +113,9 @@ void StringBuilder::Resize(unsigned new_size) {
   length_ = new_size;
   if (HasBuffer()) {
     if (is8_bit_)
-      buffer8_->Resize(new_size);
+      buffer8_->resize(new_size);
     else
-      buffer16_->Resize(new_size);
+      buffer16_->resize(new_size);
   }
 }
 
@@ -144,7 +144,7 @@ void StringBuilder::CreateBuffer16(unsigned added_size) {
   Buffer8 buffer8;
   unsigned length = length_;
   if (buffer8_) {
-    buffer8_->Swap(buffer8);
+    buffer8_->swap(buffer8);
     delete buffer8_;
   }
   buffer16_ = new Buffer16;
@@ -154,7 +154,7 @@ void StringBuilder::CreateBuffer16(unsigned added_size) {
   is8_bit_ = false;
   length_ = 0;
   if (!buffer8.IsEmpty()) {
-    Append(buffer8.Data(), length);
+    Append(buffer8.data(), length);
     return;
   }
   Append(string_);
@@ -228,6 +228,20 @@ void StringBuilder::AppendNumber(unsigned long long number) {
 void StringBuilder::AppendNumber(double number, unsigned precision) {
   NumberToStringBuffer buffer;
   Append(NumberToFixedPrecisionString(number, precision, buffer));
+}
+
+void StringBuilder::erase(unsigned index) {
+  if (index >= length_)
+    return;
+
+  if (is8_bit_) {
+    EnsureBuffer8(0);
+    buffer8_->EraseAt(index);
+  } else {
+    EnsureBuffer16(0);
+    buffer16_->EraseAt(index);
+  }
+  --length_;
 }
 
 }  // namespace WTF

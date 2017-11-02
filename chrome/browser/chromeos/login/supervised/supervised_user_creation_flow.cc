@@ -24,7 +24,7 @@ SupervisedUserCreationScreen* GetScreen(LoginDisplayHost* host) {
   return result;
 }
 
-} // namespace
+}  // namespace
 
 SupervisedUserCreationFlow::SupervisedUserCreationFlow(
     const AccountId& manager_id)
@@ -46,11 +46,15 @@ bool SupervisedUserCreationFlow::CanStartArc() {
   return false;
 }
 
-bool SupervisedUserCreationFlow::ShouldShowSettings() {
+bool SupervisedUserCreationFlow::ShouldEnableSettings() {
   return false;
 }
 
 bool SupervisedUserCreationFlow::ShouldShowNotificationTray() {
+  return false;
+}
+
+bool SupervisedUserCreationFlow::AllowsNotificationBalloons() {
   return false;
 }
 
@@ -103,8 +107,7 @@ bool SupervisedUserCreationFlow::HandlePasswordChangeDetected() {
   return true;
 }
 
-void SupervisedUserCreationFlow::LaunchExtraSteps(
-    Profile* profile) {
+void SupervisedUserCreationFlow::LaunchExtraSteps(Profile* profile) {
   // TODO(antrim): remove this output once crash is found.
   LOG(ERROR) << "LaunchExtraSteps for " << this << " host is " << host();
   logged_in_ = true;

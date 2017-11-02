@@ -5,7 +5,6 @@
 #include "core/animation/SVGInterpolationTypesMap.h"
 
 #include <memory>
-#include "core/HTMLNames.h"
 #include "core/animation/SVGAngleInterpolationType.h"
 #include "core/animation/SVGIntegerInterpolationType.h"
 #include "core/animation/SVGIntegerOptionalIntegerInterpolationType.h"
@@ -19,7 +18,7 @@
 #include "core/animation/SVGRectInterpolationType.h"
 #include "core/animation/SVGTransformListInterpolationType.h"
 #include "core/animation/SVGValueInterpolationType.h"
-#include "core/css/CSSPropertyMetadata.h"
+#include "core/html_names.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -29,7 +28,7 @@ const InterpolationTypes& SVGInterpolationTypesMap::Get(
   using ApplicableTypesMap =
       HashMap<PropertyHandle, std::unique_ptr<const InterpolationTypes>>;
   DEFINE_STATIC_LOCAL(ApplicableTypesMap, applicable_types_map, ());
-  auto entry = applicable_types_map.Find(property);
+  auto entry = applicable_types_map.find(property);
   if (entry != applicable_types_map.end())
     return *entry->value.get();
 

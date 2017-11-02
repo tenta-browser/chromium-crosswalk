@@ -61,7 +61,8 @@ class ASH_EXPORT SystemTrayItem {
     UMA_TRACING = 23,
     UMA_USER = 24,
     UMA_VPN = 25,
-    UMA_COUNT = 26,
+    UMA_NIGHT_LIGHT = 26,
+    UMA_COUNT = 27,
   };
 
   SystemTrayItem(SystemTray* system_tray, UmaType type);
@@ -89,9 +90,9 @@ class ASH_EXPORT SystemTrayItem {
   // These functions are called when the corresponding view item is about to be
   // removed. An item should do appropriate cleanup in these functions.
   // The default implementation does nothing.
-  virtual void DestroyTrayView();
-  virtual void DestroyDefaultView();
-  virtual void DestroyDetailedView();
+  virtual void OnTrayViewDestroyed();
+  virtual void OnDefaultViewDestroyed();
+  virtual void OnDetailedViewDestroyed();
 
   // Updates the tray view (if applicable) when the user's login status changes.
   // It is not necessary the update the default or detailed view, since the
@@ -101,7 +102,7 @@ class ASH_EXPORT SystemTrayItem {
 
   // Updates the tray view (if applicable) when shelf's alignment changes.
   // The default implementation does nothing.
-  virtual void UpdateAfterShelfAlignmentChange(ShelfAlignment alignment);
+  virtual void UpdateAfterShelfAlignmentChange();
 
   // Shows the detailed view for this item. If the main popup for the tray is
   // currently visible, then making this call would use the existing window to
@@ -117,7 +118,7 @@ class ASH_EXPORT SystemTrayItem {
   // something, e.g. volume, network availability etc. changes). If
   // |for_seconds| is non-zero, then the popup is closed after the specified
   // time.
-  void ShowDetailedView(int for_seconds, bool activate);
+  void ShowDetailedView(int for_seconds);
 
   // Continue showing the currently-shown detailed view, if any, for
   // |for_seconds| seconds.  The caller is responsible for checking that the

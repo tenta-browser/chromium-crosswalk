@@ -1,4 +1,4 @@
-
+Tests that DOM.getNodeForLocation method correctly skips shadow dom when instructed.
 Node: {
     attributes : [
         [0] : type
@@ -11,6 +11,7 @@ Node: {
     children : [
     ]
     localName : input
+    nodeId : <number>
     nodeName : INPUT
     nodeType : 1
     nodeValue : 

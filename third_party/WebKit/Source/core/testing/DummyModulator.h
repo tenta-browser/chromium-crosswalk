@@ -35,17 +35,39 @@ class DummyModulator : public Modulator {
   WebTaskRunner* TaskRunner() override;
   ReferrerPolicy GetReferrerPolicy() override;
   SecurityOrigin* GetSecurityOrigin() override;
+  ScriptState* GetScriptState() override;
 
+  void FetchTree(const ModuleScriptFetchRequest&, ModuleTreeClient*) override;
+  void FetchSingle(const ModuleScriptFetchRequest&,
+                   ModuleGraphLevel,
+                   SingleModuleClient*) override;
+  void FetchDescendantsForInlineScript(ModuleScript*,
+                                       ModuleTreeClient*) override;
   ModuleScript* GetFetchedModuleScript(const KURL&) override;
   void FetchNewSingleModule(const ModuleScriptFetchRequest&,
                             ModuleGraphLevel,
                             ModuleScriptLoaderClient*) override;
+  bool HasValidContext() override;
+  void ResolveDynamically(const String& specifier,
+                          const KURL&,
+                          const ReferrerScriptInfo&,
+                          ScriptPromiseResolver*) override;
   ScriptModule CompileModule(const String& script,
                              const String& url_str,
-                             AccessControlStatus) override;
+                             AccessControlStatus,
+                             WebURLRequest::FetchCredentialsMode,
+                             const String& nonce,
+                             ParserDisposition,
+                             const TextPosition&,
+                             ExceptionState&) override;
   ScriptValue InstantiateModule(ScriptModule) override;
-  Vector<String> ModuleRequestsFromScriptModule(ScriptModule) override;
-  void ExecuteModule(ScriptModule) override;
+  ScriptModuleState GetRecordStatus(ScriptModule) override;
+  ScriptValue GetError(const ModuleScript*) override;
+  Vector<ModuleRequest> ModuleRequestsFromScriptModule(ScriptModule) override;
+  ScriptValue ExecuteModule(const ModuleScript*, CaptureEvalErrorFlag) override;
+  ModuleScriptFetcher* CreateModuleScriptFetcher() override;
+
+  Member<ScriptModuleResolver> resolver_;
 };
 
 }  // namespace blink

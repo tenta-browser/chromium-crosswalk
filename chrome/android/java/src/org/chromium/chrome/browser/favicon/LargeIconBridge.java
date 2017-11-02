@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.support.annotation.Nullable;
 import android.util.LruCache;
 
+import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.browser.profiles.Profile;
 
@@ -19,8 +20,8 @@ import org.chromium.chrome.browser.profiles.Profile;
 public class LargeIconBridge {
 
     private static final int CACHE_ENTRY_MIN_SIZE_BYTES = 1024;
+    private final Profile mProfile;
     private long mNativeLargeIconBridge;
-    private Profile mProfile;
     private LruCache<String, CachedFavicon> mFaviconCache;
 
     private static class CachedFavicon {
@@ -44,6 +45,7 @@ public class LargeIconBridge {
          *
          * @param icon The icon, or null if none is available.
          * @param fallbackColor The fallback color to use if icon is null.
+         * @param isFallbackColorDefault Whether the fallback color is the default color.
          */
         @CalledByNative("LargeIconCallback")
         void onLargeIconAvailable(
@@ -57,6 +59,17 @@ public class LargeIconBridge {
     public LargeIconBridge(Profile profile) {
         mNativeLargeIconBridge = nativeInit();
         mProfile = profile;
+    }
+
+    /**
+     * Constructor that leaves the bridge independent from the native side.
+     * Note: {@link #getLargeIconForUrl(String, int, LargeIconCallback)} will crash with the default
+     * implementation, it should then be overridden.
+     */
+    @VisibleForTesting
+    public LargeIconBridge() {
+        mNativeLargeIconBridge = 0;
+        mProfile = null;
     }
 
     /**
@@ -81,9 +94,10 @@ public class LargeIconBridge {
      * Deletes the C++ side of this class. This must be called when this object is no longer needed.
      */
     public void destroy() {
-        assert mNativeLargeIconBridge != 0;
-        nativeDestroy(mNativeLargeIconBridge);
-        mNativeLargeIconBridge = 0;
+        if (mNativeLargeIconBridge != 0) {
+            nativeDestroy(mNativeLargeIconBridge);
+            mNativeLargeIconBridge = 0;
+        }
     }
 
     /**

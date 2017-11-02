@@ -235,15 +235,17 @@ const QuotesData* QuotesDataForLanguage(const AtomicString& lang) {
   // This could be just a hash table, but doing that adds 200k to LayoutQuote.o
   Language* languages_end = g_languages + WTF_ARRAY_LENGTH(g_languages);
   CString lowercase_lang = lang.DeprecatedLower().Utf8();
-  Language key = {lowercase_lang.Data(), 0, 0, 0, 0, 0};
+  Language key = {lowercase_lang.data(), 0, 0, 0, 0, 0};
   Language* match = std::lower_bound(g_languages, languages_end, key);
   if (match == languages_end || strcmp(match->lang, key.lang))
     return nullptr;
 
-  if (!match->data)
-    match->data = QuotesData::Create(match->open1, match->close1, match->open2,
-                                     match->close2)
-                      .LeakRef();
+  if (!match->data) {
+    auto data = QuotesData::Create(match->open1, match->close1, match->open2,
+                                   match->close2);
+    data->AddRef();
+    match->data = data.get();
+  }
 
   return match->data;
 }

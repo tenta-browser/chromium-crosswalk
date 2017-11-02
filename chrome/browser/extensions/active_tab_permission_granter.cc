@@ -4,6 +4,9 @@
 
 #include "chrome/browser/extensions/active_tab_permission_granter.h"
 
+#include <set>
+#include <vector>
+
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/navigation_entry.h"
@@ -66,6 +69,8 @@ void SendMessageToProcesses(
     tab_process->Send(create_message.Run(false));
 }
 
+ActiveTabPermissionGranter::Delegate* g_delegate = nullptr;
+
 }  // namespace
 
 ActiveTabPermissionGranter::ActiveTabPermissionGranter(
@@ -80,6 +85,17 @@ ActiveTabPermissionGranter::ActiveTabPermissionGranter(
 
 ActiveTabPermissionGranter::~ActiveTabPermissionGranter() {}
 
+// static
+ActiveTabPermissionGranter::Delegate*
+ActiveTabPermissionGranter::SetPlatformDelegate(Delegate* delegate) {
+  // Disallow setting it twice (but allow resetting - don't forget to free in
+  // that case).
+  CHECK(!g_delegate || !delegate);
+  Delegate* previous_delegate = g_delegate;
+  g_delegate = delegate;
+  return previous_delegate;
+}
+
 void ActiveTabPermissionGranter::GrantIfRequested(const Extension* extension) {
   if (granted_extensions_.Contains(extension->id()))
     return;
@@ -89,11 +105,15 @@ void ActiveTabPermissionGranter::GrantIfRequested(const Extension* extension) {
 
   const PermissionsData* permissions_data = extension->permissions_data();
 
+  bool should_grant_active_tab =
+      !g_delegate ||
+      g_delegate->ShouldGrantActiveTab(extension, web_contents());
   // If the extension requested all-hosts but has had it withheld, we grant it
   // active tab-style permissions, even if it doesn't have the activeTab
   // permission in the manifest.
-  if (permissions_data->HasAPIPermission(APIPermission::kActiveTab) ||
-      permissions_data->HasWithheldImpliedAllHosts()) {
+  if (should_grant_active_tab &&
+      (permissions_data->HasWithheldImpliedAllHosts() ||
+       permissions_data->HasAPIPermission(APIPermission::kActiveTab))) {
     new_hosts.AddOrigin(UserScript::ValidUserScriptSchemes(),
                         web_contents()->GetVisibleURL().GetOrigin());
     new_apis.insert(APIPermission::kTab);
@@ -119,10 +139,9 @@ void ActiveTabPermissionGranter::GrantIfRequested(const Extension* extension) {
                      new_hosts,
                      tab_id_);
       SendMessageToProcesses(
-          ProcessManager::Get(web_contents()->GetBrowserContext())->
-              GetRenderFrameHostsForExtension(extension->id()),
-          web_contents()->GetRenderProcessHost(),
-          update_message);
+          ProcessManager::Get(web_contents()->GetBrowserContext())
+              ->GetRenderFrameHostsForExtension(extension->id()),
+          web_contents()->GetMainFrame()->GetProcess(), update_message);
 
       // If more things ever need to know about this, we should consider making
       // an observer class.
@@ -176,7 +195,7 @@ void ActiveTabPermissionGranter::WebContentsDestroyed() {
 void ActiveTabPermissionGranter::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   // Note: don't need to clear the permissions (nor tell the renderer about it)
   // because it's being unloaded anyway.
   granted_extensions_.Remove(extension->id());
@@ -201,9 +220,8 @@ void ActiveTabPermissionGranter::ClearActiveExtensionsAndNotify() {
 
   CreateMessageFunction clear_message =
       base::Bind(&CreateClearMessage, extension_ids, tab_id_);
-  SendMessageToProcesses(frame_hosts,
-                         web_contents()->GetRenderProcessHost(),
-                         clear_message);
+  SendMessageToProcesses(
+      frame_hosts, web_contents()->GetMainFrame()->GetProcess(), clear_message);
 
   granted_extensions_.Clear();
 }

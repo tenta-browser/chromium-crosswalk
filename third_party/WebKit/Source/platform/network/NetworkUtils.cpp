@@ -4,7 +4,6 @@
 
 #include "platform/network/NetworkUtils.h"
 
-#include "components/mime_util/mime_util.h"
 #include "net/base/data_url.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
@@ -19,6 +18,7 @@
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/URLConversion.h"
 #include "public/platform/WebString.h"
+#include "third_party/WebKit/common/mime_util/mime_util.h"
 #include "url/gurl.h"
 
 namespace {
@@ -64,7 +64,7 @@ String GetDomainAndRegistry(const String& host, PrivateRegistryFilter filter) {
   return String(domain.data(), domain.length());
 }
 
-PassRefPtr<SharedBuffer> ParseDataURLAndPopulateResponse(
+RefPtr<SharedBuffer> ParseDataURLAndPopulateResponse(
     const KURL& url,
     ResourceResponse& response) {
   // The following code contains duplication of GetInfoFromDataURL() and
@@ -83,7 +83,7 @@ PassRefPtr<SharedBuffer> ParseDataURLAndPopulateResponse(
   if (result != net::OK)
     return nullptr;
 
-  if (!mime_util::IsSupportedMimeType(utf8_mime_type))
+  if (!blink::IsSupportedMimeType(utf8_mime_type))
     return nullptr;
 
   RefPtr<SharedBuffer> data =
@@ -103,6 +103,16 @@ PassRefPtr<SharedBuffer> ParseDataURLAndPopulateResponse(
                                 WebString::FromLatin1(value));
   }
   return data;
+}
+
+bool IsDataURLMimeTypeSupported(const KURL& url) {
+  std::string utf8_mime_type;
+  std::string utf8_charset;
+  if (net::DataURL::Parse(WebStringToGURL(url.GetString()), &utf8_mime_type,
+                          &utf8_charset, nullptr)) {
+    return blink::IsSupportedMimeType(utf8_mime_type);
+  }
+  return false;
 }
 
 bool IsRedirectResponseCode(int response_code) {

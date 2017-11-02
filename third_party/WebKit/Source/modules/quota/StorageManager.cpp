@@ -10,12 +10,14 @@
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "modules/permissions/PermissionUtils.h"
 #include "modules/quota/StorageEstimate.h"
 #include "platform/StorageQuotaCallbacks.h"
-#include "platform/UserGestureIndicator.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/Functional.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebStorageQuotaError.h"
 
 namespace blink {
 
@@ -134,7 +136,7 @@ ScriptPromise StorageManager::estimate(ScriptState* script_state) {
     return promise;
   }
 
-  KURL storage_partition = KURL(KURL(), security_origin->ToString());
+  KURL storage_partition = KURL(NullURL(), security_origin->ToString());
   Platform::Current()->QueryStorageUsageAndQuota(
       storage_partition, kWebStorageQuotaTypeTemporary,
       new EstimateCallbacks(resolver));
@@ -165,5 +167,11 @@ void StorageManager::PermissionRequestComplete(ScriptPromiseResolver* resolver,
     return;
   resolver->Resolve(status == PermissionStatus::GRANTED);
 }
+
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorNotSupported, kNotSupportedError);
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorInvalidModification,
+                   kInvalidModificationError);
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorInvalidAccess, kInvalidAccessError);
+STATIC_ASSERT_ENUM(kWebStorageQuotaErrorAbort, kAbortError);
 
 }  // namespace blink

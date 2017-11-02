@@ -27,8 +27,6 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/grit/chromium_strings.h"
-#include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_ui.h"
 
@@ -93,9 +91,8 @@ void ImportDataHandler::StartImport(
   if (importer_host_)
     importer_host_->set_observer(NULL);
 
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("import-data-status-changed"),
-                         base::Value(kImportStatusInProgress));
+  FireWebUIListener("import-data-status-changed",
+                    base::Value(kImportStatusInProgress));
   import_did_succeed_ = false;
 
   importer_host_ = new ExternalProcessImporterHost();
@@ -234,7 +231,8 @@ void ImportDataHandler::HandleChooseBookmarksFile(const base::ListValue* args) {
 
   DCHECK(args && args->empty());
   select_file_dialog_ = ui::SelectFileDialog::Create(
-      this, new ChromeSelectFilePolicy(web_ui()->GetWebContents()));
+      this,
+      std::make_unique<ChromeSelectFilePolicy>(web_ui()->GetWebContents()));
 
   ui::SelectFileDialog::FileTypeInfo file_type_info;
   file_type_info.extensions.resize(1);

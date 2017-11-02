@@ -17,8 +17,7 @@ URLLoaderClientImpl::URLLoaderClientImpl(
     int request_id,
     ResourceDispatcher* resource_dispatcher,
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-    : binding_(this),
-      request_id_(request_id),
+    : request_id_(request_id),
       resource_dispatcher_(resource_dispatcher),
       task_runner_(std::move(task_runner)),
       weak_factory_(this) {}
@@ -26,10 +25,6 @@ URLLoaderClientImpl::URLLoaderClientImpl(
 URLLoaderClientImpl::~URLLoaderClientImpl() {
   if (body_consumer_)
     body_consumer_->Cancel();
-}
-
-void URLLoaderClientImpl::Bind(mojom::URLLoaderClientPtr* client_ptr) {
-  binding_.Bind(client_ptr, task_runner_);
 }
 
 void URLLoaderClientImpl::SetDefersLoading() {
@@ -110,6 +105,7 @@ void URLLoaderClientImpl::FlushDeferredMessages() {
 
 void URLLoaderClientImpl::OnReceiveResponse(
     const ResourceResponseHead& response_head,
+    const base::Optional<net::SSLInfo>& ssl_info,
     mojom::DownloadedTempFilePtr downloaded_file) {
   has_received_response_ = true;
   downloaded_file_ = std::move(downloaded_file);
@@ -168,8 +164,13 @@ void URLLoaderClientImpl::OnStartLoadingResponseBody(
   DCHECK(has_received_response_);
   body_consumer_ = new URLResponseBodyConsumer(
       request_id_, resource_dispatcher_, std::move(body), task_runner_);
-  if (is_deferred_)
+
+  if (is_deferred_) {
     body_consumer_->SetDefersLoading();
+    return;
+  }
+
+  body_consumer_->OnReadable(MOJO_RESULT_OK);
 }
 
 void URLLoaderClientImpl::OnComplete(
@@ -201,9 +202,10 @@ void URLLoaderClientImpl::StoreAndDispatch(const IPC::Message& message) {
   }
 }
 
-void URLLoaderClientImpl::OnUploadProgress(int64_t current_position,
-                                           int64_t total_size,
-                                           const base::Closure& ack_callback) {
+void URLLoaderClientImpl::OnUploadProgress(
+    int64_t current_position,
+    int64_t total_size,
+    OnUploadProgressCallback ack_callback) {
   if (NeedsStoringMessage()) {
     StoreAndDispatch(
         ResourceMsg_UploadProgress(request_id_, current_position, total_size));
@@ -211,7 +213,7 @@ void URLLoaderClientImpl::OnUploadProgress(int64_t current_position,
     resource_dispatcher_->OnUploadProgress(request_id_, current_position,
                                            total_size);
   }
-  ack_callback.Run();
+  std::move(ack_callback).Run();
 }
 
 }  // namespace content

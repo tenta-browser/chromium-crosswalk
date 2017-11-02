@@ -16,6 +16,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -60,16 +61,14 @@
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #endif
 
-#if defined(USE_ASH)
-#include "ash/ash_switches.h"
+#if defined(OS_CHROMEOS)
+#include "ash/public/cpp/ash_switches.h"
+#include "ash/public/cpp/immersive/immersive_fullscreen_controller_test_api.h"
 #include "ash/shell.h"
-#include "ash/test/cursor_manager_test_api.h"
-#include "ash/test/immersive_fullscreen_controller_test_api.h"
+#include "ash/wm/cursor_manager_test_api.h"
 #include "ash/wm/root_window_finder.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
-#include "ash/wm_window.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller_ash.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -112,7 +111,7 @@ class QuitDraggingObserver : public content::NotificationObserver {
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override {
     DCHECK_EQ(chrome::NOTIFICATION_TAB_DRAG_LOOP_DONE, type);
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
     delete this;
   }
 
@@ -125,8 +124,9 @@ class QuitDraggingObserver : public content::NotificationObserver {
 };
 
 void SetID(WebContents* web_contents, int id) {
-  web_contents->SetUserData(&kTabDragControllerInteractiveUITestUserDataKey,
-                            new TabDragControllerInteractiveUITestUserData(id));
+  web_contents->SetUserData(
+      &kTabDragControllerInteractiveUITestUserDataKey,
+      base::MakeUnique<TabDragControllerInteractiveUITestUserData>(id));
 }
 
 void ResetIDs(TabStripModel* model, int start) {
@@ -230,17 +230,17 @@ int GetDetachY(TabStrip* tab_strip) {
 }
 
 bool GetIsDragged(Browser* browser) {
-#if !defined(USE_ASH) || defined(OS_WIN)  // TODO(win_ash)
-  return false;
-#else
+#if defined(OS_CHROMEOS)
   return ash::wm::GetWindowState(browser->window()->GetNativeWindow())->
       is_dragged();
+#else
+  return false;
 #endif
 }
 
 }  // namespace
 
-#if defined(USE_ASH) && !defined(OS_WIN)  // TODO(win_ash)
+#if defined(OS_CHROMEOS)
 class ScreenEventGeneratorDelegate
     : public aura::test::EventGeneratorDelegateAura {
  public:
@@ -402,9 +402,8 @@ class DetachToBrowserTabDragControllerTest
     if (input_source() == INPUT_SOURCE_MOUSE)
       return;
 #if defined(OS_CHROMEOS)
-    event_generator_.reset(
-        new ui::test::EventGenerator(new ScreenEventGeneratorDelegate(
-            ash::WmWindow::GetAuraWindow(ash::wm::GetRootWindowAt(point)))));
+    event_generator_.reset(new ui::test::EventGenerator(
+        new ScreenEventGeneratorDelegate(ash::wm::GetRootWindowAt(point))));
 #endif
   }
 
@@ -640,7 +639,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
 
 namespace {
 
-// Invoked from the nested message loop.
+// Invoked from the nested run loop.
 void DragToSeparateWindowStep2(DetachToBrowserTabDragControllerTest* test,
                                TabStrip* not_attached_tab_strip,
                                TabStrip* target_tab_strip) {
@@ -804,7 +803,8 @@ class MaximizedBrowserWindowWaiter {
   bool CheckMaximized() {
     if (!window_->IsMaximized()) {
       base::MessageLoop::current()->task_runner()->PostTask(
-          FROM_HERE, base::Bind(
+          FROM_HERE,
+          base::BindOnce(
               base::IgnoreResult(&MaximizedBrowserWindowWaiter::CheckMaximized),
               base::Unretained(this)));
       return false;
@@ -827,9 +827,14 @@ class MaximizedBrowserWindowWaiter {
 
 }  // namespace
 
+#if defined(OS_CHROMEOS)
+#define MAYBE_DetachToOwnWindow DISABLED_DetachToOwnWindow
+#else
+#define MAYBE_DetachToOwnWindow DetachToOwnWindow
+#endif
 // Drags from browser to separate window and releases mouse.
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
-                       DetachToOwnWindow) {
+                       MAYBE_DetachToOwnWindow) {
   const gfx::Rect initial_bounds(browser()->window()->GetBounds());
   // Add another tab.
   AddTabAndResetBrowser(browser());
@@ -1356,7 +1361,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest, MAYBE_DragAll) {
 
 namespace {
 
-// Invoked from the nested message loop.
+// Invoked from the nested run loop.
 void DragAllToSeparateWindowStep2(DetachToBrowserTabDragControllerTest* test,
                                   TabStrip* attached_tab_strip,
                                   TabStrip* target_tab_strip,
@@ -1428,7 +1433,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
 
 namespace {
 
-// Invoked from the nested message loop.
+// Invoked from the nested run loop.
 void DragAllToSeparateWindowAndCancelStep2(
     DetachToBrowserTabDragControllerTest* test,
     TabStrip* attached_tab_strip,
@@ -1620,7 +1625,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
 
 namespace {
 
-// Invoked from the nested message loop.
+// Invoked from the nested run loop.
 void CancelOnNewTabWhenDraggingStep2(
     DetachToBrowserTabDragControllerTest* test,
     const BrowserList* browser_list) {
@@ -1842,7 +1847,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserInSeparateDisplayTabDragControllerTest,
 
 namespace {
 
-// Invoked from the nested message loop.
+// Invoked from the nested run loop.
 void DragTabToWindowInSeparateDisplayStep2(
     DetachToBrowserTabDragControllerTest* test,
     TabStrip* not_attached_tab_strip,
@@ -2144,7 +2149,7 @@ class DifferentDeviceScaleFactorDisplayTabDragControllerTest
   }
 
   float GetCursorDeviceScaleFactor() const {
-    ash::test::CursorManagerTestApi cursor_test_api(
+    ash::CursorManagerTestApi cursor_test_api(
         ash::Shell::Get()->cursor_manager());
     return cursor_test_api.GetCurrentCursor().device_scale_factor();
   }
@@ -2266,7 +2271,7 @@ class DetachToBrowserInSeparateDisplayAndCancelTabDragControllerTest
       DetachToBrowserInSeparateDisplayAndCancelTabDragControllerTest);
 };
 
-// Invoked from the nested message loop.
+// Invoked from the nested run loop.
 void CancelDragTabToWindowInSeparateDisplayStep3(
     TabStrip* tab_strip,
     const BrowserList* browser_list) {
@@ -2280,7 +2285,7 @@ void CancelDragTabToWindowInSeparateDisplayStep3(
   display_manager->AddRemoveDisplay();
 }
 
-// Invoked from the nested message loop.
+// Invoked from the nested run loop.
 void CancelDragTabToWindowInSeparateDisplayStep2(
     DetachToBrowserInSeparateDisplayAndCancelTabDragControllerTest* test,
     TabStrip* tab_strip,
@@ -2451,7 +2456,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTestTouch,
 
 #endif  // OS_CHROMEOS
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
 INSTANTIATE_TEST_CASE_P(TabDragging,
                         DetachToBrowserInSeparateDisplayTabDragControllerTest,
                         ::testing::Values("mouse", "touch"));

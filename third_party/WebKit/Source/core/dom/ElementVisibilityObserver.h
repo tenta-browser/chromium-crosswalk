@@ -5,8 +5,10 @@
 #ifndef ElementVisibilityObserver_h
 #define ElementVisibilityObserver_h
 
+#include <limits>
+
 #include "core/CoreExport.h"
-#include "core/dom/IntersectionObserver.h"
+#include "core/intersection_observer/IntersectionObserver.h"
 #include "platform/heap/Heap.h"
 #include "platform/heap/Member.h"
 
@@ -30,10 +32,13 @@ class CORE_EXPORT ElementVisibilityObserver final
  public:
   using VisibilityCallback = Function<void(bool), WTF::kSameThreadAffinity>;
 
-  ElementVisibilityObserver(Element*, std::unique_ptr<VisibilityCallback>);
+  ElementVisibilityObserver(Element*, VisibilityCallback);
   virtual ~ElementVisibilityObserver();
 
-  void Start();
+  // The |threshold| is the minimum fraction that needs to be visible.
+  // See https://github.com/WICG/IntersectionObserver/issues/164 for why this
+  // defaults to std::numeric_limits<float>::min() rather than zero.
+  void Start(float threshold = std::numeric_limits<float>::min());
   void Stop();
 
   void DeliverObservationsForTesting();
@@ -48,7 +53,7 @@ class CORE_EXPORT ElementVisibilityObserver final
 
   Member<Element> element_;
   Member<IntersectionObserver> intersection_observer_;
-  std::unique_ptr<VisibilityCallback> callback_;
+  VisibilityCallback callback_;
 };
 
 }  // namespace blink

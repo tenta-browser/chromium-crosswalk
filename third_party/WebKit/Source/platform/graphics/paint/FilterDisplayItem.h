@@ -8,7 +8,7 @@
 #include "platform/geometry/FloatRect.h"
 #include "platform/graphics/CompositorFilterOperations.h"
 #include "platform/graphics/paint/DisplayItem.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/RefPtr.h"
 #ifndef NDEBUG
 #include "platform/wtf/text/WTFString.h"
 #endif
@@ -31,13 +31,13 @@ class PLATFORM_EXPORT BeginFilterDisplayItem final
         origin_(origin) {}
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
   bool DrawsContent() const override;
 
  private:
 #ifndef NDEBUG
-  void DumpPropertiesAsDebugString(WTF::StringBuilder&) const override;
+  void PropertiesAsJSON(JSONObject&) const override;
 #endif
   bool Equals(const DisplayItem& other) const final {
     if (!DisplayItem::Equals(other))
@@ -64,7 +64,7 @@ class PLATFORM_EXPORT EndFilterDisplayItem final : public PairedEndDisplayItem {
       : PairedEndDisplayItem(client, kEndFilter, sizeof(*this)) {}
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
  private:

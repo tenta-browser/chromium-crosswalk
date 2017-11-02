@@ -80,7 +80,7 @@ PrefService::PrefService(
 }
 
 PrefService::~PrefService() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Reset pointers so accesses after destruction reliably crash.
   pref_value_store_.reset();
@@ -104,17 +104,21 @@ void PrefService::InitFromStorage(bool async) {
 }
 
 void PrefService::CommitPendingWrite() {
-  DCHECK(CalledOnValidThread());
-  user_pref_store_->CommitPendingWrite();
+  CommitPendingWrite(base::OnceClosure());
+}
+
+void PrefService::CommitPendingWrite(base::OnceClosure done_callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  user_pref_store_->CommitPendingWrite(std::move(done_callback));
 }
 
 void PrefService::SchedulePendingLossyWrites() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   user_pref_store_->SchedulePendingLossyWrites();
 }
 
 bool PrefService::GetBoolean(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   bool result = false;
 
@@ -129,7 +133,7 @@ bool PrefService::GetBoolean(const std::string& path) const {
 }
 
 int PrefService::GetInteger(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   int result = 0;
 
@@ -144,7 +148,7 @@ int PrefService::GetInteger(const std::string& path) const {
 }
 
 double PrefService::GetDouble(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   double result = 0.0;
 
@@ -159,7 +163,7 @@ double PrefService::GetDouble(const std::string& path) const {
 }
 
 std::string PrefService::GetString(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   std::string result;
 
@@ -174,7 +178,7 @@ std::string PrefService::GetString(const std::string& path) const {
 }
 
 base::FilePath PrefService::GetFilePath(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   base::FilePath result;
 
@@ -193,53 +197,44 @@ bool PrefService::HasPrefPath(const std::string& path) const {
   return pref && !pref->IsDefaultValue();
 }
 
-std::unique_ptr<base::DictionaryValue> PrefService::GetPreferenceValues()
-    const {
-  DCHECK(CalledOnValidThread());
-  std::unique_ptr<base::DictionaryValue> out(new base::DictionaryValue);
-  for (const auto& it : *pref_registry_) {
-    out->Set(it.first, GetPreferenceValue(it.first)->CreateDeepCopy());
-  }
-  return out;
+void PrefService::IteratePreferenceValues(
+    base::RepeatingCallback<void(const std::string& key,
+                                 const base::Value& value)> callback) const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  for (const auto& it : *pref_registry_)
+    callback.Run(it.first, *GetPreferenceValue(it.first));
 }
 
-std::unique_ptr<base::DictionaryValue>
-PrefService::GetPreferenceValuesOmitDefaults() const {
-  DCHECK(CalledOnValidThread());
+std::unique_ptr<base::DictionaryValue> PrefService::GetPreferenceValues(
+    IncludeDefaults include_defaults) const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::unique_ptr<base::DictionaryValue> out(new base::DictionaryValue);
   for (const auto& it : *pref_registry_) {
-    const Preference* pref = FindPreference(it.first);
-    if (pref->IsDefaultValue())
-      continue;
-    out->Set(it.first, pref->GetValue()->CreateDeepCopy());
-  }
-  return out;
-}
-
-std::unique_ptr<base::DictionaryValue>
-PrefService::GetPreferenceValuesWithoutPathExpansion() const {
-  DCHECK(CalledOnValidThread());
-  std::unique_ptr<base::DictionaryValue> out(new base::DictionaryValue);
-  for (const auto& it : *pref_registry_) {
-    const base::Value* value = GetPreferenceValue(it.first);
-    DCHECK(value);
-    out->SetWithoutPathExpansion(it.first, value->CreateDeepCopy());
+    if (include_defaults == INCLUDE_DEFAULTS) {
+      out->Set(it.first, GetPreferenceValue(it.first)->CreateDeepCopy());
+    } else {
+      const Preference* pref = FindPreference(it.first);
+      if (pref->IsDefaultValue())
+        continue;
+      out->Set(it.first, pref->GetValue()->CreateDeepCopy());
+    }
   }
   return out;
 }
 
 const PrefService::Preference* PrefService::FindPreference(
     const std::string& pref_name) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   PreferenceMap::iterator it = prefs_map_.find(pref_name);
   if (it != prefs_map_.end())
     return &(it->second);
   const base::Value* default_value = NULL;
   if (!pref_registry_->defaults()->GetValue(pref_name, &default_value))
     return NULL;
-  it = prefs_map_.insert(
-      std::make_pair(pref_name, Preference(
-          this, pref_name, default_value->GetType()))).first;
+  it = prefs_map_
+           .insert(std::make_pair(
+               pref_name, Preference(this, pref_name, default_value->type())))
+           .first;
   return &(it->second);
 }
 
@@ -262,6 +257,14 @@ PrefService::PrefInitializationStatus PrefService::GetInitializationStatus()
   }
 }
 
+PrefService::PrefInitializationStatus
+PrefService::GetAllPrefStoresInitializationStatus() const {
+  if (!pref_value_store_->IsInitializationComplete())
+    return INITIALIZATION_STATUS_WAITING;
+
+  return GetInitializationStatus();
+}
+
 bool PrefService::IsManagedPreference(const std::string& pref_name) const {
   const Preference* pref = FindPreference(pref_name);
   return pref && pref->IsManaged();
@@ -281,14 +284,14 @@ bool PrefService::IsUserModifiablePreference(
 
 const base::DictionaryValue* PrefService::GetDictionary(
     const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const base::Value* value = GetPreferenceValue(path);
   if (!value) {
     NOTREACHED() << "Trying to read an unregistered pref: " << path;
     return NULL;
   }
-  if (value->GetType() != base::Value::Type::DICTIONARY) {
+  if (value->type() != base::Value::Type::DICTIONARY) {
     NOTREACHED();
     return NULL;
   }
@@ -297,7 +300,7 @@ const base::DictionaryValue* PrefService::GetDictionary(
 
 const base::Value* PrefService::GetUserPrefValue(
     const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const Preference* pref = FindPreference(path);
   if (!pref) {
@@ -321,13 +324,13 @@ const base::Value* PrefService::GetUserPrefValue(
 
 void PrefService::SetDefaultPrefValue(const std::string& path,
                                       base::Value* value) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   pref_registry_->SetDefaultPrefValue(path, value);
 }
 
 const base::Value* PrefService::GetDefaultPrefValue(
     const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // Lookup the preference in the default store.
   const base::Value* value = NULL;
   if (!pref_registry_->defaults()->GetValue(path, &value)) {
@@ -338,14 +341,14 @@ const base::Value* PrefService::GetDefaultPrefValue(
 }
 
 const base::ListValue* PrefService::GetList(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const base::Value* value = GetPreferenceValue(path);
   if (!value) {
     NOTREACHED() << "Trying to read an unregistered pref: " << path;
     return NULL;
   }
-  if (value->GetType() != base::Value::Type::LIST) {
+  if (value->type() != base::Value::Type::LIST) {
     NOTREACHED();
     return NULL;
   }
@@ -370,7 +373,7 @@ PrefRegistry* PrefService::DeprecatedGetPrefRegistry() {
 }
 
 void PrefService::ClearPref(const std::string& path) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const Preference* pref = FindPreference(path);
   if (!pref) {
@@ -382,6 +385,18 @@ void PrefService::ClearPref(const std::string& path) {
 
 void PrefService::ClearMutableValues() {
   user_pref_store_->ClearMutableValues();
+}
+
+void PrefService::OnStoreDeletionFromDisk() {
+  user_pref_store_->OnStoreDeletionFromDisk();
+}
+
+void PrefService::AddPrefObserverAllPrefs(PrefObserver* obs) {
+  pref_notifier_->AddPrefObserverAllPrefs(obs);
+}
+
+void PrefService::RemovePrefObserverAllPrefs(PrefObserver* obs) {
+  pref_notifier_->RemovePrefObserverAllPrefs(obs);
 }
 
 void PrefService::Set(const std::string& path, const base::Value& value) {
@@ -415,7 +430,7 @@ void PrefService::SetInt64(const std::string& path, int64_t value) {
 }
 
 int64_t PrefService::GetInt64(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const base::Value* value = GetPreferenceValue(path);
   if (!value) {
@@ -437,7 +452,7 @@ void PrefService::SetUint64(const std::string& path, uint64_t value) {
 }
 
 uint64_t PrefService::GetUint64(const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const base::Value* value = GetPreferenceValue(path);
   if (!value) {
@@ -457,7 +472,7 @@ base::Value* PrefService::GetMutableUserPref(const std::string& path,
                                              base::Value::Type type) {
   CHECK(type == base::Value::Type::DICTIONARY ||
         type == base::Value::Type::LIST);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const Preference* pref = FindPreference(path);
   if (!pref) {
@@ -488,23 +503,31 @@ base::Value* PrefService::GetMutableUserPref(const std::string& path,
 }
 
 void PrefService::ReportUserPrefChanged(const std::string& key) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   user_pref_store_->ReportValueChanged(key, GetWriteFlags(FindPreference(key)));
+}
+
+void PrefService::ReportUserPrefChanged(
+    const std::string& key,
+    std::set<std::vector<std::string>> path_components) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  user_pref_store_->ReportSubValuesChanged(key, std::move(path_components),
+                                           GetWriteFlags(FindPreference(key)));
 }
 
 void PrefService::SetUserPrefValue(const std::string& path,
                                    std::unique_ptr<base::Value> new_value) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   const Preference* pref = FindPreference(path);
   if (!pref) {
     NOTREACHED() << "Trying to write an unregistered pref: " << path;
     return;
   }
-  if (pref->GetType() != new_value->GetType()) {
-    NOTREACHED() << "Trying to set pref " << path
-                 << " of type " << pref->GetType()
-                 << " to value of type " << new_value->GetType();
+  if (pref->GetType() != new_value->type()) {
+    NOTREACHED() << "Trying to set pref " << path << " of type "
+                 << pref->GetType() << " to value of type "
+                 << new_value->type();
     return;
   }
 
@@ -598,7 +621,7 @@ bool PrefService::Preference::IsExtensionModifiable() const {
 
 const base::Value* PrefService::GetPreferenceValue(
     const std::string& path) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // TODO(battre): This is a check for crbug.com/435208. After analyzing some
   // crash dumps it looks like the PrefService is accessed even though it has
@@ -610,7 +633,7 @@ const base::Value* PrefService::GetPreferenceValue(
   const base::Value* default_value = NULL;
   if (pref_registry_->defaults()->GetValue(path, &default_value)) {
     const base::Value* found_value = NULL;
-    base::Value::Type default_type = default_value->GetType();
+    base::Value::Type default_type = default_value->type();
     if (pref_value_store_->GetValue(path, default_type, &found_value)) {
       DCHECK(found_value->IsType(default_type));
       return found_value;

@@ -21,7 +21,6 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/extensions/extension_util.h"
-#include "chrome/browser/extensions/path_util.h"
 #include "chrome/browser/extensions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/shared_module_service.h"
 #include "chrome/browser/profiles/profile.h"
@@ -37,6 +36,7 @@
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/image_loader.h"
+#include "extensions/browser/path_util.h"
 #include "extensions/browser/warning_service.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/feature_switch.h"
@@ -260,7 +260,7 @@ void ExtensionInfoGenerator::CreateExtensionInfo(
   if (pending_image_loads_ == 0) {
     // Don't call the callback re-entrantly.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, base::Passed(&list_)));
+        FROM_HERE, base::BindOnce(callback, base::Passed(&list_)));
     list_.clear();
   } else {
     callback_ = callback;
@@ -298,7 +298,7 @@ void ExtensionInfoGenerator::CreateExtensionsInfo(
   if (pending_image_loads_ == 0) {
     // Don't call the callback re-entrantly.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, base::Passed(&list_)));
+        FROM_HERE, base::BindOnce(callback, base::Passed(&list_)));
     list_.clear();
   } else {
     callback_ = callback;
@@ -311,26 +311,20 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
   std::unique_ptr<developer::ExtensionInfo> info(
       new developer::ExtensionInfo());
 
-  // Don't consider the button hidden with the redesign, because "hidden"
-  // buttons are now just hidden in the wrench menu.
-  info->action_button_hidden =
-      !extension_action_api_->GetBrowserActionVisibility(extension.id()) &&
-      !FeatureSwitch::extension_action_redesign()->IsEnabled();
-
   // Blacklist text.
   int blacklist_text = -1;
   switch (extension_prefs_->GetExtensionBlacklistState(extension.id())) {
     case BLACKLISTED_MALWARE:
-      blacklist_text = IDS_OPTIONS_BLACKLISTED_MALWARE;
+      blacklist_text = IDS_EXTENSIONS_BLACKLISTED_MALWARE;
       break;
     case BLACKLISTED_SECURITY_VULNERABILITY:
-      blacklist_text = IDS_OPTIONS_BLACKLISTED_SECURITY_VULNERABILITY;
+      blacklist_text = IDS_EXTENSIONS_BLACKLISTED_SECURITY_VULNERABILITY;
       break;
     case BLACKLISTED_CWS_POLICY_VIOLATION:
-      blacklist_text = IDS_OPTIONS_BLACKLISTED_CWS_POLICY_VIOLATION;
+      blacklist_text = IDS_EXTENSIONS_BLACKLISTED_CWS_POLICY_VIOLATION;
       break;
     case BLACKLISTED_POTENTIALLY_UNWANTED:
-      blacklist_text = IDS_OPTIONS_BLACKLISTED_POTENTIALLY_UNWANTED;
+      blacklist_text = IDS_EXTENSIONS_BLACKLISTED_POTENTIALLY_UNWANTED;
       break;
     default:
       break;
@@ -349,7 +343,7 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
     if (is_policy_location) {
       info->controlled_info->type = developer::CONTROLLER_TYPE_POLICY;
       info->controlled_info->text =
-          l10n_util::GetStringUTF8(IDS_OPTIONS_INSTALL_LOCATION_ENTERPRISE);
+          l10n_util::GetStringUTF8(IDS_EXTENSIONS_INSTALL_LOCATION_ENTERPRISE);
     } else if (profile->IsChild()) {
       info->controlled_info->type = developer::CONTROLLER_TYPE_CHILD_CUSTODIAN;
       info->controlled_info->text = l10n_util::GetStringUTF8(
@@ -388,11 +382,12 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
   // Disable reasons.
   int disable_reasons = extension_prefs_->GetDisableReasons(extension.id());
   info->disable_reasons.suspicious_install =
-      (disable_reasons & Extension::DISABLE_NOT_VERIFIED) != 0;
+      (disable_reasons & disable_reason::DISABLE_NOT_VERIFIED) != 0;
   info->disable_reasons.corrupt_install =
-      (disable_reasons & Extension::DISABLE_CORRUPTED) != 0;
+      (disable_reasons & disable_reason::DISABLE_CORRUPTED) != 0;
   info->disable_reasons.update_required =
-      (disable_reasons & Extension::DISABLE_UPDATE_REQUIRED_BY_POLICY) != 0;
+      (disable_reasons & disable_reason::DISABLE_UPDATE_REQUIRED_BY_POLICY) !=
+      0;
 
   // Error collection.
   bool error_console_enabled =
@@ -403,7 +398,10 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
       error_console_->IsReportingEnabledForExtension(extension.id());
 
   // File access.
-  info->file_access.is_enabled = extension.wants_file_access();
+  ManagementPolicy* management_policy = extension_system_->management_policy();
+  info->file_access.is_enabled =
+      extension.wants_file_access() &&
+      management_policy->UserMayModifySettings(&extension, nullptr);
   info->file_access.is_active =
       util::AllowFileAccess(extension.id(), browser_context_);
 
@@ -452,11 +450,11 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
   // Location text.
   int location_text = -1;
   if (info->location == developer::LOCATION_UNKNOWN)
-    location_text = IDS_OPTIONS_INSTALL_LOCATION_UNKNOWN;
+    location_text = IDS_EXTENSIONS_INSTALL_LOCATION_UNKNOWN;
   else if (extension.location() == Manifest::EXTERNAL_REGISTRY)
-    location_text = IDS_OPTIONS_INSTALL_LOCATION_3RD_PARTY;
+    location_text = IDS_EXTENSIONS_INSTALL_LOCATION_3RD_PARTY;
   else if (extension.is_shared_module())
-    location_text = IDS_OPTIONS_INSTALL_LOCATION_SHARED_MODULE;
+    location_text = IDS_EXTENSIONS_INSTALL_LOCATION_SHARED_MODULE;
   if (location_text != -1) {
     info->location_text.reset(
         new std::string(l10n_util::GetStringUTF8(location_text)));
@@ -487,7 +485,6 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
     }
   }
 
-  ManagementPolicy* management_policy = extension_system_->management_policy();
   info->must_remain_installed =
       management_policy->MustRemainInstalled(&extension, nullptr);
 
@@ -520,7 +517,7 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
 
   // Runs on all urls.
   ScriptingPermissionsModifier permissions_modifier(
-      browser_context_, make_scoped_refptr(&extension));
+      browser_context_, base::WrapRefCounted(&extension));
   info->run_on_all_urls.is_enabled =
       (FeatureSwitch::scripts_require_action()->IsEnabled() &&
        permissions_modifier.CanAffectExtension(

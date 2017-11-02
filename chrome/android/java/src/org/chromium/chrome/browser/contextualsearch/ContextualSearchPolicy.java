@@ -155,8 +155,6 @@ class ContextualSearchPolicy {
      * @return Whether surroundings are available.
      */
     boolean canSendSurroundings() {
-        if (isUserUndecided()) return false;
-
         if (isPromoAvailable()) return isBasePageHTTP(mNetworkCommunicator.getBasePageUrl());
 
         return true;
@@ -406,6 +404,8 @@ class ContextualSearchPolicy {
      */
     boolean isAmpUrl(String url) {
         Uri uri = Uri.parse(url);
+        if (uri == null || uri.getHost() == null || uri.getPath() == null) return false;
+
         return uri.getHost().contains(DOMAIN_GOOGLE) && uri.getPath().startsWith(PATH_AMP);
     }
 

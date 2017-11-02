@@ -7,6 +7,8 @@
 #include <map>
 #include <string>
 
+#include "base/feature_list.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/string_util.h"
@@ -21,24 +23,22 @@ namespace {
 const char kClientSidePreviewsFieldTrial[] = "ClientSidePreviews";
 const char kClientLoFiFieldTrial[] = "PreviewsClientLoFi";
 const char kEnabled[] = "Enabled";
+const char kDisabled[] = "Disabled";
 
-// Verifies that we can enable offline previews via field trial.
-TEST(PreviewsExperimentsTest, TestFieldTrialOfflinePage) {
-  EXPECT_FALSE(IsIncludedInClientSidePreviewsExperimentsFieldTrial());
-  EXPECT_FALSE(params::IsOfflinePreviewsEnabled());
-
-  base::FieldTrialList field_trial_list(nullptr);
-
-  std::map<std::string, std::string> params;
-  params["show_offline_pages"] = "true";
-  EXPECT_TRUE(base::AssociateFieldTrialParams(kClientSidePreviewsFieldTrial,
-                                              kEnabled, params));
-  EXPECT_TRUE(base::FieldTrialList::CreateFieldTrial(
-      kClientSidePreviewsFieldTrial, kEnabled));
-
-  EXPECT_TRUE(IsIncludedInClientSidePreviewsExperimentsFieldTrial());
+// Verifies that we can enable offline previews via comand line.
+TEST(PreviewsExperimentsTest, TestCommandLineOfflinePage) {
   EXPECT_TRUE(params::IsOfflinePreviewsEnabled());
-  variations::testing::ClearAllVariationParams();
+
+  std::unique_ptr<base::FeatureList> feature_list =
+      base::MakeUnique<base::FeatureList>();
+
+  // The feature is explicitly enabled on the command-line.
+  feature_list->InitializeFromCommandLine("", "OfflinePreviews");
+  base::FeatureList::ClearInstanceForTesting();
+  base::FeatureList::SetInstance(std::move(feature_list));
+
+  EXPECT_FALSE(params::IsOfflinePreviewsEnabled());
+  base::FeatureList::ClearInstanceForTesting();
 }
 
 // Verifies that the default params are correct, and that custom params can be
@@ -49,7 +49,7 @@ TEST(PreviewsExperimentsTest, TestParamsForBlackListAndOffline) {
   EXPECT_EQ(10u, params::MaxStoredHistoryLengthForHostIndifferentBlackList());
   EXPECT_EQ(100u, params::MaxInMemoryHostsInBlackList());
   EXPECT_EQ(2, params::PerHostBlackListOptOutThreshold());
-  EXPECT_EQ(4, params::HostIndifferentBlackListOptOutThreshold());
+  EXPECT_EQ(6, params::HostIndifferentBlackListOptOutThreshold());
   EXPECT_EQ(base::TimeDelta::FromDays(30), params::PerHostBlackListDuration());
   EXPECT_EQ(base::TimeDelta::FromDays(365 * 100),
             params::HostIndifferentBlackListPerHostDuration());
@@ -57,8 +57,8 @@ TEST(PreviewsExperimentsTest, TestParamsForBlackListAndOffline) {
             params::SingleOptOutDuration());
   EXPECT_EQ(base::TimeDelta::FromDays(7),
             params::OfflinePreviewFreshnessDuration());
-  EXPECT_EQ(net::EFFECTIVE_CONNECTION_TYPE_SLOW_2G,
-            params::EffectiveConnectionTypeThresholdForOffline());
+  EXPECT_EQ(net::EFFECTIVE_CONNECTION_TYPE_2G,
+            params::GetECTThresholdForPreview(PreviewsType::OFFLINE));
   EXPECT_EQ(0, params::OfflinePreviewsVersion());
 
   base::FieldTrialList field_trial_list(nullptr);
@@ -94,7 +94,7 @@ TEST(PreviewsExperimentsTest, TestParamsForBlackListAndOffline) {
   EXPECT_EQ(base::TimeDelta::FromDays(12),
             params::OfflinePreviewFreshnessDuration());
   EXPECT_EQ(net::EFFECTIVE_CONNECTION_TYPE_4G,
-            params::EffectiveConnectionTypeThresholdForOffline());
+            params::GetECTThresholdForPreview(PreviewsType::OFFLINE));
   EXPECT_EQ(10, params::OfflinePreviewsVersion());
 
   variations::testing::ClearAllVariationParams();
@@ -108,8 +108,8 @@ TEST(PreviewsExperimentsTest, TestClientLoFiDisabledByDefault) {
 TEST(PreviewsExperimentsTest, TestClientLoFiExplicitlyDisabled) {
   base::FieldTrialList field_trial_list(nullptr);
   EXPECT_TRUE(
-      base::FieldTrialList::CreateFieldTrial(kClientLoFiFieldTrial, kEnabled));
-  EXPECT_TRUE(params::IsClientLoFiEnabled());
+      base::FieldTrialList::CreateFieldTrial(kClientLoFiFieldTrial, kDisabled));
+  EXPECT_FALSE(params::IsClientLoFiEnabled());
 }
 
 TEST(PreviewsExperimentsTest, TestClientLoFiEnabled) {
@@ -128,6 +128,8 @@ TEST(PreviewsExperimentsTest, TestEnableClientLoFiWithDefaultParams) {
   EXPECT_EQ(0, params::ClientLoFiVersion());
   EXPECT_EQ(net::EFFECTIVE_CONNECTION_TYPE_2G,
             params::EffectiveConnectionTypeThresholdForClientLoFi());
+  EXPECT_EQ(std::vector<std::string>(),
+            params::GetBlackListedHostsForClientLoFiFieldTrial());
 }
 
 TEST(PreviewsExperimentsTest, TestEnableClientLoFiWithCustomParams) {
@@ -135,7 +137,9 @@ TEST(PreviewsExperimentsTest, TestEnableClientLoFiWithCustomParams) {
 
   // Set some custom params for Client LoFi.
   std::map<std::string, std::string> custom_params = {
-      {"version", "10"}, {"max_allowed_effective_connection_type", "3G"},
+      {"version", "10"},
+      {"max_allowed_effective_connection_type", "3G"},
+      {"short_host_blacklist", "some,hosts, to-blacklist ,,"},
   };
   EXPECT_TRUE(base::AssociateFieldTrialParams(kClientLoFiFieldTrial, kEnabled,
                                               custom_params));
@@ -146,8 +150,26 @@ TEST(PreviewsExperimentsTest, TestEnableClientLoFiWithCustomParams) {
   EXPECT_EQ(10, params::ClientLoFiVersion());
   EXPECT_EQ(net::EFFECTIVE_CONNECTION_TYPE_3G,
             params::EffectiveConnectionTypeThresholdForClientLoFi());
+  EXPECT_EQ(std::vector<std::string>({"some", "hosts", "to-blacklist"}),
+            params::GetBlackListedHostsForClientLoFiFieldTrial());
 
   variations::testing::ClearAllVariationParams();
+}
+
+// Verifies that we can enable offline previews via comand line.
+TEST(PreviewsExperimentsTest, TestCommandLineClientLoFi) {
+  EXPECT_FALSE(params::IsClientLoFiEnabled());
+
+  std::unique_ptr<base::FeatureList> feature_list =
+      base::MakeUnique<base::FeatureList>();
+
+  // The feature is explicitly enabled on the command-line.
+  feature_list->InitializeFromCommandLine("ClientLoFi", "");
+  base::FeatureList::ClearInstanceForTesting();
+  base::FeatureList::SetInstance(std::move(feature_list));
+
+  EXPECT_TRUE(params::IsClientLoFiEnabled());
+  base::FeatureList::ClearInstanceForTesting();
 }
 
 }  // namespace

@@ -78,8 +78,6 @@ typedef NS_ENUM(NSInteger, ItemType) {
 // |bookmarkModel| must not be NULL and must be loaded.
 - (instancetype)initWithBookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
     NS_DESIGNATED_INITIALIZER;
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style
-    NS_UNAVAILABLE;
 
 // Enables or disables the save button depending on the state of the form.
 - (void)updateSaveButtonState;
@@ -143,7 +141,9 @@ folderEditorWithBookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
 - (instancetype)initWithBookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel {
   DCHECK(bookmarkModel);
   DCHECK(bookmarkModel->loaded());
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     _bookmarkModel = bookmarkModel;
 
@@ -152,11 +152,6 @@ folderEditorWithBookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
         new bookmarks::BookmarkModelBridge(self, _bookmarkModel));
   }
   return self;
-}
-
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style {
-  NOTREACHED();
-  return nil;
 }
 
 - (void)dealloc {
@@ -250,6 +245,11 @@ folderEditorWithBookmarkModel:(bookmarks::BookmarkModel*)bookmarkModel
 
   if (self.editingExistingFolder) {
     DCHECK(self.folder);
+    // Tell delegate if folder title has been changed.
+    if (self.folder->GetTitle() != folderTitle) {
+      [self.delegate bookmarkFolderEditorWillCommitTitleChange:self];
+    }
+
     self.bookmarkModel->SetTitle(self.folder, folderTitle);
     if (self.folder->parent() != self.parentFolder) {
       base::AutoReset<BOOL> autoReset(&_ignoresOwnMove, YES);

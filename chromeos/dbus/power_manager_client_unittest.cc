@@ -5,7 +5,9 @@
 #include "chromeos/dbus/power_manager_client.h"
 
 #include <map>
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/macros.h"
@@ -75,7 +77,7 @@ MATCHER_P3(IsSuspendReadiness, method_name, suspend_id, delay_id, "") {
 // bare pointer rather than an std::unique_ptr.
 void RunResponseCallback(dbus::ObjectProxy::ResponseCallback callback,
                          std::unique_ptr<dbus::Response> response) {
-  callback.Run(response.get());
+  std::move(callback).Run(response.get());
 }
 
 // Stub implementation of PowerManagerClient::Observer.
@@ -204,7 +206,7 @@ class PowerManagerClientTest : public testing::Test {
         .WillRepeatedly(Return(proxy_.get()));
 
     // Save |client_|'s signal and name-owner-changed callbacks.
-    EXPECT_CALL(*proxy_.get(), ConnectToSignal(kInterface, _, _, _))
+    EXPECT_CALL(*proxy_.get(), DoConnectToSignal(kInterface, _, _, _))
         .WillRepeatedly(Invoke(this, &PowerManagerClientTest::ConnectToSignal));
     EXPECT_CALL(*proxy_.get(), SetNameOwnerChangedCallback(_))
         .WillRepeatedly(SaveArg<0>(&name_owner_changed_callback_));
@@ -213,13 +215,14 @@ class PowerManagerClientTest : public testing::Test {
     // delays.
     EXPECT_CALL(
         *proxy_.get(),
-        CallMethod(HasMember(power_manager::kRegisterSuspendDelayMethod), _, _))
+        DoCallMethod(HasMember(power_manager::kRegisterSuspendDelayMethod), _,
+                     _))
         .WillRepeatedly(
             Invoke(this, &PowerManagerClientTest::RegisterSuspendDelay));
     EXPECT_CALL(
         *proxy_.get(),
-        CallMethod(HasMember(power_manager::kRegisterDarkSuspendDelayMethod), _,
-                   _))
+        DoCallMethod(HasMember(power_manager::kRegisterDarkSuspendDelayMethod),
+                     _, _))
         .WillRepeatedly(
             Invoke(this, &PowerManagerClientTest::RegisterSuspendDelay));
 
@@ -269,8 +272,8 @@ class PowerManagerClientTest : public testing::Test {
                               int delay_id) {
     EXPECT_CALL(
         *proxy_.get(),
-        CallMethod(IsSuspendReadiness(method_name, suspend_id, delay_id), _,
-                   _));
+        DoCallMethod(IsSuspendReadiness(method_name, suspend_id, delay_id), _,
+                     _));
   }
 
   // Arbitrary delay IDs returned to |client_|.
@@ -299,19 +302,20 @@ class PowerManagerClientTest : public testing::Test {
       const std::string& interface_name,
       const std::string& signal_name,
       dbus::ObjectProxy::SignalCallback signal_callback,
-      dbus::ObjectProxy::OnConnectedCallback on_connected_callback) {
+      dbus::ObjectProxy::OnConnectedCallback* on_connected_callback) {
     CHECK_EQ(interface_name, power_manager::kPowerManagerInterface);
     signal_callbacks_[signal_name] = signal_callback;
 
     message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(on_connected_callback, interface_name,
-                              signal_name, true /* success */));
+        FROM_HERE,
+        base::BindOnce(std::move(*on_connected_callback), interface_name,
+                       signal_name, true /* success */));
   }
 
   // Handles calls to |proxy_|'s CallMethod() method to register suspend delays.
   void RegisterSuspendDelay(dbus::MethodCall* method_call,
                             int timeout_ms,
-                            dbus::ObjectProxy::ResponseCallback callback) {
+                            dbus::ObjectProxy::ResponseCallback* callback) {
     power_manager::RegisterSuspendDelayReply proto;
     proto.set_delay_id(method_call->GetMember() ==
                                power_manager::kRegisterDarkSuspendDelayMethod
@@ -324,8 +328,8 @@ class PowerManagerClientTest : public testing::Test {
     CHECK(dbus::MessageWriter(response.get()).AppendProtoAsArrayOfBytes(proto));
 
     message_loop_.task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&RunResponseCallback, callback, base::Passed(&response)));
+        FROM_HERE, base::BindOnce(&RunResponseCallback, std::move(*callback),
+                                  base::Passed(&response)));
   }
 
   DISALLOW_COPY_AND_ASSIGN(PowerManagerClientTest);

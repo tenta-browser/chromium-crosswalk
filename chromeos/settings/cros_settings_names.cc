@@ -245,4 +245,42 @@ const char kDeviceLoginScreenLocales[] = "cros.device_login_screen_locales";
 const char kDeviceLoginScreenInputMethods[] =
     "cros.device_login_screen_input_methods";
 
+// A boolean pref that matches enable-per-user-time-zone chrome://flags value.
+const char kPerUserTimezoneEnabled[] = "cros.flags.per_user_timezone_enabled";
+
+// A dictionary pref containing time intervals and ignored policies.
+// It's used to allow less restricted usage of Chrome OS during off-hours.
+// This pref is set by an admin policy.
+// Pref format:
+// { "timezone" : string,
+//   "intervals" : list of Intervals,
+//   "ignored_policies" : string list }
+// Interval dictionary format:
+// { "start" : WeeklyTime,
+//   "end" : WeeklyTime }
+// WeeklyTime dictionary format:
+// { "weekday" : int # value is from 1 to 7 (1 = Monday, 2 = Tuesday, etc.)
+//   "time" : int # in milliseconds from the beginning of the day.
+// }
+const char kDeviceOffHours[] = "cros.device_off_hours";
+
+// An external data pref for the printer configurations download.
+const char kDevicePrintersConfigurations[] =
+    "cros.device.printer_configurations";
+// An enum specifying the access policy device printers should observe.
+const char kDevicePrintersAccessMode[] = "cros.device.printers_access_mode";
+// A list of strings representing device printer ids for which access is
+// restricted.
+const char kDevicePrintersBlacklist[] = "cros.device.printers_blacklist";
+// A list of strings representing the list of device printer ids which are
+// accessible.
+const char kDevicePrintersWhitelist[] = "cros.device.printers_whitelist";
+
+// A dictionary containing parameters controlling the TPM firmware update
+// functionality.
+const char kTPMFirmwareUpdateSettings[] = "cros.tpm_firmware_update_settings";
+
+// Boolean pref indicating whether videos for user avatar are allowed.
+const char kAllowUserAvatarVideos[] = "cros.allow_user_avatar_videos";
+
 }  // namespace chromeos

@@ -89,7 +89,8 @@ content::ScreenInfo GetNSViewScreenInfo(NSView* view) {
 
   content::ScreenInfo results;
   results.device_scale_factor = static_cast<int>(display.device_scale_factor());
-  results.icc_profile = display.icc_profile();
+  results.color_space = display.color_space();
+  results.color_space.GetICCProfile(&results.icc_profile);
   results.depth = display.color_depth();
   results.depth_per_component = display.depth_per_component();
   results.is_monochrome = display.is_monochrome();
@@ -269,8 +270,8 @@ void WebContentsViewMac::UpdateDragCursor(WebDragOperation operation) {
   [cocoa_view_ setCurrentDragOperation: operation];
 }
 
-void WebContentsViewMac::GotFocus() {
-  web_contents_->NotifyWebContentsFocused();
+void WebContentsViewMac::GotFocus(RenderWidgetHostImpl* render_widget_host) {
+  web_contents_->NotifyWebContentsFocused(render_widget_host);
 }
 
 // This is called when the renderer asks us to take focus back (i.e., it has
@@ -307,16 +308,20 @@ void WebContentsViewMac::ShowPopupMenu(
     const std::vector<MenuItem>& items,
     bool right_aligned,
     bool allow_multiple_selection) {
-  popup_menu_helper_.reset(new PopupMenuHelper(render_frame_host));
+  popup_menu_helper_.reset(new PopupMenuHelper(this, render_frame_host));
   popup_menu_helper_->ShowPopupMenu(bounds, item_height, item_font_size,
                                     selected_item, items, right_aligned,
                                     allow_multiple_selection);
-  popup_menu_helper_.reset();
+  // Note: |this| may be deleted here.
 }
 
 void WebContentsViewMac::HidePopupMenu() {
   if (popup_menu_helper_)
     popup_menu_helper_->Hide();
+}
+
+void WebContentsViewMac::OnMenuClosed() {
+  popup_menu_helper_.reset();
 }
 
 gfx::Rect WebContentsViewMac::GetViewBounds() const {
@@ -366,9 +371,9 @@ RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForWidget(
                                              is_guest_view_hack)
           : new RenderWidgetHostViewMac(render_widget_host, is_guest_view_hack);
   if (delegate()) {
-    base::scoped_nsobject<NSObject<RenderWidgetHostViewMacDelegate> >
-        rw_delegate(
-            delegate()->CreateRenderWidgetHostViewDelegate(render_widget_host));
+    base::scoped_nsobject<NSObject<RenderWidgetHostViewMacDelegate>>
+        rw_delegate(delegate()->CreateRenderWidgetHostViewDelegate(
+            render_widget_host, false));
 
     view->SetDelegate(rw_delegate.get());
   }
@@ -398,7 +403,15 @@ RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForWidget(
 
 RenderWidgetHostViewBase* WebContentsViewMac::CreateViewForPopupWidget(
     RenderWidgetHost* render_widget_host) {
-  return new RenderWidgetHostViewMac(render_widget_host, false);
+  RenderWidgetHostViewMac* view =
+      new RenderWidgetHostViewMac(render_widget_host, false);
+  if (delegate()) {
+    base::scoped_nsobject<NSObject<RenderWidgetHostViewMacDelegate>>
+        rw_delegate(delegate()->CreateRenderWidgetHostViewDelegate(
+            render_widget_host, true));
+    view->SetDelegate(rw_delegate.get());
+  }
+  return view;
 }
 
 void WebContentsViewMac::SetPageTitle(const base::string16& title) {
@@ -516,10 +529,9 @@ void WebContentsViewMac::CloseTab() {
 - (void)mouseEvent:(NSEvent*)theEvent {
   WebContentsImpl* webContents = [self webContents];
   if (webContents && webContents->GetDelegate()) {
-    NSPoint location = [NSEvent mouseLocation];
     webContents->GetDelegate()->ContentsMouseEvent(
-        webContents, gfx::Point(location.x, location.y),
-        [theEvent type] == NSMouseMoved, [theEvent type] == NSMouseExited);
+        webContents, [theEvent type] == NSMouseMoved,
+        [theEvent type] == NSMouseExited);
   }
 }
 
@@ -535,16 +547,6 @@ void WebContentsViewMac::CloseTab() {
   // saves us the effort of overriding this method in every possible
   // subview.
   return mouseDownCanMoveWindow_;
-}
-
-- (void)setOpaque:(BOOL)opaque {
-  WebContentsImpl* webContents = [self webContents];
-  if (!webContents)
-    return;
-  RenderWidgetHostViewMac* view = static_cast<RenderWidgetHostViewMac*>(
-      webContents->GetRenderWidgetHostView());
-  DCHECK(view);
-  [view->cocoa_view() setOpaque:opaque];
 }
 
 - (void)pasteboard:(NSPasteboard*)sender provideDataForType:(NSString*)type {
@@ -682,6 +684,9 @@ void WebContentsViewMac::CloseTab() {
 
 - (void)setFrameSize:(NSSize)newSize {
   [super setFrameSize:newSize];
+
+  if (webContentsView_ && webContentsView_->delegate())
+    webContentsView_->delegate()->SizeChanged(gfx::Size(newSize));
 
   // Perform manual layout of subviews, e.g., when the window size changes.
   for (NSView* subview in [self subviews])

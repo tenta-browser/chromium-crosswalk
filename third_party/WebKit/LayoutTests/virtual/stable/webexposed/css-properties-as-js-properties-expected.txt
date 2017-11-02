@@ -120,6 +120,7 @@ float
 floodColor
 floodOpacity
 font
+fontDisplay
 fontFamily
 fontFeatureSettings
 fontKerning
@@ -128,8 +129,10 @@ fontStretch
 fontStyle
 fontVariant
 fontVariantCaps
+fontVariantEastAsian
 fontVariantLigatures
 fontVariantNumeric
+fontVariationSettings
 fontWeight
 getPropertyPriority
 getPropertyValue
@@ -164,6 +167,7 @@ left
 length
 letterSpacing
 lightingColor
+lineBreak
 lineHeight
 listStyle
 listStyleImage
@@ -191,14 +195,12 @@ minInlineSize
 minWidth
 minZoom
 mixBlendMode
-motion
 objectFit
 objectPosition
 offset
 offsetDistance
 offsetPath
 offsetRotate
-offsetRotation
 opacity
 order
 orientation
@@ -238,6 +240,10 @@ resize
 right
 rx
 ry
+scrollBehavior
+scrollBoundaryBehavior
+scrollBoundaryBehaviorX
+scrollBoundaryBehaviorY
 setProperty
 shapeImageThreshold
 shapeMargin

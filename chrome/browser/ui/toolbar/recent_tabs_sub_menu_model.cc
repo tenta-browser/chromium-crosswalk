@@ -45,9 +45,9 @@
 #include "ui/gfx/paint_vector_icon.h"
 #endif
 
-#if defined(USE_ASH)
-#include "ash/accelerators/accelerator_table.h"  // nogncheck
-#endif  // defined(USE_ASH)
+#if defined(OS_CHROMEOS)
+#include "ash/accelerators/accelerator_table.h"
+#endif
 
 namespace {
 
@@ -220,7 +220,7 @@ RecentTabsSubMenuModel::RecentTabsSubMenuModel(
   // Retrieve accelerator key for IDC_RESTORE_TAB now, because on ASH, it's not
   // defined in |accelerator_provider|, but in shell, so simply retrieve it now
   // for all ASH and non-ASH for use in |GetAcceleratorForCommandId|.
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
   for (size_t i = 0; i < ash::kAcceleratorDataLength; ++i) {
     const ash::AcceleratorData& accel_data = ash::kAcceleratorData[i];
     if (accel_data.action == ash::RESTORE_TAB) {
@@ -234,7 +234,7 @@ RecentTabsSubMenuModel::RecentTabsSubMenuModel(
     accelerator_provider->GetAcceleratorForCommandId(
         IDC_RESTORE_TAB, &reopen_closed_tab_accelerator_);
   }
-#endif  // defined(USE_ASH)
+#endif  // defined(OS_CHROMEOS)
 
   if (accelerator_provider) {
     accelerator_provider->GetAcceleratorForCommandId(
@@ -464,6 +464,10 @@ void RecentTabsSubMenuModel::BuildLocalEntries() {
           break;
         }
         case sessions::TabRestoreService::WINDOW: {
+          // TODO(chrisha): Make this menu entry better. When windows contain a
+          // single tab, display that tab directly in the menu. Otherwise, offer
+          // a hover over or alternative mechanism for seeing which tabs were in
+          // the window.
           BuildLocalWindowItem(
               entry->id,
               static_cast<const sessions::TabRestoreService::Window&>(*entry)

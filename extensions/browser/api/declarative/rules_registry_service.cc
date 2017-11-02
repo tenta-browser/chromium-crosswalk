@@ -200,7 +200,7 @@ void RulesRegistryService::NotifyRegistriesHelper(
     } else {
       content::BrowserThread::PostTask(
           registry->owner_thread(), FROM_HERE,
-          base::Bind(&NotifyWithExtensionSafe, make_scoped_refptr(extension),
+          base::Bind(&NotifyWithExtensionSafe, base::WrapRefCounted(extension),
                      notification_callback, registry));
     }
   }
@@ -215,7 +215,7 @@ void RulesRegistryService::OnExtensionLoaded(
 void RulesRegistryService::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   NotifyRegistriesHelper(&RulesRegistry::OnExtensionUnloaded, extension);
 }
 

@@ -6,12 +6,12 @@
 
 #include <algorithm>
 #include <list>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -138,7 +138,7 @@ std::string URLRequestTestJob::test_error_headers() {
 // static
 std::unique_ptr<URLRequestJobFactory::ProtocolHandler>
 URLRequestTestJob::CreateProtocolHandler() {
-  return base::MakeUnique<TestJobProtocolHandler>();
+  return std::make_unique<TestJobProtocolHandler>();
 }
 
 URLRequestTestJob::URLRequestTestJob(URLRequest* request,
@@ -294,12 +294,6 @@ void URLRequestTestJob::GetLoadTimingInfo(
   *load_timing_info = load_timing_info_;
   load_timing_info->request_start = request_start;
   load_timing_info->request_start_time = request_start_time;
-}
-
-int URLRequestTestJob::GetResponseCode() const {
-  if (response_headers_.get())
-    return response_headers_->response_code();
-  return -1;
 }
 
 int64_t URLRequestTestJob::GetTotalReceivedBytes() const {

@@ -4,13 +4,13 @@
 
 #include "ash/accelerators/exit_warning_handler.h"
 
+#include <memory>
+
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/root_window_controller.h"
+#include "ash/session/session_controller.h"
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
-#include "ash/shell_port.h"
 #include "ash/strings/grit/ash_strings.h"
-#include "ash/wm_window.h"
+#include "base/metrics/user_metrics.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -45,29 +45,23 @@ class ExitWarningWidgetDelegateView : public views::WidgetDelegateView {
       : text_(l10n_util::GetStringUTF16(IDS_ASH_SIGN_OUT_WARNING_POPUP_TEXT)),
         accessible_name_(l10n_util::GetStringUTF16(
             IDS_ASH_SIGN_OUT_WARNING_POPUP_TEXT_ACCESSIBLE)),
-        text_width_(0),
-        width_(0),
-        height_(0) {
+        text_width_(0) {
     ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     const gfx::FontList& font_list =
         rb.GetFontList(ui::ResourceBundle::LargeFont);
     text_width_ = gfx::GetStringWidth(text_, font_list);
-    width_ = text_width_ + kHorizontalMarginAroundText;
-    height_ = font_list.GetHeight() + kVerticalMarginAroundText;
+    SetPreferredSize(
+        gfx::Size(text_width_ + kHorizontalMarginAroundText,
+                  font_list.GetHeight() + kVerticalMarginAroundText));
     views::Label* label = new views::Label();
     label->SetText(text_);
     label->SetHorizontalAlignment(gfx::ALIGN_CENTER);
     label->SetFontList(font_list);
     label->SetEnabledColor(kTextColor);
-    label->SetDisabledColor(kTextColor);
     label->SetAutoColorReadabilityEnabled(false);
     label->SetSubpixelRenderingEnabled(false);
     AddChildView(label);
     SetLayoutManager(new views::FillLayout);
-  }
-
-  gfx::Size GetPreferredSize() const override {
-    return gfx::Size(width_, height_);
   }
 
   void OnPaint(gfx::Canvas* canvas) override {
@@ -87,8 +81,6 @@ class ExitWarningWidgetDelegateView : public views::WidgetDelegateView {
   base::string16 text_;
   base::string16 accessible_name_;
   int text_width_;
-  int width_;
-  int height_;
 
   DISALLOW_COPY_AND_ASSIGN(ExitWarningWidgetDelegateView);
 };
@@ -109,14 +101,14 @@ void ExitWarningHandler::HandleAccelerator() {
       state_ = WAIT_FOR_DOUBLE_PRESS;
       Show();
       StartTimer();
-      ShellPort::Get()->RecordUserMetricsAction(UMA_ACCEL_EXIT_FIRST_Q);
+      base::RecordAction(base::UserMetricsAction("Accel_Exit_First_Q"));
       break;
     case WAIT_FOR_DOUBLE_PRESS:
       state_ = EXITING;
       CancelTimer();
       Hide();
-      ShellPort::Get()->RecordUserMetricsAction(UMA_ACCEL_EXIT_SECOND_Q);
-      Shell::Get()->shell_delegate()->Exit();
+      base::RecordAction(base::UserMetricsAction("Accel_Exit_Second_Q"));
+      Shell::Get()->session_controller()->RequestSignOut();
       break;
     case EXITING:
       break;
@@ -144,9 +136,9 @@ void ExitWarningHandler::CancelTimer() {
 void ExitWarningHandler::Show() {
   if (widget_)
     return;
-  WmWindow* root_window = Shell::GetWmRootWindowForNewWindows();
+  aura::Window* root_window = Shell::GetRootWindowForNewWindows();
   ExitWarningWidgetDelegateView* delegate = new ExitWarningWidgetDelegateView;
-  gfx::Size rs = root_window->GetBounds().size();
+  gfx::Size rs = root_window->bounds().size();
   gfx::Size ps = delegate->GetPreferredSize();
   gfx::Rect bounds((rs.width() - ps.width()) / 2,
                    (rs.height() - ps.height()) / 3, ps.width(), ps.height());
@@ -160,9 +152,9 @@ void ExitWarningHandler::Show() {
   params.delegate = delegate;
   params.bounds = bounds;
   params.name = "ExitWarningWindow";
-  widget_.reset(new views::Widget);
-  root_window->GetRootWindowController()->ConfigureWidgetInitParamsForContainer(
-      widget_.get(), kShellWindowId_SettingBubbleContainer, &params);
+  params.parent =
+      root_window->GetChildById(kShellWindowId_SettingBubbleContainer);
+  widget_ = std::make_unique<views::Widget>();
   widget_->Init(params);
   widget_->Show();
 

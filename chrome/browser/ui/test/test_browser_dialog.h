@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_TEST_TEST_BROWSER_DIALOG_H_
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/macros.h"
@@ -64,6 +65,13 @@ class TestBrowserDialog {
   // Show the dialog corresponding to |name| and leave it open.
   virtual void ShowDialog(const std::string& name) = 0;
 
+  // Whether to always close asynchronously using Widget::Close(). This covers
+  // codepaths relying on DialogDelegate::Close(), which isn't invoked by
+  // Widget::CloseNow(). Dialogs should support both, since the OS can initiate
+  // the destruction of dialogs, e.g., during logoff which bypass
+  // Widget::CanClose() and DialogDelegate::Close().
+  virtual bool AlwaysCloseAsynchronously();
+
  private:
   DISALLOW_COPY_AND_ASSIGN(TestBrowserDialog);
 };
@@ -73,7 +81,9 @@ class TestBrowserDialog {
 template <class Base>
 class SupportsTestDialog : public Base, public TestBrowserDialog {
  protected:
-  SupportsTestDialog() {}
+  template <class... Args>
+  explicit SupportsTestDialog(Args&&... args)
+      : Base(std::forward<Args>(args)...) {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SupportsTestDialog);

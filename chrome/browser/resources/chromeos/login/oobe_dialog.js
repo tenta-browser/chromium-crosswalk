@@ -15,12 +15,41 @@ Polymer({
     },
 
     /**
+     * Hide the box shadow on the top of oobe-bottom
+     */
+    hideShadow: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
+     * Control visibility of the header container.
+     */
+    noHeader: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
+     * Removes footer padding.
+     */
+    noFooterPadding: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
      * Switches styles to "Welcome screen".
      */
     welcomeScreen: {
       type: Boolean,
       value: false,
       reflectToAttribute: true,
+    },
+
+    android: {
+      type: Boolean,
+      value: false,
     },
   },
 
@@ -35,11 +64,20 @@ Polymer({
   },
 
   /**
-    * This is called from oobe_welcome when this dialog is shown.
-    */
+   * This is called from oobe_welcome when this dialog is shown.
+   */
   show: function() {
     var focusedElements = this.getElementsByClassName('focus-on-show');
-    if (focusedElements.length > 0)
+    var focused = false;
+    for (var i = 0; i < focusedElements.length; ++i) {
+      if (focusedElements[i].hidden)
+        continue;
+
+      focused = true;
+      focusedElements[i].focus();
+      break;
+    }
+    if (!focused && focusedElements.length > 0)
       focusedElements[0].focus();
 
     this.fire('show-dialog');

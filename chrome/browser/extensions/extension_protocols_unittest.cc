@@ -229,7 +229,6 @@ class ExtensionProtocolsTest : public testing::Test {
         /*render_view_id=*/-1,
         /*render_frame_id=*/-1,
         /*is_main_frame=*/resource_type == content::RESOURCE_TYPE_MAIN_FRAME,
-        /*parent_is_main_frame=*/false,
         /*allow_download=*/true,
         /*is_async=*/false, content::PREVIEWS_OFF);
     request->Start();
@@ -377,7 +376,7 @@ TEST_F(ExtensionProtocolsTest, ComponentResourceRequest) {
 
   // And then test it with the extension disabled.
   extension_info_map_->RemoveExtension(extension->id(),
-                                       UnloadedExtensionInfo::REASON_DISABLE);
+                                       UnloadedExtensionReason::DISABLE);
   {
     std::unique_ptr<net::URLRequest> request(
         resource_context_.GetRequestContext()->CreateRequest(

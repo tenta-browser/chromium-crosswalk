@@ -11,10 +11,7 @@
 #include "base/compiler_specific.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_export.h"
-
-namespace base {
-class CommandLine;
-}
+#include "ui/gl/gl_workarounds.h"
 
 namespace gl {
 
@@ -52,8 +49,7 @@ class GL_EXPORT RealGLApi : public GLApiBase {
   RealGLApi();
   ~RealGLApi() override;
   void Initialize(DriverGL* driver);
-  void InitializeWithCommandLine(DriverGL* driver,
-                                 base::CommandLine* command_line);
+  void SetDisabledExtensions(const std::string& disabled_extensions) override;
 
   void glGetIntegervFn(GLenum pname, GLint* params) override;
   const GLubyte* glGetStringFn(GLenum name) override;
@@ -102,7 +98,19 @@ class GL_EXPORT RealGLApi : public GLApiBase {
                                           GLsizei width,
                                           GLsizei height) override;
 
+  void glReadPixelsFn(GLint x,
+                      GLint y,
+                      GLsizei width,
+                      GLsizei height,
+                      GLenum format,
+                      GLenum type,
+                      void* pixels) override;
+
   void glClearFn(GLbitfield mask) override;
+  void glClearColorFn(GLclampf red,
+                      GLclampf green,
+                      GLclampf blue,
+                      GLclampf alpha) override;
   void glDrawArraysFn(GLenum mode, GLint first, GLsizei count) override;
   void glDrawElementsFn(GLenum mode,
                         GLsizei count,
@@ -112,20 +120,21 @@ class GL_EXPORT RealGLApi : public GLApiBase {
   void glClearDepthFn(GLclampd depth) override;
   void glDepthRangeFn(GLclampd z_near, GLclampd z_far) override;
 
-  void InitializeFilteredExtensions();
+  void set_gl_workarounds(const GLWorkarounds& workarounds);
   void set_version(std::unique_ptr<GLVersionInfo> version);
+  void ClearCachedGLExtensions();
 
  private:
-  // Filtered GL_EXTENSIONS we return to glGetString(i) calls.
+  // Compute |filtered_exts_| & |filtered_exts_str_| from |disabled_ext_|.
+  void InitializeFilteredExtensionsIfNeeded();
+
   std::vector<std::string> disabled_exts_;
+  // Filtered GL_EXTENSIONS we return to glGetString(i) calls.
   std::vector<std::string> filtered_exts_;
   std::string filtered_exts_str_;
 
+  GLWorkarounds gl_workarounds_;
   std::unique_ptr<GLVersionInfo> version_;
-
-#if DCHECK_IS_ON()
-  bool filtered_exts_initialized_;
-#endif
 };
 
 // Inserts a TRACE for every GL call.

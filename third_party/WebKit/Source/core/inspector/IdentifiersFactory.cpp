@@ -27,11 +27,12 @@
 
 #include "core/dom/WeakIdentifierMap.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameClient.h"
 #include "core/inspector/InspectedFrames.h"
 #include "core/loader/DocumentLoader.h"
+#include "platform/wtf/Assertions.h"
+#include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/Platform.h"
-#include "wtf/Assertions.h"
-#include "wtf/text/StringBuilder.h"
 
 namespace blink {
 
@@ -54,18 +55,19 @@ String IdentifiersFactory::RequestId(unsigned long identifier) {
 
 // static
 String IdentifiersFactory::FrameId(LocalFrame* frame) {
-  return AddProcessIdPrefixTo(WeakIdentifierMap<LocalFrame>::Identifier(frame));
+  if (!frame)
+    return g_empty_string;
+  return frame->GetInstrumentationToken();
 }
 
 // static
 LocalFrame* IdentifiersFactory::FrameById(InspectedFrames* inspected_frames,
                                           const String& frame_id) {
-  bool ok;
-  int id = RemoveProcessIdPrefixFrom(frame_id, &ok);
-  if (!ok)
-    return nullptr;
-  LocalFrame* frame = WeakIdentifierMap<LocalFrame>::Lookup(id);
-  return frame && inspected_frames->Contains(frame) ? frame : nullptr;
+  for (auto* frame : *inspected_frames) {
+    if (frame->Client() && frame->GetInstrumentationToken() == frame_id)
+      return frame;
+  }
+  return nullptr;
 }
 
 // static
@@ -89,9 +91,7 @@ DocumentLoader* IdentifiersFactory::LoaderById(
 
 // static
 String IdentifiersFactory::AddProcessIdPrefixTo(int id) {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      uint32_t, process_id,
-      new uint32_t(Platform::Current()->GetUniqueIdForProcess()));
+  static uint32_t process_id = Platform::Current()->GetUniqueIdForProcess();
 
   StringBuilder builder;
 
@@ -104,7 +104,7 @@ String IdentifiersFactory::AddProcessIdPrefixTo(int id) {
 
 // static
 int IdentifiersFactory::RemoveProcessIdPrefixFrom(const String& id, bool* ok) {
-  size_t dot_index = id.Find('.');
+  size_t dot_index = id.find('.');
 
   if (dot_index == kNotFound) {
     *ok = false;

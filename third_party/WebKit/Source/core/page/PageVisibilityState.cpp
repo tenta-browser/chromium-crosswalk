@@ -29,6 +29,8 @@
  */
 
 #include "core/page/PageVisibilityState.h"
+#include "platform/wtf/Assertions.h"
+#include "public/platform/WebPageVisibilityState.h"
 
 namespace blink {
 
@@ -42,8 +44,13 @@ String PageVisibilityStateString(PageVisibilityState state) {
       return "prerender";
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return String();
 }
+
+STATIC_ASSERT_ENUM(kWebPageVisibilityStateVisible, kPageVisibilityStateVisible);
+STATIC_ASSERT_ENUM(kWebPageVisibilityStateHidden, kPageVisibilityStateHidden);
+STATIC_ASSERT_ENUM(kWebPageVisibilityStatePrerender,
+                   kPageVisibilityStatePrerender);
 
 }  // namespace blink

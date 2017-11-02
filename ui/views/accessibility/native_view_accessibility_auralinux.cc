@@ -72,6 +72,11 @@ class AuraLinuxApplication
 
   const ui::AXNodeData& GetData() const override { return data_; }
 
+  const ui::AXTreeData& GetTreeData() const override {
+    CR_DEFINE_STATIC_LOCAL(ui::AXTreeData, empty_data, ());
+    return empty_data;
+  }
+
   gfx::NativeWindow GetTopLevelWidget() override { return nullptr; }
 
   gfx::NativeViewAccessible GetParent() override {
@@ -101,6 +106,15 @@ class AuraLinuxApplication
     return nullptr;
   }
 
+  bool IsOffscreen() const override {
+    // TODO: need to implement.
+    return false;
+  }
+
+  int GetIndexInParent() const override { return -1; }
+
+  ui::AXPlatformNode* GetFromNodeID(int32_t id) override { return nullptr; }
+
   gfx::AcceleratedWidget GetTargetForNativeAccessibilityEvent() override {
     return gfx::kNullAcceleratedWidget;
   }
@@ -108,6 +122,8 @@ class AuraLinuxApplication
   bool AccessibilityPerformAction(const ui::AXActionData& data) override {
     return false;
   }
+
+  bool ShouldIgnoreHoveredStateForTesting() override { return false; }
 
  private:
   friend struct base::DefaultSingletonTraits<AuraLinuxApplication>;
@@ -122,12 +138,7 @@ class AuraLinuxApplication
     }
     ui::AXPlatformNodeAuraLinux::SetApplication(platform_node_);
     if (ViewsDelegate::GetInstance()) {
-      // This should be on the a blocking pool thread so that we can open
-      // libatk-bridge.so without blocking this thread.
-      scoped_refptr<base::TaskRunner> init_task_runner =
-          ViewsDelegate::GetInstance()->GetBlockingPoolTaskRunner();
-      if (init_task_runner)
-        ui::AXPlatformNodeAuraLinux::StaticInitialize(init_task_runner);
+      ui::AXPlatformNodeAuraLinux::StaticInitialize();
     }
   }
 

@@ -45,6 +45,8 @@ class GL_EXPORT GLImageIOSurface : public GLImage {
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
   bool BindTexImage(unsigned target) override;
+  bool BindTexImageWithInternalformat(unsigned target,
+                                      unsigned internalformat) override;
   void ReleaseTexImage(unsigned target) override {}
   bool CopyTexImage(unsigned target) override;
   bool CopyTexSubImage(unsigned target,
@@ -68,6 +70,11 @@ class GL_EXPORT GLImageIOSurface : public GLImage {
   // Whether checking IOSurfaceIsInUse() will actually provide a meaningful
   // signal about whether the Window Server is still using the IOSurface.
   bool CanCheckIOSurfaceIsInUse() const;
+
+  // For IOSurfaces that need manual conversion to a GL texture before being
+  // sampled from, specify the color space in which to do the required YUV to
+  // RGB transformation.
+  void SetColorSpaceForYUVToRGBConversion(const gfx::ColorSpace& color_space);
 
   static unsigned GetInternalFormatForTesting(gfx::BufferFormat format);
 
@@ -95,6 +102,8 @@ class GL_EXPORT GLImageIOSurface : public GLImage {
   base::ScopedCFTypeRef<CVPixelBufferRef> cv_pixel_buffer_;
   gfx::GenericSharedMemoryId io_surface_id_;
   base::ThreadChecker thread_checker_;
+  // The default value of Rec. 601 is based on historical shader code.
+  gfx::ColorSpace color_space_for_yuv_to_rgb_ = gfx::ColorSpace::CreateREC601();
 
   DISALLOW_COPY_AND_ASSIGN(GLImageIOSurface);
 };

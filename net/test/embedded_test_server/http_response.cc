@@ -6,6 +6,7 @@
 
 #include "base/format_macros.h"
 #include "base/logging.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "net/http/http_status_code.h"
 
@@ -24,10 +25,18 @@ RawHttpResponse::~RawHttpResponse() {}
 void RawHttpResponse::SendResponse(const SendBytesCallback& send,
                                    const SendCompleteCallback& done) {
   std::string response;
-  if (!headers_.empty())
-    response = headers_ + "\r\n" + contents_;
-  else
+  if (!headers_.empty()) {
+    response = headers_;
+    // LocateEndOfHeadersHelper() searches for the first "\n\n" and "\n\r\n" as
+    // the end of the header.
+    std::size_t index = response.find_last_not_of("\r\n");
+    if (index != std::string::npos)
+      response.erase(index + 1);
+    response += "\n\n";
+    response += contents_;
+  } else {
     response = contents_;
+  }
   send.Run(response, done);
 }
 

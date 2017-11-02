@@ -40,6 +40,7 @@ class ClientPolicyController {
 
   // Returns whether pages for |name_space| should be removed on cache reset.
   bool IsRemovedOnCacheReset(const std::string& name_space) const;
+  const std::vector<std::string>& GetNamespacesRemovedOnCacheReset() const;
 
   // Returns whether pages for |name_space| are shown in Download UI.
   bool IsSupportedByDownload(const std::string& name_space) const;
@@ -56,6 +57,14 @@ class ClientPolicyController {
   bool IsRestrictedToOriginalTab(const std::string& name_space) const;
   const std::vector<std::string>& GetNamespacesRestrictedToOriginalTab() const;
 
+  bool IsDisabledWhenPrefetchDisabled(const std::string& name_space) const;
+  const std::vector<std::string>& GetNamespacesDisabledWhenPrefetchDisabled()
+      const;
+
+  // Returns whether pages for |name_space| originate from suggested URLs and
+  // are downloaded on behalf of user.
+  bool IsSuggested(const std::string& name_space) const;
+
   void AddPolicyForTest(const std::string& name_space,
                         const OfflinePageClientPolicyBuilder& builder);
 
@@ -65,9 +74,13 @@ class ClientPolicyController {
   std::map<std::string, OfflinePageClientPolicy> policies_;
 
   // Memoizing results.
+  mutable std::unique_ptr<std::vector<std::string>>
+      cache_reset_namespace_cache_;
   mutable std::unique_ptr<std::vector<std::string>> download_namespace_cache_;
   mutable std::unique_ptr<std::vector<std::string>> recent_tab_namespace_cache_;
   mutable std::unique_ptr<std::vector<std::string>> show_in_original_tab_cache_;
+  mutable std::unique_ptr<std::vector<std::string>>
+      disabled_when_prefetch_disabled_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientPolicyController);
 };

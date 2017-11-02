@@ -76,8 +76,8 @@ Polymer({
     if (selected == this.notFoundValue_)
       return;
 
-    var prefValue = Settings.PrefUtil.stringToPrefValue(
-        selected, assert(this.pref));
+    var prefValue =
+        Settings.PrefUtil.stringToPrefValue(selected, assert(this.pref));
     if (prefValue !== undefined)
       this.set('pref.value', prefValue);
   },
@@ -97,11 +97,11 @@ Polymer({
 
     // Wait for the dom-repeat to populate the <select> before setting
     // <select>#value so the correct option gets selected.
-    this.async(function() {
+    this.async(() => {
       this.$.dropdownMenu.value = option == undefined ?
           this.notFoundValue_ :
           Settings.PrefUtil.prefToString(assert(this.pref));
-    }.bind(this));
+    });
   },
 
   /**

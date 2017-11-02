@@ -13,7 +13,6 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/profiler/scoped_tracker.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/pepper/content_browser_pepper_host_factory.h"
 #include "content/browser/renderer_host/pepper/pepper_socket_utils.h"
@@ -53,7 +52,7 @@ using ppapi::TCPSocketVersion;
 
 namespace {
 
-size_t g_num_instances = 0;
+size_t g_num_tcp_filter_instances = 0;
 
 }  // namespace
 
@@ -86,7 +85,9 @@ PepperTCPSocketMessageFilter::PepperTCPSocketMessageFilter(
       is_potentially_secure_plugin_context_(
           host->IsPotentiallySecurePluginContext(instance)) {
   DCHECK(host);
-  ++g_num_instances;
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+
+  ++g_num_tcp_filter_instances;
   host_->AddInstanceObserver(instance_, this);
   if (!host->GetRenderFrameIDsForInstance(
           instance, &render_process_id_, &render_frame_id_)) {
@@ -122,8 +123,9 @@ PepperTCPSocketMessageFilter::PepperTCPSocketMessageFilter(
           host->IsPotentiallySecurePluginContext(instance)) {
   DCHECK(host);
   DCHECK_NE(version, ppapi::TCP_SOCKET_VERSION_1_0);
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  ++g_num_instances;
+  ++g_num_tcp_filter_instances;
   host_->AddInstanceObserver(instance_, this);
   if (!host->GetRenderFrameIDsForInstance(
           instance, &render_process_id_, &render_frame_id_)) {
@@ -132,18 +134,19 @@ PepperTCPSocketMessageFilter::PepperTCPSocketMessageFilter(
 }
 
 PepperTCPSocketMessageFilter::~PepperTCPSocketMessageFilter() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (host_)
     host_->RemoveInstanceObserver(instance_, this);
   if (socket_)
     socket_->Close();
   if (ssl_socket_)
     ssl_socket_->Disconnect();
-  --g_num_instances;
+  --g_num_tcp_filter_instances;
 }
 
 // static
 size_t PepperTCPSocketMessageFilter::GetNumInstances() {
-  return g_num_instances;
+  return g_num_tcp_filter_instances;
 }
 
 scoped_refptr<base::TaskRunner>
@@ -203,6 +206,7 @@ void PepperTCPSocketMessageFilter::OnThrottleStateChanged(bool is_throttled) {
 }
 
 void PepperTCPSocketMessageFilter::OnHostDestroyed() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   host_->RemoveInstanceObserver(instance_, this);
   host_ = nullptr;
 }
@@ -228,12 +232,10 @@ int32_t PepperTCPSocketMessageFilter::OnMsgBind(
 
   bind_input_addr_ = net_addr;
 
-  BrowserThread::PostTask(BrowserThread::IO,
-                          FROM_HERE,
-                          base::Bind(&PepperTCPSocketMessageFilter::DoBind,
-                                     this,
-                                     context->MakeReplyMessageContext(),
-                                     net_addr));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&PepperTCPSocketMessageFilter::DoBind, this,
+                     context->MakeReplyMessageContext(), net_addr));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -267,14 +269,11 @@ int32_t PepperTCPSocketMessageFilter::OnMsgConnect(
   if (!browser_context || !browser_context->GetResourceContext())
     return PP_ERROR_FAILED;
 
-  BrowserThread::PostTask(BrowserThread::IO,
-                          FROM_HERE,
-                          base::Bind(&PepperTCPSocketMessageFilter::DoConnect,
-                                     this,
-                                     context->MakeReplyMessageContext(),
-                                     host,
-                                     port,
-                                     browser_context->GetResourceContext()));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&PepperTCPSocketMessageFilter::DoConnect, this,
+                     context->MakeReplyMessageContext(), host, port,
+                     browser_context->GetResourceContext()));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -295,12 +294,9 @@ int32_t PepperTCPSocketMessageFilter::OnMsgConnectWithNetAddress(
   }
 
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&PepperTCPSocketMessageFilter::DoConnectWithNetAddress,
-                 this,
-                 context->MakeReplyMessageContext(),
-                 net_addr));
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&PepperTCPSocketMessageFilter::DoConnectWithNetAddress,
+                     this, context->MakeReplyMessageContext(), net_addr));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -447,12 +443,10 @@ int32_t PepperTCPSocketMessageFilter::OnMsgListen(
     return PP_ERROR_NOACCESS;
   }
 
-  BrowserThread::PostTask(BrowserThread::IO,
-                          FROM_HERE,
-                          base::Bind(&PepperTCPSocketMessageFilter::DoListen,
-                                     this,
-                                     context->MakeReplyMessageContext(),
-                                     backlog));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&PepperTCPSocketMessageFilter::DoListen, this,
+                     context->MakeReplyMessageContext(), backlog));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -580,7 +574,7 @@ void PepperTCPSocketMessageFilter::DoBind(
 
   int pp_result = PP_OK;
   do {
-    std::vector<uint8_t> address;
+    net::IPAddressBytes address;
     uint16_t port;
     if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(
             net_addr, &address, &port)) {
@@ -665,7 +659,7 @@ void PepperTCPSocketMessageFilter::DoConnectWithNetAddress(
 
   state_.SetPendingTransition(TCPSocketState::CONNECT);
 
-  std::vector<uint8_t> address;
+  net::IPAddressBytes address;
   uint16_t port;
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(
           net_addr, &address, &port)) {
@@ -803,11 +797,6 @@ void PepperTCPSocketMessageFilter::OnConnectCompleted(
     const ppapi::host::ReplyMessageContext& context,
     int net_result) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  // TODO(rvargas): Remove ScopedTracker below once crbug.com/462784 is fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "462784 PepperTCPSocketMessageFilter::OnConnectCompleted"));
 
   if (!state_.IsPending(TCPSocketState::CONNECT)) {
     DCHECK(state_.state() == TCPSocketState::CLOSED);
@@ -962,9 +951,10 @@ void PepperTCPSocketMessageFilter::OpenFirewallHole(
   pepper_socket_utils::FirewallHoleOpenCallback callback =
       base::Bind(&PepperTCPSocketMessageFilter::OnFirewallHoleOpened, this,
                  context, pp_result);
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&pepper_socket_utils::OpenTCPFirewallHole,
-                                     local_addr, callback));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&pepper_socket_utils::OpenTCPFirewallHole, local_addr,
+                     callback));
 }
 
 void PepperTCPSocketMessageFilter::OnFirewallHoleOpened(
@@ -976,8 +966,8 @@ void PepperTCPSocketMessageFilter::OnFirewallHoleOpened(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&PepperTCPSocketMessageFilter::OnListenCompleted, this,
-                 context, result));
+      base::BindOnce(&PepperTCPSocketMessageFilter::OnListenCompleted, this,
+                     context, result));
 }
 #endif  // defined(OS_CHROMEOS)
 

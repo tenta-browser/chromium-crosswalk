@@ -7,7 +7,6 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <map>
 #include <set>
 #include <string>
@@ -15,12 +14,12 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/containers/circular_deque.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_database.h"
-#include "content/browser/service_worker/service_worker_database_task_manager.h"
 #include "content/browser/service_worker/service_worker_metrics.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/content_export.h"
@@ -29,7 +28,6 @@
 
 namespace base {
 class SequencedTaskRunner;
-class SingleThreadTaskRunner;
 }
 
 namespace storage {
@@ -53,7 +51,7 @@ struct ServiceWorkerRegistrationInfo;
 // disabled and all subsequent requests are aborted until the context core is
 // restarted.
 class CONTENT_EXPORT ServiceWorkerStorage
-    : NON_EXPORTED_BASE(public ServiceWorkerVersion::Listener) {
+    : public ServiceWorkerVersion::Listener {
  public:
   typedef std::vector<ServiceWorkerDatabase::ResourceRecord> ResourceList;
   typedef base::Callback<void(ServiceWorkerStatusCode status)> StatusCallback;
@@ -82,8 +80,7 @@ class CONTENT_EXPORT ServiceWorkerStorage
   static std::unique_ptr<ServiceWorkerStorage> Create(
       const base::FilePath& path,
       const base::WeakPtr<ServiceWorkerContextCore>& context,
-      std::unique_ptr<ServiceWorkerDatabaseTaskManager> database_task_manager,
-      const scoped_refptr<base::SingleThreadTaskRunner>& disk_cache_thread,
+      scoped_refptr<base::SequencedTaskRunner> database_task_runner,
       storage::QuotaManagerProxy* quota_manager_proxy,
       storage::SpecialStoragePolicy* special_storage_policy);
 
@@ -181,11 +178,15 @@ class CONTENT_EXPORT ServiceWorkerStorage
 
   // Provide a storage mechanism to read/write arbitrary data associated with
   // a registration. Each registration has its own key namespace.
-  // GetUserData responds OK only if all keys are found; otherwise NOT_FOUND,
-  // and the callback's data will be empty.
+  // GetUserData/GetUserDataByKeyPrefix responds OK only if all keys are found;
+  // otherwise NOT_FOUND, and the callback's data will be empty.
   void GetUserData(int64_t registration_id,
                    const std::vector<std::string>& keys,
                    const GetUserDataCallback& callback);
+  void GetUserDataByKeyPrefix(int64_t registration_id,
+                              const std::string& key_prefix,
+                              const GetUserDataCallback& callback);
+
   // Stored data is deleted when the associated registraton is deleted.
   void StoreUserData(
       int64_t registration_id,
@@ -196,10 +197,20 @@ class CONTENT_EXPORT ServiceWorkerStorage
   void ClearUserData(int64_t registration_id,
                      const std::vector<std::string>& keys,
                      const StatusCallback& callback);
+  // Responds OK if all are successfully deleted or not found in the database.
+  // Neither |key_prefixes| nor the prefixes within can be empty.
+  void ClearUserDataByKeyPrefixes(int64_t registration_id,
+                                  const std::vector<std::string>& key_prefixes,
+                                  const StatusCallback& callback);
   // Responds with all registrations that have user data with a particular key,
   // as well as that user data.
   void GetUserDataForAllRegistrations(
       const std::string& key,
+      const GetUserDataForAllRegistrationsCallback& callback);
+  // Responds with all registrations that have user data with a particular key,
+  // as well as that user data.
+  void GetUserDataForAllRegistrationsByKeyPrefix(
+      const std::string& key_prefix,
       const GetUserDataForAllRegistrationsCallback& callback);
 
   // Returns true if any service workers at |origin| have registered for foreign
@@ -210,8 +221,8 @@ class CONTENT_EXPORT ServiceWorkerStorage
   void DeleteAndStartOver(const StatusCallback& callback);
 
   // Returns a new registration id which is guaranteed to be unique in the
-  // storage. Returns kInvalidServiceWorkerRegistrationId if the storage is
-  // disabled.
+  // storage. Returns blink::mojom::kInvalidServiceWorkerRegistrationId if the
+  // storage is disabled.
   int64_t NewRegistrationId();
 
   // Returns a new version id which is guaranteed to be unique in the storage.
@@ -239,36 +250,14 @@ class CONTENT_EXPORT ServiceWorkerStorage
   // |resources| must already be on the purgeable list.
   void PurgeResources(const ResourceList& resources);
 
+  bool LazyInitializeForTest(base::OnceClosure callback);
+
  private:
-  friend class ForeignFetchRequestHandlerTest;
-  friend class ServiceWorkerDispatcherHostTest;
-  friend class ServiceWorkerHandleTest;
   friend class ServiceWorkerStorageTest;
-  friend class ServiceWorkerStorageOriginTrialsTest;
-  friend class ServiceWorkerRegistrationTest;
   friend class ServiceWorkerResourceStorageTest;
-  friend class ServiceWorkerControlleeRequestHandlerTest;
-  friend class ServiceWorkerContextRequestHandlerTest;
-  friend class ServiceWorkerReadFromCacheJobTest;
-  friend class ServiceWorkerRequestHandlerTest;
-  friend class ServiceWorkerURLRequestJobTest;
-  friend class ServiceWorkerVersionBrowserTest;
-  friend class ServiceWorkerVersionTest;
   friend class ServiceWorkerWriteToCacheJobTest;
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDispatcherHostTest,
-                           CleanupOnRendererCrash);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageTest,
-                           DeleteRegistration_NoLiveVersion);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageTest,
-                           DeleteRegistration_WaitingVersion);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageTest,
-                           DeleteRegistration_ActiveVersion);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageTest,
-                           UpdateRegistration);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageDiskTest,
                            CleanupOnRestart);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageDiskTest,
-                           ClearOnExit);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageDiskTest,
                            DeleteAndStartOver);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerResourceStorageDiskTest,
@@ -344,16 +333,14 @@ class CONTENT_EXPORT ServiceWorkerStorage
   ServiceWorkerStorage(
       const base::FilePath& path,
       base::WeakPtr<ServiceWorkerContextCore> context,
-      std::unique_ptr<ServiceWorkerDatabaseTaskManager> database_task_manager,
-      const scoped_refptr<base::SingleThreadTaskRunner>& disk_cache_thread,
+      scoped_refptr<base::SequencedTaskRunner> database_task_runner,
       storage::QuotaManagerProxy* quota_manager_proxy,
       storage::SpecialStoragePolicy* special_storage_policy);
 
   base::FilePath GetDatabasePath();
   base::FilePath GetDiskCachePath();
 
-  bool LazyInitialize(
-      const base::Closure& callback);
+  bool LazyInitialize(base::OnceClosure callback);
   void DidReadInitialData(std::unique_ptr<InitialData> data,
                           ServiceWorkerDatabase::Status status);
   void DidFindRegistrationForDocument(
@@ -499,10 +486,21 @@ class CONTENT_EXPORT ServiceWorkerStorage
       int64_t registration_id,
       const std::vector<std::string>& keys,
       const GetUserDataInDBCallback& callback);
+  static void GetUserDataByKeyPrefixInDB(
+      ServiceWorkerDatabase* database,
+      scoped_refptr<base::SequencedTaskRunner> original_task_runner,
+      int64_t registration_id,
+      const std::string& key_prefix,
+      const GetUserDataInDBCallback& callback);
   static void GetUserDataForAllRegistrationsInDB(
       ServiceWorkerDatabase* database,
       scoped_refptr<base::SequencedTaskRunner> original_task_runner,
       const std::string& key,
+      const GetUserDataForAllRegistrationsInDBCallback& callback);
+  static void GetUserDataForAllRegistrationsByKeyPrefixInDB(
+      ServiceWorkerDatabase* database,
+      scoped_refptr<base::SequencedTaskRunner> original_task_runner,
+      const std::string& key_prefix,
       const GetUserDataForAllRegistrationsInDBCallback& callback);
   static void DeleteAllDataForOriginsFromDB(
       ServiceWorkerDatabase* database,
@@ -510,9 +508,13 @@ class CONTENT_EXPORT ServiceWorkerStorage
 
   bool IsDisabled() const;
   void ScheduleDeleteAndStartOver();
-  void DidDeleteDatabase(
-      const StatusCallback& callback,
-      ServiceWorkerDatabase::Status status);
+
+  // Posted by the underlying cache implementation after it finishes making
+  // disk changes upon its destruction.
+  void DiskCacheImplDoneWithDisk();
+  void DidDeleteDatabase(const StatusCallback& callback,
+                         ServiceWorkerDatabase::Status status);
+  // Posted when we finish deleting the cache directory.
   void DidDeleteDiskCache(
       const StatusCallback& callback,
       bool result);
@@ -526,7 +528,7 @@ class CONTENT_EXPORT ServiceWorkerStorage
   std::set<GURL> foreign_fetch_origins_;
 
   // Pending database tasks waiting for initialization.
-  std::vector<base::Closure> pending_tasks_;
+  std::vector<base::OnceClosure> pending_tasks_;
 
   int64_t next_registration_id_;
   int64_t next_version_id_;
@@ -540,22 +542,34 @@ class CONTENT_EXPORT ServiceWorkerStorage
   };
   State state_;
 
+  // non-null between when DeleteAndStartOver() is called and when the
+  // underlying disk cache stops using the disk.
+  StatusCallback delete_and_start_over_callback_;
+
+  // This is set when we know that a call to Disable() will result in
+  // DiskCacheImplDoneWithDisk() eventually called. This might not happen
+  // for many reasons:
+  // 1) A previous call to Disable() may have already triggered that.
+  // 2) We may be using a memory backend.
+  // 3) |disk_cache_| might not have been created yet.
+  // ... so it's easier to keep track of the case when it will happen.
+  bool expecting_done_with_disk_on_disable_;
+
   base::FilePath path_;
 
   // The context should be valid while the storage is alive.
   base::WeakPtr<ServiceWorkerContextCore> context_;
 
-  // Only accessed using |database_task_manager_|.
+  // |database_| is only accessed using |database_task_runner_|.
   std::unique_ptr<ServiceWorkerDatabase> database_;
+  scoped_refptr<base::SequencedTaskRunner> database_task_runner_;
 
-  std::unique_ptr<ServiceWorkerDatabaseTaskManager> database_task_manager_;
-  scoped_refptr<base::SingleThreadTaskRunner> disk_cache_thread_;
   scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy_;
   scoped_refptr<storage::SpecialStoragePolicy> special_storage_policy_;
 
   std::unique_ptr<ServiceWorkerDiskCache> disk_cache_;
 
-  std::deque<int64_t> purgeable_resource_ids_;
+  base::circular_deque<int64_t> purgeable_resource_ids_;
   bool is_purge_pending_;
   bool has_checked_for_stale_resources_;
   std::set<int64_t> pending_deletions_;

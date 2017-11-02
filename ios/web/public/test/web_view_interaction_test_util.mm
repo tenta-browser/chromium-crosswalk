@@ -14,6 +14,10 @@
 #import "ios/web/web_state/ui/crw_web_view_proxy_impl.h"
 #import "ios/web/web_state/web_state_impl.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 using web::NavigationManager;
 
 namespace web {
@@ -30,7 +34,7 @@ std::unique_ptr<base::Value> ExecuteJavaScript(web::WebState* web_state,
   __block std::unique_ptr<base::Value> result;
   __block bool did_finish = false;
   web_state->ExecuteJavaScript(base::UTF8ToUTF16(script),
-                               base::BindBlock(^(const base::Value* value) {
+                               base::BindBlockArc(^(const base::Value* value) {
                                  if (value)
                                    result = value->CreateDeepCopy();
                                  did_finish = true;
@@ -46,13 +50,16 @@ std::unique_ptr<base::Value> ExecuteJavaScript(web::WebState* web_state,
 
   // As result is marked __block, this return call does a copy and not a move
   // (marking the variable as __block mean it is allocated in the block object
-  // and not the stack). Since the "return std::move()" pattern is discouraged
-  // use a local variable.
+  // and not the stack). Use an explicit move to a local variable.
   //
-  // Fixes the following compilation failure:
-  //   ../web_view_matchers.mm:ll:cc: error: call to implicitly-deleted copy
-  //       constructor of 'std::unique_ptr<base::Value>'
-  // TODO(crbug.com/703565): remove std::move() once Xcode 9.0+ is required.
+  // Fixes the following compilation failures:
+  //   ../web_view_interaction_test_util.mm:58:10: error:
+  //       call to implicitly-deleted copy constructor of
+  //       'std::unique_ptr<base::Value>'
+  //
+  //   ../web_view_interaction_test_util.mm:58:10: error:
+  //       moving a local object in a return statement prevents copy elision
+  //       [-Werror,-Wpessimizing-move]
   std::unique_ptr<base::Value> stack_result = std::move(result);
   return stack_result;
 }

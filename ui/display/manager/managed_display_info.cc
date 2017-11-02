@@ -6,16 +6,19 @@
 
 #include <stdio.h>
 
-#include <algorithm>
 #include <string>
 #include <vector>
 
+#include "base/format_macros.h"
+#include "base/hash.h"
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "ui/display/display.h"
+#include "ui/events/devices/touchscreen_device.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/size_f.h"
 
@@ -33,7 +36,8 @@ const int64_t kSynthesizedDisplayIdStart = 2200000000LL;
 int64_t synthesized_display_id = kSynthesizedDisplayIdStart;
 
 const float kDpi96 = 96.0;
-bool use_125_dsf_for_ui_scaling = true;
+
+constexpr char kFallbackTouchDeviceName[] = "fallback_touch_device_name";
 
 // Check the content of |spec| and fill |bounds| and |device_scale_factor|.
 // Returns true when |bounds| is found.
@@ -86,6 +90,25 @@ TouchCalibrationData::TouchCalibrationData(
     const TouchCalibrationData& calibration_data)
     : point_pairs(calibration_data.point_pairs),
       bounds(calibration_data.bounds) {}
+
+// static
+uint32_t TouchCalibrationData::GenerateTouchDeviceIdentifier(
+    const ui::TouchscreenDevice& device) {
+  std::string hash_str = device.name + "-" +
+                         base::UintToString(device.vendor_id) + "-" +
+                         base::UintToString(device.product_id);
+  return base::PersistentHash(hash_str);
+}
+
+// static
+uint32_t TouchCalibrationData::GetFallbackTouchDeviceIdentifier() {
+  ui::TouchscreenDevice device;
+  device.name = kFallbackTouchDeviceName;
+  device.vendor_id = device.product_id = 0;
+  static const uint32_t kFallbackTouchDeviceIdentifier =
+      GenerateTouchDeviceIdentifier(device);
+  return kFallbackTouchDeviceIdentifier;
+}
 
 bool TouchCalibrationData::operator==(TouchCalibrationData other) const {
   if (bounds != other.bounds)
@@ -146,8 +169,7 @@ gfx::Size ManagedDisplayMode::GetSizeInDIP(bool is_internal) const {
   size_dip.Scale(ui_scale_);
   // DSF=1.25 is special on internal display. The screen is drawn with DSF=1.25
   // but it doesn't affect the screen size computation.
-  if (use_125_dsf_for_ui_scaling && is_internal &&
-      device_scale_factor_ == 1.25f)
+  if (is_internal && device_scale_factor_ == 1.25f)
     return gfx::ToFlooredSize(size_dip);
   size_dip.Scale(1.0f / device_scale_factor_);
   return gfx::ToFlooredSize(size_dip);
@@ -260,9 +282,9 @@ ManagedDisplayInfo ManagedDisplayInfo::CreateFromSpecWithID(
           highest_refresh_rate = refresh_rate;
           native_mode = i;
         }
-        display_modes.push_back(make_scoped_refptr(
-            new ManagedDisplayMode(size, refresh_rate, is_interlaced, false,
-                                   1.0, device_scale_factor)));
+        display_modes.push_back(base::MakeRefCounted<ManagedDisplayMode>(
+            size, refresh_rate, is_interlaced, false, 1.0,
+            device_scale_factor));
       }
     }
     scoped_refptr<ManagedDisplayMode> dm = display_modes[native_mode];
@@ -294,25 +316,18 @@ ManagedDisplayInfo ManagedDisplayInfo::CreateFromSpecWithID(
   return display_info;
 }
 
-// static
-void ManagedDisplayInfo::SetUse125DSFForUIScalingForTest(bool enable) {
-  use_125_dsf_for_ui_scaling = enable;
-}
-
 ManagedDisplayInfo::ManagedDisplayInfo()
     : id_(kInvalidDisplayId),
       has_overscan_(false),
       active_rotation_source_(Display::ROTATION_SOURCE_UNKNOWN),
       touch_support_(Display::TOUCH_SUPPORT_UNKNOWN),
-      has_touch_calibration_data_(false),
       device_scale_factor_(1.0f),
       device_dpi_(kDpi96),
       overscan_insets_in_dip_(0, 0, 0, 0),
       configured_ui_scale_(1.0f),
       native_(false),
       is_aspect_preserving_scaling_(false),
-      clear_overscan_insets_(false),
-      color_profile_(COLOR_PROFILE_STANDARD) {}
+      clear_overscan_insets_(false) {}
 
 ManagedDisplayInfo::ManagedDisplayInfo(int64_t id,
                                        const std::string& name,
@@ -322,15 +337,13 @@ ManagedDisplayInfo::ManagedDisplayInfo(int64_t id,
       has_overscan_(has_overscan),
       active_rotation_source_(Display::ROTATION_SOURCE_UNKNOWN),
       touch_support_(Display::TOUCH_SUPPORT_UNKNOWN),
-      has_touch_calibration_data_(false),
       device_scale_factor_(1.0f),
       device_dpi_(kDpi96),
       overscan_insets_in_dip_(0, 0, 0, 0),
       configured_ui_scale_(1.0f),
       native_(false),
       is_aspect_preserving_scaling_(false),
-      clear_overscan_insets_(false),
-      color_profile_(COLOR_PROFILE_STANDARD) {}
+      clear_overscan_insets_(false) {}
 
 ManagedDisplayInfo::ManagedDisplayInfo(const ManagedDisplayInfo& other) =
     default;
@@ -362,7 +375,7 @@ void ManagedDisplayInfo::Copy(const ManagedDisplayInfo& native_info) {
 
   active_rotation_source_ = native_info.active_rotation_source_;
   touch_support_ = native_info.touch_support_;
-  input_devices_ = native_info.input_devices_;
+  touch_device_identifiers_ = native_info.touch_device_identifiers_;
   device_scale_factor_ = native_info.device_scale_factor_;
   DCHECK(!native_info.bounds_in_native_.IsEmpty());
   bounds_in_native_ = native_info.bounds_in_native_;
@@ -370,7 +383,6 @@ void ManagedDisplayInfo::Copy(const ManagedDisplayInfo& native_info) {
   size_in_pixel_ = native_info.size_in_pixel_;
   is_aspect_preserving_scaling_ = native_info.is_aspect_preserving_scaling_;
   display_modes_ = native_info.display_modes_;
-  available_color_profiles_ = native_info.available_color_profiles_;
   maximum_cursor_size_ = native_info.maximum_cursor_size_;
 
   // Rotation, ui_scale, color_profile and overscan are given by preference,
@@ -384,13 +396,10 @@ void ManagedDisplayInfo::Copy(const ManagedDisplayInfo& native_info) {
     else if (!native_info.overscan_insets_in_dip_.IsEmpty())
       overscan_insets_in_dip_ = native_info.overscan_insets_in_dip_;
 
-    has_touch_calibration_data_ = native_info.has_touch_calibration_data_;
-    if (has_touch_calibration_data_)
-      touch_calibration_data_ = native_info.touch_calibration_data_;
+    touch_calibration_data_map_ = native_info.touch_calibration_data_map_;
 
     rotations_ = native_info.rotations_;
     configured_ui_scale_ = native_info.configured_ui_scale_;
-    color_profile_ = native_info.color_profile();
   }
 }
 
@@ -398,6 +407,12 @@ void ManagedDisplayInfo::SetBounds(const gfx::Rect& new_bounds_in_native) {
   bounds_in_native_ = new_bounds_in_native;
   size_in_pixel_ = new_bounds_in_native.size();
   UpdateDisplaySize();
+}
+
+float ManagedDisplayInfo::GetDensityRatio() const {
+  if (Use125DSFForUIScaling() && device_scale_factor_ == 1.25f)
+    return 1.0f;
+  return device_scale_factor_;
 }
 
 float ManagedDisplayInfo::GetEffectiveDeviceScaleFactor() const {
@@ -460,18 +475,13 @@ gfx::Size ManagedDisplayInfo::GetNativeModeSize() const {
 
 std::string ManagedDisplayInfo::ToString() const {
   int rotation_degree = static_cast<int>(GetActiveRotation()) * 90;
-  std::string devices_str;
-
-  for (size_t i = 0; i < input_devices_.size(); ++i) {
-    devices_str += base::IntToString(input_devices_[i]);
-    if (i != input_devices_.size() - 1)
-      devices_str += ", ";
-  }
+  std::string touch_device_count_str =
+      base::UintToString(touch_device_identifiers_.size());
 
   std::string result = base::StringPrintf(
       "ManagedDisplayInfo[%lld] native bounds=%s, size=%s, device-scale=%g, "
       "overscan=%s, rotation=%d, ui-scale=%g, touchscreen=%s, "
-      "input_devices=[%s]",
+      "touch device count=[%" PRIuS "]",
       static_cast<long long int>(id_), bounds_in_native_.ToString().c_str(),
       size_in_pixel_.ToString().c_str(), device_scale_factor_,
       overscan_insets_in_dip_.ToString().c_str(), rotation_degree,
@@ -480,7 +490,7 @@ std::string ManagedDisplayInfo::ToString() const {
           ? "yes"
           : touch_support_ == Display::TOUCH_SUPPORT_UNAVAILABLE ? "no"
                                                                  : "unknown",
-      devices_str.c_str());
+      touch_device_identifiers_.size());
 
   return result;
 }
@@ -500,28 +510,23 @@ std::string ManagedDisplayInfo::ToFullString() const {
   return ToString() + ", display_modes==" + display_modes_str;
 }
 
-void ManagedDisplayInfo::SetColorProfile(ColorCalibrationProfile profile) {
-  if (IsColorProfileAvailable(profile))
-    color_profile_ = profile;
-}
-
-bool ManagedDisplayInfo::IsColorProfileAvailable(
-    ColorCalibrationProfile profile) const {
-  return std::find(available_color_profiles_.begin(),
-                   available_color_profiles_.end(),
-                   profile) != available_color_profiles_.end();
-}
-
 bool ManagedDisplayInfo::Use125DSFForUIScaling() const {
-  return use_125_dsf_for_ui_scaling && Display::IsInternalDisplayId(id_);
+  return Display::IsInternalDisplayId(id_);
 }
 
-void ManagedDisplayInfo::AddInputDevice(int id) {
-  input_devices_.push_back(id);
+void ManagedDisplayInfo::AddTouchDevice(uint32_t touch_device_identifier) {
+  touch_device_identifiers_.insert(touch_device_identifier);
+  set_touch_support(Display::TOUCH_SUPPORT_AVAILABLE);
 }
 
-void ManagedDisplayInfo::ClearInputDevices() {
-  input_devices_.clear();
+void ManagedDisplayInfo::ClearTouchDevices() {
+  touch_device_identifiers_.clear();
+  set_touch_support(Display::TOUCH_SUPPORT_UNAVAILABLE);
+}
+
+bool ManagedDisplayInfo::HasTouchDevice(
+    uint32_t touch_device_identifier) const {
+  return touch_device_identifiers_.count(touch_device_identifier);
 }
 
 void ResetDisplayIdForTest() {
@@ -529,9 +534,49 @@ void ResetDisplayIdForTest() {
 }
 
 void ManagedDisplayInfo::SetTouchCalibrationData(
+    uint32_t touch_device_identifier,
     const TouchCalibrationData& touch_calibration_data) {
-  has_touch_calibration_data_ = true;
-  touch_calibration_data_ = touch_calibration_data;
+  touch_calibration_data_map_[touch_device_identifier] = touch_calibration_data;
+}
+
+const TouchCalibrationData& ManagedDisplayInfo::GetTouchCalibrationData(
+    uint32_t touch_device_identifier) const {
+  DCHECK(HasTouchCalibrationData(touch_device_identifier));
+
+  // If the system does not have the calibration information for the touch
+  // device identified with |touch_device_identifier|, use the fallback
+  // calibration data if availble. This also helps keep support for legacy
+  // touch calibration data which is stored in association with the fallback
+  // device identifier.
+  if (touch_calibration_data_map_.count(
+          TouchCalibrationData::GetFallbackTouchDeviceIdentifier()) &&
+      touch_calibration_data_map_.size() == 1) {
+    return touch_calibration_data_map_.at(
+        TouchCalibrationData::GetFallbackTouchDeviceIdentifier());
+  }
+
+  return touch_calibration_data_map_.at(touch_device_identifier);
+}
+
+void ManagedDisplayInfo::SetTouchCalibrationDataMap(
+    const std::map<uint32_t, TouchCalibrationData>& data_map) {
+  touch_calibration_data_map_ = data_map;
+}
+
+bool ManagedDisplayInfo::HasTouchCalibrationData(
+    uint32_t touch_device_identifier) const {
+  return touch_calibration_data_map_.count(touch_device_identifier) ||
+         touch_calibration_data_map_.count(
+             TouchCalibrationData::GetFallbackTouchDeviceIdentifier());
+}
+
+void ManagedDisplayInfo::ClearTouchCalibrationData(
+    uint32_t touch_device_identifier) {
+  touch_calibration_data_map_.erase(touch_device_identifier);
+}
+
+void ManagedDisplayInfo::ClearAllTouchCalibrationData() {
+  touch_calibration_data_map_.clear();
 }
 
 }  // namespace display

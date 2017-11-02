@@ -22,9 +22,9 @@
 #ifndef SVGFELightElement_h
 #define SVGFELightElement_h
 
-#include "core/SVGNames.h"
 #include "core/svg/SVGAnimatedNumber.h"
 #include "core/svg/SVGElement.h"
+#include "core/svg_names.h"
 #include "platform/graphics/filters/LightSource.h"
 #include "platform/heap/Handle.h"
 
@@ -34,7 +34,7 @@ class Filter;
 
 class SVGFELightElement : public SVGElement {
  public:
-  virtual PassRefPtr<LightSource> GetLightSource(Filter*) const = 0;
+  virtual RefPtr<LightSource> GetLightSource(Filter*) const = 0;
   static SVGFELightElement* FindLightElement(const SVGElement&);
 
   FloatPoint3D GetPosition() const;

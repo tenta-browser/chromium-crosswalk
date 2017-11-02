@@ -115,6 +115,26 @@ class Other : public base::RefCounted<Other> {
   ~Other() {}
 };
 
+class HasPrivateDestructorWithDeleter;
+
+struct Deleter {
+  static void Destruct(const HasPrivateDestructorWithDeleter* x);
+};
+
+class HasPrivateDestructorWithDeleter
+    : public base::RefCounted<HasPrivateDestructorWithDeleter, Deleter> {
+ public:
+  HasPrivateDestructorWithDeleter() {}
+
+ private:
+  friend struct Deleter;
+  ~HasPrivateDestructorWithDeleter() {}
+};
+
+void Deleter::Destruct(const HasPrivateDestructorWithDeleter* x) {
+  delete x;
+}
+
 scoped_refptr<Other> Overloaded(scoped_refptr<Other> other) {
   return other;
 }
@@ -415,6 +435,27 @@ TEST(RefCountedUnitTest, MoveAssignmentDifferentInstances) {
   EXPECT_EQ(2, ScopedRefPtrCountBase::destructor_count());
 }
 
+TEST(RefCountedUnitTest, MoveAssignmentSelfMove) {
+  ScopedRefPtrCountBase::reset_count();
+
+  {
+    ScopedRefPtrCountBase* raw = new ScopedRefPtrCountBase;
+    scoped_refptr<ScopedRefPtrCountBase> p1(raw);
+    scoped_refptr<ScopedRefPtrCountBase>& p1_ref = p1;
+
+    EXPECT_EQ(1, ScopedRefPtrCountBase::constructor_count());
+    EXPECT_EQ(0, ScopedRefPtrCountBase::destructor_count());
+
+    p1 = std::move(p1_ref);
+
+    // |p1| is "valid but unspecified", so don't bother inspecting its
+    // contents, just ensure that we don't crash.
+  }
+
+  EXPECT_EQ(1, ScopedRefPtrCountBase::constructor_count());
+  EXPECT_EQ(1, ScopedRefPtrCountBase::destructor_count());
+}
+
 TEST(RefCountedUnitTest, MoveAssignmentDerived) {
   ScopedRefPtrCountBase::reset_count();
   ScopedRefPtrCountDerived::reset_count();
@@ -542,7 +583,7 @@ TEST(RefCountedUnitTest, TestOverloadResolutionMove) {
 
 TEST(RefCountedUnitTest, TestInitialRefCountIsOne) {
   scoped_refptr<InitialRefCountIsOne> obj =
-      base::MakeShared<InitialRefCountIsOne>();
+      base::MakeRefCounted<InitialRefCountIsOne>();
   EXPECT_TRUE(obj->HasOneRef());
   obj = nullptr;
 
@@ -551,18 +592,30 @@ TEST(RefCountedUnitTest, TestInitialRefCountIsOne) {
   EXPECT_TRUE(obj2->HasOneRef());
   obj2 = nullptr;
 
-  scoped_refptr<Other> obj3 = base::MakeShared<Other>();
+  scoped_refptr<Other> obj3 = base::MakeRefCounted<Other>();
   EXPECT_TRUE(obj3->HasOneRef());
   obj3 = nullptr;
 }
 
 TEST(RefCountedDeathTest, TestAdoptRef) {
-  EXPECT_DCHECK_DEATH(make_scoped_refptr(new InitialRefCountIsOne));
+  // Check that WrapRefCounted() DCHECKs if passed a type that defines
+  // REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE.
+  EXPECT_DCHECK_DEATH(base::WrapRefCounted(new InitialRefCountIsOne));
 
+  // Check that AdoptRef() DCHECKs if passed a nullptr.
   InitialRefCountIsOne* ptr = nullptr;
   EXPECT_DCHECK_DEATH(base::AdoptRef(ptr));
 
+  // Check that AdoptRef() DCHECKs if passed an object that doesn't need to be
+  // adopted.
   scoped_refptr<InitialRefCountIsOne> obj =
-      base::MakeShared<InitialRefCountIsOne>();
+      base::MakeRefCounted<InitialRefCountIsOne>();
   EXPECT_DCHECK_DEATH(base::AdoptRef(obj.get()));
+}
+
+TEST(RefCountedUnitTest, TestPrivateDestructorWithDeleter) {
+  // Ensure that RefCounted doesn't need the access to the pointee dtor when
+  // a custom deleter is given.
+  scoped_refptr<HasPrivateDestructorWithDeleter> obj =
+      base::MakeRefCounted<HasPrivateDestructorWithDeleter>();
 }

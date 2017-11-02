@@ -30,7 +30,7 @@
 #include <libxslt/extensions.h>
 #include <libxslt/extra.h>
 #include <libxslt/xsltutils.h>
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/Assertions.h"
 
 namespace blink {
@@ -75,7 +75,7 @@ static void ExsltNodeSetFunction(xmlXPathParserContextPtr ctxt, int nargs) {
 }
 
 void RegisterXSLTExtensions(xsltTransformContextPtr ctxt) {
-  DCHECK(RuntimeEnabledFeatures::xsltEnabled());
+  DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
   xsltRegisterExtFunction(ctxt, (const xmlChar*)"node-set",
                           (const xmlChar*)"http://exslt.org/common",
                           ExsltNodeSetFunction);

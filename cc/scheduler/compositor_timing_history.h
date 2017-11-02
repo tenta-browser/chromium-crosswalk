@@ -10,7 +10,8 @@
 #include "base/macros.h"
 #include "cc/base/rolling_time_delta_history.h"
 #include "cc/cc_export.h"
-#include "cc/output/begin_frame_args.h"
+#include "cc/tiles/tile_priority.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 
 namespace base {
 namespace trace_event {
@@ -52,12 +53,12 @@ class CC_EXPORT CompositorTimingHistory {
 
   // State that affects when events should be expected/recorded/reported.
   void SetRecordingEnabled(bool enabled);
-  void DidCreateAndInitializeCompositorFrameSink();
+  void DidCreateAndInitializeLayerTreeFrameSink();
 
   // Events to be timed.
   void WillBeginImplFrame(bool new_active_tree_is_likely,
                           base::TimeTicks frame_time,
-                          BeginFrameArgs::BeginFrameArgsType frame_type,
+                          viz::BeginFrameArgs::BeginFrameArgsType frame_type,
                           base::TimeTicks now);
   void WillFinishImplFrame(bool needs_redraw);
   void BeginImplFrameNotExpectedSoon();
@@ -74,13 +75,14 @@ class CC_EXPORT CompositorTimingHistory {
   void DrawAborted();
   void WillDraw();
   void DidDraw(bool used_new_active_tree,
-               bool main_thread_missed_last_deadline,
                base::TimeTicks impl_frame_time);
   void DidSubmitCompositorFrame();
   void DidReceiveCompositorFrameAck();
+  void WillInvalidateOnImplSide();
+  void SetTreePriority(TreePriority priority);
 
  protected:
-  void DidBeginMainFrame();
+  void DidBeginMainFrame(base::TimeTicks begin_main_frame_end_time);
 
   void SetBeginMainFrameNeededContinuously(bool active);
   void SetBeginMainFrameCommittingContinuously(bool active);
@@ -114,19 +116,24 @@ class CC_EXPORT CompositorTimingHistory {
   base::TimeTicks begin_main_frame_frame_time_;
   base::TimeTicks begin_main_frame_sent_time_;
   base::TimeTicks begin_main_frame_start_time_;
-  base::TimeTicks begin_main_frame_end_time_;
   base::TimeTicks pending_tree_main_frame_time_;
+  base::TimeTicks pending_tree_creation_time_;
+  base::TimeTicks pending_tree_ready_to_activate_time_;
   base::TimeTicks prepare_tiles_start_time_;
   base::TimeTicks activate_start_time_;
   base::TimeTicks active_tree_main_frame_time_;
   base::TimeTicks draw_start_time_;
   base::TimeTicks submit_start_time_;
 
+  bool pending_tree_is_impl_side_;
+
   // Watchdog timers.
   bool submit_ack_watchdog_enabled_;
 
   std::unique_ptr<UMAReporter> uma_reporter_;
   RenderingStatsInstrumentation* rendering_stats_instrumentation_;
+
+  TreePriority tree_priority_ = SAME_PRIORITY_FOR_BOTH_TREES;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CompositorTimingHistory);

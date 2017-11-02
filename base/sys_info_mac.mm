@@ -24,6 +24,23 @@
 
 namespace base {
 
+namespace {
+
+// Queries sysctlbyname() for the given key and returns the value from the
+// system or the empty string on failure.
+std::string GetSysctlValue(const char* key_name) {
+  char value[256];
+  size_t len = arraysize(value);
+  if (sysctlbyname(key_name, &value, &len, nullptr, 0) == 0) {
+    DCHECK_GE(len, 1u);
+    DCHECK_EQ('\0', value[len - 1]);
+    return std::string(value, len - 1);
+  }
+  return std::string();
+}
+
+}  // namespace
+
 // static
 std::string SysInfo::OperatingSystemName() {
   return "Mac OS X";
@@ -41,8 +58,15 @@ void SysInfo::OperatingSystemVersionNumbers(int32_t* major_version,
                                             int32_t* minor_version,
                                             int32_t* bugfix_version) {
   NSProcessInfo* processInfo = [NSProcessInfo processInfo];
+  // We should try to avoid using Gestalt here because it has been observed to
+  // spin up threads among other things. Using an availability check here would
+  // prevent us from using the private API in 10.9.2. So use a
+  // respondsToSelector check here instead and silence the warning.
   if ([processInfo respondsToSelector:@selector(operatingSystemVersion)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability"
     NSOperatingSystemVersion version = [processInfo operatingSystemVersion];
+#pragma clang diagnostic pop
     *major_version = version.majorVersion;
     *minor_version = version.minorVersion;
     *bugfix_version = version.patchVersion;
@@ -66,7 +90,7 @@ void SysInfo::OperatingSystemVersionNumbers(int32_t* major_version,
 }
 
 // static
-int64_t SysInfo::AmountOfPhysicalMemory() {
+int64_t SysInfo::AmountOfPhysicalMemoryImpl() {
   struct host_basic_info hostinfo;
   mach_msg_type_number_t count = HOST_BASIC_INFO_COUNT;
   base::mac::ScopedMachSendRight host(mach_host_self());
@@ -83,7 +107,7 @@ int64_t SysInfo::AmountOfPhysicalMemory() {
 }
 
 // static
-int64_t SysInfo::AmountOfAvailablePhysicalMemory() {
+int64_t SysInfo::AmountOfAvailablePhysicalMemoryImpl() {
   SystemMemoryInfoKB info;
   if (!GetSystemMemoryInfo(&info))
     return 0;
@@ -94,19 +118,12 @@ int64_t SysInfo::AmountOfAvailablePhysicalMemory() {
 
 // static
 std::string SysInfo::CPUModelName() {
-  char name[256];
-  size_t len = arraysize(name);
-  if (sysctlbyname("machdep.cpu.brand_string", &name, &len, NULL, 0) == 0)
-    return name;
-  return std::string();
+  return GetSysctlValue("machdep.cpu.brand_string");
 }
 
+// static
 std::string SysInfo::HardwareModelName() {
-  char model[256];
-  size_t len = sizeof(model);
-  if (sysctlbyname("hw.model", model, &len, NULL, 0) == 0)
-    return std::string(model, 0, len);
-  return std::string();
+  return GetSysctlValue("hw.model");
 }
 
 }  // namespace base

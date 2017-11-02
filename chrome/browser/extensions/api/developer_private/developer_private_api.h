@@ -13,8 +13,6 @@
 #include "base/scoped_observer.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/api/developer_private/entry_picker.h"
-#include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
-#include "chrome/browser/extensions/api/file_system/file_system_api.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/error_console/error_console.h"
 #include "chrome/browser/extensions/extension_management.h"
@@ -23,6 +21,7 @@
 #include "chrome/common/extensions/api/developer_private.h"
 #include "chrome/common/extensions/webstore_install_result.h"
 #include "components/prefs/pref_change_registrar.h"
+#include "extensions/browser/api/file_system/file_system_api.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/event_router.h"
@@ -55,7 +54,6 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
                                     public ProcessManagerObserver,
                                     public AppWindowRegistry::Observer,
                                     public CommandService::Observer,
-                                    public ExtensionActionAPI::Observer,
                                     public ExtensionPrefsObserver,
                                     public ExtensionManagement::Observer,
                                     public WarningService::Observer {
@@ -73,7 +71,7 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
                          const Extension* extension) override;
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override;
+                           UnloadedExtensionReason reason) override;
   void OnExtensionInstalled(content::BrowserContext* browser_context,
                             const Extension* extension,
                             bool is_update) override;
@@ -102,10 +100,6 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
                                const Command& added_command) override;
   void OnExtensionCommandRemoved(const std::string& extension_id,
                                  const Command& removed_command) override;
-
-  // ExtensionActionAPI::Observer:
-  void OnExtensionActionVisibilityChanged(const std::string& extension_id,
-                                          bool is_now_visible) override;
 
   // ExtensionPrefsObserver:
   void OnExtensionDisableReasonsChanged(const std::string& extension_id,
@@ -137,8 +131,6 @@ class DeveloperPrivateEventRouter : public ExtensionRegistryObserver,
       process_manager_observer_;
   ScopedObserver<AppWindowRegistry, AppWindowRegistry::Observer>
       app_window_registry_observer_;
-  ScopedObserver<ExtensionActionAPI, ExtensionActionAPI::Observer>
-      extension_action_api_observer_;
   ScopedObserver<WarningService, WarningService::Observer>
       warning_service_observer_;
   ScopedObserver<ExtensionPrefs, ExtensionPrefsObserver>
@@ -474,7 +466,7 @@ class DeveloperPrivatePackDirectoryFunction
   ResponseAction Run() override;
 
  private:
-  scoped_refptr<PackExtensionJob> pack_job_;
+  std::unique_ptr<PackExtensionJob> pack_job_;
   std::string item_path_str_;
   std::string key_path_str_;
 };
@@ -517,7 +509,7 @@ class DeveloperPrivateLoadDirectoryFunction
       const base::FilePath& project_path,
       const base::FilePath& destination_path,
       base::File::Error result,
-      const storage::FileSystemOperation::FileEntryList& file_list,
+      storage::FileSystemOperation::FileEntryList file_list,
       bool has_more);
 
   void SnapshotFileCallback(
@@ -525,7 +517,7 @@ class DeveloperPrivateLoadDirectoryFunction
       base::File::Error result,
       const base::File::Info& file_info,
       const base::FilePath& platform_path,
-      const scoped_refptr<storage::ShareableFileReference>& file_ref);
+      scoped_refptr<storage::ShareableFileReference> file_ref);
 
   void CopyFile(const base::FilePath& src_path,
                 const base::FilePath& dest_path);

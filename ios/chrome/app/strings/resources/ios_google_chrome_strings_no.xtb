@@ -6,6 +6,7 @@
 <translation id="1759842336958782510">Chrome</translation>
 <translation id="2147651015520127414">Chrome bekreftet at sertifikatet for dette nettstedet er utstedt av <ph name="ISSUER" />.</translation>
 <translation id="2334084861041072223">Copyright <ph name="YEAR" /> Google Inc. Med enerett.</translation>
+<translation id="2342981853652716282">Logg på Chrome for å hente blant annet bokmerkene og passordene dine på alle enhetene du bruker.</translation>
 <translation id="2347208864470321755">Når denne funksjonen er slått på, tilbyr Chrome å oversette sider som er skrevet på andre språk ved hjelp av Google Oversetter. <ph name="BEGIN_LINK" />Finn ut mer<ph name="END_LINK" /></translation>
 <translation id="2441696206556358796">For å lagre bilder, trykk på Innstillinger for å la Chrome bruke bildene dine</translation>
 <translation id="2576431527583832481">Chrome har blitt enda bedre. En ny versjon er nå tilgjengelig.</translation>
@@ -16,8 +17,6 @@
 <translation id="3196546062792660320">Chrome sparer tid for deg ved å legge kontoene dine på nettet. Du kan legge til eller fjerne kontoer i Innstillinger.</translation>
 <translation id="3282568296779691940">Logg på Chrome</translation>
 <translation id="3345341804167540816">Bruk Chrome overalt</translation>
-<translation id="3531621179462011934">For å få innstillingene dine på alle enhetene du bruker, logg på Chrome.</translation>
-<translation id="3601960512121168237">Elsker du Chrome? <ph name="BEGIN_LINK" />Flytt den til dokken<ph name="END_LINK" /></translation>
 <translation id="3678774398092457402">Vil du at Chrome skal lagre passordet du bruker på dette nettstedet?</translation>
 <translation id="384394811301901750">Google Chrome kan ikke bruke kameraet akkurat nå</translation>
 <translation id="3870154837782082782">Google Inc.</translation>
@@ -43,7 +42,6 @@
 <translation id="7172660552945675509">Tips: <ph name="BEGIN_LINK" />Flytt Chrome til dokken<ph name="END_LINK" /></translation>
 <translation id="7265369419224458312">Du kan bruke fanene du har åpne på datamaskinen, direkte herfra. Bare åpne Chrome på datamaskinen, gå til menyen, og velg «Logg på Chrome».</translation>
 <translation id="728488472449859922">Slå på Google Chrome QR-skanneren</translation>
-<translation id="7311395200710390977">For raskere tilgang, <ph name="BEGIN_LINK" />flytt Chrome til dokken<ph name="END_LINK" /></translation>
 <translation id="7400722733683201933">Om Google Chrome</translation>
 <translation id="7437998757836447326">Logg av Chrome</translation>
 <translation id="756809126120519699">Chrome-dataene er slettet</translation>

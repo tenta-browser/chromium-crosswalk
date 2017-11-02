@@ -9,6 +9,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/feature_list.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
@@ -53,6 +54,7 @@
 #include "jni/AutocompleteController_jni.h"
 #include "net/base/escape.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "ui/base/device_form_factor.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
@@ -96,10 +98,12 @@ ZeroSuggestPrefetcher::ZeroSuggestPrefetcher(Profile* profile)
   // AutocompleteInput object.
   base::string16 fake_request_source(base::ASCIIToUTF16(
       "http://www.foobarbazblah.com"));
-  controller_->Start(AutocompleteInput(
-      fake_request_source, base::string16::npos, std::string(),
-      GURL(fake_request_source), OmniboxEventProto::INVALID_SPEC, false, false,
-      true, true, true, ChromeAutocompleteSchemeClassifier(profile)));
+  AutocompleteInput input(fake_request_source,
+                          metrics::OmniboxEventProto::OTHER,
+                          ChromeAutocompleteSchemeClassifier(profile));
+  input.set_current_url(GURL(fake_request_source));
+  input.set_from_omnibox_focus(true);
+  controller_->Start(input);
   // Delete ourselves after 10s. This is enough time to cache results or
   // give up if the results haven't been received.
   expire_timer_.Start(FROM_HERE,
@@ -130,17 +134,17 @@ AutocompleteControllerAndroid::AutocompleteControllerAndroid(Profile* profile)
       inside_synchronous_start_(false),
       profile_(profile) {}
 
-void AutocompleteControllerAndroid::Start(
-    JNIEnv* env,
-    const JavaRef<jobject>& obj,
-    const JavaRef<jstring>& j_text,
-    jint j_cursor_pos,
-    const JavaRef<jstring>& j_desired_tld,
-    const JavaRef<jstring>& j_current_url,
-    bool prevent_inline_autocomplete,
-    bool prefer_keyword,
-    bool allow_exact_keyword_match,
-    bool want_asynchronous_matches) {
+void AutocompleteControllerAndroid::Start(JNIEnv* env,
+                                          const JavaRef<jobject>& obj,
+                                          const JavaRef<jstring>& j_text,
+                                          jint j_cursor_pos,
+                                          const JavaRef<jstring>& j_desired_tld,
+                                          const JavaRef<jstring>& j_current_url,
+                                          bool prevent_inline_autocomplete,
+                                          bool prefer_keyword,
+                                          bool allow_exact_keyword_match,
+                                          bool want_asynchronous_matches,
+                                          bool focused_from_fakebox) {
   if (!autocomplete_controller_)
     return;
 
@@ -152,21 +156,24 @@ void AutocompleteControllerAndroid::Start(
     desired_tld = base::android::ConvertJavaStringToUTF8(env, j_desired_tld);
   base::string16 text = ConvertJavaStringToUTF16(env, j_text);
   OmniboxEventProto::PageClassification page_classification =
-      OmniboxEventProto::OTHER;
+      ClassifyPage(current_url, focused_from_fakebox);
   size_t cursor_pos = j_cursor_pos == -1 ? base::string16::npos : j_cursor_pos;
-  input_ = AutocompleteInput(text, cursor_pos, desired_tld, current_url,
-                             page_classification, prevent_inline_autocomplete,
-                             prefer_keyword, allow_exact_keyword_match,
-                             want_asynchronous_matches, false,
+  input_ = AutocompleteInput(text, cursor_pos, desired_tld, page_classification,
                              ChromeAutocompleteSchemeClassifier(profile_));
+  input_.set_current_url(current_url);
+  input_.set_prevent_inline_autocomplete(prevent_inline_autocomplete);
+  input_.set_prefer_keyword(prefer_keyword);
+  input_.set_allow_exact_keyword_match(allow_exact_keyword_match);
+  input_.set_want_asynchronous_matches(want_asynchronous_matches);
   autocomplete_controller_->Start(input_);
 }
 
 ScopedJavaLocalRef<jobject> AutocompleteControllerAndroid::Classify(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jstring>& j_text) {
-  return GetTopSynchronousResult(env, obj, j_text, true);
+    const JavaParamRef<jstring>& j_text,
+    bool focused_from_fakebox) {
+  return GetTopSynchronousResult(env, obj, j_text, true, focused_from_fakebox);
 }
 
 void AutocompleteControllerAndroid::OnOmniboxFocused(
@@ -176,6 +183,11 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
     const JavaParamRef<jstring>& j_current_url,
     jboolean focused_from_fakebox) {
   if (!autocomplete_controller_)
+    return;
+
+  // Prevents double triggering of zero suggest when OnOmniboxFocused is issued
+  // in quick succession (due to odd timing in the Android focus callbacks).
+  if (!autocomplete_controller_->done())
     return;
 
   base::string16 url = ConvertJavaStringToUTF16(env, j_current_url);
@@ -189,11 +201,11 @@ void AutocompleteControllerAndroid::OnOmniboxFocused(
       !current_url.SchemeIs(chrome::kChromeUINativeScheme))
     omnibox_text = url;
 
-  input_ = AutocompleteInput(
-      omnibox_text, base::string16::npos, std::string(), current_url,
-      ClassifyPage(current_url, focused_from_fakebox),
-      false, false, true, true, true,
-      ChromeAutocompleteSchemeClassifier(profile_));
+  input_ = AutocompleteInput(omnibox_text,
+                             ClassifyPage(current_url, focused_from_fakebox),
+                             ChromeAutocompleteSchemeClassifier(profile_));
+  input_.set_current_url(current_url);
+  input_.set_from_omnibox_focus(true);
   autocomplete_controller_->Start(input_);
 }
 
@@ -397,6 +409,16 @@ AutocompleteControllerAndroid::ClassifyPage(const GURL& gurl,
   }
 
   if (url == chrome::kChromeUINativeNewTabURL) {
+    // If the fakebox demotion experiment is not active, pretend all focus
+    // events go to the omnibox.
+    if (!base::FeatureList::IsEnabled(omnibox::kAndroidFakeboxDemotion))
+      return OmniboxEventProto::INSTANT_NTP_WITH_OMNIBOX_AS_STARTING_FOCUS;
+    // On phones, the specific feature flag for the experiment on phones has to
+    // be enabled.  (Because there is only one box on the NTP on phones, the
+    // case for demoting URLs is less clear; hence the separate experiment)
+    if ((ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_PHONE) &&
+        !base::FeatureList::IsEnabled(omnibox::kAndroidFakeboxDemotionOnPhones))
+      return OmniboxEventProto::INSTANT_NTP_WITH_OMNIBOX_AS_STARTING_FOCUS;
     return focused_from_fakebox ?
         OmniboxEventProto::INSTANT_NTP_WITH_FAKEBOX_AS_STARTING_FOCUS :
         OmniboxEventProto::INSTANT_NTP_WITH_OMNIBOX_AS_STARTING_FOCUS;
@@ -527,21 +549,14 @@ AutocompleteControllerAndroid::GetTopSynchronousResult(
     JNIEnv* env,
     const JavaRef<jobject>& obj,
     const JavaRef<jstring>& j_text,
-    bool prevent_inline_autocomplete) {
+    bool prevent_inline_autocomplete,
+    bool focused_from_fakebox) {
   if (!autocomplete_controller_)
     return ScopedJavaLocalRef<jobject>();
 
   inside_synchronous_start_ = true;
-  Start(env,
-        obj,
-        j_text,
-        -1,
-        nullptr,
-        nullptr,
-        prevent_inline_autocomplete,
-        false,
-        false,
-        false);
+  Start(env, obj, j_text, -1, nullptr, nullptr, prevent_inline_autocomplete,
+        false, false, false, focused_from_fakebox);
   inside_synchronous_start_ = false;
   DCHECK(autocomplete_controller_->done());
   const AutocompleteResult& result = autocomplete_controller_->result();
@@ -598,14 +613,10 @@ static void PrefetchZeroSuggestResults(JNIEnv* env,
   if (!profile)
     return;
 
-  if (!OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial())
+  if (!OmniboxFieldTrial::InZeroSuggestPersonalizedFieldTrial(
+          profile->GetPrefs()))
     return;
 
   // ZeroSuggestPrefetcher deletes itself after it's done prefetching.
   new ZeroSuggestPrefetcher(profile);
-}
-
-// Register native methods
-bool RegisterAutocompleteControllerAndroid(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

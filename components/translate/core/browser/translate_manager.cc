@@ -11,11 +11,11 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
+#include "components/language/core/browser/language_model.h"
 #include "components/metrics/proto/translate_event.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/translate/core/browser/language_state.h"
@@ -26,7 +26,6 @@
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/browser/translate_driver.h"
 #include "components/translate/core/browser/translate_error_details.h"
-#include "components/translate/core/browser/translate_experiment.h"
 #include "components/translate/core/browser/translate_language_list.h"
 #include "components/translate/core/browser/translate_prefs.h"
 #include "components/translate/core/browser/translate_ranker.h"
@@ -34,7 +33,6 @@
 #include "components/translate/core/browser/translate_url_util.h"
 #include "components/translate/core/common/language_detection_details.h"
 #include "components/translate/core/common/translate_constants.h"
-#include "components/translate/core/common/translate_pref_names.h"
 #include "components/translate/core/common/translate_switches.h"
 #include "components/translate/core/common/translate_util.h"
 #include "components/variations/variations_associated_data.h"
@@ -129,15 +127,14 @@ TranslateManager::RegisterTranslateErrorCallback(
   return g_callback_list_->Add(callback);
 }
 
-TranslateManager::TranslateManager(
-    TranslateClient* translate_client,
-    TranslateRanker* translate_ranker,
-    const std::string& accept_languages_pref_name)
+TranslateManager::TranslateManager(TranslateClient* translate_client,
+                                   TranslateRanker* translate_ranker,
+                                   language::LanguageModel* language_model)
     : page_seq_no_(0),
-      accept_languages_pref_name_(accept_languages_pref_name),
       translate_client_(translate_client),
       translate_driver_(translate_client_->GetTranslateDriver()),
       translate_ranker_(translate_ranker),
+      language_model_(language_model),
       language_state_(translate_driver_),
       translate_event_(base::MakeUnique<metrics::TranslateEventProto>()),
       weak_method_factory_(this) {}
@@ -147,11 +144,6 @@ base::WeakPtr<TranslateManager> TranslateManager::GetWeakPtr() {
 }
 
 void TranslateManager::InitiateTranslation(const std::string& page_lang) {
-  // TODO(rogerm): Remove ScopedTracker below once crbug.com/646711 is closed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "646711 translate::TranslateManager::InitiateTranslation"));
-
   // Short-circuit out if not in a state where initiating translation makes
   // sense (this method may be called muhtiple times for a given page).
   if (!language_state_.page_needs_translation() ||
@@ -166,8 +158,7 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
   if (net::NetworkChangeNotifier::IsOffline())
     return;
 
-  if (!ignore_missing_key_for_testing_ &&
-      !::google_apis::HasKeysConfigured()) {
+  if (!ignore_missing_key_for_testing_ && !::google_apis::HasKeysConfigured()) {
     // Without an API key, translate won't work, so don't offer to translate
     // in the first place. Leave prefs::kEnableTranslate on, though, because
     // that settings syncs and we don't want to turn off translate everywhere
@@ -177,23 +168,21 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
     return;
   }
 
-  PrefService* prefs = translate_client_->GetPrefs();
-  if (!prefs->GetBoolean(prefs::kEnableTranslate)) {
+  std::unique_ptr<TranslatePrefs> translate_prefs(
+      translate_client_->GetTranslatePrefs());
+
+  if (!translate_prefs->IsEnabled()) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_DISABLED_BY_PREFS);
+    std::string target_lang =
+        GetTargetLanguage(translate_prefs.get(), language_model_);
+    std::string language_code =
+        TranslateDownloadManager::GetLanguageCode(page_lang);
+    InitTranslateEvent(language_code, target_lang, *translate_prefs);
     RecordTranslateEvent(metrics::TranslateEventProto::DISABLED_BY_PREF);
     const std::string& locale =
         TranslateDownloadManager::GetInstance()->application_locale();
     TranslateBrowserMetrics::ReportLocalesOnDisabledByPrefs(locale);
-    return;
-  }
-
-  // Allow disabling of translate from the command line to assist with
-  // automated browser testing.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          translate::switches::kDisableTranslate)) {
-    TranslateBrowserMetrics::ReportInitiationStatus(
-        TranslateBrowserMetrics::INITIATION_STATUS_DISABLED_BY_SWITCH);
     return;
   }
 
@@ -214,14 +203,10 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
     return;
   }
 
-  std::unique_ptr<TranslatePrefs> translate_prefs(
-      translate_client_->GetTranslatePrefs());
-
-  std::string target_lang = GetTargetLanguage(translate_prefs.get());
+  std::string target_lang =
+      GetTargetLanguage(translate_prefs.get(), language_model_);
   std::string language_code =
       TranslateDownloadManager::GetLanguageCode(page_lang);
-
-  InitTranslateEvent(language_code, target_lang, *translate_prefs);
 
   // Don't translate similar languages (ex: en-US to en).
   if (language_code == target_lang) {
@@ -230,22 +215,15 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
     return;
   }
 
-  bool ranker_should_offer_translation = true;
-  if (translate_ranker_->IsQueryEnabled() ||
-      translate_ranker_->IsEnforcementEnabled()) {
-    ranker_should_offer_translation = translate_ranker_->ShouldOfferTranslation(
-        *translate_prefs, language_code, target_lang);
-    translate_event_->set_ranker_request_timestamp_sec(
-        (base::TimeTicks::Now() - base::TimeTicks()).InSeconds());
-    translate_event_->set_ranker_version(translate_ranker_->GetModelVersion());
-    translate_event_->set_ranker_response(
-        ranker_should_offer_translation
-            ? metrics::TranslateEventProto::SHOW
-            : metrics::TranslateEventProto::DONT_SHOW);
-  }
+  InitTranslateEvent(language_code, target_lang, *translate_prefs);
 
-  // Nothing to do if either the language Chrome is in or the language of the
-  // page is not supported by the translation server.
+  // Querying the ranker now, but not exiting immediately so that we may log
+  // other potential suppression reasons.
+  bool should_offer_translation =
+      translate_ranker_->ShouldOfferTranslation(translate_event_.get());
+
+  // Nothing to do if either the language Chrome is in or the language of
+  // the page is not supported by the translation server.
   if (target_lang.empty() ||
       !TranslateDownloadManager::IsSupportedLanguage(language_code)) {
     TranslateBrowserMetrics::ReportInitiationStatus(
@@ -259,8 +237,7 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
   TranslateAcceptLanguages* accept_languages =
       translate_client_->GetTranslateAcceptLanguages();
   // Don't translate any user black-listed languages.
-  if (!translate_prefs->CanTranslateLanguage(accept_languages,
-                                             language_code)) {
+  if (!translate_prefs->CanTranslateLanguage(accept_languages, language_code)) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_DISABLED_BY_CONFIG);
     RecordTranslateEvent(
@@ -289,7 +266,7 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
           TranslateBrowserMetrics::INITIATION_STATUS_AUTO_BY_CONFIG);
       translate_event_->set_modified_target_language(auto_target_lang);
       RecordTranslateEvent(
-          metrics::TranslateEventProto::AUTOMATICALLY_TRANSLATED);
+          metrics::TranslateEventProto::AUTO_TRANSLATION_BY_PREF);
       TranslatePage(language_code, auto_target_lang, false);
       return;
     }
@@ -302,7 +279,7 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
         TranslateBrowserMetrics::INITIATION_STATUS_AUTO_BY_LINK);
     translate_event_->set_modified_target_language(auto_translate_to);
     RecordTranslateEvent(
-        metrics::TranslateEventProto::AUTOMATICALLY_TRANSLATED);
+        metrics::TranslateEventProto::AUTO_TRANSLATION_BY_LINK);
     TranslatePage(language_code, auto_translate_to, false);
     return;
   }
@@ -314,8 +291,7 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
     return;
   }
 
-  if (!ranker_should_offer_translation &&
-      translate_ranker_->IsEnforcementEnabled()) {
+  if (!should_offer_translation) {
     TranslateBrowserMetrics::ReportInitiationStatus(
         TranslateBrowserMetrics::INITIATION_STATUS_ABORTED_BY_RANKER);
     RecordTranslateEvent(metrics::TranslateEventProto::DISABLED_BY_RANKER);
@@ -327,10 +303,8 @@ void TranslateManager::InitiateTranslation(const std::string& page_lang) {
 
   // Prompts the user if they want the page translated.
   translate_client_->ShowTranslateUI(translate::TRANSLATE_STEP_BEFORE_TRANSLATE,
-                                     language_code,
-                                     target_lang,
-                                     TranslateErrors::NONE,
-                                     false);
+                                     language_code, target_lang,
+                                     TranslateErrors::NONE, false);
 }
 
 bool TranslateManager::LanguageInULP(const std::string& language) const {
@@ -362,6 +336,10 @@ void TranslateManager::TranslatePage(const std::string& original_source_lang,
     return;
   }
 
+  // Log the source and target languages of the translate request.
+  TranslateBrowserMetrics::ReportTranslateSourceLanguage(original_source_lang);
+  TranslateBrowserMetrics::ReportTranslateTargetLanguage(target_lang);
+
   // Translation can be kicked by context menu against unsupported languages.
   // Unsupported language strings should be replaced with
   // kUnknownLanguageCode in order to send a translation request with enabling
@@ -377,11 +355,9 @@ void TranslateManager::TranslatePage(const std::string& original_source_lang,
   }
 
   // Trigger the "translating now" UI.
-  translate_client_->ShowTranslateUI(translate::TRANSLATE_STEP_TRANSLATING,
-                                     source_lang,
-                                     target_lang,
-                                     TranslateErrors::NONE,
-                                     triggered_from_menu);
+  translate_client_->ShowTranslateUI(
+      translate::TRANSLATE_STEP_TRANSLATING, source_lang, target_lang,
+      TranslateErrors::NONE, triggered_from_menu);
 
   TranslateScript* script = TranslateDownloadManager::GetInstance()->script();
   DCHECK(script != NULL);
@@ -394,9 +370,9 @@ void TranslateManager::TranslatePage(const std::string& original_source_lang,
 
   // The script is not available yet.  Queue that request and query for the
   // script.  Once it is downloaded we'll do the translate.
-  TranslateScript::RequestCallback callback = base::Bind(
-      &TranslateManager::OnTranslateScriptFetchComplete, GetWeakPtr(),
-      source_lang, target_lang);
+  TranslateScript::RequestCallback callback =
+      base::Bind(&TranslateManager::OnTranslateScriptFetchComplete,
+                 GetWeakPtr(), source_lang, target_lang);
 
   script->Request(callback);
 }
@@ -420,8 +396,7 @@ void TranslateManager::ReportLanguageDetectionError() {
       translate_driver_->GetLastCommittedURL().spec());
 
   report_error_url =
-      net::AppendQueryParameter(report_error_url,
-                                kSourceLanguageQueryName,
+      net::AppendQueryParameter(report_error_url, kSourceLanguageQueryName,
                                 language_state_.original_language());
 
   report_error_url = translate::AddHostLocaleToUrl(report_error_url);
@@ -434,8 +409,8 @@ void TranslateManager::DoTranslatePage(const std::string& translate_script,
                                        const std::string& source_lang,
                                        const std::string& target_lang) {
   language_state_.set_translation_pending(true);
-  translate_driver_->TranslatePage(
-      page_seq_no_, translate_script, source_lang, target_lang);
+  translate_driver_->TranslatePage(page_seq_no_, translate_script, source_lang,
+                                   target_lang);
 }
 
 // Notifies |g_callback_list_| of translate errors.
@@ -455,8 +430,11 @@ void TranslateManager::NotifyTranslateError(TranslateErrors::Type error_type) {
 void TranslateManager::PageTranslated(const std::string& source_lang,
                                       const std::string& target_lang,
                                       TranslateErrors::Type error_type) {
-  language_state_.SetCurrentLanguage(target_lang);
+  if (error_type == TranslateErrors::NONE)
+    language_state_.SetCurrentLanguage(target_lang);
+
   language_state_.set_translation_pending(false);
+  language_state_.set_translation_error(error_type != TranslateErrors::NONE);
 
   if ((error_type == TranslateErrors::NONE) &&
       source_lang != translate::kUnknownLanguageCode &&
@@ -464,10 +442,14 @@ void TranslateManager::PageTranslated(const std::string& source_lang,
     error_type = TranslateErrors::UNSUPPORTED_LANGUAGE;
   }
 
+  // Currently we only want to log any error happens during the translation
+  // script initialization phase such as translation script failed because of
+  // CSP issues (crbug.com/738277).
+  // Note: NotifyTranslateError and ShowTranslateUI will not log the errors.
+  if (error_type == TranslateErrors::INITIALIZATION_ERROR)
+    RecordTranslateEvent(metrics::TranslateEventProto::INITIALIZATION_ERROR);
   translate_client_->ShowTranslateUI(translate::TRANSLATE_STEP_AFTER_TRANSLATE,
-                                     source_lang,
-                                     target_lang,
-                                     error_type,
+                                     source_lang, target_lang, error_type,
                                      false);
   NotifyTranslateError(error_type);
 }
@@ -488,45 +470,50 @@ void TranslateManager::OnTranslateScriptFetchComplete(
     DoTranslatePage(translate_script->data(), source_lang, target_lang);
   } else {
     translate_client_->ShowTranslateUI(
-        translate::TRANSLATE_STEP_TRANSLATE_ERROR,
-        source_lang,
-        target_lang,
-        TranslateErrors::NETWORK,
-        false);
+        translate::TRANSLATE_STEP_TRANSLATE_ERROR, source_lang, target_lang,
+        TranslateErrors::NETWORK, false);
     NotifyTranslateError(TranslateErrors::NETWORK);
   }
 }
 
 // static
-std::string TranslateManager::GetTargetLanguage(const TranslatePrefs* prefs) {
-  std::string language;
-
-  // Get the override UI language.
-  TranslateExperiment::OverrideUiLanguage(prefs->GetCountry(), &language);
-
-  // If there are no override.
-  if (language.empty()) {
-    // Get the language from ULP.
-    language = TranslateManager::GetTargetLanguageFromULP(prefs);
+std::string TranslateManager::GetTargetLanguage(
+    const TranslatePrefs* prefs,
+    language::LanguageModel* language_model) {
+  if (language_model) {
+    // Use the first language from the model that translate supports.
+    for (const auto& lang : language_model->GetLanguages()) {
+      std::string lang_code =
+          TranslateDownloadManager::GetLanguageCode(lang.lang_code);
+      translate::ToTranslateLanguageSynonym(&lang_code);
+      if (TranslateDownloadManager::IsSupportedLanguage(lang_code))
+        return lang_code;
+    }
+  } else {
+    // Get target language from ULP if the ULP experiment is enabled.
+    std::string language = TranslateManager::GetTargetLanguageFromULP(prefs);
     if (!language.empty())
       return language;
 
     // Get the browser's user interface language.
     language = TranslateDownloadManager::GetLanguageCode(
         TranslateDownloadManager::GetInstance()->application_locale());
-  }
-  if (TranslateDownloadManager::IsSupportedLanguage(language))
-    return language;
+    // Map 'he', 'nb', 'fil' back to 'iw', 'no', 'tl'
+    translate::ToTranslateLanguageSynonym(&language);
+    if (TranslateDownloadManager::IsSupportedLanguage(language))
+      return language;
 
-  // Will translate to the first supported language on the Accepted Language
-  // list or not at all if no such candidate exists.
-  std::vector<std::string> accept_languages_list;
-  prefs->GetLanguageList(&accept_languages_list);
-  for (const auto& lang : accept_languages_list) {
-    std::string lang_code = TranslateDownloadManager::GetLanguageCode(lang);
-    if (TranslateDownloadManager::IsSupportedLanguage(lang_code))
-      return lang_code;
+    // Will translate to the first supported language on the Accepted Language
+    // list or not at all if no such candidate exists.
+    std::vector<std::string> accept_languages_list;
+    prefs->GetLanguageList(&accept_languages_list);
+    for (const auto& lang : accept_languages_list) {
+      std::string lang_code = TranslateDownloadManager::GetLanguageCode(lang);
+      if (TranslateDownloadManager::IsSupportedLanguage(lang_code))
+        return lang_code;
+    }
   }
+
   return std::string();
 }
 
@@ -601,13 +588,47 @@ void TranslateManager::InitTranslateEvent(const std::string& src_lang,
 }
 
 void TranslateManager::RecordTranslateEvent(int event_type) {
-  DCHECK(metrics::TranslateEventProto::EventType_IsValid(event_type));
-  translate_event_->set_event_type(
-      static_cast<metrics::TranslateEventProto::EventType>(event_type));
-  translate_event_->set_event_timestamp_sec(
-      (base::TimeTicks::Now() - base::TimeTicks()).InSeconds());
-  translate_ranker_->AddTranslateEvent(*translate_event_,
-                                       translate_driver_->GetVisibleURL());
+  translate_ranker_->RecordTranslateEvent(
+      event_type, translate_driver_->GetVisibleURL(), translate_event_.get());
+  translate_client_->RecordTranslateEvent(*translate_event_.get());
+}
+
+bool TranslateManager::ShouldOverrideDecision(int event_type) {
+  return translate_ranker_->ShouldOverrideDecision(
+      event_type, translate_driver_->GetVisibleURL(), translate_event_.get());
+}
+
+bool TranslateManager::ShouldSuppressBubbleUI(
+    bool triggered_from_menu,
+    const std::string& source_language) {
+  // Suppress the UI if the user navigates to a page with
+  // the same language as the previous page. In the new UI,
+  // continue offering translation after the user navigates
+  // to another page.
+  language_state_.SetTranslateEnabled(true);
+  if (!base::FeatureList::IsEnabled(translate::kTranslateUI2016Q2) &&
+      !language_state_.HasLanguageChanged() &&
+      !ShouldOverrideDecision(
+          metrics::TranslateEventProto::MATCHES_PREVIOUS_LANGUAGE)) {
+    TranslateBrowserMetrics::ReportInitiationStatus(
+        TranslateBrowserMetrics::
+            INITIATION_STATUS_ABORTED_BY_MATCHES_PREVIOUS_LANGUAGE);
+    return true;
+  }
+
+  // Suppress the UI if the user denied translation for this language
+  // too often.
+  if (!triggered_from_menu &&
+      translate_client_->GetTranslatePrefs()->IsTooOftenDenied(
+          source_language) &&
+      !ShouldOverrideDecision(
+          metrics::TranslateEventProto::LANGUAGE_DISABLED_BY_AUTO_BLACKLIST)) {
+    TranslateBrowserMetrics::ReportInitiationStatus(
+        TranslateBrowserMetrics::INITIATION_STATUS_ABORTED_BY_TOO_OFTEN_DENIED);
+    return true;
+  }
+
+  return false;
 }
 
 }  // namespace translate

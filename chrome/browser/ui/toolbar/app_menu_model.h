@@ -71,6 +71,7 @@ enum AppMenuAction {
   MENU_ACTION_BOOKMARK_OPEN = 42,
   MENU_ACTION_UPGRADE_DIALOG = 44,
   MENU_ACTION_CAST = 45,
+  MENU_ACTION_BETA_FORUM = 46,
   LIMIT_MENU_ACTION
 };
 
@@ -185,7 +186,7 @@ class AppMenuModel : public ui::SimpleMenuModel,
   void LogMenuMetrics(int command_id);
 
   // Helper function to record the menu action in a UMA histogram.
-  void LogMenuAction(int action_id);
+  void LogMenuAction(AppMenuAction action_id);
 
   // Time menu has been open. Used by LogMenuMetrics() to record the time
   // to action when the user selects a menu item.

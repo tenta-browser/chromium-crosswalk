@@ -28,14 +28,17 @@
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/editing/CaretDisplayItemClient.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/FrameSelection.h"
+#include "core/editing/PositionWithAffinity.h"
 #include "core/editing/SelectionEditor.h"
-#include "core/frame/FrameView.h"
+#include "core/editing/VisiblePosition.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
-#include "core/html/TextControlElement.h"
+#include "core/html/forms/TextControlElement.h"
 #include "core/layout/LayoutBlock.h"
 #include "core/layout/LayoutTheme.h"
-#include "core/layout/api/LayoutPartItem.h"
+#include "core/layout/api/LayoutEmbeddedContentItem.h"
 #include "core/page/Page.h"
 #include "public/platform/WebTraceLocation.h"
 
@@ -72,6 +75,10 @@ const PositionWithAffinity FrameCaret::CaretPosition() const {
   if (!selection.IsCaret())
     return PositionWithAffinity();
   return PositionWithAffinity(selection.Start(), selection.Affinity());
+}
+
+bool FrameCaret::IsActive() const {
+  return CaretPosition().IsNotNull();
 }
 
 void FrameCaret::UpdateAppearance() {
@@ -140,16 +147,16 @@ void FrameCaret::UpdateStyleAndLayoutIfNeeded() {
   bool should_paint_caret =
       should_paint_caret_ && IsActive() &&
       caret_visibility_ == CaretVisibility::kVisible &&
-      selection_editor_->ComputeVisibleSelectionInDOMTree().HasEditableStyle();
+      IsEditablePosition(
+          selection_editor_->ComputeVisibleSelectionInDOMTree().Start());
 
   display_item_client_->UpdateStyleAndLayoutIfNeeded(
       should_paint_caret ? CaretPosition() : PositionWithAffinity());
 }
 
-void FrameCaret::InvalidatePaintIfNeeded(
-    const LayoutBlock& block,
-    const PaintInvalidatorContext& context) {
-  display_item_client_->InvalidatePaintIfNeeded(block, context);
+void FrameCaret::InvalidatePaint(const LayoutBlock& block,
+                                 const PaintInvalidatorContext& context) {
+  display_item_client_->InvalidatePaint(block, context);
 }
 
 bool FrameCaret::CaretPositionIsValidForDocument(
@@ -173,7 +180,7 @@ static IntRect AbsoluteBoundsForLocalRect(Node* node, const LayoutRect& rect) {
 
 IntRect FrameCaret::AbsoluteCaretBounds() const {
   DCHECK_NE(frame_->GetDocument()->Lifecycle().GetState(),
-            DocumentLifecycle::kInPaintInvalidation);
+            DocumentLifecycle::kInPrePaint);
   DCHECK(!frame_->GetDocument()->NeedsLayoutTreeUpdate());
   DocumentLifecycle::DisallowTransitionScope disallow_transition(
       frame_->GetDocument()->Lifecycle());
@@ -213,8 +220,7 @@ bool FrameCaret::ShouldBlinkCaret() const {
   if (!focused_element)
     return false;
 
-  return focused_element->IsShadowIncludingInclusiveAncestorOf(
-      CaretPosition().AnchorNode());
+  return frame_->Selection().SelectionHasFocus();
 }
 
 void FrameCaret::CaretBlinkTimerFired(TimerBase*) {
@@ -226,7 +232,7 @@ void FrameCaret::CaretBlinkTimerFired(TimerBase*) {
 }
 
 void FrameCaret::ScheduleVisualUpdateForPaintInvalidationIfNeeded() {
-  if (FrameView* frame_view = frame_->View())
+  if (LocalFrameView* frame_view = frame_->View())
     frame_view->ScheduleVisualUpdateForPaintInvalidationIfNeeded();
 }
 

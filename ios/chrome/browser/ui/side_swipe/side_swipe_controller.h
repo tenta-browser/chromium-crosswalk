@@ -10,19 +10,17 @@
 #include "ios/chrome/browser/infobars/infobar_container_ios.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_snapshotting_delegate.h"
-#import "ios/chrome/browser/ui/tabs/tab_strip_controller.h"
-#import "ios/chrome/browser/ui/toolbar/web_toolbar_controller.h"
 #import "ios/web/web_state/ui/crw_swipe_recognizer_provider.h"
 
 @class CardSideSwipeView;
 @class SideSwipeGestureRecognizer;
+@protocol TabStripHighlighting;
+@class WebToolbarController;
 
-namespace ios_internal {
 // Notification sent when the user starts a side swipe (on tablet).
 extern NSString* const kSideSwipeWillStartNotification;
 // Notification sent when the user finishes a side swipe (on tablet).
 extern NSString* const kSideSwipeDidStopNotification;
-}  // namespace ios_internal
 
 // A protocol for the Side Swipe controller sources.
 @protocol SideSwipeContentProvider
@@ -50,8 +48,6 @@ extern NSString* const kSideSwipeDidStopNotification;
 - (UIView*)contentView;
 // Returns the toolbar controller.
 - (WebToolbarController*)toolbarController;
-// Returns the tabstrip controller.
-- (TabStripController*)tabStripController;
 // Makes |tab| the currently visible tab, displaying its view.  Calls
 // -selectedTabChanged on the toolbar only if |newSelection| is YES.
 - (void)displayTab:(Tab*)tab isNewSelection:(BOOL)newSelection;
@@ -78,8 +74,9 @@ extern NSString* const kSideSwipeDidStopNotification;
     : NSObject<CRWSwipeRecognizerProvider, UIGestureRecognizerDelegate>
 
 @property(nonatomic, assign) BOOL inSwipe;
-@property(nonatomic, assign) id<SideSwipeControllerDelegate> swipeDelegate;
-@property(nonatomic, assign) id<TabSnapshottingDelegate> snapshotDelegate;
+@property(nonatomic, weak) id<SideSwipeControllerDelegate> swipeDelegate;
+@property(nonatomic, weak) id<TabSnapshottingDelegate> snapshotDelegate;
+@property(nonatomic, weak) id<TabStripHighlighting> tabStripDelegate;
 
 // Initializer.
 - (id)initWithTabModel:(TabModel*)model

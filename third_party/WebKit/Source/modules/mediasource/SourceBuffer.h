@@ -32,12 +32,12 @@
 #define SourceBuffer_h
 
 #include <memory>
-#include "bindings/core/v8/ActiveScriptWrappable.h"
-#include "core/dom/NotShared.h"
 #include "core/dom/SuspendableObject.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
 #include "modules/EventTargetModules.h"
 #include "modules/mediasource/TrackDefaultList.h"
 #include "platform/AsyncMethodRunner.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebSourceBufferClient.h"
@@ -48,7 +48,7 @@ class AudioTrackList;
 class DOMArrayBuffer;
 class DOMArrayBufferView;
 class ExceptionState;
-class GenericEventQueue;
+class MediaElementEventQueue;
 class MediaSource;
 class TimeRanges;
 class VideoTrackList;
@@ -65,7 +65,7 @@ class SourceBuffer final : public EventTargetWithInlineData,
  public:
   static SourceBuffer* Create(std::unique_ptr<WebSourceBuffer>,
                               MediaSource*,
-                              GenericEventQueue*);
+                              MediaElementEventQueue*);
   static const AtomicString& SegmentsKeyword();
   static const AtomicString& SequenceKeyword();
 
@@ -114,21 +114,25 @@ class SourceBuffer final : public EventTargetWithInlineData,
 
   // WebSourceBufferClient interface
   bool InitializationSegmentReceived(const WebVector<MediaTrackInfo>&) override;
+  void NotifyParseWarning(const ParseWarning) override;
 
   DECLARE_VIRTUAL_TRACE();
 
  private:
   SourceBuffer(std::unique_ptr<WebSourceBuffer>,
                MediaSource*,
-               GenericEventQueue*);
+               MediaElementEventQueue*);
   void Dispose();
 
   bool IsRemoved() const;
   void ScheduleEvent(const AtomicString& event_name);
 
-  bool PrepareAppend(size_t new_data_size, ExceptionState&);
-  bool EvictCodedFrames(size_t new_data_size);
-  void AppendBufferInternal(const unsigned char*, unsigned, ExceptionState&);
+  bool PrepareAppend(double media_time, size_t new_data_size, ExceptionState&);
+  bool EvictCodedFrames(double media_time, size_t new_data_size);
+  void AppendBufferInternal(double media_time,
+                            const unsigned char*,
+                            unsigned,
+                            ExceptionState&);
   void AppendBufferAsyncPart();
   void AppendError();
 
@@ -138,6 +142,10 @@ class SourceBuffer final : public EventTargetWithInlineData,
   void AbortIfUpdating();
 
   void RemoveMediaTracks();
+
+  // Returns MediaElement playback position (i.e. MediaElement.currentTime() )
+  // in seconds, or NaN if media element is not available.
+  double GetMediaTime();
 
   const TrackDefault* GetTrackDefault(
       const AtomicString& track_type,
@@ -152,7 +160,7 @@ class SourceBuffer final : public EventTargetWithInlineData,
   std::unique_ptr<WebSourceBuffer> web_source_buffer_;
   Member<MediaSource> source_;
   Member<TrackDefaultList> track_defaults_;
-  Member<GenericEventQueue> async_event_queue_;
+  Member<MediaElementEventQueue> async_event_queue_;
 
   AtomicString mode_;
   bool updating_;

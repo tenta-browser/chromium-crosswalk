@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/base_paths.h"
@@ -226,22 +227,19 @@ void DoElevatedInstallRecoveryComponent(const base::FilePath& path) {
 #endif
   // This task joins a process, hence .WithBaseSyncPrimitives().
   base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .WithPriority(base::TaskPriority::BACKGROUND)
-                     .WithBaseSyncPrimitives(),
-      base::Bind(&WaitForElevatedInstallToComplete, base::Passed(&process)));
+      FROM_HERE,
+      {base::WithBaseSyncPrimitives(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&WaitForElevatedInstallToComplete,
+                     base::Passed(&process)));
 }
 
 void ElevatedInstallRecoveryComponent(const base::FilePath& installer_path) {
   base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .WithPriority(base::TaskPriority::BACKGROUND)
-                     .MayBlock(),
-      base::Bind(&DoElevatedInstallRecoveryComponent, installer_path));
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&DoElevatedInstallRecoveryComponent, installer_path));
 }
 
 }  // namespace
@@ -262,9 +260,9 @@ class RecoveryComponentInstaller : public update_client::CrxInstaller {
   // ComponentInstaller implementation:
   void OnUpdateError(int error) override;
 
-  update_client::CrxInstaller::Result Install(
-      const base::DictionaryValue& manifest,
-      const base::FilePath& unpack_path) override;
+  void Install(std::unique_ptr<base::DictionaryValue> manifest,
+               const base::FilePath& unpack_path,
+               const Callback& callback) override;
 
   bool GetInstalledFile(const std::string& file,
                         base::FilePath* installed_file) override;
@@ -341,11 +339,9 @@ void WaitForInstallToComplete(base::Process process,
       RecordRecoveryComponentUMAEvent(RCE_ELEVATION_NEEDED);
 
       BrowserThread::PostTask(
-          BrowserThread::UI,
-          FROM_HERE,
-          base::Bind(&SetPrefsForElevatedRecoveryInstall,
-                     installer_folder,
-                     prefs));
+          BrowserThread::UI, FROM_HERE,
+          base::BindOnce(&SetPrefsForElevatedRecoveryInstall, installer_folder,
+                         prefs));
     } else if (installer_exit_code == EXIT_CODE_RECOVERY_SUCCEEDED) {
       RecordRecoveryComponentUMAEvent(RCE_SUCCEEDED);
     } else if (installer_exit_code == EXIT_CODE_RECOVERY_SKIPPED) {
@@ -372,13 +368,11 @@ bool RecoveryComponentInstaller::RunInstallCommand(
   // Let worker pool thread wait for us so we don't block Chrome shutdown.
   // This task joins a process, hence .WithBaseSyncPrimitives().
   base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .WithPriority(base::TaskPriority::BACKGROUND)
-                     .WithBaseSyncPrimitives(),
-      base::Bind(&WaitForInstallToComplete, base::Passed(&process),
-                 installer_folder, prefs_));
+      FROM_HERE,
+      {base::WithBaseSyncPrimitives(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&WaitForInstallToComplete, base::Passed(&process),
+                     installer_folder, prefs_));
 
   // Returns true regardless of install result since from updater service
   // perspective the install is done, even we may need to do elevated
@@ -401,12 +395,14 @@ bool SetPosixExecutablePermission(const base::FilePath& path) {
 }
 #endif  // defined(OS_POSIX)
 
-update_client::CrxInstaller::Result RecoveryComponentInstaller::Install(
-    const base::DictionaryValue& manifest,
-    const base::FilePath& unpack_path) {
-  return update_client::InstallFunctionWrapper(
+void RecoveryComponentInstaller::Install(
+    std::unique_ptr<base::DictionaryValue> manifest,
+    const base::FilePath& unpack_path,
+    const update_client::CrxInstaller::Callback& callback) {
+  auto result = update_client::InstallFunctionWrapper(
       base::Bind(&RecoveryComponentInstaller::DoInstall, base::Unretained(this),
-                 base::ConstRef(manifest), base::ConstRef(unpack_path)));
+                 base::ConstRef(*manifest), base::ConstRef(unpack_path)));
+  base::PostTask(FROM_HERE, base::BindOnce(callback, result));
 }
 
 bool RecoveryComponentInstaller::DoInstall(
@@ -465,9 +461,8 @@ bool RecoveryComponentInstaller::DoInstall(
   current_version_ = version;
   if (prefs_) {
     BrowserThread::PostTask(
-        BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&RecoveryUpdateVersionHelper, version, prefs_));
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&RecoveryUpdateVersionHelper, version, prefs_));
   }
   return true;
 }
@@ -491,17 +486,15 @@ void RegisterRecoveryComponent(ComponentUpdateService* cus,
 #if defined(OS_WIN) || defined(OS_MACOSX)
   if (SimulatingElevatedRecovery()) {
     BrowserThread::PostTask(
-        BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&SimulateElevatedRecoveryHelper, prefs));
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&SimulateElevatedRecoveryHelper, prefs));
   }
 
   // We delay execute the registration because we are not required in
   // the critical path during browser startup.
   BrowserThread::PostDelayedTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&RecoveryRegisterHelper, cus, prefs),
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&RecoveryRegisterHelper, cus, prefs),
       base::TimeDelta::FromSeconds(6));
 #endif
 #endif

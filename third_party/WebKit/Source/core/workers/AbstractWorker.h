@@ -33,8 +33,8 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventListener.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventListener.h"
+#include "core/dom/events/EventTarget.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 
@@ -44,6 +44,8 @@ class ExceptionState;
 class KURL;
 class ExecutionContext;
 
+// Implementation of the AbstractWorker interface defined in the WebWorker HTML
+// spec: https://html.spec.whatwg.org/multipage/workers.html#abstractworker
 class CORE_EXPORT AbstractWorker : public EventTargetWithInlineData,
                                    public ContextLifecycleObserver {
   USING_GARBAGE_COLLECTED_MIXIN(AbstractWorker);
@@ -64,9 +66,10 @@ class CORE_EXPORT AbstractWorker : public EventTargetWithInlineData,
  protected:
   // Helper function that converts a URL to an absolute URL and checks the
   // result for validity.
-  KURL ResolveURL(const String& url,
-                  ExceptionState&,
-                  WebURLRequest::RequestContext);
+  static KURL ResolveURL(ExecutionContext*,
+                         const String& url,
+                         ExceptionState&,
+                         WebURLRequest::RequestContext);
 };
 
 }  // namespace blink

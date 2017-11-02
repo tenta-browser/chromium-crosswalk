@@ -27,8 +27,8 @@
 #ifndef CanvasGradient_h
 #define CanvasGradient_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/ModulesExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/graphics/Gradient.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
@@ -53,7 +53,7 @@ class MODULES_EXPORT CanvasGradient final
     return new CanvasGradient(p0, r0, p1, r1);
   }
 
-  Gradient* GetGradient() const { return gradient_.Get(); }
+  Gradient* GetGradient() const { return gradient_.get(); }
 
   void addColorStop(float value, const String& color, ExceptionState&);
 

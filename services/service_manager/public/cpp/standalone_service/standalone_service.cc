@@ -9,8 +9,10 @@
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/task_scheduler/task_scheduler.h"
 #include "base/threading/thread.h"
 #include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/incoming_broker_client_invitation.h"
 #include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "mojo/public/cpp/system/message_pipe.h"
 #include "services/service_manager/public/cpp/service_context.h"
@@ -74,6 +76,7 @@ void RunStandaloneService(const StandaloneServiceCallback& callback) {
 
   mojo::edk::Init();
 
+  base::TaskScheduler::CreateAndStartWithDefaultParams("StandaloneService");
   base::Thread io_thread("io_thread");
   io_thread.StartWithOptions(
       base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
@@ -81,9 +84,11 @@ void RunStandaloneService(const StandaloneServiceCallback& callback) {
   mojo::edk::ScopedIPCSupport ipc_support(
       io_thread.task_runner(),
       mojo::edk::ScopedIPCSupport::ShutdownPolicy::CLEAN);
-  mojo::edk::SetParentPipeHandleFromCommandLine();
 
-  callback.Run(GetServiceRequestFromCommandLine());
+  auto invitation =
+      mojo::edk::IncomingBrokerClientInvitation::AcceptFromCommandLine(
+          mojo::edk::TransportProtocol::kLegacy);
+  callback.Run(GetServiceRequestFromCommandLine(invitation.get()));
 }
 
 }  // namespace service_manager

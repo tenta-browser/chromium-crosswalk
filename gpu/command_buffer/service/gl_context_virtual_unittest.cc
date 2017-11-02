@@ -4,8 +4,10 @@
 
 #include "gpu/command_buffer/service/gl_context_virtual.h"
 
+#include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
+#include "gpu/command_buffer/service/gpu_tracer.h"
 #include "ui/gl/gl_context_stub.h"
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gl_surface.h"
@@ -19,10 +21,13 @@ using testing::Return;
 
 class GLContextVirtualTest : public GpuServiceTest {
  public:
-  GLContextVirtualTest() : decoder_(new gles2::MockGLES2Decoder()) {}
+  GLContextVirtualTest()
+      : decoder_(new MockGLES2Decoder(&command_buffer_service_, &outputter_)) {}
   ~GLContextVirtualTest() override {}
 
  protected:
+  FakeCommandBufferServiceBase command_buffer_service_;
+  TraceOutputter outputter_;
   std::unique_ptr<MockGLES2Decoder> decoder_;
 };
 

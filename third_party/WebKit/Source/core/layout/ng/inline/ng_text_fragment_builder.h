@@ -6,28 +6,33 @@
 #define NGTextFragmentBuilder_h
 
 #include "core/layout/ng/geometry/ng_logical_size.h"
-#include "core/layout/ng/inline/ng_line_height_metrics.h"
-#include "platform/text/TextDirection.h"
+#include "core/layout/ng/inline/ng_inline_node.h"
+#include "core/layout/ng/inline/ng_text_end_effect.h"
+#include "core/layout/ng/ng_base_fragment_builder.h"
 #include "platform/wtf/Allocator.h"
 
 namespace blink {
 
-class NGInlineNode;
+class LayoutObject;
 class NGPhysicalTextFragment;
+class ShapeResult;
+struct NGInlineItemResult;
 
-class CORE_EXPORT NGTextFragmentBuilder final {
+class CORE_EXPORT NGTextFragmentBuilder final : public NGBaseFragmentBuilder {
   STACK_ALLOCATED();
 
  public:
-  NGTextFragmentBuilder(NGInlineNode*);
+  NGTextFragmentBuilder(NGInlineNode, NGWritingMode);
 
-  NGTextFragmentBuilder& SetDirection(TextDirection);
-
-  NGTextFragmentBuilder& SetInlineSize(LayoutUnit);
-  NGTextFragmentBuilder& SetBlockSize(LayoutUnit);
-
-  void UniteMetrics(const NGLineHeightMetrics&);
-  const NGLineHeightMetrics& Metrics() const { return metrics_; }
+  // NOTE: Takes ownership of the shape result within the item result.
+  void SetItem(NGInlineItemResult*, LayoutUnit line_height);
+  void SetAtomicInline(RefPtr<const ComputedStyle>,
+                       LayoutUnit inline_size,
+                       LayoutUnit line_height);
+  void SetText(RefPtr<const ComputedStyle>,
+               RefPtr<const ShapeResult>,
+               LayoutUnit inline_size,
+               LayoutUnit line_height);
 
   // Creates the fragment. Can only be called once.
   RefPtr<NGPhysicalTextFragment> ToTextFragment(unsigned index,
@@ -35,13 +40,16 @@ class CORE_EXPORT NGTextFragmentBuilder final {
                                                 unsigned end_offset);
 
  private:
-  TextDirection direction_;
-
-  Persistent<NGInlineNode> node_;
-
+  NGInlineNode inline_node_;
   NGLogicalSize size_;
+  RefPtr<const ShapeResult> shape_result_;
+  NGTextEndEffect end_effect_ = NGTextEndEffect::kNone;
 
-  NGLineHeightMetrics metrics_;
+  // TODO(eae): Replace with Node pointer.
+  LayoutObject* layout_object_ = nullptr;
+
+  // Not used in NG paint, only to copy to InlineTextBox::SetExpansion().
+  int expansion_ = 0;
 };
 
 }  // namespace blink

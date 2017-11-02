@@ -33,23 +33,24 @@
 #include "base/sys_info.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/about_flags.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/defaults.h"
-#include "chrome/browser/memory/tab_manager.h"
-#include "chrome/browser/memory/tab_stats.h"
 #include "chrome/browser/net/predictor.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/resource_coordinator/tab_manager.h"
+#include "chrome/browser/resource_coordinator/tab_stats.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/locale_settings.h"
+#include "components/about_ui/credit_utils.h"
 #include "components/grit/components_resources.h"
 #include "components/strings/grit/components_locale_settings.h"
 #include "content/public/browser/browser_thread.h"
@@ -64,8 +65,6 @@
 #include "net/base/filename_util.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_request_status.h"
 #include "third_party/brotli/include/brotli/decode.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -93,91 +92,17 @@ using content::WebContents;
 
 namespace {
 
-const char kCreditsJsPath[] = "credits.js";
-const char kStatsJsPath[] = "stats.js";
-const char kStringsJsPath[] = "strings.js";
+constexpr char kCreditsJsPath[] = "credits.js";
+constexpr char kStatsJsPath[] = "stats.js";
+constexpr char kStringsJsPath[] = "strings.js";
 
 #if defined(OS_CHROMEOS)
 
-const char kKeyboardUtilsPath[] = "keyboard_utils.js";
+constexpr char kKeyboardUtilsPath[] = "keyboard_utils.js";
 
-// chrome://terms falls back to offline page after kOnlineTermsTimeoutSec.
-const int kOnlineTermsTimeoutSec = 7;
-
-// Helper class that fetches the online Chrome OS terms. Empty string is
-// returned once fetching failed or exceeded |kOnlineTermsTimeoutSec|.
-class ChromeOSOnlineTermsHandler : public net::URLFetcherDelegate {
- public:
-  typedef base::Callback<void (ChromeOSOnlineTermsHandler*)> FetchCallback;
-
-  explicit ChromeOSOnlineTermsHandler(const FetchCallback& callback,
-                                      const std::string& locale)
-      : fetch_callback_(callback) {
-    std::string eula_URL = base::StringPrintf(chrome::kOnlineEulaURLPath,
-                                              locale.c_str());
-    eula_fetcher_ =
-        net::URLFetcher::Create(0 /* ID used for testing */, GURL(eula_URL),
-                                net::URLFetcher::GET, this);
-    eula_fetcher_->SetRequestContext(
-        g_browser_process->system_request_context());
-    eula_fetcher_->AddExtraRequestHeader("Accept: text/html");
-    eula_fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
-                                net::LOAD_DO_NOT_SAVE_COOKIES |
-                                net::LOAD_DISABLE_CACHE);
-    eula_fetcher_->Start();
-    // Abort the download attempt if it takes longer than one minute.
-    download_timer_.Start(FROM_HERE,
-                          base::TimeDelta::FromSeconds(kOnlineTermsTimeoutSec),
-                          this,
-                          &ChromeOSOnlineTermsHandler::OnDownloadTimeout);
-  }
-
-  void GetResponseResult(std::string* response_string) {
-    std::string mime_type;
-    if (!eula_fetcher_ ||
-        !eula_fetcher_->GetStatus().is_success() ||
-        eula_fetcher_->GetResponseCode() != 200 ||
-        !eula_fetcher_->GetResponseHeaders()->GetMimeType(&mime_type) ||
-        mime_type != "text/html" ||
-        !eula_fetcher_->GetResponseAsString(response_string)) {
-      response_string->clear();
-    }
-  }
-
- private:
-  // Prevents allocation on the stack. ChromeOSOnlineTermsHandler should be
-  // created by 'operator new'. |this| takes care of destruction.
-  ~ChromeOSOnlineTermsHandler() override {}
-
-  // net::URLFetcherDelegate:
-  void OnURLFetchComplete(const net::URLFetcher* source) override {
-    if (source != eula_fetcher_.get()) {
-      NOTREACHED() << "Callback from foreign URL fetcher";
-      return;
-    }
-    fetch_callback_.Run(this);
-    delete this;
-  }
-
-  void OnDownloadTimeout() {
-    eula_fetcher_.reset();
-    fetch_callback_.Run(this);
-    delete this;
-  }
-
-  // Timer that enforces a timeout on the attempt to download the
-  // ChromeOS Terms.
-  base::OneShotTimer download_timer_;
-
-  // |fetch_callback_| called when fetching succeeded or failed.
-  FetchCallback fetch_callback_;
-
-  // Helper to fetch online eula.
-  std::unique_ptr<net::URLFetcher> eula_fetcher_;
-
-  DISALLOW_COPY_AND_ASSIGN(ChromeOSOnlineTermsHandler);
-};
-
+// Loads bundled Eula contents. The online version of Eula is fetched in Eula
+// screen javascript. This is intentional because chrome://terms runs in a
+// privileged webui context and should never load from untrusted places.
 class ChromeOSTermsHandler
     : public base::RefCountedThreadSafe<ChromeOSTermsHandler> {
  public:
@@ -205,50 +130,39 @@ class ChromeOSTermsHandler
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (path_ == chrome::kOemEulaURLPath) {
       // Load local OEM EULA from the disk.
-      BrowserThread::PostTask(
-          BrowserThread::FILE, FROM_HERE,
-          base::Bind(&ChromeOSTermsHandler::LoadOemEulaFileOnFileThread, this));
+      base::PostTaskWithTraitsAndReply(
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+          base::BindOnce(&ChromeOSTermsHandler::LoadOemEulaFileAsync, this),
+          base::BindOnce(&ChromeOSTermsHandler::ResponseOnUIThread, this));
     } else {
-      // Try to load online version of ChromeOS terms first.
-      // ChromeOSOnlineTermsHandler object destroys itself.
-      new ChromeOSOnlineTermsHandler(
-          base::Bind(&ChromeOSTermsHandler::OnOnlineEULAFetched, this),
-          locale_);
-    }
-  }
-
-  void OnOnlineEULAFetched(ChromeOSOnlineTermsHandler* loader) {
-    DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    loader->GetResponseResult(&contents_);
-    if (contents_.empty()) {
       // Load local ChromeOS terms from the file.
-      BrowserThread::PostTask(
-          BrowserThread::FILE, FROM_HERE,
-          base::Bind(&ChromeOSTermsHandler::LoadEulaFileOnFileThread, this));
-    } else {
-      ResponseOnUIThread();
+      base::PostTaskWithTraitsAndReply(
+          FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+          base::BindOnce(&ChromeOSTermsHandler::LoadEulaFileAsync, this),
+          base::BindOnce(&ChromeOSTermsHandler::ResponseOnUIThread, this));
     }
   }
 
-  void LoadOemEulaFileOnFileThread() {
-    DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  void LoadOemEulaFileAsync() {
+    base::ThreadRestrictions::AssertIOAllowed();
+
     const chromeos::StartupCustomizationDocument* customization =
         chromeos::StartupCustomizationDocument::GetInstance();
-    if (customization->IsReady()) {
-      base::FilePath oem_eula_file_path;
-      if (net::FileURLToFilePath(GURL(customization->GetEULAPage(locale_)),
-                                 &oem_eula_file_path)) {
-        if (!base::ReadFileToString(oem_eula_file_path, &contents_)) {
-          contents_.clear();
-        }
+    if (!customization->IsReady())
+      return;
+
+    base::FilePath oem_eula_file_path;
+    if (net::FileURLToFilePath(GURL(customization->GetEULAPage(locale_)),
+                               &oem_eula_file_path)) {
+      if (!base::ReadFileToString(oem_eula_file_path, &contents_)) {
+        contents_.clear();
       }
     }
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(&ChromeOSTermsHandler::ResponseOnUIThread, this));
   }
 
-  void LoadEulaFileOnFileThread() {
+  void LoadEulaFileAsync() {
+    base::ThreadRestrictions::AssertIOAllowed();
+
     std::string file_path =
         base::StringPrintf(chrome::kEULAPathFormat, locale_.c_str());
     if (!base::ReadFileToString(base::FilePath(file_path), &contents_)) {
@@ -260,9 +174,6 @@ class ChromeOSTermsHandler
         contents_.clear();
       }
     }
-    BrowserThread::PostTask(
-        BrowserThread::UI, FROM_HERE,
-        base::Bind(&ChromeOSTermsHandler::ResponseOnUIThread, this));
   }
 
   void ResponseOnUIThread() {
@@ -312,7 +223,7 @@ class ChromeOSCreditsHandler
   void StartOnUIThread() {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     if (path_ == kKeyboardUtilsPath) {
-      contents_ = ResourceBundle::GetSharedInstance()
+      contents_ = ui::ResourceBundle::GetSharedInstance()
                       .GetRawDataResource(IDR_KEYBOARD_UTILS_JS)
                       .as_string();
       ResponseOnUIThread();
@@ -320,8 +231,7 @@ class ChromeOSCreditsHandler
     }
     // Load local Chrome OS credits from the disk.
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                       base::TaskPriority::BACKGROUND),
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
         base::Bind(&ChromeOSCreditsHandler::LoadCreditsFileAsync, this),
         base::Bind(&ChromeOSCreditsHandler::ResponseOnUIThread, this));
   }
@@ -339,7 +249,7 @@ class ChromeOSCreditsHandler
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     // If we fail to load Chrome OS credits from disk, load it from resources.
     if (contents_.empty() && path_ != kKeyboardUtilsPath) {
-      contents_ = ResourceBundle::GetSharedInstance()
+      contents_ = ui::ResourceBundle::GetSharedInstance()
                       .GetRawDataResource(IDR_OS_CREDITS_HTML)
                       .as_string();
     }
@@ -423,6 +333,7 @@ std::string ChromeURLs() {
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
 
 const char kAboutDiscardsRunCommand[] = "run";
+const char kAboutDiscardsSkipUnloadHandlersCommand[] = "skip_unload_handlers";
 
 // Html output helper functions
 
@@ -467,12 +378,13 @@ std::string BuildAboutDiscardsRunPage() {
 }
 
 std::vector<std::string> GetHtmlTabDescriptorsForDiscardPage() {
-  memory::TabManager* tab_manager = g_browser_process->GetTabManager();
-  memory::TabStatsList stats = tab_manager->GetTabStats();
+  resource_coordinator::TabManager* tab_manager =
+      g_browser_process->GetTabManager();
+  resource_coordinator::TabStatsList stats = tab_manager->GetTabStats();
   std::vector<std::string> titles;
   titles.reserve(stats.size());
-  for (memory::TabStatsList::iterator it = stats.begin(); it != stats.end();
-       ++it) {
+  for (resource_coordinator::TabStatsList::iterator it = stats.begin();
+       it != stats.end(); ++it) {
     std::string str;
     str.reserve(4096);
     str += "<b>";
@@ -486,13 +398,22 @@ std::vector<std::string> GetHtmlTabDescriptorsForDiscardPage() {
 #if defined(OS_CHROMEOS)
     str += base::StringPrintf(" (%d) ", it->oom_score);
 #endif
-    if (!it->is_discarded) {
-      str += base::StringPrintf(" <a href='%s%s/%" PRId64 "'>Discard</a>",
-                                chrome::kChromeUIDiscardsURL,
-                                kAboutDiscardsRunCommand, it->tab_contents_id);
-    }
     str += base::StringPrintf("&nbsp;&nbsp;(%d discards this session)",
                               it->discard_count);
+
+    if (!it->is_discarded) {
+      str += "<ul>";
+      str += base::StringPrintf("<li><a href='%s%s/%" PRId64
+                                "'>Discard (safely)</a></li>",
+                                chrome::kChromeUIDiscardsURL,
+                                kAboutDiscardsRunCommand, it->tab_contents_id);
+      str += base::StringPrintf(
+          "<li><a href='%s%s/%" PRId64
+          "?%s'>Discard (allow unsafe process shutdown)</a></li>",
+          chrome::kChromeUIDiscardsURL, kAboutDiscardsRunCommand,
+          it->tab_contents_id, kAboutDiscardsSkipUnloadHandlersCommand);
+      str += "</ul>";
+    }
     titles.push_back(str);
   }
   return titles;
@@ -501,18 +422,31 @@ std::vector<std::string> GetHtmlTabDescriptorsForDiscardPage() {
 std::string AboutDiscards(const std::string& path) {
   std::string output;
   int64_t web_content_id;
-  memory::TabManager* tab_manager = g_browser_process->GetTabManager();
+  resource_coordinator::TabManager* tab_manager =
+      g_browser_process->GetTabManager();
 
-  std::vector<std::string> path_split = base::SplitString(
-      path, "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  if (path_split.size() == 2 && path_split[0] == kAboutDiscardsRunCommand &&
-      base::StringToInt64(path_split[1], &web_content_id)) {
-    tab_manager->DiscardTabById(web_content_id);
-    return BuildAboutDiscardsRunPage();
-  } else if (path_split.size() == 1 &&
-             path_split[0] == kAboutDiscardsRunCommand) {
-    tab_manager->DiscardTab();
-    return BuildAboutDiscardsRunPage();
+  std::vector<std::string> url_split =
+      base::SplitString(path, "?", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (!url_split.empty()) {
+    resource_coordinator::TabManager::DiscardTabCondition discard_condition;
+    if ((url_split.size() > 1 &&
+         url_split[1] == kAboutDiscardsSkipUnloadHandlersCommand)) {
+      discard_condition = resource_coordinator::TabManager::kUrgentShutdown;
+    } else {
+      discard_condition = resource_coordinator::TabManager::kProactiveShutdown;
+    }
+
+    std::vector<std::string> path_split = base::SplitString(
+        url_split[0], "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+    if (path_split.size() == 2 && path_split[0] == kAboutDiscardsRunCommand &&
+        base::StringToInt64(path_split[1], &web_content_id)) {
+      tab_manager->DiscardTabById(web_content_id, discard_condition);
+      return BuildAboutDiscardsRunPage();
+    } else if (path_split.size() == 1 &&
+               path_split[0] == kAboutDiscardsRunCommand) {
+      tab_manager->DiscardTab(discard_condition);
+      return BuildAboutDiscardsRunPage();
+    }
   }
 
   AppendHeader(&output, 0, "About discards");
@@ -536,9 +470,9 @@ std::string AboutDiscards(const std::string& path) {
   }
   output.append(base::StringPrintf("%d discards this session. ",
                                    tab_manager->discard_count()));
-  output.append(base::StringPrintf("<a href='%s%s'>Discard tab now</a>",
-                                   chrome::kChromeUIDiscardsURL,
-                                   kAboutDiscardsRunCommand));
+  output.append(base::StringPrintf(
+      "<a href='%s%s'>Discard tab now (safely)</a>",
+      chrome::kChromeUIDiscardsURL, kAboutDiscardsRunCommand));
 
   base::SystemMemoryInfoKB meminfo;
   base::GetSystemMemoryInfo(&meminfo);
@@ -611,7 +545,7 @@ class AboutDnsHandler : public base::RefCountedThreadSafe<AboutDnsHandler> {
     chrome_browser_net::Predictor* predictor = profile_->GetNetworkPredictor();
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&AboutDnsHandler::StartOnIOThread, this, predictor));
+        base::BindOnce(&AboutDnsHandler::StartOnIOThread, this, predictor));
   }
 
   void StartOnIOThread(chrome_browser_net::Predictor* predictor) {
@@ -625,7 +559,7 @@ class AboutDnsHandler : public base::RefCountedThreadSafe<AboutDnsHandler> {
 
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&AboutDnsHandler::FinishOnUIThread, this, data));
+        base::BindOnce(&AboutDnsHandler::FinishOnUIThread, this, data));
   }
 
   void FinishOnUIThread(const std::string& data) {
@@ -691,32 +625,14 @@ void AboutUIHTMLSource::StartDataRequest(
       idr = IDR_KEYBOARD_UTILS_JS;
 #endif
 
-    base::StringPiece raw_response =
-        ResourceBundle::GetSharedInstance().GetRawDataResource(idr);
     if (idr == IDR_ABOUT_UI_CREDITS_HTML) {
-      const uint8_t* next_encoded_byte =
-          reinterpret_cast<const uint8_t*>(raw_response.data());
-      size_t input_size_remaining = raw_response.size();
-      BrotliDecoderState* decoder =
-          BrotliDecoderCreateInstance(nullptr /* no custom allocator */,
-                                      nullptr /* no custom deallocator */,
-                                      nullptr /* no custom memory handle */);
-      CHECK(!!decoder);
-      while (!BrotliDecoderIsFinished(decoder)) {
-        size_t output_size_remaining = 0;
-        CHECK(BrotliDecoderDecompressStream(
-                  decoder, &input_size_remaining, &next_encoded_byte,
-                  &output_size_remaining, nullptr,
-                  nullptr) != BROTLI_DECODER_RESULT_ERROR);
-        const uint8_t* output_buffer =
-            BrotliDecoderTakeOutput(decoder, &output_size_remaining);
-        response.insert(response.end(), output_buffer,
-                        output_buffer + output_size_remaining);
-      }
-      BrotliDecoderDestroyInstance(decoder);
+      response = about_ui::GetCredits(true /*include_scripts*/);
     } else {
-      response = raw_response.as_string();
+      response = ui::ResourceBundle::GetSharedInstance()
+                     .GetRawDataResource(idr)
+                     .as_string();
     }
+
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
   } else if (source_name_ == chrome::kChromeUIDiscardsHost) {
     response = AboutDiscards(path);
@@ -774,14 +690,17 @@ bool AboutUIHTMLSource::ShouldAddContentSecurityPolicy() const {
   return content::URLDataSource::ShouldAddContentSecurityPolicy();
 }
 
-bool AboutUIHTMLSource::ShouldDenyXFrameOptions() const {
+std::string AboutUIHTMLSource::GetAccessControlAllowOriginForOrigin(
+    const std::string& origin) const {
 #if defined(OS_CHROMEOS)
-  if (source_name_ == chrome::kChromeUITermsHost) {
-    // chrome://terms page is embedded in iframe to chrome://oobe.
-    return false;
+  // Allow chrome://oobe to load chrome://terms via XHR.
+  if (source_name_ == chrome::kChromeUITermsHost &&
+      base::StartsWith(chrome::kChromeUIOobeURL, origin,
+                       base::CompareCase::SENSITIVE)) {
+    return origin;
   }
 #endif
-  return content::URLDataSource::ShouldDenyXFrameOptions();
+  return content::URLDataSource::GetAccessControlAllowOriginForOrigin(origin);
 }
 
 AboutUI::AboutUI(content::WebUI* web_ui, const std::string& name)

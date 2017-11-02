@@ -21,10 +21,12 @@
 #include "media/base/decryptor.h"
 #include "media/base/video_decoder_config.h"
 
-class GURL;
-
 namespace base {
 class SingleThreadTaskRunner;
+}
+
+namespace url {
+class Origin;
 }
 
 namespace content {
@@ -39,7 +41,7 @@ class PpapiDecryptor : public media::ContentDecryptionModule,
  public:
   static void Create(
       const std::string& key_system,
-      const GURL& security_origin,
+      const url::Origin& security_origin,
       bool allow_distinctive_identifier,
       bool allow_persistent_state,
       const CreatePepperCdmCB& create_pepper_cdm_cb,
@@ -53,6 +55,9 @@ class PpapiDecryptor : public media::ContentDecryptionModule,
   void SetServerCertificate(
       const std::vector<uint8_t>& certificate,
       std::unique_ptr<media::SimpleCdmPromise> promise) override;
+  void GetStatusForPolicy(
+      media::HdcpVersion min_hdcp_version,
+      std::unique_ptr<media::KeyStatusCdmPromise> promise) override;
   void CreateSessionAndGenerateRequest(
       media::CdmSessionType session_type,
       media::EmeInitDataType init_data_type,
@@ -114,7 +119,7 @@ class PpapiDecryptor : public media::ContentDecryptionModule,
 
   // Callbacks for |plugin_cdm_delegate_| to fire session events.
   void OnSessionMessage(const std::string& session_id,
-                        ContentDecryptionModule::MessageType message_type,
+                        media::CdmMessageType message_type,
                         const std::vector<uint8_t>& message);
   void OnSessionKeysChange(const std::string& session_id,
                            bool has_additional_usable_key,

@@ -8,16 +8,15 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.support.graphics.drawable.VectorDrawableCompat;
-import android.support.v4.view.GravityCompat;
-import android.support.v4.widget.DrawerLayout;
 import android.support.v7.widget.RecyclerView;
-import android.support.v7.widget.Toolbar;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.TextView;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
+import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.BasicNativePage;
@@ -27,7 +26,9 @@ import org.chromium.chrome.browser.favicon.LargeIconBridge;
 import org.chromium.chrome.browser.partnerbookmarks.PartnerBookmarksShim;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.selection.SelectableListLayout;
+import org.chromium.chrome.browser.widget.selection.SelectableListToolbar;
 import org.chromium.chrome.browser.widget.selection.SelectableListToolbar.SearchDelegate;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate;
 import org.chromium.components.bookmarks.BookmarkId;
@@ -57,10 +58,9 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
     private BasicNativePage mNativePage;
     private SelectableListLayout<BookmarkId> mSelectableListLayout;
     private RecyclerView mRecyclerView;
+    private TextView mEmptyView;
     private BookmarkItemsAdapter mAdapter;
     private BookmarkActionBar mToolbar;
-    private DrawerLayout mDrawer;
-    private BookmarkDrawerListView mDrawerListView;
     private SelectionDelegate<BookmarkId> mSelectionDelegate;
     private final Stack<BookmarkUIState> mStateStack = new Stack<>();
     private LargeIconBridge mLargeIconBridge;
@@ -106,7 +106,6 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
     private final Runnable mModelLoadedRunnable = new Runnable() {
         @Override
         public void run() {
-            mDrawerListView.onBookmarkDelegateInitialized(BookmarkManager.this);
             mAdapter.onBookmarkDelegateInitialized(BookmarkManager.this);
             mToolbar.onBookmarkDelegateInitialized(BookmarkManager.this);
             if (!TextUtils.isEmpty(mInitialUrl)) {
@@ -137,15 +136,12 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
 
         mBookmarkModel = new BookmarkModel();
         mMainView = (ViewGroup) mActivity.getLayoutInflater().inflate(R.layout.bookmark_main, null);
-        mDrawer = (DrawerLayout) mMainView.findViewById(R.id.bookmark_drawer_layout);
-        mDrawerListView = (BookmarkDrawerListView) mMainView.findViewById(
-                R.id.bookmark_drawer_list);
 
         @SuppressWarnings("unchecked")
         SelectableListLayout<BookmarkId> selectableList =
                 (SelectableListLayout<BookmarkId>) mMainView.findViewById(R.id.selectable_list);
         mSelectableListLayout = selectableList;
-        mSelectableListLayout.initializeEmptyView(
+        mEmptyView = mSelectableListLayout.initializeEmptyView(
                 VectorDrawableCompat.create(
                         mActivity.getResources(), R.drawable.bookmark_big, mActivity.getTheme()),
                 R.string.bookmarks_folder_empty, R.string.bookmark_no_result);
@@ -155,19 +151,22 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
         mRecyclerView = mSelectableListLayout.initializeRecyclerView(mAdapter);
 
         mToolbar = (BookmarkActionBar) mSelectableListLayout.initializeToolbar(
-                R.layout.bookmark_action_bar, mSelectionDelegate, 0, mDrawer,
-                R.id.normal_menu_group, R.id.selection_mode_menu_group, null, true, null);
+                R.layout.bookmark_action_bar, mSelectionDelegate, 0, null, R.id.normal_menu_group,
+                R.id.selection_mode_menu_group,
+                FeatureUtilities.isChromeHomeEnabled() ? R.color.modern_toolbar_bg
+                                                       : R.color.modern_primary_color,
+                null, true);
         mToolbar.initializeSearchView(
                 this, R.string.bookmark_action_bar_search, R.id.search_menu_id);
+
+        mSelectableListLayout.configureWideDisplayStyle();
 
         mUndoController = new BookmarkUndoController(activity, mBookmarkModel, snackbarManager);
         mBookmarkModel.addObserver(mBookmarkModelObserver);
         initializeToLoadingState();
         mBookmarkModel.runAfterBookmarkModelLoaded(mModelLoadedRunnable);
 
-        // Load partner bookmarks explicitly. We load partner bookmarks in the deferred startup
-        // code, but that might be executed much later. Especially on L, showing loading
-        // progress bar blocks that so it won't be loaded. http://crbug.com/429383
+        // Load partner bookmarks explicitly.
         PartnerBookmarksShim.kickOffReading(activity);
 
         mLargeIconBridge = new LargeIconBridge(Profile.getLastUsedProfile().getOriginalProfile());
@@ -214,13 +213,6 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
      * @return True if manager handles this event, false if it decides to ignore.
      */
     public boolean onBackPressed() {
-        if (doesDrawerExist()) {
-            if (mDrawer.isDrawerVisible(GravityCompat.START)) {
-                mDrawer.closeDrawer(GravityCompat.START);
-                return true;
-            }
-        }
-
         // TODO(twellington): replicate this behavior for other list UIs during unification.
         if (mSelectionDelegate.isSelectionEnabled()) {
             mSelectionDelegate.clearSelection();
@@ -247,9 +239,23 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
     }
 
     /**
+     * @return The {@link RecyclerView} that contains the list of bookmarks.
+     */
+    public RecyclerView getRecyclerView() {
+        return mRecyclerView;
+    }
+
+    /**
+     * @return The {@link TextView} that's displayed when there are no bookmarks to display.
+     */
+    public TextView getEmptyView() {
+        return mEmptyView;
+    }
+
+    /**
      * See {@link SelectableListLayout#detachToolbarView()}.
      */
-    public Toolbar detachToolbarView() {
+    public SelectableListToolbar<BookmarkId> detachToolbarView() {
         return mSelectableListLayout.detachToolbarView();
     }
 
@@ -301,7 +307,6 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
      */
     private void initializeToLoadingState() {
         mToolbar.showLoadingUi();
-        mDrawerListView.showLoadingUi();
         assert mStateStack.isEmpty();
         setState(BookmarkUIState.createLoadingState());
     }
@@ -372,6 +377,11 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
     }
 
     @Override
+    public SelectableListLayout<BookmarkId> getSelectableListLayout() {
+        return mSelectableListLayout;
+    }
+
+    @Override
     public void notifyStateChange(BookmarkUIObserver observer) {
         int state = getCurrentState();
         switch (state) {
@@ -390,23 +400,6 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
                 assert false : "State not valid";
                 break;
         }
-    }
-
-    @Override
-    public boolean doesDrawerExist() {
-        return mDrawer != null;
-    }
-
-    @Override
-    public void closeDrawer() {
-        if (!doesDrawerExist()) return;
-
-        mDrawer.closeDrawer(GravityCompat.START);
-    }
-
-    @Override
-    public DrawerLayout getDrawerLayout() {
-        return mDrawer;
     }
 
     @Override
@@ -474,5 +467,19 @@ public class BookmarkManager implements BookmarkDelegate, SearchDelegate {
     @Override
     public void onEndSearch() {
         closeSearchUI();
+    }
+
+    // Testing methods
+
+    @VisibleForTesting
+    public BookmarkActionBar getToolbarForTests() {
+        return mToolbar;
+    }
+
+    /**
+     * Called to scroll to the top of the bookmarks list.
+     */
+    public void scrollToTop() {
+        mRecyclerView.smoothScrollToPosition(0);
     }
 }

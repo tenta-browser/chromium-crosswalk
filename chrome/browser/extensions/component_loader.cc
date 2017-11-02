@@ -35,6 +35,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/common/content_switches.h"
+#include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_l10n_util.h"
@@ -46,7 +47,6 @@
 #include "ui/base/resource/resource_bundle.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/system/devicetype_utils.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/chrome_apps/grit/chrome_apps_resources.h"
 #include "components/user_manager/user_manager.h"
@@ -54,6 +54,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "storage/browser/fileapi/file_system_context.h"
+#include "ui/chromeos/devicetype_utils.h"
 #include "ui/file_manager/grit/file_manager_resources.h"
 #include "ui/keyboard/grit/keyboard_resources.h"
 #include "ui/keyboard/keyboard_util.h"
@@ -84,8 +85,9 @@ std::string GenerateId(const base::DictionaryValue* manifest,
 #if defined(OS_CHROMEOS)
 std::unique_ptr<base::DictionaryValue> LoadManifestOnFileThread(
     const base::FilePath& root_directory,
-    const base::FilePath::CharType* manifest_filename) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
+    const base::FilePath::CharType* manifest_filename,
+    bool localize_manifest) {
+  DCHECK(GetExtensionFileTaskRunner()->RunsTasksInCurrentSequence());
   std::string error;
   std::unique_ptr<base::DictionaryValue> manifest(
       file_util::LoadManifest(root_directory, manifest_filename, &error));
@@ -95,9 +97,13 @@ std::unique_ptr<base::DictionaryValue> LoadManifestOnFileThread(
                << ": " << error;
     return nullptr;
   }
-  bool localized = extension_l10n_util::LocalizeExtension(
-      root_directory, manifest.get(), &error);
-  CHECK(localized) << error;
+
+  if (localize_manifest) {
+    bool localized = extension_l10n_util::LocalizeExtension(
+        root_directory, manifest.get(), &error);
+    CHECK(localized) << error;
+  }
+
   return manifest;
 }
 
@@ -180,7 +186,7 @@ std::string ComponentLoader::Add(int manifest_resource_id,
     return std::string();
 
   base::StringPiece manifest_contents =
-      ResourceBundle::GetSharedInstance().GetRawDataResource(
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
           manifest_resource_id);
   return Add(manifest_contents, root_directory, true);
 }
@@ -317,6 +323,21 @@ void ComponentLoader::AddGalleryExtension() {
 #endif
 }
 
+void ComponentLoader::AddZipArchiverExtension() {
+#if defined(OS_CHROMEOS)
+  base::FilePath resources_path;
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kEnableZipArchiverOnFileManager) &&
+      PathService::Get(chrome::DIR_RESOURCES, &resources_path)) {
+    AddWithNameAndDescriptionFromDir(
+        resources_path.Append(extension_misc::kZipArchiverExtensionPath),
+        extension_misc::kZipArchiverExtensionId,
+        l10n_util::GetStringUTF8(IDS_ZIP_ARCHIVER_NAME),
+        l10n_util::GetStringUTF8(IDS_ZIP_ARCHIVER_DESCRIPTION));
+  }
+#endif  // defined(OS_CHROMEOS)
+}
+
 void ComponentLoader::AddWebstoreWidgetExtension() {
 #if defined(OS_CHROMEOS)
   AddWithNameAndDescription(
@@ -385,7 +406,7 @@ void ComponentLoader::AddWithNameAndDescription(
     return;
 
   base::StringPiece manifest_contents =
-      ResourceBundle::GetSharedInstance().GetRawDataResource(
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
           manifest_resource_id);
 
   // The Value is kept for the lifetime of the ComponentLoader. This is
@@ -541,11 +562,12 @@ void ComponentLoader::AddDefaultComponentExtensionsWithBackgroundPages(
 #if defined(OS_CHROMEOS) && defined(GOOGLE_CHROME_BUILD)
   // Since this is a v2 app it has a background page.
   AddWithNameAndDescription(
-      IDR_GENIUS_APP_MANIFEST, base::FilePath(FILE_PATH_LITERAL(
-                                   "/usr/share/chromeos-assets/genius_app")),
+      IDR_GENIUS_APP_MANIFEST,
+      base::FilePath(
+          FILE_PATH_LITERAL("/usr/share/chromeos-assets/genius_app")),
       l10n_util::GetStringUTF8(IDS_GENIUS_APP_NAME),
       l10n_util::GetStringFUTF8(IDS_GENIUS_APP_DESCRIPTION,
-                                ash::GetChromeOSDeviceName()));
+                                ui::GetChromeOSDeviceName()));
 #endif
 
   if (!skip_session_components) {
@@ -553,6 +575,7 @@ void ComponentLoader::AddDefaultComponentExtensionsWithBackgroundPages(
     AddAudioPlayerExtension();
     AddFileManagerExtension();
     AddGalleryExtension();
+    AddZipArchiverExtension();
     AddWebstoreWidgetExtension();
 
     AddHangoutServicesExtension();
@@ -663,25 +686,50 @@ void ComponentLoader::AddComponentFromDir(
   const base::FilePath::CharType* manifest_filename =
       IsNormalSession() ? extensions::kManifestFilename
                         : extension_misc::kGuestManifestFilename;
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::FILE,
-      FROM_HERE,
-      base::Bind(&LoadManifestOnFileThread, root_directory, manifest_filename),
+
+  base::PostTaskAndReplyWithResult(
+      GetExtensionFileTaskRunner().get(), FROM_HERE,
+      base::Bind(&LoadManifestOnFileThread, root_directory, manifest_filename,
+                 true),
       base::Bind(&ComponentLoader::FinishAddComponentFromDir,
-                 weak_factory_.GetWeakPtr(),
-                 root_directory,
-                 extension_id,
-                 done_cb));
+                 weak_factory_.GetWeakPtr(), root_directory, extension_id,
+                 base::nullopt, base::nullopt, done_cb));
+}
+
+void ComponentLoader::AddWithNameAndDescriptionFromDir(
+    const base::FilePath& root_directory,
+    const char* extension_id,
+    const std::string& name_string,
+    const std::string& description_string) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  base::PostTaskAndReplyWithResult(
+      GetExtensionFileTaskRunner().get(), FROM_HERE,
+      base::Bind(&LoadManifestOnFileThread, root_directory,
+                 extensions::kManifestFilename, false),
+      base::Bind(&ComponentLoader::FinishAddComponentFromDir,
+                 weak_factory_.GetWeakPtr(), root_directory, extension_id,
+                 name_string, description_string, base::Closure()));
 }
 
 void ComponentLoader::FinishAddComponentFromDir(
     const base::FilePath& root_directory,
     const char* extension_id,
+    const base::Optional<std::string>& name_string,
+    const base::Optional<std::string>& description_string,
     const base::Closure& done_cb,
     std::unique_ptr<base::DictionaryValue> manifest) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!manifest)
     return;  // Error already logged.
+
+  if (name_string)
+    manifest->SetString(manifest_keys::kName, name_string.value());
+
+  if (description_string) {
+    manifest->SetString(manifest_keys::kDescription,
+                        description_string.value());
+  }
+
   std::string actual_extension_id =
       Add(std::move(manifest), root_directory, false);
   CHECK_EQ(extension_id, actual_extension_id);

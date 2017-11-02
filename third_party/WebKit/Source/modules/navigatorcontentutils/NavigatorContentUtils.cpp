@@ -27,13 +27,9 @@
 #include "modules/navigatorcontentutils/NavigatorContentUtils.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/frame/LocalFrame.h"
-#include "core/frame/Navigator.h"
 #include "core/frame/UseCounter.h"
-#include "platform/wtf/HashSet.h"
-#include "platform/wtf/text/StringBuilder.h"
 
 namespace blink {
 
@@ -95,7 +91,7 @@ static bool IsSchemeWhitelisted(const String& scheme) {
     InitCustomSchemeHandlerWhitelist();
 
   StringBuilder builder;
-  builder.Append(scheme.DeprecatedLower().Ascii().Data());
+  builder.Append(scheme.DeprecatedLower().Ascii().data());
 
   return g_scheme_whitelist->Contains(builder.ToString());
 }
@@ -147,7 +143,7 @@ void NavigatorContentUtils::registerProtocolHandler(
     return;
 
   Document* document = navigator.GetFrame()->GetDocument();
-  ASSERT(document);
+  DCHECK(document);
 
   if (!VerifyCustomHandlerURL(*document, url, exception_state))
     return;
@@ -158,8 +154,8 @@ void NavigatorContentUtils::registerProtocolHandler(
   // Count usage; perhaps we can lock this to secure contexts.
   UseCounter::Count(*document,
                     document->IsSecureContext()
-                        ? UseCounter::kRegisterProtocolHandlerSecureOrigin
-                        : UseCounter::kRegisterProtocolHandlerInsecureOrigin);
+                        ? WebFeature::kRegisterProtocolHandlerSecureOrigin
+                        : WebFeature::kRegisterProtocolHandlerInsecureOrigin);
 
   NavigatorContentUtils::From(navigator)->Client()->RegisterProtocolHandler(
       scheme, document->CompleteURL(url), title);
@@ -180,7 +176,7 @@ static String CustomHandlersStateString(
       return declined_handler;
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return String();
 }
 
@@ -189,21 +185,27 @@ String NavigatorContentUtils::isProtocolHandlerRegistered(
     const String& scheme,
     const String& url,
     ExceptionState& exception_state) {
-  DEFINE_STATIC_LOCAL(const String, declined, ("declined"));
-
-  if (!navigator.GetFrame())
-    return declined;
+  if (!navigator.GetFrame()) {
+    return CustomHandlersStateString(
+        NavigatorContentUtilsClient::kCustomHandlersDeclined);
+  }
 
   Document* document = navigator.GetFrame()->GetDocument();
-  ASSERT(document);
-  if (document->IsContextDestroyed())
-    return declined;
+  DCHECK(document);
+  if (document->IsContextDestroyed()) {
+    return CustomHandlersStateString(
+        NavigatorContentUtilsClient::kCustomHandlersDeclined);
+  }
 
-  if (!VerifyCustomHandlerURL(*document, url, exception_state))
-    return declined;
+  if (!VerifyCustomHandlerURL(*document, url, exception_state)) {
+    return CustomHandlersStateString(
+        NavigatorContentUtilsClient::kCustomHandlersDeclined);
+  }
 
-  if (!VerifyCustomHandlerScheme(scheme, exception_state))
-    return declined;
+  if (!VerifyCustomHandlerScheme(scheme, exception_state)) {
+    return CustomHandlersStateString(
+        NavigatorContentUtilsClient::kCustomHandlersDeclined);
+  }
 
   return CustomHandlersStateString(
       NavigatorContentUtils::From(navigator)
@@ -220,7 +222,7 @@ void NavigatorContentUtils::unregisterProtocolHandler(
     return;
 
   Document* document = navigator.GetFrame()->GetDocument();
-  ASSERT(document);
+  DCHECK(document);
 
   if (!VerifyCustomHandlerURL(*document, url, exception_state))
     return;

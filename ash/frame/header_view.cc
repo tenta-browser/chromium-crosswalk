@@ -4,13 +4,13 @@
 
 #include "ash/frame/header_view.h"
 
+#include <memory>
+
 #include "ash/frame/caption_buttons/frame_caption_button_container_view.h"
 #include "ash/frame/default_header_painter.h"
-#include "ash/session/session_state_delegate.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
-#include "ash/wm_window.h"
-#include "ui/gfx/canvas.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
+#include "ash/wm/window_state.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/widget/widget.h"
 
@@ -19,7 +19,7 @@ namespace ash {
 HeaderView::HeaderView(views::Widget* target_widget,
                        mojom::WindowStyle window_style)
     : target_widget_(target_widget),
-      header_painter_(base::MakeUnique<DefaultHeaderPainter>(window_style)),
+      header_painter_(std::make_unique<DefaultHeaderPainter>(window_style)),
       avatar_icon_(nullptr),
       caption_button_container_(nullptr),
       fullscreen_visible_fraction_(0) {
@@ -29,12 +29,14 @@ HeaderView::HeaderView(views::Widget* target_widget,
   AddChildView(caption_button_container_);
 
   header_painter_->Init(target_widget_, this, caption_button_container_);
-  UpdateAvatarIcon();
 
   Shell::Get()->AddShellObserver(this);
+  Shell::Get()->tablet_mode_controller()->AddObserver(this);
 }
 
 HeaderView::~HeaderView() {
+  if (Shell::Get()->tablet_mode_controller())
+    Shell::Get()->tablet_mode_controller()->RemoveObserver(this);
   Shell::Get()->RemoveShellObserver(this);
 }
 
@@ -47,7 +49,13 @@ void HeaderView::ResetWindowControls() {
 }
 
 int HeaderView::GetPreferredOnScreenHeight() {
-  if (is_immersive_delegate_ && target_widget_->IsFullscreen()) {
+  const bool should_hide_titlebar_in_tablet_mode =
+      Shell::Get()->tablet_mode_controller() &&
+      Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars() &&
+      target_widget_->IsMaximized();
+
+  if (is_immersive_delegate_ &&
+      (target_widget_->IsFullscreen() || should_hide_titlebar_in_tablet_mode)) {
     return static_cast<int>(GetPreferredHeight() *
                             fullscreen_visible_fraction_);
   }
@@ -65,23 +73,20 @@ int HeaderView::GetMinimumWidth() const {
   return header_painter_->GetMinimumHeaderWidth();
 }
 
-void HeaderView::UpdateAvatarIcon() {
-  SessionStateDelegate* delegate = ShellPort::Get()->GetSessionStateDelegate();
-  WmWindow* window = WmWindow::Get(target_widget_->GetNativeWindow());
-  bool show = delegate->ShouldShowAvatar(window);
+void HeaderView::SetAvatarIcon(const gfx::ImageSkia& avatar) {
+  const bool show = !avatar.isNull();
   if (!show) {
     if (!avatar_icon_)
       return;
     delete avatar_icon_;
     avatar_icon_ = nullptr;
   } else {
-    gfx::ImageSkia image = delegate->GetAvatarImageForWindow(window);
-    DCHECK_EQ(image.width(), image.height());
+    DCHECK_EQ(avatar.width(), avatar.height());
     if (!avatar_icon_) {
       avatar_icon_ = new views::ImageView();
       AddChildView(avatar_icon_);
     }
-    avatar_icon_->SetImage(image);
+    avatar_icon_->SetImage(avatar);
   }
   header_painter_->UpdateLeftHeaderView(avatar_icon_);
   Layout();
@@ -146,14 +151,17 @@ void HeaderView::OnOverviewModeEnded() {
   caption_button_container_->SetVisible(true);
 }
 
-void HeaderView::OnMaximizeModeStarted() {
+void HeaderView::OnTabletModeStarted() {
   caption_button_container_->UpdateSizeButtonVisibility();
   parent()->Layout();
+  if (Shell::Get()->tablet_mode_controller()->ShouldAutoHideTitlebars())
+    target_widget_->non_client_view()->Layout();
 }
 
-void HeaderView::OnMaximizeModeEnded() {
+void HeaderView::OnTabletModeEnded() {
   caption_button_container_->UpdateSizeButtonVisibility();
   parent()->Layout();
+  target_widget_->non_client_view()->Layout();
 }
 
 views::View* HeaderView::avatar_icon() const {

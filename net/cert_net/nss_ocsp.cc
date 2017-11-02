@@ -32,6 +32,7 @@
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/host_port_pair.h"
@@ -41,12 +42,20 @@
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "url/gurl.h"
 
 namespace net {
+
+// OCSPScopedAllowBaseSyncPrimitives is a friend and derived class of
+// base::ScopedAllowBaseSyncPrimitives which can be instantiated by
+// OCSPRequestSession. OCSPRequestSession can't itself be a friend of
+// base::ScopedAllowBaseSyncPrimitives because it is in the anonymous namespace.
+class OCSPScopedAllowBaseSyncPrimitives
+    : public base::ScopedAllowBaseSyncPrimitives {};
 
 namespace {
 
@@ -82,7 +91,7 @@ class OCSPIOLoop {
   }
 
   // Called from worker thread.
-  void PostTaskToIOLoop(const tracked_objects::Location& from_here,
+  void PostTaskToIOLoop(const base::Location& from_here,
                         const base::Closure& task);
 
   void AddRequest(OCSPRequestSession* request);
@@ -239,6 +248,9 @@ class OCSPRequestSession
   }
 
   bool Wait() {
+    // This method waits on a ConditionVariable from a base::MayBlock task.
+    OCSPScopedAllowBaseSyncPrimitives scoped_allow_base_sync_primitives;
+
     base::TimeDelta timeout = timeout_;
     base::AutoLock autolock(lock_);
     while (!finished_) {
@@ -399,7 +411,28 @@ class OCSPRequestSession
       g_ocsp_io_loop.Get().AddRequest(this);
     }
 
-    request_ = url_request_context->CreateRequest(url_, DEFAULT_PRIORITY, this);
+    net::NetworkTrafficAnnotationTag traffic_annotation =
+        net::DefineNetworkTrafficAnnotation("ocsp_start_url_request", R"(
+        semantics {
+          sender: "OCSP"
+          description:
+            "Verifying the revocation status of a certificate via OCSP."
+          trigger:
+            "This may happen in response to visiting a website that uses "
+            "https://"
+          data:
+            "Identifier for the certificate whose revocation status is being "
+            "checked. See https://tools.ietf.org/html/rfc6960#section-2.1 for "
+            "more details."
+          destination: OTHER
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled by settings."
+          policy_exception_justification: "Not implemented."
+        })");
+    request_ = url_request_context->CreateRequest(url_, DEFAULT_PRIORITY, this,
+                                                  traffic_annotation);
     // To meet the privacy requirements of incognito mode.
     request_->SetLoadFlags(LOAD_DISABLE_CACHE | LOAD_DO_NOT_SAVE_COOKIES |
                            LOAD_DO_NOT_SEND_COOKIES);
@@ -518,8 +551,8 @@ void OCSPIOLoop::Shutdown() {
   pthread_mutex_unlock(&g_request_context_lock);
 }
 
-void OCSPIOLoop::PostTaskToIOLoop(
-    const tracked_objects::Location& from_here, const base::Closure& task) {
+void OCSPIOLoop::PostTaskToIOLoop(const base::Location& from_here,
+                                  const base::Closure& task) {
   base::AutoLock autolock(lock_);
   if (io_loop_)
     io_loop_->task_runner()->PostTask(from_here, task);
@@ -728,87 +761,9 @@ SECStatus OCSPTrySendAndReceive(SEC_HTTP_REQUEST_SESSION request,
     return SECFailure;
   }
 
-  const base::Time start_time = base::Time::Now();
-  bool request_ok = true;
   req->Start();
   if (!req->Wait() || req->http_response_code() == static_cast<PRUint16>(-1)) {
     // If the response code is -1, the request failed and there is no response.
-    request_ok = false;
-  }
-  const base::TimeDelta duration = base::Time::Now() - start_time;
-
-  // For metrics, we want to know if the request was 'successful' or not.
-  // |request_ok| determines if we'll pass the response back to NSS and |ok|
-  // keep track of if we think the response was good.
-  bool ok = true;
-  if (!request_ok ||
-      (req->http_response_code() >= 400 && req->http_response_code() < 600) ||
-      req->http_response_data().size() == 0 ||
-      // 0x30 is the ASN.1 DER encoding of a SEQUENCE. All valid OCSP/CRL/CRT
-      // responses must start with this. If we didn't check for this then a
-      // captive portal could provide an HTML reply that we would count as a
-      // 'success' (although it wouldn't count in NSS, of course).
-      req->http_response_data().data()[0] != 0x30) {
-    ok = false;
-  }
-
-  // We want to know if this was:
-  //   1) An OCSP request
-  //   2) A CRL request
-  //   3) A request for a missing intermediate certificate
-  // There's no sure way to do this, so we use heuristics like MIME type and
-  // URL.
-  const char* mime_type = "";
-  if (ok)
-    mime_type = req->http_response_content_type().c_str();
-  bool is_ocsp =
-      strcasecmp(mime_type, "application/ocsp-response") == 0;
-  bool is_crl = strcasecmp(mime_type, "application/x-pkcs7-crl") == 0 ||
-                strcasecmp(mime_type, "application/x-x509-crl") == 0 ||
-                strcasecmp(mime_type, "application/pkix-crl") == 0;
-  bool is_cert =
-      strcasecmp(mime_type, "application/x-x509-ca-cert") == 0 ||
-      strcasecmp(mime_type, "application/x-x509-server-cert") == 0 ||
-      strcasecmp(mime_type, "application/pkix-cert") == 0 ||
-      strcasecmp(mime_type, "application/pkcs7-mime") == 0;
-
-  if (!is_cert && !is_crl && !is_ocsp) {
-    // We didn't get a hint from the MIME type, so do the best that we can.
-    const std::string path = req->url().path();
-    const std::string host = req->url().host();
-    is_crl = strcasestr(path.c_str(), ".crl") != NULL;
-    is_cert = strcasestr(path.c_str(), ".crt") != NULL ||
-              strcasestr(path.c_str(), ".p7c") != NULL ||
-              strcasestr(path.c_str(), ".cer") != NULL;
-    is_ocsp = strcasestr(host.c_str(), "ocsp") != NULL ||
-              req->http_request_method() == "POST";
-  }
-
-  if (is_ocsp) {
-    if (ok) {
-      UMA_HISTOGRAM_TIMES("Net.OCSPRequestTimeMs", duration);
-      UMA_HISTOGRAM_BOOLEAN("Net.OCSPRequestSuccess", true);
-    } else {
-      UMA_HISTOGRAM_TIMES("Net.OCSPRequestFailedTimeMs", duration);
-      UMA_HISTOGRAM_BOOLEAN("Net.OCSPRequestSuccess", false);
-    }
-  } else if (is_crl) {
-    if (ok) {
-      UMA_HISTOGRAM_TIMES("Net.CRLRequestTimeMs", duration);
-      UMA_HISTOGRAM_BOOLEAN("Net.CRLRequestSuccess", true);
-    } else {
-      UMA_HISTOGRAM_TIMES("Net.CRLRequestFailedTimeMs", duration);
-      UMA_HISTOGRAM_BOOLEAN("Net.CRLRequestSuccess", false);
-    }
-  } else if (is_cert) {
-    if (ok)
-      UMA_HISTOGRAM_TIMES("Net.CRTRequestTimeMs", duration);
-  } else {
-    if (ok)
-      UMA_HISTOGRAM_TIMES("Net.UnknownTypeRequestTimeMs", duration);
-  }
-
-  if (!request_ok) {
     PORT_SetError(SEC_ERROR_BAD_HTTP_RESPONSE);  // Simple approximation.
     return SECFailure;
   }

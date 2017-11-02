@@ -11,13 +11,14 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "components/prefs/pref_member.h"
-#include "components/translate/core/common/translate_pref_names.h"
+#include "components/translate/core/browser/translate_pref_names.h"
 #include "components/translate/core/language_detection/language_detection_util.h"
 #import "components/translate/ios/browser/js_language_detection_manager.h"
 #include "components/translate/ios/browser/string_clipping_util.h"
 #import "ios/web/public/url_scheme_util.h"
-#include "ios/web/public/web_state/navigation_context.h"
+#import "ios/web/public/web_state/navigation_context.h"
 #include "ios/web/public/web_state/web_state.h"
+#include "net/http/http_response_headers.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -51,6 +52,14 @@ LanguageDetectionController::LanguageDetectionController(
 
 LanguageDetectionController::~LanguageDetectionController() {
 }
+
+LanguageDetectionController::DetectionDetails::DetectionDetails()
+    : is_cld_reliable(false) {}
+
+LanguageDetectionController::DetectionDetails::DetectionDetails(
+    const DetectionDetails& other) = default;
+
+LanguageDetectionController::DetectionDetails::~DetectionDetails() = default;
 
 std::unique_ptr<LanguageDetectionController::CallbackList::Subscription>
 LanguageDetectionController::RegisterLanguageDetectionCallback(
@@ -102,7 +111,7 @@ bool LanguageDetectionController::OnTextCaptured(
   command.GetString("httpContentLanguage", &http_content_language);
   // If there is no language defined in httpEquiv, use the HTTP header.
   if (http_content_language.empty())
-    http_content_language = web_state()->GetContentLanguageHeader();
+    http_content_language = content_language_header_;
 
   [js_manager_ retrieveBufferedTextContent:
                    base::Bind(&LanguageDetectionController::OnTextRetrieved,
@@ -115,11 +124,13 @@ void LanguageDetectionController::OnTextRetrieved(
     const std::string& http_content_language,
     const std::string& html_lang,
     const base::string16& text_content) {
+  std::string cld_language;
+  bool is_cld_reliable;
   std::string language = translate::DeterminePageLanguage(
       http_content_language, html_lang,
       GetStringByClippingLastWord(text_content,
                                   language_detection::kMaxIndexChars),
-      nullptr /* cld_language */, nullptr /* is_cld_reliable */);
+      &cld_language, &is_cld_reliable);
   if (language.empty())
     return;  // No language detected.
 
@@ -127,7 +138,23 @@ void LanguageDetectionController::OnTextRetrieved(
   details.content_language = http_content_language;
   details.html_root_language = html_lang;
   details.adopted_language = language;
+  details.cld_language = cld_language;
+  details.is_cld_reliable = is_cld_reliable;
   language_detection_callbacks_.Notify(details);
+}
+
+void LanguageDetectionController::ExtractContentLanguageHeader(
+    net::HttpResponseHeaders* headers) {
+  if (!headers) {
+    content_language_header_.clear();
+    return;
+  }
+
+  headers->GetNormalizedHeader("content-language", &content_language_header_);
+  // Remove everything after the comma ',' if any.
+  size_t comma_index = content_language_header_.find_first_of(',');
+  if (comma_index != std::string::npos)
+    content_language_header_.resize(comma_index);
 }
 
 // web::WebStateObserver implementation:
@@ -140,8 +167,11 @@ void LanguageDetectionController::PageLoaded(
 
 void LanguageDetectionController::DidFinishNavigation(
     web::NavigationContext* navigation_context) {
-  if (navigation_context->IsSameDocument())
+  if (navigation_context->IsSameDocument()) {
     StartLanguageDetection();
+  } else {
+    ExtractContentLanguageHeader(navigation_context->GetResponseHeaders());
+  }
 }
 
 void LanguageDetectionController::WebStateDestroyed() {

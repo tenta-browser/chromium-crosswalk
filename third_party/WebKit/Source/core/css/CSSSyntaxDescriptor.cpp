@@ -4,9 +4,6 @@
 
 #include "core/css/CSSSyntaxDescriptor.h"
 
-#include "core/animation/CSSColorInterpolationType.h"
-#include "core/animation/CSSLengthInterpolationType.h"
-#include "core/animation/CSSValueInterpolationType.h"
 #include "core/css/CSSCustomPropertyDeclaration.h"
 #include "core/css/CSSURIValue.h"
 #include "core/css/CSSValueList.h"
@@ -57,8 +54,8 @@ CSSSyntaxType ParseSyntaxType(String type) {
     return CSSSyntaxType::kTime;
   if (type == "resolution")
     return CSSSyntaxType::kResolution;
-  if (type == "transform-function")
-    return CSSSyntaxType::kTransformFunction;
+  if (type == "transform-list")
+    return CSSSyntaxType::kTransformList;
   if (type == "custom-ident")
     return CSSSyntaxType::kCustomIdent;
   // Not an Ident, just used to indicate failure
@@ -92,7 +89,7 @@ bool ConsumeSyntaxIdent(const String& input, size_t& offset, String& ident) {
   return !CSSPropertyParserHelpers::IsCSSWideKeyword(ident);
 }
 
-CSSSyntaxDescriptor::CSSSyntaxDescriptor(String input) {
+CSSSyntaxDescriptor::CSSSyntaxDescriptor(const String& input) {
   size_t offset = 0;
   ConsumeWhitespace(input, offset);
 
@@ -117,18 +114,24 @@ CSSSyntaxDescriptor::CSSSyntaxDescriptor(String input) {
     }
 
     if (!success) {
-      syntax_components_.Clear();
+      syntax_components_.clear();
       return;
     }
 
     bool repeatable = ConsumeCharacterAndWhitespace(input, '+', offset);
+    // <transform-list> is already a space separated list,
+    // <transform-list>+ is invalid.
+    if (type == CSSSyntaxType::kTransformList && repeatable) {
+      syntax_components_.clear();
+      return;
+    }
     ConsumeWhitespace(input, offset);
     syntax_components_.push_back(CSSSyntaxComponent(type, ident, repeatable));
 
   } while (ConsumeCharacterAndWhitespace(input, '|', offset));
 
   if (offset != input.length())
-    syntax_components_.Clear();
+    syntax_components_.clear();
 }
 
 const CSSValue* ConsumeSingleType(const CSSSyntaxComponent& syntax,
@@ -163,13 +166,13 @@ const CSSValue* ConsumeSingleType(const CSSSyntaxComponent& syntax,
     case CSSSyntaxType::kInteger:
       return ConsumeInteger(range);
     case CSSSyntaxType::kAngle:
-      return ConsumeAngle(range);
+      return ConsumeAngle(range, context, WTF::Optional<WebFeature>());
     case CSSSyntaxType::kTime:
       return ConsumeTime(range, ValueRange::kValueRangeAll);
     case CSSSyntaxType::kResolution:
       return ConsumeResolution(range);
-    case CSSSyntaxType::kTransformFunction:
-      return nullptr;  // TODO(timloh): Implement this.
+    case CSSSyntaxType::kTransformList:
+      return ConsumeTransformList(range, *context);
     case CSSSyntaxType::kCustomIdent:
       return ConsumeCustomIdent(range);
     default:
@@ -203,7 +206,7 @@ const CSSValue* CSSSyntaxDescriptor::Parse(CSSParserTokenRange range,
                                            bool is_animation_tainted) const {
   if (IsTokenStream()) {
     return CSSVariableParser::ParseRegisteredPropertyValue(
-        range, false, is_animation_tainted);
+        range, *context, false, is_animation_tainted);
   }
   range.ConsumeWhitespace();
   for (const CSSSyntaxComponent& component : syntax_components_) {
@@ -211,7 +214,7 @@ const CSSValue* CSSSyntaxDescriptor::Parse(CSSParserTokenRange range,
             ConsumeSyntaxComponent(component, range, context))
       return result;
   }
-  return CSSVariableParser::ParseRegisteredPropertyValue(range, true,
+  return CSSVariableParser::ParseRegisteredPropertyValue(range, *context, true,
                                                          is_animation_tainted);
 }
 

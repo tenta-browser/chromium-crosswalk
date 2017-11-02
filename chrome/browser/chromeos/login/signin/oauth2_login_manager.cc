@@ -10,31 +10,20 @@
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/gaia_cookie_manager_service_factory.h"
 #include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/signin/core/account_id/account_id.h"
-#include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_client.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_urls.h"
 
 namespace chromeos {
-
-namespace {
-
-static const char kServiceScopeGetUserInfo[] =
-    "https://www.googleapis.com/auth/userinfo.email";
-static const int kMaxRetries = 5;
-
-}  // namespace
 
 OAuth2LoginManager::OAuth2LoginManager(Profile* user_profile)
     : user_profile_(user_profile),
@@ -50,8 +39,7 @@ OAuth2LoginManager::OAuth2LoginManager(Profile* user_profile)
   }
 }
 
-OAuth2LoginManager::~OAuth2LoginManager() {
-}
+OAuth2LoginManager::~OAuth2LoginManager() {}
 
 void OAuth2LoginManager::AddObserver(OAuth2LoginManager::Observer* observer) {
   observer_list_.AddObserver(observer);
@@ -103,7 +91,7 @@ void OAuth2LoginManager::RestoreSessionFromSavedTokens() {
     return;
 
   ProfileOAuth2TokenService* token_service = GetTokenService();
-  const std::string& primary_account_id = GetPrimaryAccountId();
+  const std::string primary_account_id = GetPrimaryAccountId();
   if (token_service->RefreshTokenIsAvailable(primary_account_id)) {
     VLOG(1) << "OAuth2 refresh token is already loaded.";
     FireRefreshTokensLoaded();
@@ -170,34 +158,17 @@ ProfileOAuth2TokenService* OAuth2LoginManager::GetTokenService() {
   return ProfileOAuth2TokenServiceFactory::GetForProfile(user_profile_);
 }
 
-const std::string& OAuth2LoginManager::GetPrimaryAccountId() {
+std::string OAuth2LoginManager::GetPrimaryAccountId() {
   SigninManagerBase* signin_manager =
       SigninManagerFactory::GetForProfile(user_profile_);
-  return signin_manager->GetAuthenticatedAccountId();
+  const std::string primary_account_id =
+      signin_manager->GetAuthenticatedAccountId();
+  LOG_IF(ERROR, primary_account_id.empty()) << "Primary account id is empty.";
+  return primary_account_id;
 }
 
 void OAuth2LoginManager::StoreOAuth2Token() {
-  const std::string& primary_account_id = GetPrimaryAccountId();
-  if (primary_account_id.empty()) {
-    GetAccountInfoOfRefreshToken(refresh_token_);
-    return;
-  }
-
-  UpdateCredentials(primary_account_id);
-}
-
-void OAuth2LoginManager::GetAccountInfoOfRefreshToken(
-    const std::string& refresh_token) {
-  gaia::OAuthClientInfo client_info;
-  GaiaUrls* gaia_urls = GaiaUrls::GetInstance();
-  client_info.client_id = gaia_urls->oauth2_chrome_client_id();
-  client_info.client_secret = gaia_urls->oauth2_chrome_client_secret();
-
-  account_info_fetcher_.reset(new gaia::GaiaOAuthClient(
-      auth_request_context_.get()));
-  account_info_fetcher_->RefreshToken(client_info, refresh_token,
-      std::vector<std::string>(1, kServiceScopeGetUserInfo), kMaxRetries,
-      this);
+  UpdateCredentials(GetPrimaryAccountId());
 }
 
 void OAuth2LoginManager::UpdateCredentials(const std::string& account_id) {
@@ -214,39 +185,6 @@ void OAuth2LoginManager::UpdateCredentials(const std::string& account_id) {
 void OAuth2LoginManager::FireRefreshTokensLoaded() {
   // TODO(570218): Figure out the right way to plumb this.
   GetTokenService()->LoadCredentials(std::string());
-}
-
-void OAuth2LoginManager::OnRefreshTokenResponse(
-    const std::string& access_token,
-    int expires_in_seconds) {
-  account_info_fetcher_->GetUserInfo(access_token, kMaxRetries, this);
-}
-
-void OAuth2LoginManager::OnGetUserInfoResponse(
-    std::unique_ptr<base::DictionaryValue> user_info) {
-  account_info_fetcher_.reset();
-
-  std::string gaia_id;
-  std::string email;
-  user_info->GetString("id", &gaia_id);
-  user_info->GetString("email", &email);
-
-  AccountTrackerService* account_tracker =
-      AccountTrackerServiceFactory::GetForProfile(user_profile_);
-  account_tracker->SeedAccountInfo(gaia_id, email);
-  UpdateCredentials(account_tracker->PickAccountIdForAccount(gaia_id, email));
-}
-
-void OAuth2LoginManager::OnOAuthError() {
-  account_info_fetcher_.reset();
-  LOG(ERROR) << "Account info fetch failed!";
-  SetSessionRestoreState(OAuth2LoginManager::SESSION_RESTORE_FAILED);
-}
-
-void OAuth2LoginManager::OnNetworkError(int response_code) {
-  account_info_fetcher_.reset();
-  LOG(ERROR) << "Account info fetch failed! response_code=" << response_code;
-  SetSessionRestoreState(OAuth2LoginManager::SESSION_RESTORE_FAILED);
 }
 
 void OAuth2LoginManager::FetchOAuth2Tokens() {
@@ -312,17 +250,16 @@ void OAuth2LoginManager::Shutdown() {
 
 void OAuth2LoginManager::OnSessionMergeSuccess() {
   VLOG(1) << "OAuth2 refresh and/or GAIA token verification succeeded.";
-  RecordSessionRestoreOutcome(SESSION_RESTORE_SUCCESS,
-                              SESSION_RESTORE_DONE);
+  RecordSessionRestoreOutcome(SESSION_RESTORE_SUCCESS, SESSION_RESTORE_DONE);
 }
 
 void OAuth2LoginManager::OnSessionMergeFailure(bool connection_error) {
   LOG(ERROR) << "OAuth2 refresh and GAIA token verification failed!"
              << " connection_error: " << connection_error;
   RecordSessionRestoreOutcome(SESSION_RESTORE_MERGE_SESSION_FAILED,
-                              connection_error ?
-                                  SESSION_RESTORE_CONNECTION_FAILED :
-                                  SESSION_RESTORE_FAILED);
+                              connection_error
+                                  ? SESSION_RESTORE_CONNECTION_FAILED
+                                  : SESSION_RESTORE_FAILED);
 }
 
 void OAuth2LoginManager::OnListAccountsSuccess(
@@ -371,10 +308,9 @@ void OAuth2LoginManager::OnListAccountsSuccess(
 
 void OAuth2LoginManager::OnListAccountsFailure(bool connection_error) {
   bool is_pre_merge = (state_ == SESSION_RESTORE_PREPARING);
-  RecordCookiesCheckOutcome(
-      is_pre_merge,
-      connection_error ? POST_MERGE_CONNECTION_FAILED :
-                         POST_MERGE_VERIFICATION_FAILED);
+  RecordCookiesCheckOutcome(is_pre_merge, connection_error
+                                              ? POST_MERGE_CONNECTION_FAILED
+                                              : POST_MERGE_VERIFICATION_FAILED);
   if (is_pre_merge) {
     if (!connection_error) {
       // If we failed to get account list, our cookies might be stale so we
@@ -390,8 +326,7 @@ void OAuth2LoginManager::OnListAccountsFailure(bool connection_error) {
 void OAuth2LoginManager::RecordSessionRestoreOutcome(
     SessionRestoreOutcome outcome,
     OAuth2LoginManager::SessionRestoreState state) {
-  UMA_HISTOGRAM_ENUMERATION("OAuth2Login.SessionRestore",
-                            outcome,
+  UMA_HISTOGRAM_ENUMERATION("OAuth2Login.SessionRestore", outcome,
                             SESSION_RESTORE_COUNT);
   SetSessionRestoreState(state);
 }
@@ -401,12 +336,10 @@ void OAuth2LoginManager::RecordCookiesCheckOutcome(
     bool is_pre_merge,
     MergeVerificationOutcome outcome) {
   if (is_pre_merge) {
-    UMA_HISTOGRAM_ENUMERATION("OAuth2Login.PreMergeVerification",
-                              outcome,
+    UMA_HISTOGRAM_ENUMERATION("OAuth2Login.PreMergeVerification", outcome,
                               POST_MERGE_COUNT);
   } else {
-    UMA_HISTOGRAM_ENUMERATION("OAuth2Login.PostMergeVerification",
-                              outcome,
+    UMA_HISTOGRAM_ENUMERATION("OAuth2Login.PostMergeVerification", outcome,
                               POST_MERGE_COUNT);
   }
 }

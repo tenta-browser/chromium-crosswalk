@@ -14,9 +14,9 @@ class SVGValueNonInterpolableValue : public NonInterpolableValue {
  public:
   virtual ~SVGValueNonInterpolableValue() {}
 
-  static PassRefPtr<SVGValueNonInterpolableValue> Create(
+  static RefPtr<SVGValueNonInterpolableValue> Create(
       SVGPropertyBase* svg_value) {
-    return AdoptRef(new SVGValueNonInterpolableValue(svg_value));
+    return WTF::AdoptRef(new SVGValueNonInterpolableValue(svg_value));
   }
 
   SVGPropertyBase* SvgValue() const { return svg_value_; }

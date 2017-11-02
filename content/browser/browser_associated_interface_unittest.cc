@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
@@ -91,15 +92,21 @@ class TestDriverMessageFilter
     return true;
   }
 
+  void OnFilterRemoved() override {
+    // Check that the bindings are cleared by
+    // BrowserAssociatedInterface::ClearBindings() callbacks.
+    EXPECT_FALSE(internal_state_->bindings_.has_value());
+  }
+
   // mojom::BrowserAssociatedInterfaceTestDriver:
   void ExpectString(const std::string& expected) override {
     next_expected_string_ = expected;
   }
 
-  void RequestQuit(const RequestQuitCallback& callback) override {
+  void RequestQuit(RequestQuitCallback callback) override {
     EXPECT_EQ(kNumTestMessages, message_count_);
-    callback.Run();
-    base::MessageLoop::current()->QuitWhenIdle();
+    std::move(callback).Run();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   std::string next_expected_string_;
@@ -112,7 +119,7 @@ class TestClientRunner {
       : client_thread_("Test client") {
     client_thread_.Start();
     client_thread_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(&RunTestClient, base::Passed(&pipe)));
+        FROM_HERE, base::BindOnce(&RunTestClient, base::Passed(&pipe)));
   }
 
   ~TestClientRunner() {

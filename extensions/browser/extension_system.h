@@ -57,7 +57,8 @@ class ExtensionSystem : public KeyedService {
   // controlled by |extensions_enabled|.
   virtual void InitForRegularProfile(bool extensions_enabled) = 0;
 
-  // The ExtensionService is created at startup.
+  // The ExtensionService is created at startup. ExtensionService is only
+  // defined in Chrome.
   virtual ExtensionService* extension_service() = 0;
 
   // Per-extension data that can change during the life of the process but
@@ -109,7 +110,7 @@ class ExtensionSystem : public KeyedService {
   // EXTENSION_UNLOADED notification have finished running.
   virtual void UnregisterExtensionWithRequestContexts(
       const std::string& extension_id,
-      const UnloadedExtensionInfo::Reason reason) {}
+      const UnloadedExtensionReason reason) {}
 
   // Signaled when the extension system has completed its startup tasks.
   virtual const OneShotEvent& ready() const = 0;

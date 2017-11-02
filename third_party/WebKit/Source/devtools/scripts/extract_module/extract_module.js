@@ -11,38 +11,76 @@ const FRONTEND_PATH = path.resolve(__dirname, '..', '..', 'front_end');
 const BUILD_GN_PATH = path.resolve(__dirname, '..', '..', 'BUILD.gn');
 const SPECIAL_CASE_NAMESPACES_PATH = path.resolve(__dirname, '..', 'special_case_namespaces.json');
 
+/*
+ * ==========================================
+ * START EDITING HERE - TRANSFORMATION INPUTS
+ * ==========================================
+ */
+
 const APPLICATION_DESCRIPTORS = [
   'inspector.json',
   'toolbox.json',
-  'unit_test_runner.json',
+  'integration_test_runner.json',
   'formatter_worker.json',
   'heap_snapshot_worker.json',
-  'utility_shared_worker.json',
 ];
 
-// Replace based on specified transformation
+/*
+ * If the transformation removes all the files of a module:
+ * ['text_editor']
+ */
 const MODULES_TO_REMOVE = [];
 
+/**
+ * If moving to a new module:
+ * {file: 'common/Text.js', new: 'a_new_module'}
+ *
+ * If moving to an existing module:
+ * {file: 'ui/SomeFile.js', existing: 'common'}
+ */
 const JS_FILES_MAPPING = [
-  {file: 'common/Text.js', new: 'text_utils'},
-  {file: 'common/TextUtils.js', new: 'text_utils'},
-  {file: 'common/TextRange.js', new: 'text_utils'},
+  {file: 'test_runner/PageMockTestRunner.js', new: 'sdk_test_runner'},
 ];
 
+/**
+ * List all new modules here:
+ * mobile_throttling: {
+ *   dependencies: ['sdk'],
+ *   dependents: ['console'],
+ *   applications: ['inspector.json'],
+ *   autostart: false,
+ * }
+ */
 const MODULE_MAPPING = {
-  text_utils: {
-    dependencies: [],
-    dependents: ['common'],
-    applications: ['inspector.json'],
-    autostart: true,  // set to autostart because of extensions
+  sdk_test_runner: {
+    dependencies: ['sdk', 'test_runner'],
+    dependents: [],
+    applications: ['integration_test_runner.json'],
+    autostart: false,
   },
 };
 
+/**
+ * If an existing module will have a new dependency on an existing module:
+ * console: ['new_dependency']
+ */
 const NEW_DEPENDENCIES_BY_EXISTING_MODULES = {
     // resources: ['components'],
 };
 
-const REMOVE_DEPENDENCIES_BY_EXISTING_MODULES = {};
+/**
+ * If an existing module will no longer have a dependency on a module:
+ * console: ['former_dependency']
+ */
+const REMOVE_DEPENDENCIES_BY_EXISTING_MODULES = {
+    // console_test_runner: ['main']
+};
+
+/*
+ * ==========================================
+ * STOP EDITING HERE
+ * ==========================================
+ */
 
 const DEPENDENCIES_BY_MODULE = Object.keys(MODULE_MAPPING).reduce((acc, module) => {
   acc[module] = MODULE_MAPPING[module].dependencies;
@@ -228,7 +266,7 @@ function updateBuildGNFile(cssFilesMapping, newModuleSet) {
 
   let newContent = addContentToLinesInSortedOrder({
     content,
-    startLine: '# this contains non-autostart non-remote modules only.',
+    startLine: 'generated_non_autostart_non_remote_modules = [',
     endLine: ']',
     linesToInsert: newNonAutostartModules,
   });
@@ -329,12 +367,8 @@ function mapIdentifiers(identifiersByFile, cssFilesMapping) {
 function renameIdentifiers(identifierMap) {
   walkSync('front_end', write, true);
 
-  walkSync('../../LayoutTests/http/tests/inspector', write, false);
-  walkSync('../../LayoutTests/http/tests/inspector-enabled', write, false);
+  walkSync('../../LayoutTests/http/tests/devtools', write, false);
   walkSync('../../LayoutTests/http/tests/inspector-protocol', write, false);
-  walkSync('../../LayoutTests/http/tests/inspector-unit', write, false);
-  walkSync('../../LayoutTests/inspector', write, false);
-  walkSync('../../LayoutTests/inspector-enabled', write, false);
   walkSync('../../LayoutTests/inspector-protocol', write, false);
 
   function walkSync(currentDirPath, process, json) {
@@ -636,7 +670,7 @@ function updateApplicationDescriptor(descriptorFileName, newModuleSet) {
         // Need spacing to preserve indentation
         let string;
         if (MODULE_MAPPING[m].autostart)
-          string = `        { "name": "${m}", "type": "autostart"}`;
+          string = `        { "name": "${m}", "type": "autostart" }`;
         else
           string = `        { "name": "${m}" }`;
         if (i !== newModules.length - 1)

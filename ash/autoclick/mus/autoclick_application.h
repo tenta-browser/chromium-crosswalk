@@ -25,21 +25,20 @@ class Widget;
 namespace ash {
 namespace autoclick {
 
-class AutoclickApplication
-    : public service_manager::Service,
-      public mash::mojom::Launchable,
-      public mojom::AutoclickController,
-      public service_manager::InterfaceFactory<mash::mojom::Launchable>,
-      public service_manager::InterfaceFactory<mojom::AutoclickController>,
-      public AutoclickControllerCommonDelegate {
+class AutoclickApplication : public service_manager::Service,
+                             public mash::mojom::Launchable,
+                             public mojom::AutoclickController,
+                             public AutoclickControllerCommonDelegate {
  public:
   AutoclickApplication();
   ~AutoclickApplication() override;
 
+  void set_running_standalone(bool value) { running_standalone_ = value; }
+
  private:
   // service_manager::Service:
   void OnStart() override;
-  void OnBindInterface(const service_manager::ServiceInfo& remote_info,
+  void OnBindInterface(const service_manager::BindSourceInfo& remote_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override;
 
@@ -49,13 +48,10 @@ class AutoclickApplication
   // mojom::AutoclickController:
   void SetAutoclickDelay(uint32_t delay_in_milliseconds) override;
 
-  // service_manager::InterfaceFactory<mojom::Launchable>:
-  void Create(const service_manager::Identity& remote_identity,
-              mash::mojom::LaunchableRequest request) override;
+  void BindLaunchableRequest(mash::mojom::LaunchableRequest request);
 
-  // service_manager::InterfaceFactory<mojom::AutoclickController>:
-  void Create(const service_manager::Identity& remote_identity,
-              mojom::AutoclickControllerRequest request) override;
+  void BindAutoclickControllerRequest(
+      mojom::AutoclickControllerRequest request);
 
   // AutoclickControllerCommonDelegate:
   views::Widget* CreateAutoclickRingWidget(
@@ -73,6 +69,8 @@ class AutoclickApplication
   std::unique_ptr<views::AuraInit> aura_init_;
   std::unique_ptr<AutoclickControllerCommon> autoclick_controller_common_;
   std::unique_ptr<views::Widget> widget_;
+
+  bool running_standalone_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(AutoclickApplication);
 };

@@ -57,10 +57,10 @@ void TableLayoutAlgorithmAuto::RecalcColumn(unsigned eff_col) {
       for (unsigned i = 0; i < num_rows; i++) {
         if (eff_col >= section->NumCols(i))
           continue;
-        LayoutTableSection::CellStruct current = section->CellAt(i, eff_col);
-        LayoutTableCell* cell = current.PrimaryCell();
+        auto& grid_cell = section->GridCellAt(i, eff_col);
+        LayoutTableCell* cell = grid_cell.PrimaryCell();
 
-        if (current.in_col_span || !cell)
+        if (grid_cell.InColSpan() || !cell)
           continue;
         column_layout.column_has_no_cells = false;
 
@@ -161,7 +161,7 @@ void TableLayoutAlgorithmAuto::FullRecalc() {
   effective_logical_width_dirty_ = true;
 
   unsigned n_eff_cols = table_->NumEffectiveColumns();
-  layout_struct_.Resize(n_eff_cols);
+  layout_struct_.resize(n_eff_cols);
   layout_struct_.Fill(Layout());
   span_cells_.Fill(0);
 
@@ -267,11 +267,6 @@ void TableLayoutAlgorithmAuto::ComputeIntrinsicLogicalWidths(
   float max_non_percent = 0;
   bool scale_columns_for_self = ShouldScaleColumnsForSelf(table_);
 
-  // We substitute 0 percent by (epsilon / percentScaleFactor) percent in two
-  // places below to avoid division by zero.
-  // FIXME: Handle the 0% cases properly.
-  const float kEpsilon = 1 / 128.0f;
-
   float remaining_percent = 100;
   for (size_t i = 0; i < layout_struct_.size(); ++i) {
     min_width += layout_struct_[i].effective_min_logical_width;
@@ -282,9 +277,16 @@ void TableLayoutAlgorithmAuto::ComputeIntrinsicLogicalWidths(
             std::min(static_cast<float>(
                          layout_struct_[i].effective_logical_width.Percent()),
                      remaining_percent);
+        // When percent columns meet or exceed 100% and there are remaining
+        // columns, the other browsers (FF, Edge) use an artificially high max
+        // width, so we do too. Instead of division by zero, logical_width and
+        // max_non_percent are set to kTableMaxWidth. Issue:
+        // https://github.com/w3c/csswg-drafts/issues/1501
         float logical_width =
-            static_cast<float>(layout_struct_[i].effective_max_logical_width) *
-            100 / std::max(percent, kEpsilon);
+            (percent > 0) ? static_cast<float>(
+                                layout_struct_[i].effective_max_logical_width) *
+                                100 / percent
+                          : kTableMaxWidth;
         max_percent = std::max(logical_width, max_percent);
         remaining_percent -= percent;
       } else {
@@ -294,13 +296,14 @@ void TableLayoutAlgorithmAuto::ComputeIntrinsicLogicalWidths(
   }
 
   if (scale_columns_for_self) {
-    max_non_percent =
-        max_non_percent * 100 / std::max(remaining_percent, kEpsilon);
-    scaled_width_from_percent_columns_ = LayoutUnit(
-        std::min(max_non_percent, static_cast<float>(kTableMaxWidth)));
-    scaled_width_from_percent_columns_ = std::max(
-        scaled_width_from_percent_columns_,
-        LayoutUnit(std::min(max_percent, static_cast<float>(kTableMaxWidth))));
+    if (max_non_percent != 0) {
+      max_non_percent = (remaining_percent > 0)
+                            ? max_non_percent * 100 / remaining_percent
+                            : kTableMaxWidth;
+    }
+    scaled_width_from_percent_columns_ =
+        std::min(LayoutUnit(kTableMaxWidth),
+                 LayoutUnit(std::max(max_percent, max_non_percent)));
     if (scaled_width_from_percent_columns_ > max_width &&
         ShouldScaleColumnsForParent(table_))
       max_width = scaled_width_from_percent_columns_;
@@ -630,7 +633,7 @@ void TableLayoutAlgorithmAuto::InsertSpanCell(LayoutTableCell* cell) {
   while (pos < span_cells_.size() && span_cells_[pos] &&
          span > span_cells_[pos]->ColSpan())
     pos++;
-  memmove(span_cells_.Data() + pos + 1, span_cells_.Data() + pos,
+  memmove(span_cells_.data() + pos + 1, span_cells_.data() + pos,
           (size - pos - 1) * sizeof(LayoutTableCell*));
   span_cells_[pos] = cell;
 }

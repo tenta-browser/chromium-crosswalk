@@ -34,17 +34,18 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/DOMHighResTimeStamp.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/loader/FrameLoaderTypes.h"
 #include "core/timing/PerformanceEntry.h"
 #include "core/timing/PerformanceNavigationTiming.h"
 #include "core/timing/PerformancePaintTiming.h"
+#include "core/timing/SubTaskAttribution.h"
 #include "platform/Timer.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Forward.h"
-#include "wtf/HashSet.h"
-#include "wtf/ListHashSet.h"
-#include "wtf/Vector.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/HashSet.h"
+#include "platform/wtf/ListHashSet.h"
+#include "platform/wtf/Vector.h"
 
 namespace blink {
 
@@ -55,6 +56,7 @@ class ResourceResponse;
 class ResourceTimingInfo;
 class SecurityOrigin;
 class UserTiming;
+class SubTaskAttribution;
 
 using PerformanceEntryVector = HeapVector<Member<PerformanceEntry>>;
 using PerformanceObservers = HeapListHashSet<Member<PerformanceObserver>>;
@@ -76,7 +78,8 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
 
   static DOMHighResTimeStamp MonotonicTimeToDOMHighResTimeStamp(
       double time_origin,
-      double monotonic_time);
+      double monotonic_time,
+      bool allow_negative_value);
 
   // Translate given platform monotonic time in seconds into a high resolution
   // DOMHighResTimeStamp in milliseconds. The result timestamp is relative to
@@ -85,7 +88,12 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   DOMHighResTimeStamp MonotonicTimeToDOMHighResTimeStamp(double) const;
   DOMHighResTimeStamp now() const;
 
-  double TimeOrigin() const { return time_origin_; }
+  // High Resolution Time Level 3 timeOrigin.
+  // (https://www.w3.org/TR/hr-time-3/#dom-performance-timeorigin)
+  DOMHighResTimeStamp timeOrigin() const;
+
+  // Internal getter method for the time origin value.
+  double GetTimeOrigin() const { return time_origin_; }
 
   PerformanceEntryVector getEntries();
   PerformanceEntryVector getEntriesByType(const String& entry_type);
@@ -97,17 +105,14 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(resourcetimingbufferfull);
 
-  void clearFrameTimings();
-  void setFrameTimingBufferSize(unsigned);
-
-  DEFINE_ATTRIBUTE_EVENT_LISTENER(frametimingbufferfull);
-
-  void AddLongTaskTiming(double start_time,
-                         double end_time,
-                         const String& name,
-                         const String& culprit_frame_src,
-                         const String& culprit_frame_id,
-                         const String& culprit_frame_name);
+  void AddLongTaskTiming(
+      double start_time,
+      double end_time,
+      const String& name,
+      const String& culprit_frame_src,
+      const String& culprit_frame_id,
+      const String& culprit_frame_name,
+      const SubTaskAttribution::EntriesVector& sub_task_attributions);
 
   void AddResourceTiming(const ResourceTimingInfo&);
 
@@ -159,10 +164,8 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   bool IsResourceTimingBufferFull();
   void AddResourceTimingBuffer(PerformanceEntry&);
 
-  bool IsFrameTimingBufferFull();
-  void AddFrameTimingBuffer(PerformanceEntry&);
-
-  void NotifyObserversOfEntry(PerformanceEntry&);
+  void NotifyObserversOfEntry(PerformanceEntry&) const;
+  void NotifyObserversOfEntries(PerformanceEntryVector&);
   bool HasObserverFor(PerformanceEntry::EntryType) const;
 
   void DeliverObservationsTimerFired(TimerBase*);
@@ -173,6 +176,8 @@ class CORE_EXPORT PerformanceBase : public EventTargetWithInlineData {
   unsigned resource_timing_buffer_size_;
   Member<PerformanceEntry> navigation_timing_;
   Member<UserTiming> user_timing_;
+  Member<PerformanceEntry> first_paint_timing_;
+  Member<PerformanceEntry> first_contentful_paint_timing_;
 
   double time_origin_;
 

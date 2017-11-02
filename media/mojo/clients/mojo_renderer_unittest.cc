@@ -31,6 +31,8 @@
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
+#include "url/origin.h"
 
 using ::testing::_;
 using ::testing::DoAll;
@@ -105,6 +107,7 @@ class MojoRendererTest : public ::testing::Test {
 
   void CreateAudioStream() {
     audio_stream_ = CreateStream(DemuxerStream::AUDIO);
+    audio_stream_->set_audio_decoder_config(TestAudioConfig::Normal());
     streams_.push_back(audio_stream_.get());
     EXPECT_CALL(demuxer_, GetAllStreams()).WillRepeatedly(Return(streams_));
   }
@@ -179,8 +182,8 @@ class MojoRendererTest : public ::testing::Test {
                                          &cdm_factory_),
         mojo::MakeRequest(&remote_cdm_));
     remote_cdm_->Initialize(
-        kClearKeyKeySystem, "https://www.test.com",
-        mojom::CdmConfig::From(CdmConfig()),
+        kClearKeyKeySystem, url::Origin(GURL("https://www.test.com")),
+        CdmConfig(),
         base::Bind(&MojoRendererTest::OnCdmCreated, base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
   }

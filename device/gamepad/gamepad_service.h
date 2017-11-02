@@ -7,6 +7,8 @@
 
 #include <memory>
 #include <set>
+#include <unordered_map>
+#include <vector>
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
@@ -17,10 +19,6 @@
 
 namespace {
 class SingleThreadTaskRunner;
-}
-
-namespace blink {
-class WebGamepad;
 }
 
 namespace content {
@@ -71,10 +69,8 @@ class DEVICE_GAMEPAD_EXPORT GamepadService
   // while a consumer is active.
   void RegisterForUserGesture(const base::Closure& closure);
 
-  // Returns the shared memory handle of the gamepad data duplicated into the
-  // given process.
-  base::SharedMemoryHandle GetSharedMemoryHandleForProcess(
-      base::ProcessHandle handle);
+  // Returns a duplicate of the shared memory handle of the gamepad data.
+  base::SharedMemoryHandle DuplicateSharedMemoryHandle();
 
   // Returns a new mojo::ScopedSharedBuffer handle of the gamepad data.
   mojo::ScopedSharedBufferHandle GetSharedBufferHandle();
@@ -83,10 +79,10 @@ class DEVICE_GAMEPAD_EXPORT GamepadService
   void Terminate();
 
   // Called on IO thread when a gamepad is connected.
-  void OnGamepadConnected(int index, const blink::WebGamepad& pad);
+  void OnGamepadConnected(int index, const Gamepad& pad);
 
   // Called on IO thread when a gamepad is disconnected.
-  void OnGamepadDisconnected(int index, const blink::WebGamepad& pad);
+  void OnGamepadDisconnected(int index, const Gamepad& pad);
 
  private:
   friend struct base::DefaultSingletonTraits<GamepadService>;
@@ -107,7 +103,7 @@ class DEVICE_GAMEPAD_EXPORT GamepadService
 
   void OnGamepadConnectionChange(bool connected,
                                  int index,
-                                 const blink::WebGamepad& pad) override;
+                                 const Gamepad& pad) override;
 
   void SetSanitizationEnabled(bool sanitize);
 
@@ -131,6 +127,11 @@ class DEVICE_GAMEPAD_EXPORT GamepadService
   typedef std::set<ConsumerInfo> ConsumerSet;
   ConsumerSet consumers_;
 
+  typedef std::unordered_map<device::GamepadConsumer*, std::vector<bool>>
+      ConsumerConnectedStateMap;
+
+  ConsumerConnectedStateMap inactive_consumer_state_;
+
   int num_active_consumers_;
 
   bool gesture_callback_pending_;
@@ -138,6 +139,6 @@ class DEVICE_GAMEPAD_EXPORT GamepadService
   DISALLOW_COPY_AND_ASSIGN(GamepadService);
 };
 
-}  // namespace content
+}  // namespace device
 
 #endif  // DEVICE_GAMEPAD_GAMEPAD_SERVICE_H_

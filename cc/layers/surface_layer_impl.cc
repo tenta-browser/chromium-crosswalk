@@ -9,28 +9,25 @@
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/debug/debug_colors.h"
 #include "cc/layers/append_quads_data.h"
-#include "cc/quads/solid_color_draw_quad.h"
-#include "cc/quads/surface_draw_quad.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "cc/trees/occlusion.h"
+#include "components/viz/common/quads/solid_color_draw_quad.h"
+#include "components/viz/common/quads/surface_draw_quad.h"
 
 namespace cc {
 
 SurfaceLayerImpl::SurfaceLayerImpl(LayerTreeImpl* tree_impl, int id)
-    : LayerImpl(tree_impl, id) {
-  layer_tree_impl()->AddSurfaceLayer(this);
-}
+    : LayerImpl(tree_impl, id) {}
 
-SurfaceLayerImpl::~SurfaceLayerImpl() {
-  layer_tree_impl()->RemoveSurfaceLayer(this);
-}
+SurfaceLayerImpl::~SurfaceLayerImpl() {}
 
 std::unique_ptr<LayerImpl> SurfaceLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
   return SurfaceLayerImpl::Create(tree_impl, id());
 }
 
-void SurfaceLayerImpl::SetPrimarySurfaceInfo(const SurfaceInfo& surface_info) {
+void SurfaceLayerImpl::SetPrimarySurfaceInfo(
+    const viz::SurfaceInfo& surface_info) {
   if (primary_surface_info_ == surface_info)
     return;
 
@@ -38,7 +35,8 @@ void SurfaceLayerImpl::SetPrimarySurfaceInfo(const SurfaceInfo& surface_info) {
   NoteLayerPropertyChanged();
 }
 
-void SurfaceLayerImpl::SetFallbackSurfaceInfo(const SurfaceInfo& surface_info) {
+void SurfaceLayerImpl::SetFallbackSurfaceInfo(
+    const viz::SurfaceInfo& surface_info) {
   if (fallback_surface_info_ == surface_info)
     return;
 
@@ -54,36 +52,60 @@ void SurfaceLayerImpl::SetStretchContentToFillBounds(bool stretch_content) {
   NoteLayerPropertyChanged();
 }
 
+void SurfaceLayerImpl::SetDefaultBackgroundColor(SkColor background_color) {
+  if (default_background_color_ == background_color)
+    return;
+
+  default_background_color_ = background_color;
+  NoteLayerPropertyChanged();
+}
+
 void SurfaceLayerImpl::PushPropertiesTo(LayerImpl* layer) {
   LayerImpl::PushPropertiesTo(layer);
   SurfaceLayerImpl* layer_impl = static_cast<SurfaceLayerImpl*>(layer);
   layer_impl->SetPrimarySurfaceInfo(primary_surface_info_);
   layer_impl->SetFallbackSurfaceInfo(fallback_surface_info_);
   layer_impl->SetStretchContentToFillBounds(stretch_content_to_fill_bounds_);
+  layer_impl->SetDefaultBackgroundColor(default_background_color_);
 }
 
-void SurfaceLayerImpl::AppendQuads(RenderPass* render_pass,
+void SurfaceLayerImpl::AppendQuads(viz::RenderPass* render_pass,
                                    AppendQuadsData* append_quads_data) {
   AppendRainbowDebugBorder(render_pass);
-  auto* primary = CreateSurfaceDrawQuad(
-      render_pass, SurfaceDrawQuadType::PRIMARY, primary_surface_info_,
-      &append_quads_data->embedded_surfaces);
-  // Emitting a fallback SurfaceDrawQuad is unnecessary if the primary and
+  if (!primary_surface_info_.is_valid())
+    return;
+
+  viz::SharedQuadState* common_shared_quad_state = nullptr;
+  auto* primary =
+      CreateSurfaceDrawQuad(render_pass, viz::SurfaceDrawQuadType::PRIMARY,
+                            primary_surface_info_, &common_shared_quad_state);
+  // Emitting a fallback viz::SurfaceDrawQuad is unnecessary if the primary and
   // fallback surface Ids match.
   if (primary && fallback_surface_info_.id() != primary_surface_info_.id()) {
-    primary->fallback_quad = CreateSurfaceDrawQuad(
-        render_pass, SurfaceDrawQuadType::FALLBACK, fallback_surface_info_,
-        nullptr /* embedded_surfaces */);
+    // Add the primary surface ID as a dependency.
+    append_quads_data->activation_dependencies.push_back(
+        primary_surface_info_.id());
+    if (fallback_surface_info_.is_valid()) {
+      // We can use the same SharedQuadState as the primary viz::SurfaceDrawQuad
+      // if we don't need a different transform on the fallback.
+      bool use_common_shared_quad_state =
+          !stretch_content_to_fill_bounds_ &&
+          primary_surface_info_.device_scale_factor() ==
+              fallback_surface_info_.device_scale_factor();
+      primary->fallback_quad = CreateSurfaceDrawQuad(
+          render_pass, viz::SurfaceDrawQuadType::FALLBACK,
+          fallback_surface_info_,
+          use_common_shared_quad_state ? &common_shared_quad_state : nullptr);
+    }
   }
 }
 
-SurfaceDrawQuad* SurfaceLayerImpl::CreateSurfaceDrawQuad(
-    RenderPass* render_pass,
-    SurfaceDrawQuadType surface_draw_quad_type,
-    const SurfaceInfo& surface_info,
-    std::vector<SurfaceId>* embedded_surfaces) {
-  if (!surface_info.is_valid())
-    return nullptr;
+viz::SurfaceDrawQuad* SurfaceLayerImpl::CreateSurfaceDrawQuad(
+    viz::RenderPass* render_pass,
+    viz::SurfaceDrawQuadType surface_draw_quad_type,
+    const viz::SurfaceInfo& surface_info,
+    viz::SharedQuadState** common_shared_quad_state) {
+  DCHECK(surface_info.is_valid());
 
   gfx::Rect quad_rect(surface_info.size_in_pixels());
   gfx::Rect visible_quad_rect =
@@ -105,24 +127,32 @@ SurfaceDrawQuad* SurfaceLayerImpl::CreateSurfaceDrawQuad(
         surface_info.device_scale_factor();
   }
 
-  visible_quad_rect = gfx::ScaleToEnclosedRect(
+  visible_quad_rect = gfx::ScaleToEnclosingRect(
       visible_quad_rect, layer_to_content_scale_x, layer_to_content_scale_y);
   visible_quad_rect = gfx::IntersectRects(quad_rect, visible_quad_rect);
 
   if (visible_quad_rect.IsEmpty())
     return nullptr;
 
-  SharedQuadState* shared_quad_state =
-      render_pass->CreateAndAppendSharedQuadState();
-  PopulateScaledSharedQuadState(shared_quad_state, layer_to_content_scale_x,
-                                layer_to_content_scale_y);
+  // If a |common_shared_quad_state| is provided then use that. Otherwise,
+  // allocate a new SharedQuadState. Assign the new SharedQuadState to
+  // *|common_shared_quad_state| so that it may be reused by another emitted
+  // viz::SurfaceDrawQuad.
+  viz::SharedQuadState* shared_quad_state =
+      common_shared_quad_state ? *common_shared_quad_state : nullptr;
+  if (!shared_quad_state) {
+    shared_quad_state = render_pass->CreateAndAppendSharedQuadState();
+    PopulateScaledSharedQuadState(shared_quad_state, layer_to_content_scale_x,
+                                  layer_to_content_scale_y, contents_opaque());
+  }
+  if (common_shared_quad_state)
+    *common_shared_quad_state = shared_quad_state;
 
-  SurfaceDrawQuad* surface_draw_quad =
-      render_pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
+  auto* surface_draw_quad =
+      render_pass->CreateAndAppendDrawQuad<viz::SurfaceDrawQuad>();
   surface_draw_quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect,
-                            surface_info.id(), surface_draw_quad_type, nullptr);
-  if (embedded_surfaces)
-    embedded_surfaces->push_back(surface_info.id());
+                            surface_info.id(), surface_draw_quad_type,
+                            default_background_color_, nullptr);
 
   return surface_draw_quad;
 }
@@ -134,13 +164,13 @@ void SurfaceLayerImpl::GetDebugBorderProperties(SkColor* color,
       layer_tree_impl() ? layer_tree_impl()->device_scale_factor() : 1);
 }
 
-void SurfaceLayerImpl::AppendRainbowDebugBorder(RenderPass* render_pass) {
+void SurfaceLayerImpl::AppendRainbowDebugBorder(viz::RenderPass* render_pass) {
   if (!ShowDebugBorders(DebugBorderType::SURFACE))
     return;
 
-  SharedQuadState* shared_quad_state =
+  viz::SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
-  PopulateSharedQuadState(shared_quad_state);
+  PopulateSharedQuadState(shared_quad_state, contents_opaque());
 
   SkColor color;
   float border_width;
@@ -178,13 +208,13 @@ void SurfaceLayerImpl::AppendRainbowDebugBorder(RenderPass* render_pass) {
 
     if (!top.IsEmpty()) {
       bool force_anti_aliasing_off = false;
-      SolidColorDrawQuad* top_quad =
-          render_pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
+      auto* top_quad =
+          render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
       top_quad->SetNew(shared_quad_state, top, top, colors[i % kNumColors],
                        force_anti_aliasing_off);
 
-      SolidColorDrawQuad* bottom_quad =
-          render_pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
+      auto* bottom_quad =
+          render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
       bottom_quad->SetNew(shared_quad_state, bottom, bottom,
                           colors[kNumColors - 1 - (i % kNumColors)],
                           force_anti_aliasing_off);
@@ -192,8 +222,8 @@ void SurfaceLayerImpl::AppendRainbowDebugBorder(RenderPass* render_pass) {
       if (contents_opaque()) {
         // Draws a stripe filling the layer vertically with the same color and
         // width as the horizontal stipes along the layer's top border.
-        SolidColorDrawQuad* solid_quad =
-            render_pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
+        auto* solid_quad =
+            render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
         // The inner fill is more transparent then the border.
         static const float kFillOpacity = 0.1f;
         SkColor fill_color = SkColorSetA(
@@ -207,14 +237,14 @@ void SurfaceLayerImpl::AppendRainbowDebugBorder(RenderPass* render_pass) {
     }
     if (!left.IsEmpty()) {
       bool force_anti_aliasing_off = false;
-      SolidColorDrawQuad* left_quad =
-          render_pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
+      auto* left_quad =
+          render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
       left_quad->SetNew(shared_quad_state, left, left,
                         colors[kNumColors - 1 - (i % kNumColors)],
                         force_anti_aliasing_off);
 
-      SolidColorDrawQuad* right_quad =
-          render_pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
+      auto* right_quad =
+          render_pass->CreateAndAppendDrawQuad<viz::SolidColorDrawQuad>();
       right_quad->SetNew(shared_quad_state, right, right,
                          colors[i % kNumColors], force_anti_aliasing_off);
     }

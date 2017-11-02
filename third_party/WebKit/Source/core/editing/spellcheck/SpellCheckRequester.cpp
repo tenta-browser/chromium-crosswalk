@@ -29,11 +29,13 @@
 #include "core/dom/Node.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/markers/DocumentMarkerController.h"
 #include "core/editing/spellcheck/SpellChecker.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
-#include "core/html/TextControlElement.h"
+#include "core/html/forms/TextControlElement.h"
+#include "platform/Histogram.h"
 #include "platform/text/TextCheckerClient.h"
 
 namespace blink {
@@ -125,6 +127,7 @@ SpellCheckRequester::SpellCheckRequester(LocalFrame& frame)
     : frame_(&frame),
       last_request_sequence_(0),
       last_processed_sequence_(0),
+      last_request_time_(0.0),
       timer_to_process_queued_request_(
           TaskRunnerHelper::Get(TaskType::kUnspecedTimer, &frame),
           this,
@@ -153,6 +156,17 @@ void SpellCheckRequester::RequestCheckingFor(const EphemeralRange& range,
   SpellCheckRequest* request = SpellCheckRequest::Create(range, request_num);
   if (!request)
     return;
+
+  DEFINE_STATIC_LOCAL(CustomCountHistogram,
+                      spell_checker_request_interval_histogram,
+                      ("WebCore.SpellChecker.RequestInterval", 0, 10000, 50));
+  const double current_request_time = MonotonicallyIncreasingTime();
+  if (request_num == 0 && last_request_time_ > 0) {
+    const double interval_ms =
+        (current_request_time - last_request_time_) * 1000.0;
+    spell_checker_request_interval_histogram.Count(interval_ms);
+  }
+  last_request_time_ = current_request_time;
 
   DCHECK_EQ(request->Data().Sequence(), kUnrequestedTextCheckingSequence);
   int sequence = ++last_request_sequence_;
@@ -183,8 +197,8 @@ void SpellCheckRequester::PrepareForLeakDetection() {
   // Rather than somehow wait for this async queue to drain before running
   // the leak detector, they're all cancelled to prevent flaky leaks being
   // reported.
-  request_queue_.Clear();
-  // WebSpellCheckClient stores a set of WebTextCheckingCompletion objects,
+  request_queue_.clear();
+  // TextCheckerClient stores a set of WebTextCheckingCompletion objects,
   // which may store references to already invoked requests. We should clear
   // these references to prevent them from being a leak source.
   Client().CancelAllPendingRequests();
@@ -232,19 +246,16 @@ void SpellCheckRequester::EnqueueRequest(SpellCheckRequest* request) {
   request_queue_.push_back(request);
 }
 
-void SpellCheckRequester::DidCheck(int sequence,
-                                   const Vector<TextCheckingResult>& results) {
+bool SpellCheckRequester::EnsureValidRequestQueueFor(int sequence) {
   DCHECK(processing_request_);
-  DCHECK_EQ(processing_request_->Data().Sequence(), sequence);
-  if (processing_request_->Data().Sequence() != sequence) {
-    request_queue_.Clear();
-    return;
-  }
+  if (processing_request_->Data().Sequence() == sequence)
+    return true;
+  NOTREACHED();
+  request_queue_.clear();
+  return false;
+}
 
-  if (results.size())
-    GetFrame().GetSpellChecker().MarkAndReplaceFor(processing_request_,
-                                                   results);
-
+void SpellCheckRequester::DidCheck(int sequence) {
   DCHECK_LT(last_processed_sequence_, sequence);
   last_processed_sequence_ = sequence;
 
@@ -256,26 +267,16 @@ void SpellCheckRequester::DidCheck(int sequence,
 void SpellCheckRequester::DidCheckSucceed(
     int sequence,
     const Vector<TextCheckingResult>& results) {
-  // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
-  // needs to be audited.  See http://crbug.com/590369 for more details.
-  GetFrame().GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
-
-  TextCheckingRequestData request_data = processing_request_->Data();
-  if (request_data.Sequence() == sequence) {
-    DocumentMarker::MarkerTypes markers =
-        DocumentMarker::SpellCheckClientMarkers();
-    if (processing_request_->IsValid()) {
-      Range* checking_range = processing_request_->CheckingRange();
-      GetFrame().GetDocument()->Markers().RemoveMarkers(
-          EphemeralRange(checking_range), markers);
-    }
-  }
-  DidCheck(sequence, results);
+  if (!EnsureValidRequestQueueFor(sequence))
+    return;
+  GetFrame().GetSpellChecker().MarkAndReplaceFor(processing_request_, results);
+  DidCheck(sequence);
 }
 
 void SpellCheckRequester::DidCheckCancel(int sequence) {
-  Vector<TextCheckingResult> results;
-  DidCheck(sequence, results);
+  if (!EnsureValidRequestQueueFor(sequence))
+    return;
+  DidCheck(sequence);
 }
 
 DEFINE_TRACE(SpellCheckRequester) {

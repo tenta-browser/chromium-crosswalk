@@ -5,17 +5,16 @@
 #include "core/dom/ScriptedIdleTaskController.h"
 
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/IdleRequestCallback.h"
 #include "core/dom/IdleRequestOptions.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/probe/CoreProbes.h"
 #include "platform/Histogram.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/CurrentTime.h"
 #include "platform/wtf/Functional.h"
 #include "platform/wtf/RefCounted.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebTraceLocation.h"
 
 namespace blink {
@@ -25,29 +24,42 @@ namespace internal {
 class IdleRequestCallbackWrapper
     : public RefCounted<IdleRequestCallbackWrapper> {
  public:
-  static PassRefPtr<IdleRequestCallbackWrapper> Create(
+  static RefPtr<IdleRequestCallbackWrapper> Create(
       ScriptedIdleTaskController::CallbackId id,
       ScriptedIdleTaskController* controller) {
-    return AdoptRef(new IdleRequestCallbackWrapper(id, controller));
+    return WTF::AdoptRef(new IdleRequestCallbackWrapper(id, controller));
   }
   virtual ~IdleRequestCallbackWrapper() {}
 
-  static void IdleTaskFired(
-      PassRefPtr<IdleRequestCallbackWrapper> callback_wrapper,
-      double deadline_seconds) {
+  static void IdleTaskFired(RefPtr<IdleRequestCallbackWrapper> callback_wrapper,
+                            double deadline_seconds) {
     // TODO(rmcilroy): Implement clamping of deadline in some form.
-    if (ScriptedIdleTaskController* controller = callback_wrapper->Controller())
+    if (ScriptedIdleTaskController* controller =
+            callback_wrapper->Controller()) {
+      // If we are going to yield immediately, reschedule the callback for
+      // later.
+      if (Platform::Current()
+              ->CurrentThread()
+              ->Scheduler()
+              ->ShouldYieldForHighPriorityWork()) {
+        controller->ScheduleCallback(std::move(callback_wrapper),
+                                     /* timeout_millis */ 0);
+        return;
+      }
       controller->CallbackFired(callback_wrapper->Id(), deadline_seconds,
                                 IdleDeadline::CallbackType::kCalledWhenIdle);
+    }
     callback_wrapper->Cancel();
   }
 
   static void TimeoutFired(
-      PassRefPtr<IdleRequestCallbackWrapper> callback_wrapper) {
-    if (ScriptedIdleTaskController* controller = callback_wrapper->Controller())
+      RefPtr<IdleRequestCallbackWrapper> callback_wrapper) {
+    if (ScriptedIdleTaskController* controller =
+            callback_wrapper->Controller()) {
       controller->CallbackFired(callback_wrapper->Id(),
                                 MonotonicallyIncreasingTime(),
                                 IdleDeadline::CallbackType::kCalledByTimeout);
+    }
     callback_wrapper->Cancel();
   }
 
@@ -67,6 +79,24 @@ class IdleRequestCallbackWrapper
 
 }  // namespace internal
 
+ScriptedIdleTaskController::V8IdleTask::V8IdleTask(
+    V8IdleRequestCallback* callback)
+    : callback_(callback) {}
+
+DEFINE_TRACE(ScriptedIdleTaskController::V8IdleTask) {
+  visitor->Trace(callback_);
+  ScriptedIdleTaskController::IdleTask::Trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(ScriptedIdleTaskController::V8IdleTask) {
+  visitor->TraceWrappers(callback_);
+  ScriptedIdleTaskController::IdleTask::TraceWrappers(visitor);
+}
+
+void ScriptedIdleTaskController::V8IdleTask::invoke(IdleDeadline* deadline) {
+  callback_->call(nullptr, deadline);
+}
+
 ScriptedIdleTaskController::ScriptedIdleTaskController(
     ExecutionContext* context)
     : SuspendableObject(context),
@@ -79,8 +109,14 @@ ScriptedIdleTaskController::ScriptedIdleTaskController(
 ScriptedIdleTaskController::~ScriptedIdleTaskController() {}
 
 DEFINE_TRACE(ScriptedIdleTaskController) {
-  visitor->Trace(callbacks_);
+  visitor->Trace(idle_tasks_);
   SuspendableObject::Trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(ScriptedIdleTaskController) {
+  for (const auto& idle_task : idle_tasks_.Values()) {
+    visitor->TraceWrappers(idle_task);
+  }
 }
 
 int ScriptedIdleTaskController::NextCallbackId() {
@@ -90,39 +126,47 @@ int ScriptedIdleTaskController::NextCallbackId() {
     if (!IsValidCallbackId(next_callback_id_))
       next_callback_id_ = 1;
 
-    if (!callbacks_.Contains(next_callback_id_))
+    if (!idle_tasks_.Contains(next_callback_id_))
       return next_callback_id_;
   }
 }
 
 ScriptedIdleTaskController::CallbackId
 ScriptedIdleTaskController::RegisterCallback(
-    IdleRequestCallback* callback,
+    IdleTask* idle_task,
     const IdleRequestOptions& options) {
   CallbackId id = NextCallbackId();
-  callbacks_.Set(id, callback);
+  idle_tasks_.Set(id, idle_task);
   long long timeout_millis = options.timeout();
 
   probe::AsyncTaskScheduled(GetExecutionContext(), "requestIdleCallback",
-                            callback);
+                            idle_task);
 
   RefPtr<internal::IdleRequestCallbackWrapper> callback_wrapper =
       internal::IdleRequestCallbackWrapper::Create(id, this);
-  scheduler_->PostIdleTask(
-      BLINK_FROM_HERE,
-      WTF::Bind(&internal::IdleRequestCallbackWrapper::IdleTaskFired,
-                callback_wrapper));
-  if (timeout_millis > 0)
-    scheduler_->TimerTaskRunner()->PostDelayedTask(
-        BLINK_FROM_HERE,
-        WTF::Bind(&internal::IdleRequestCallbackWrapper::TimeoutFired,
-                  callback_wrapper),
-        timeout_millis);
+  ScheduleCallback(std::move(callback_wrapper), timeout_millis);
   TRACE_EVENT_INSTANT1("devtools.timeline", "RequestIdleCallback",
                        TRACE_EVENT_SCOPE_THREAD, "data",
                        InspectorIdleCallbackRequestEvent::Data(
                            GetExecutionContext(), id, timeout_millis));
   return id;
+}
+
+void ScriptedIdleTaskController::ScheduleCallback(
+    RefPtr<internal::IdleRequestCallbackWrapper> callback_wrapper,
+    long long timeout_millis) {
+  scheduler_->PostIdleTask(
+      BLINK_FROM_HERE,
+      WTF::Bind(&internal::IdleRequestCallbackWrapper::IdleTaskFired,
+                callback_wrapper));
+  if (timeout_millis > 0) {
+    TaskRunnerHelper::Get(TaskType::kIdleTask, GetExecutionContext())
+        ->PostDelayedTask(
+            BLINK_FROM_HERE,
+            WTF::Bind(&internal::IdleRequestCallbackWrapper::TimeoutFired,
+                      callback_wrapper),
+            TimeDelta::FromMilliseconds(timeout_millis));
+  }
 }
 
 void ScriptedIdleTaskController::CancelCallback(CallbackId id) {
@@ -133,14 +177,14 @@ void ScriptedIdleTaskController::CancelCallback(CallbackId id) {
   if (!IsValidCallbackId(id))
     return;
 
-  callbacks_.erase(id);
+  idle_tasks_.erase(id);
 }
 
 void ScriptedIdleTaskController::CallbackFired(
     CallbackId id,
     double deadline_seconds,
     IdleDeadline::CallbackType callback_type) {
-  if (!callbacks_.Contains(id))
+  if (!idle_tasks_.Contains(id))
     return;
 
   if (suspended_) {
@@ -161,8 +205,8 @@ void ScriptedIdleTaskController::RunCallback(
     double deadline_seconds,
     IdleDeadline::CallbackType callback_type) {
   DCHECK(!suspended_);
-  IdleRequestCallback* callback = callbacks_.Take(id);
-  if (!callback)
+  IdleTask* idle_task = idle_tasks_.Take(id);
+  if (!idle_task)
     return;
 
   double allotted_time_millis =
@@ -173,7 +217,7 @@ void ScriptedIdleTaskController::RunCallback(
       ("WebCore.ScriptedIdleTaskController.IdleCallbackDeadline", 0, 50, 50));
   idle_callback_deadline_histogram.Count(allotted_time_millis);
 
-  probe::AsyncTask async_task(GetExecutionContext(), callback);
+  probe::AsyncTask async_task(GetExecutionContext(), idle_task);
   probe::UserCallback probe(GetExecutionContext(), "requestIdleCallback",
                             AtomicString(), true);
 
@@ -182,7 +226,7 @@ void ScriptedIdleTaskController::RunCallback(
       InspectorIdleCallbackFireEvent::Data(
           GetExecutionContext(), id, allotted_time_millis,
           callback_type == IdleDeadline::CallbackType::kCalledByTimeout));
-  callback->handleEvent(IdleDeadline::Create(deadline_seconds, callback_type));
+  idle_task->invoke(IdleDeadline::Create(deadline_seconds, callback_type));
 
   double overrun_millis =
       std::max((MonotonicallyIncreasingTime() - deadline_seconds) * 1000, 0.0);
@@ -194,7 +238,7 @@ void ScriptedIdleTaskController::RunCallback(
 }
 
 void ScriptedIdleTaskController::ContextDestroyed(ExecutionContext*) {
-  callbacks_.Clear();
+  idle_tasks_.clear();
 }
 
 void ScriptedIdleTaskController::Suspend() {
@@ -207,15 +251,15 @@ void ScriptedIdleTaskController::Resume() {
 
   // Run any pending timeouts.
   Vector<CallbackId> pending_timeouts;
-  pending_timeouts_.Swap(pending_timeouts);
+  pending_timeouts_.swap(pending_timeouts);
   for (auto& id : pending_timeouts)
     RunCallback(id, MonotonicallyIncreasingTime(),
                 IdleDeadline::CallbackType::kCalledByTimeout);
 
   // Repost idle tasks for any remaining callbacks.
-  for (auto& callback : callbacks_) {
+  for (auto& idle_task : idle_tasks_) {
     RefPtr<internal::IdleRequestCallbackWrapper> callback_wrapper =
-        internal::IdleRequestCallbackWrapper::Create(callback.key, this);
+        internal::IdleRequestCallbackWrapper::Create(idle_task.key, this);
     scheduler_->PostIdleTask(
         BLINK_FROM_HERE,
         WTF::Bind(&internal::IdleRequestCallbackWrapper::IdleTaskFired,

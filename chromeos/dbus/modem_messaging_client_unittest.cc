@@ -4,6 +4,9 @@
 
 #include "chromeos/dbus/modem_messaging_client.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
@@ -70,13 +73,12 @@ class ModemMessagingClientTest : public testing::Test {
 
     // Set an expectation so mock_proxy's ConnectToSignal() will use
     // OnConnectToSignal() to run the callback.
-    EXPECT_CALL(*mock_proxy_.get(),
-                ConnectToSignal(modemmanager::kModemManager1MessagingInterface,
-                                modemmanager::kSMSAddedSignal,
-                                _,
-                                _))
+    EXPECT_CALL(
+        *mock_proxy_.get(),
+        DoConnectToSignal(modemmanager::kModemManager1MessagingInterface,
+                          modemmanager::kSMSAddedSignal, _, _))
         .WillRepeatedly(
-             Invoke(this, &ModemMessagingClientTest::OnConnectToSignal));
+            Invoke(this, &ModemMessagingClientTest::OnConnectToSignal));
 
     // Set an expectation so mock_bus's GetObjectProxy() for the given
     // service name and the object path will return mock_proxy_.
@@ -97,7 +99,7 @@ class ModemMessagingClientTest : public testing::Test {
   // Handles Delete method call.
   void OnDelete(dbus::MethodCall* method_call,
                 int timeout_ms,
-                const dbus::ObjectProxy::ResponseCallback& callback) {
+                dbus::ObjectProxy::ResponseCallback* callback) {
     EXPECT_EQ(modemmanager::kModemManager1MessagingInterface,
               method_call->GetInterface());
     EXPECT_EQ(modemmanager::kSMSDeleteFunction, method_call->GetMember());
@@ -107,22 +109,22 @@ class ModemMessagingClientTest : public testing::Test {
     EXPECT_EQ(expected_sms_path_, sms_path);
     EXPECT_FALSE(reader.HasMoreData());
 
-    message_loop_.task_runner()->PostTask(FROM_HERE,
-                                          base::Bind(callback, response_));
+    message_loop_.task_runner()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(*callback), response_));
   }
 
   // Handles List method call.
   void OnList(dbus::MethodCall* method_call,
               int timeout_ms,
-              const dbus::ObjectProxy::ResponseCallback& callback) {
+              dbus::ObjectProxy::ResponseCallback* callback) {
     EXPECT_EQ(modemmanager::kModemManager1MessagingInterface,
               method_call->GetInterface());
     EXPECT_EQ(modemmanager::kSMSListFunction, method_call->GetMember());
     dbus::MessageReader reader(method_call);
     EXPECT_FALSE(reader.HasMoreData());
 
-    message_loop_.task_runner()->PostTask(FROM_HERE,
-                                          base::Bind(callback, response_));
+    message_loop_.task_runner()->PostTask(
+        FROM_HERE, base::BindOnce(std::move(*callback), response_));
   }
 
   // Checks the results of List.
@@ -154,12 +156,12 @@ class ModemMessagingClientTest : public testing::Test {
       const std::string& interface_name,
       const std::string& signal_name,
       const dbus::ObjectProxy::SignalCallback& signal_callback,
-      const dbus::ObjectProxy::OnConnectedCallback& on_connected_callback) {
+      dbus::ObjectProxy::OnConnectedCallback* on_connected_callback) {
     sms_received_callback_ = signal_callback;
     const bool success = true;
     message_loop_.task_runner()->PostTask(
-        FROM_HERE, base::Bind(on_connected_callback, interface_name,
-                              signal_name, success));
+        FROM_HERE, base::BindOnce(std::move(*on_connected_callback),
+                                  interface_name, signal_name, success));
   }
 };
 
@@ -195,7 +197,7 @@ TEST_F(ModemMessagingClientTest, Delete) {
   // Set expectations.
   const dbus::ObjectPath kSmsPath("/SMS/0");
   expected_sms_path_ = kSmsPath;
-  EXPECT_CALL(*mock_proxy_.get(), CallMethod(_, _, _))
+  EXPECT_CALL(*mock_proxy_.get(), DoCallMethod(_, _, _))
       .WillOnce(Invoke(this, &ModemMessagingClientTest::OnDelete));
   MockDeleteCallback callback;
   EXPECT_CALL(callback, Run()).Times(1);
@@ -213,7 +215,7 @@ TEST_F(ModemMessagingClientTest, Delete) {
 
 TEST_F(ModemMessagingClientTest, List) {
   // Set expectations.
-  EXPECT_CALL(*mock_proxy_.get(), CallMethod(_, _, _))
+  EXPECT_CALL(*mock_proxy_.get(), DoCallMethod(_, _, _))
       .WillOnce(Invoke(this, &ModemMessagingClientTest::OnList));
   MockListCallback callback;
   EXPECT_CALL(callback, Run(_))

@@ -8,12 +8,10 @@
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/tracked_objects.h"
 #include "components/sync/driver/data_type_controller_mock.h"
 #include "components/sync/driver/fake_sync_client.h"
 #include "components/sync/driver/fake_sync_service.h"
@@ -27,7 +25,7 @@ using testing::_;
 using testing::DoAll;
 using testing::InvokeWithoutArgs;
 using testing::Return;
-using testing::SetArgumentPointee;
+using testing::SetArgPointee;
 using testing::StrictMock;
 
 namespace syncer {
@@ -74,8 +72,8 @@ class SyncFrontendDataTypeControllerTest : public testing::Test {
         sync_client_(&components_factory_) {}
 
   void SetUp() override {
-    dtc_mock_ = base::MakeUnique<StrictMock<FrontendDataTypeControllerMock>>();
-    frontend_dtc_ = base::MakeUnique<FrontendDataTypeControllerFake>(
+    dtc_mock_ = std::make_unique<StrictMock<FrontendDataTypeControllerMock>>();
+    frontend_dtc_ = std::make_unique<FrontendDataTypeControllerFake>(
         &sync_client_, dtc_mock_.get());
   }
 
@@ -89,7 +87,7 @@ class SyncFrontendDataTypeControllerTest : public testing::Test {
     EXPECT_CALL(*model_associator_, CryptoReadyIfNecessary())
         .WillOnce(Return(true));
     EXPECT_CALL(*model_associator_, SyncModelHasUserCreatedNodes(_))
-        .WillOnce(DoAll(SetArgumentPointee<0>(true), Return(true)));
+        .WillOnce(DoAll(SetArgPointee<0>(true), Return(true)));
     EXPECT_CALL(*model_associator_, AssociateModels(_, _))
         .WillOnce(Return(SyncError()));
     EXPECT_CALL(*dtc_mock_.get(), RecordAssociationTime(_));
@@ -146,7 +144,7 @@ TEST_F(SyncFrontendDataTypeControllerTest, StartFirstRun) {
   EXPECT_CALL(*model_associator_, CryptoReadyIfNecessary())
       .WillOnce(Return(true));
   EXPECT_CALL(*model_associator_, SyncModelHasUserCreatedNodes(_))
-      .WillOnce(DoAll(SetArgumentPointee<0>(false), Return(true)));
+      .WillOnce(DoAll(SetArgPointee<0>(false), Return(true)));
   EXPECT_CALL(*model_associator_, AssociateModels(_, _))
       .WillOnce(Return(SyncError()));
   EXPECT_CALL(*dtc_mock_.get(), RecordAssociationTime(_));
@@ -184,7 +182,7 @@ TEST_F(SyncFrontendDataTypeControllerTest, StartAssociationFailed) {
   EXPECT_CALL(*model_associator_, CryptoReadyIfNecessary())
       .WillOnce(Return(true));
   EXPECT_CALL(*model_associator_, SyncModelHasUserCreatedNodes(_))
-      .WillOnce(DoAll(SetArgumentPointee<0>(true), Return(true)));
+      .WillOnce(DoAll(SetArgPointee<0>(true), Return(true)));
   EXPECT_CALL(*model_associator_, AssociateModels(_, _))
       .WillOnce(Return(
           SyncError(FROM_HERE, SyncError::DATATYPE_ERROR, "error", BOOKMARKS)));
@@ -205,7 +203,7 @@ TEST_F(SyncFrontendDataTypeControllerTest,
   EXPECT_CALL(*model_associator_, CryptoReadyIfNecessary())
       .WillRepeatedly(Return(true));
   EXPECT_CALL(*model_associator_, SyncModelHasUserCreatedNodes(_))
-      .WillRepeatedly(DoAll(SetArgumentPointee<0>(false), Return(false)));
+      .WillRepeatedly(DoAll(SetArgPointee<0>(false), Return(false)));
   EXPECT_EQ(DataTypeController::NOT_RUNNING, frontend_dtc_->state());
   Start();
   EXPECT_EQ(DataTypeController::NOT_RUNNING, frontend_dtc_->state());

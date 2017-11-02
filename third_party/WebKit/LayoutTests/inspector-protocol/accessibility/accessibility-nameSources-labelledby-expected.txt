@@ -1,9 +1,10 @@
+Tests name sources when used with aria-labelledby.
 {
   "nodeId": "<string>",
   "ignored": false,
   "role": {
     "type": "internalRole",
-    "value": "Div"
+    "value": "GenericContainer"
   },
   "name": {
     "type": "computedString",

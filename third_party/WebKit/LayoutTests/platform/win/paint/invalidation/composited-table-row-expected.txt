@@ -4,18 +4,17 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutTableRow TR",
       "position": [8, 8],
-      "bounds": [69, 23],
-      "drawsContent": true,
+      "bounds": [70, 24],
       "backgroundColor": "#FF0000",
       "paintInvalidations": [
         {
           "object": "LayoutTableCell TD id='target'",
-          "rect": [0, 0, 35, 24],
+          "rect": [0, 0, 35, 23],
           "reason": "style change"
         }
       ]

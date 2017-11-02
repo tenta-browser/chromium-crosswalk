@@ -4,11 +4,8 @@
 
 #include "chrome/common/extensions/extension_process_policy.h"
 
-#include "base/command_line.h"
-#include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
 #include "chrome/common/extensions/extension_constants.h"
-#include "content/public/common/content_switches.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
@@ -65,22 +62,18 @@ bool CrossesExtensionProcessBoundary(
       return false;
   }
 
-  return old_url_extension != new_url_extension;
-}
-
-bool IsIsolateExtensionsEnabled() {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kIsolateExtensions) ||
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          ::switches::kSitePerProcess)) {
-    return true;
+  // If there are no extensions associated with either url, we check if the new
+  // url points to an extension origin. If it does, fork - extension
+  // installation should not be a factor.
+  if (!old_url_extension && !new_url_extension) {
+    // Hypothetically, we could also do an origin check here to make sure that
+    // the two urls point two different extensions, but it's not really
+    // necesary since we know there wasn't an associated extension with the old
+    // url.
+    return new_url.SchemeIs(kExtensionScheme);
   }
 
-  const std::string group_name =
-      base::FieldTrialList::FindFullName("SiteIsolationExtensions");
-  // Use StartsWith() for more flexibility (e.g. multiple Enabled groups).
-  return !base::StartsWith(group_name, "Control",
-                           base::CompareCase::INSENSITIVE_ASCII);
+  return old_url_extension != new_url_extension;
 }
 
 }  // namespace extensions

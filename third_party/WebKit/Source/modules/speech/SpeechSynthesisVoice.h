@@ -26,7 +26,7 @@
 #ifndef SpeechSynthesisVoice_h
 #define SpeechSynthesisVoice_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/speech/PlatformSpeechSynthesisVoice.h"
 #include "platform/wtf/Forward.h"
@@ -40,7 +40,7 @@ class SpeechSynthesisVoice final
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SpeechSynthesisVoice* Create(PassRefPtr<PlatformSpeechSynthesisVoice>);
+  static SpeechSynthesisVoice* Create(RefPtr<PlatformSpeechSynthesisVoice>);
   ~SpeechSynthesisVoice();
 
   const String& voiceURI() const { return platform_voice_->VoiceURI(); }
@@ -50,13 +50,13 @@ class SpeechSynthesisVoice final
   bool isDefault() const { return platform_voice_->IsDefault(); }
 
   PlatformSpeechSynthesisVoice* PlatformVoice() const {
-    return platform_voice_.Get();
+    return platform_voice_.get();
   }
 
   DEFINE_INLINE_TRACE() {}
 
  private:
-  explicit SpeechSynthesisVoice(PassRefPtr<PlatformSpeechSynthesisVoice>);
+  explicit SpeechSynthesisVoice(RefPtr<PlatformSpeechSynthesisVoice>);
 
   RefPtr<PlatformSpeechSynthesisVoice> platform_voice_;
 };

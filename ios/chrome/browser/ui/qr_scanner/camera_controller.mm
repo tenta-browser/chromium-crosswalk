@@ -34,6 +34,10 @@
 @property(nonatomic, readwrite, assign, getter=isTorchAvailable)
     BOOL torchAvailable;
 
+// Initializes the controller with the |delegate|.
+- (instancetype)initWithDelegate:(id<CameraControllerDelegate>)delegate
+    NS_DESIGNATED_INITIALIZER;
+
 // YES if |cameraState| is CAMERA_AVAILABLE.
 - (BOOL)isCameraAvailable;
 // Starts receiving notfications about changes to the capture session and to the
@@ -57,6 +61,13 @@
 }
 
 #pragma mark lifecycle
+
++ (instancetype)cameraControllerWithDelegate:
+    (id<CameraControllerDelegate>)delegate {
+  CameraController* cameraController =
+      [[CameraController alloc] initWithDelegate:delegate];
+  return cameraController;
+}
 
 - (instancetype)initWithDelegate:(id<CameraControllerDelegate>)delegate {
   self = [super init];
@@ -342,6 +353,11 @@
       case AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableWithMultipleForegroundApps:
         [self setCameraState:qr_scanner::MULTIPLE_FOREGROUND_APPS];
         break;
+#if defined(__IPHONE_11_1) && (__IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_11_1)
+      case AVCaptureSessionInterruptionReasonVideoDeviceNotAvailableDueToSystemPressure:
+        [self setCameraState:qr_scanner::CAMERA_UNAVAILABLE_DUE_TO_SYSTEM_PRESSURE];
+        break;
+#endif
       case AVCaptureSessionInterruptionReasonAudioDeviceInUseByAnotherClient:
         NOTREACHED();
         break;

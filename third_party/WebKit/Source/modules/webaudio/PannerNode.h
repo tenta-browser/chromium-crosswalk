@@ -32,7 +32,7 @@
 #include "modules/webaudio/AudioParam.h"
 #include "platform/audio/AudioBus.h"
 #include "platform/audio/Cone.h"
-#include "platform/audio/Distance.h"
+#include "platform/audio/DistanceEffect.h"
 #include "platform/audio/Panner.h"
 #include "platform/geometry/FloatPoint3D.h"
 #include "platform/wtf/HashMap.h"
@@ -59,14 +59,14 @@ class PannerHandler final : public AudioHandler {
     kDistanceConeGainDirty = 0x2,
   };
 
-  static PassRefPtr<PannerHandler> Create(AudioNode&,
-                                          float sample_rate,
-                                          AudioParamHandler& position_x,
-                                          AudioParamHandler& position_y,
-                                          AudioParamHandler& position_z,
-                                          AudioParamHandler& orientation_x,
-                                          AudioParamHandler& orientation_y,
-                                          AudioParamHandler& orientation_z);
+  static RefPtr<PannerHandler> Create(AudioNode&,
+                                      float sample_rate,
+                                      AudioParamHandler& position_x,
+                                      AudioParamHandler& position_y,
+                                      AudioParamHandler& position_z,
+                                      AudioParamHandler& orientation_x,
+                                      AudioParamHandler& orientation_y,
+                                      AudioParamHandler& orientation_z);
 
   ~PannerHandler() override;
 

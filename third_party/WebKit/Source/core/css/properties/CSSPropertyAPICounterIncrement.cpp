@@ -8,10 +8,10 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPICounterIncrement::parseSingleValue(
+const CSSValue* CSSPropertyAPICounterIncrement::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext&,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   return CSSPropertyCounterUtils::ConsumeCounter(
       range, CSSPropertyCounterUtils::kIncrementDefaultValue);
 }

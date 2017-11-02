@@ -9,6 +9,8 @@ from telemetry import story
 class ToughPinchZoomCasesPage(page_module.Page):
 
   def __init__(self, url, page_set, name=''):
+    if name == '':
+      name = url
     super(ToughPinchZoomCasesPage, self).__init__(
         url=url, page_set=page_set, name=name,
         shared_page_state_class=shared_page_state.SharedDesktopPageState,
@@ -151,16 +153,6 @@ class LinkedinPage(ToughPinchZoomCasesPage):
       page_set=page_set, name='LinkedIn')
 
 
-class WikipediaPage(ToughPinchZoomCasesPage):
-
-  """ Why: #6 (Alexa) most visited worldwide,Picked an interesting page """
-
-  def __init__(self, page_set):
-    super(WikipediaPage, self).__init__(
-      url='http://en.wikipedia.org/wiki/Wikipedia',
-      page_set=page_set, name='Wikipedia (1 tab)')
-
-
 class TwitterPage(ToughPinchZoomCasesPage):
 
   """ Why: #8 (Alexa global),Picked an interesting page """
@@ -228,7 +220,6 @@ class ToughPinchZoomCasesPageSet(story.StorySet):
     self.AddStory(BlogSpotPage(self))
     self.AddStory(FacebookPage(self))
     self.AddStory(LinkedinPage(self))
-    self.AddStory(WikipediaPage(self))
     self.AddStory(TwitterPage(self))
     self.AddStory(ESPNPage(self))
 

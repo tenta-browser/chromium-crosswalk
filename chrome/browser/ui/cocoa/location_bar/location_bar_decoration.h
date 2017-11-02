@@ -18,6 +18,10 @@ namespace gfx {
 struct VectorIcon;
 }
 
+namespace test {
+class LocationBarDecorationTestApi;
+}
+
 // Base class for decorations at the left and right of the location
 // bar.  For instance, the location icon.
 
@@ -62,6 +66,10 @@ class LocationBarDecoration {
 
   // Returns the tooltip for this decoration, return |nil| for no tooltip.
   virtual NSString* GetToolTip();
+
+  // Returns the accessibility label for this decoration, return |nil| to use
+  // the result of |GetTooltip()| as a fallback.
+  virtual NSString* GetAccessibilityLabel();
 
   // Methods to set up and remove the tracking area from the |control_view|.
   CrTrackingArea* SetupTrackingArea(NSRect frame, NSView* control_view);
@@ -143,6 +151,17 @@ class LocationBarDecoration {
   // to the private DecorationAccessibilityView helper class.
   void OnAccessibilityViewAction();
 
+  // Called when the omnibox decoration changes state to update the
+  // accessibility view's attributes to match. The |apparent_frame| rectangle is
+  // the frame the accessibility view should appear at visually (which may be
+  // different from its frame in the Cocoa sense).
+  void UpdateAccessibilityView(NSRect apparent_frame);
+
+  // Computes the real bounds the focus ring should be drawn around for this
+  // decoration. Some decorations include visual spacing or separators in their
+  // bounds, but these should not be encompassed by the focus ring.
+  virtual NSRect GetRealFocusRingBounds(NSRect bounds) const;
+
   DecorationMouseState state() const { return state_; }
 
   bool active() const { return active_; }
@@ -155,6 +174,9 @@ class LocationBarDecoration {
   static const SkColor kMaterialDarkModeTextColor;
 
  protected:
+  // Returns the amount of padding between the divider and the label text.
+  virtual CGFloat DividerPadding() const;
+
   // Gets the color used to draw the Material Design icon. The default
   // implementation satisfies most cases - few subclasses should need to
   // override.
@@ -165,10 +187,15 @@ class LocationBarDecoration {
   // decorations are assigned their icon (vs. creating it themselves).
   virtual const gfx::VectorIcon* GetMaterialVectorIcon() const;
 
-  // Gets the color used for the divider. Only used in Material design.
-  NSColor* GetDividerColor(bool location_bar_is_dark) const;
+  // Draws the decoration's vertical divider. Assumes already lock focused on
+  // the control_view.
+  void DrawDivider(NSView* control_view,
+                   NSRect decoration_frame,
+                   CGFloat alpha) const;
 
  private:
+  friend class test::LocationBarDecorationTestApi;
+
   // Called when the state of the decoration is updated.
   void UpdateDecorationState();
 
@@ -177,7 +204,7 @@ class LocationBarDecoration {
   // True if the decoration is active.
   bool active_ = false;
 
-  base::scoped_nsobject<NSView> accessibility_view_;
+  base::scoped_nsobject<NSControl> accessibility_view_;
 
   // The decoration's tracking area. Only set if the decoration accepts a mouse
   // press.

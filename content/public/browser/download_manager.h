@@ -34,11 +34,13 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/sequenced_task_runner_helpers.h"
+#include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_url_parameters.h"
+#include "content/public/common/download_stream.mojom.h"
+#include "content/public/common/url_loader.mojom.h"
 #include "net/base/net_errors.h"
 
 class GURL;
@@ -54,6 +56,10 @@ struct DownloadCreateInfo;
 class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
  public:
   ~DownloadManager() override {}
+
+  // Returns the task runner that's used for all download-related blocking
+  // tasks, such as file IO.
+  static scoped_refptr<base::SequencedTaskRunner> GetTaskRunner();
 
   // Sets/Gets the delegate for this DownloadManager. The delegate has to live
   // past its Shutdown method being called (by the DownloadManager).
@@ -80,9 +86,8 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
     virtual void OnDownloadCreated(
         DownloadManager* manager, DownloadItem* item) {}
 
-    // A SavePackage has successfully finished.
-    virtual void OnSavePackageSuccessfullyFinished(
-        DownloadManager* manager, DownloadItem* item) {}
+    // Called when the download manager has finished loading the data.
+    virtual void OnManagerInitialized() {}
 
     // Called when the DownloadManager is being destroyed to prevent Observers
     // from calling back to a stale pointer.
@@ -98,13 +103,26 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
   // clearing |downloads| first.
   virtual void GetAllDownloads(DownloadVector* downloads) = 0;
 
+  // InputStream to read after the download starts. Only one of them could be
+  // available at the same time.
+  struct CONTENT_EXPORT InputStream {
+    explicit InputStream(std::unique_ptr<ByteStreamReader> stream_reader);
+    explicit InputStream(mojom::DownloadStreamHandlePtr stream_handle);
+    ~InputStream();
+
+    bool IsEmpty() const;
+
+    std::unique_ptr<ByteStreamReader> stream_reader_;
+    mojom::DownloadStreamHandlePtr stream_handle_;
+  };
+
   // Called by a download source (Currently DownloadResourceHandler)
   // to initiate the non-source portions of a download.
   // Returns the id assigned to the download.  If the DownloadCreateInfo
   // specifies an id, that id will be used.
   virtual void StartDownload(
       std::unique_ptr<DownloadCreateInfo> info,
-      std::unique_ptr<ByteStreamReader> stream,
+      std::unique_ptr<InputStream> stream,
       const DownloadUrlParameters::OnStartedCallback& on_started) = 0;
 
   // Remove downloads whose URLs match the |url_filter| and are within
@@ -154,6 +172,12 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
       base::Time last_access_time,
       bool transient,
       const std::vector<DownloadItem::ReceivedSlice>& received_slices) = 0;
+
+  // Called when download manager has loaded all the data.
+  virtual void PostInitialization() = 0;
+
+  // Returns if the manager has been initialized and loaded all the data.
+  virtual bool IsManagerInitialized() const = 0;
 
   // The number of in progress (including paused) downloads.
   // Performance note: this loops over all items. If profiling finds that this

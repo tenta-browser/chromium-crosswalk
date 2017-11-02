@@ -33,6 +33,8 @@ void MockModelTypeWorker::EnqueueForCommit(const CommitRequestDataList& list) {
   pending_commits_.push_back(list);
 }
 
+void MockModelTypeWorker::NudgeForCommit() {}
+
 size_t MockModelTypeWorker::GetNumPendingCommits() const {
   return pending_commits_.size();
 }
@@ -70,7 +72,7 @@ CommitRequestData MockModelTypeWorker::GetLatestPendingCommitForHash(
   return CommitRequestData();
 }
 
-void MockModelTypeWorker::ExpectNthPendingCommit(
+void MockModelTypeWorker::VerifyNthPendingCommit(
     size_t n,
     const std::string& tag_hash,
     const sync_pb::EntitySpecifics& specifics) {
@@ -81,7 +83,7 @@ void MockModelTypeWorker::ExpectNthPendingCommit(
   EXPECT_EQ(specifics.SerializeAsString(), data.specifics.SerializeAsString());
 }
 
-void MockModelTypeWorker::ExpectPendingCommits(
+void MockModelTypeWorker::VerifyPendingCommits(
     const std::vector<std::string>& tag_hashes) {
   EXPECT_EQ(tag_hashes.size(), GetNumPendingCommits());
   for (size_t i = 0; i < tag_hashes.size(); i++) {
@@ -118,6 +120,11 @@ void MockModelTypeWorker::UpdateFromServer(
   UpdateResponseDataList updates;
   updates.push_back(
       GenerateUpdateData(tag_hash, specifics, version_offset, ekn));
+  UpdateFromServer(updates);
+}
+
+void MockModelTypeWorker::UpdateFromServer(
+    const UpdateResponseDataList& updates) {
   processor_->OnUpdateReceived(model_type_state_, updates);
 }
 
@@ -152,6 +159,13 @@ UpdateResponseData MockModelTypeWorker::GenerateUpdateData(
   return response_data;
 }
 
+UpdateResponseData MockModelTypeWorker::GenerateUpdateData(
+    const std::string& tag_hash,
+    const sync_pb::EntitySpecifics& specifics) {
+  return GenerateUpdateData(tag_hash, specifics, 1,
+                            model_type_state_.encryption_key_name());
+}
+
 void MockModelTypeWorker::TombstoneFromServer(const std::string& tag_hash) {
   int64_t old_version = GetServerVersion(tag_hash);
   int64_t version = old_version + 1;
@@ -178,16 +192,21 @@ void MockModelTypeWorker::TombstoneFromServer(const std::string& tag_hash) {
 }
 
 void MockModelTypeWorker::AckOnePendingCommit() {
+  AckOnePendingCommit(1);
+}
+
+void MockModelTypeWorker::AckOnePendingCommit(int64_t version_offset) {
   CommitResponseDataList list;
   for (const CommitRequestData& data : pending_commits_.front()) {
-    list.push_back(SuccessfulCommitResponse(data));
+    list.push_back(SuccessfulCommitResponse(data, version_offset));
   }
   pending_commits_.pop_front();
   processor_->OnCommitCompleted(model_type_state_, list);
 }
 
 CommitResponseData MockModelTypeWorker::SuccessfulCommitResponse(
-    const CommitRequestData& request_data) {
+    const CommitRequestData& request_data,
+    int64_t version_offset) {
   const EntityData& entity = request_data.entity.value();
   const std::string& client_tag_hash = entity.client_tag_hash;
 
@@ -206,12 +225,12 @@ CommitResponseData MockModelTypeWorker::SuccessfulCommitResponse(
   response_data.sequence_number = request_data.sequence_number;
   response_data.specifics_hash = request_data.specifics_hash;
 
-  // Increment the server version on successful commit.
-  int64_t version = GetServerVersion(client_tag_hash);
-  version++;
-  SetServerVersion(client_tag_hash, version);
-
-  response_data.response_version = version;
+  int64_t old_version = GetServerVersion(client_tag_hash);
+  int64_t new_version = old_version + version_offset;
+  if (new_version > old_version) {
+    SetServerVersion(client_tag_hash, new_version);
+  }
+  response_data.response_version = new_version;
 
   return response_data;
 }
@@ -225,6 +244,12 @@ void MockModelTypeWorker::UpdateWithEncryptionKey(
     const UpdateResponseDataList& update) {
   model_type_state_.set_encryption_key_name(ekn);
   processor_->OnUpdateReceived(model_type_state_, update);
+}
+
+void MockModelTypeWorker::UpdateWithGarbageConllection(
+    const sync_pb::GarbageCollectionDirective& gcd) {
+  *model_type_state_.mutable_progress_marker()->mutable_gc_directive() = gcd;
+  processor_->OnUpdateReceived(model_type_state_, UpdateResponseDataList());
 }
 
 std::string MockModelTypeWorker::GenerateId(const std::string& tag_hash) {

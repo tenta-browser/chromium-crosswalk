@@ -4,6 +4,8 @@
 
 #include "components/proximity_auth/proximity_auth_system.h"
 
+#include "base/command_line.h"
+#include "base/test/simple_test_clock.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/cryptauth/remote_device.h"
@@ -11,6 +13,8 @@
 #include "components/proximity_auth/fake_remote_device_life_cycle.h"
 #include "components/proximity_auth/logging/logging.h"
 #include "components/proximity_auth/mock_proximity_auth_client.h"
+#include "components/proximity_auth/proximity_auth_profile_pref_manager.h"
+#include "components/proximity_auth/switches.h"
 #include "components/proximity_auth/unlock_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -33,6 +37,10 @@ namespace {
 const char kUser1[] = "user1";
 const char kUser2[] = "user2";
 
+const int64_t kLastPasswordEntryTimestampMs = 123456L;
+const int64_t kTimestampBeforeReauthMs = 123457L;
+const int64_t kTimestampAfterReauthMs = 123457890123L;
+
 void CompareRemoteDeviceLists(const RemoteDeviceList& list1,
                               const RemoteDeviceList& list2) {
   ASSERT_EQ(list1.size(), list2.size());
@@ -47,7 +55,9 @@ void CompareRemoteDeviceLists(const RemoteDeviceList& list1,
 RemoteDevice CreateRemoteDevice(const std::string& user_id,
                                 const std::string& name) {
   return RemoteDevice(user_id, name + "_pk", name, name + "_btaddr",
-                      name + "_psk", name + "_challenge");
+                      name + "_psk", true /* unlock_key */,
+                      true /* supports_mobile_hotspot */,
+                      0 /* last_update_time_millis */);
 }
 
 // Mock implementation of UnlockManager.
@@ -58,10 +68,21 @@ class MockUnlockManager : public UnlockManager {
   MOCK_METHOD0(IsUnlockAllowed, bool());
   MOCK_METHOD1(SetRemoteDeviceLifeCycle, void(RemoteDeviceLifeCycle*));
   MOCK_METHOD0(OnLifeCycleStateChanged, void());
-  MOCK_METHOD1(OnAuthAttempted, void(ScreenlockBridge::LockHandler::AuthType));
+  MOCK_METHOD1(OnAuthAttempted, void(mojom::AuthType));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockUnlockManager);
+};
+
+// Mock implementation of ProximityAuthProfilePrefManager.
+class MockProximityAuthPrefManager : public ProximityAuthProfilePrefManager {
+ public:
+  MockProximityAuthPrefManager() : ProximityAuthProfilePrefManager(nullptr) {}
+  ~MockProximityAuthPrefManager() override {}
+  MOCK_CONST_METHOD0(GetLastPasswordEntryTimestampMs, int64_t());
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(MockProximityAuthPrefManager);
 };
 
 // Harness for ProximityAuthSystem to make it testable.
@@ -69,10 +90,14 @@ class TestableProximityAuthSystem : public ProximityAuthSystem {
  public:
   TestableProximityAuthSystem(ScreenlockType screenlock_type,
                               ProximityAuthClient* proximity_auth_client,
-                              std::unique_ptr<UnlockManager> unlock_manager)
+                              std::unique_ptr<UnlockManager> unlock_manager,
+                              std::unique_ptr<base::Clock> clock,
+                              ProximityAuthPrefManager* pref_manager)
       : ProximityAuthSystem(screenlock_type,
                             proximity_auth_client,
-                            std::move(unlock_manager)),
+                            std::move(unlock_manager),
+                            std::move(clock),
+                            pref_manager),
         life_cycle_(nullptr) {}
   ~TestableProximityAuthSystem() override {}
 
@@ -97,7 +122,8 @@ class TestableProximityAuthSystem : public ProximityAuthSystem {
 class ProximityAuthSystemTest : public testing::Test {
  protected:
   ProximityAuthSystemTest()
-      : task_runner_(new base::TestSimpleTaskRunner()),
+      : pref_manager_(new NiceMock<MockProximityAuthPrefManager>()),
+        task_runner_(new base::TestSimpleTaskRunner()),
         thread_task_runner_handle_(task_runner_) {}
 
   void SetUp() override {
@@ -127,11 +153,23 @@ class ProximityAuthSystemTest : public testing::Test {
         new NiceMock<MockUnlockManager>());
     unlock_manager_ = unlock_manager.get();
 
+    std::unique_ptr<base::SimpleTestClock> clock =
+        base::MakeUnique<base::SimpleTestClock>();
+    clock_ = clock.get();
+
+    clock_->SetNow(base::Time::FromJavaTime(kTimestampBeforeReauthMs));
+    ON_CALL(*pref_manager_, GetLastPasswordEntryTimestampMs())
+        .WillByDefault(Return(kLastPasswordEntryTimestampMs));
+
     proximity_auth_system_.reset(new TestableProximityAuthSystem(
-        type, &proximity_auth_client_, std::move(unlock_manager)));
+        type, &proximity_auth_client_, std::move(unlock_manager),
+        std::move(clock), pref_manager_.get()));
   }
 
-  void LockScreen() { ScreenlockBridge::Get()->SetLockHandler(&lock_handler_); }
+  void LockScreen() {
+    ScreenlockBridge::Get()->SetFocusedUser(AccountId());
+    ScreenlockBridge::Get()->SetLockHandler(&lock_handler_);
+  }
 
   void FocusUser(const std::string& user_id) {
     ScreenlockBridge::Get()->SetFocusedUser(AccountId::FromUserEmail(user_id));
@@ -153,6 +191,8 @@ class ProximityAuthSystemTest : public testing::Test {
   NiceMock<MockProximityAuthClient> proximity_auth_client_;
   std::unique_ptr<TestableProximityAuthSystem> proximity_auth_system_;
   MockUnlockManager* unlock_manager_;
+  base::SimpleTestClock* clock_;
+  std::unique_ptr<MockProximityAuthPrefManager> pref_manager_;
 
   RemoteDeviceList user1_remote_devices_;
   RemoteDeviceList user2_remote_devices_;
@@ -213,7 +253,6 @@ TEST_F(ProximityAuthSystemTest, FocusRegisteredUser) {
   EXPECT_FALSE(life_cycle());
   EXPECT_EQ(std::string(),
             ScreenlockBridge::Get()->focused_account_id().GetUserEmail());
-  EXPECT_FALSE(life_cycle());
 
   RemoteDeviceLifeCycle* unlock_manager_life_cycle = nullptr;
   EXPECT_CALL(*unlock_manager_, SetRemoteDeviceLifeCycle(_))
@@ -301,6 +340,23 @@ TEST_F(ProximityAuthSystemTest, ToggleFocus_RegisteredAndUnregisteredUsers) {
       .Times(AtLeast(1));
 }
 
+TEST_F(ProximityAuthSystemTest, ToggleFocus_SameUserRefocused) {
+  RemoteDeviceLifeCycle* life_cycle = nullptr;
+  EXPECT_CALL(*unlock_manager_, SetRemoteDeviceLifeCycle(_))
+      .WillOnce(SaveArg<0>(&life_cycle));
+  FocusUser(kUser1);
+  EXPECT_EQ(kUser1, life_cycle->GetRemoteDevice().user_id);
+
+  // Focusing the user again should be idempotent. The screenlock UI may call
+  // focus on the same user multiple times.
+  // SetRemoteDeviceLifeCycle() is only expected to be called once.
+  FocusUser(kUser1);
+
+  // The RemoteDeviceLifeCycle should be nulled upon destruction.
+  EXPECT_CALL(*unlock_manager_, SetRemoteDeviceLifeCycle(nullptr))
+      .Times(AtLeast(1));
+}
+
 TEST_F(ProximityAuthSystemTest, RestartSystem_UnregisteredUserFocused) {
   FocusUser(kUser2);
 
@@ -371,6 +427,17 @@ TEST_F(ProximityAuthSystemTest, Suspend_RegisteredUserFocused) {
 
   EXPECT_CALL(*unlock_manager_, SetRemoteDeviceLifeCycle(nullptr))
       .Times(AtLeast(1));
+}
+
+TEST_F(ProximityAuthSystemTest, ForcePasswordReauth) {
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      proximity_auth::switches::kEnableForcePasswordReauth);
+  ON_CALL(*pref_manager_, GetLastPasswordEntryTimestampMs())
+      .WillByDefault(Return(kTimestampAfterReauthMs));
+  EXPECT_CALL(proximity_auth_client_,
+              UpdateScreenlockState(ScreenlockState::PASSWORD_REAUTH));
+  FocusUser(kUser1);
+  EXPECT_FALSE(life_cycle());
 }
 
 }  // namespace proximity_auth

@@ -25,6 +25,7 @@ class GpuClient : public ui::mojom::Gpu {
   void OnEstablishGpuChannel(const EstablishGpuChannelCallback& callback,
                              const IPC::ChannelHandle& channel,
                              const gpu::GPUInfo& gpu_info,
+                             const gpu::GpuFeatureInfo& gpu_feature_info,
                              GpuProcessHost::EstablishChannelStatus status);
   void OnCreateGpuMemoryBuffer(const CreateGpuMemoryBufferCallback& callback,
                                const gfx::GpuMemoryBufferHandle& handle);
@@ -32,6 +33,11 @@ class GpuClient : public ui::mojom::Gpu {
   // ui::mojom::Gpu overrides:
   void EstablishGpuChannel(
       const EstablishGpuChannelCallback& callback) override;
+  void CreateJpegDecodeAccelerator(
+      media::mojom::GpuJpegDecodeAcceleratorRequest jda_request) override;
+  void CreateVideoEncodeAcceleratorProvider(
+      media::mojom::VideoEncodeAcceleratorProviderRequest vea_provider_request)
+      override;
   void CreateGpuMemoryBuffer(
       gfx::GpuMemoryBufferId id,
       const gfx::Size& size,

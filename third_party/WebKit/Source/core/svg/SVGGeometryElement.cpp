@@ -30,12 +30,12 @@
 
 #include "core/svg/SVGGeometryElement.h"
 
-#include "core/SVGNames.h"
 #include "core/layout/HitTestRequest.h"
 #include "core/layout/PointerEventsHitRules.h"
 #include "core/layout/svg/LayoutSVGPath.h"
 #include "core/layout/svg/LayoutSVGShape.h"
 #include "core/svg/SVGPointTearOff.h"
+#include "core/svg_names.h"
 
 namespace blink {
 
@@ -130,8 +130,7 @@ SVGPointTearOff* SVGGeometryElement::getPointAtLength(float length) {
   FloatPoint point;
   if (GetLayoutObject())
     point = AsPath().PointAtLength(length);
-  return SVGPointTearOff::Create(SVGPoint::Create(point), 0,
-                                 kPropertyIsNotAnimVal);
+  return SVGPointTearOff::CreateDetached(point);
 }
 
 float SVGGeometryElement::ComputePathLength() const {

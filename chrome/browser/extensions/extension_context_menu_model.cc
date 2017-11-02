@@ -28,9 +28,8 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
-#include "components/grit/components_scaled_resources.h"
 #include "components/prefs/pref_service.h"
+#include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/context_menu_params.h"
 #include "extensions/browser/extension_registry.h"
@@ -45,7 +44,6 @@
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/vector_icons/vector_icons.h"
 
 namespace extensions {
 
@@ -163,8 +161,7 @@ bool ExtensionContextMenuModel::IsCommandIdChecked(int command_id) const {
   if (!extension)
     return false;
 
-  if (command_id >= IDC_EXTENSIONS_CONTEXT_CUSTOM_FIRST &&
-      command_id <= IDC_EXTENSIONS_CONTEXT_CUSTOM_LAST)
+  if (ContextMenuMatcher::IsExtensionsCustomCommandId(command_id))
     return extension_items_->IsCommandIdChecked(command_id);
 
   if (command_id == PAGE_ACCESS_RUN_ON_CLICK ||
@@ -178,15 +175,25 @@ bool ExtensionContextMenuModel::IsCommandIdChecked(int command_id) const {
   return false;
 }
 
+bool ExtensionContextMenuModel::IsCommandIdVisible(int command_id) const {
+  const Extension* extension = GetExtension();
+  if (!extension)
+    return false;
+  if (ContextMenuMatcher::IsExtensionsCustomCommandId(command_id)) {
+    return extension_items_->IsCommandIdVisible(command_id);
+  }
+
+  // Standard menu items are always visible.
+  return true;
+}
+
 bool ExtensionContextMenuModel::IsCommandIdEnabled(int command_id) const {
   const Extension* extension = GetExtension();
   if (!extension)
     return false;
 
-  if (command_id >= IDC_EXTENSIONS_CONTEXT_CUSTOM_FIRST &&
-      command_id <= IDC_EXTENSIONS_CONTEXT_CUSTOM_LAST) {
+  if (ContextMenuMatcher::IsExtensionsCustomCommandId(command_id))
     return extension_items_->IsCommandIdEnabled(command_id);
-  }
 
   switch (command_id) {
     case NAME:
@@ -226,8 +233,7 @@ void ExtensionContextMenuModel::ExecuteCommand(int command_id,
   if (!extension)
     return;
 
-  if (command_id >= IDC_EXTENSIONS_CONTEXT_CUSTOM_FIRST &&
-      command_id <= IDC_EXTENSIONS_CONTEXT_CUSTOM_LAST) {
+  if (ContextMenuMatcher::IsExtensionsCustomCommandId(command_id)) {
     DCHECK(extension_items_);
     extension_items_->ExecuteCommand(command_id, GetActiveWebContents(),
                                      nullptr, content::ContextMenuParams());
@@ -315,7 +321,7 @@ void ExtensionContextMenuModel::InitMenu(const Extension* extension,
     if (is_required_by_policy) {
       int uninstall_index = GetIndexOfCommandId(UNINSTALL);
       SetIcon(uninstall_index,
-              gfx::Image(gfx::CreateVectorIcon(ui::kBusinessIcon, 16,
+              gfx::Image(gfx::CreateVectorIcon(vector_icons::kBusinessIcon, 16,
                                                gfx::kChromeIconGrey)));
     }
   }

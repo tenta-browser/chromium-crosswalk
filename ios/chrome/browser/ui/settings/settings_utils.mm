@@ -4,27 +4,24 @@
 
 #import "ios/chrome/browser/ui/settings/settings_utils.h"
 
-#import "base/ios/weak_nsobject.h"
-#import "base/mac/scoped_nsobject.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/open_url_command.h"
 
-namespace ios_internal_settings {
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
-ProceduralBlockWithURL BlockToOpenURL(UIResponder* responder) {
-  base::WeakNSObject<UIResponder> weakResponder(responder);
+ProceduralBlockWithURL BlockToOpenURL(UIResponder* responder,
+                                      id<ApplicationCommands> dispatcher) {
+  __weak UIResponder* weakResponder = responder;
+  __weak id<ApplicationCommands> weakDispatcher = dispatcher;
   ProceduralBlockWithURL blockToOpenURL = ^(const GURL& url) {
-    base::scoped_nsobject<UIResponder> strongResponder([weakResponder retain]);
+    UIResponder* strongResponder = weakResponder;
     if (!strongResponder)
       return;
-    base::scoped_nsobject<OpenUrlCommand> command(
-        [[OpenUrlCommand alloc] initWithURLFromChrome:url]);
-    [command setTag:IDC_CLOSE_SETTINGS_AND_OPEN_URL];
-    [strongResponder chromeExecuteCommand:command];
+    OpenUrlCommand* command =
+        [[OpenUrlCommand alloc] initWithURLFromChrome:url];
+    [weakDispatcher closeSettingsUIAndOpenURL:command];
   };
-  return [[blockToOpenURL copy] autorelease];
+  return [blockToOpenURL copy];
 }
-
-}  // namespace ios_internal_settings

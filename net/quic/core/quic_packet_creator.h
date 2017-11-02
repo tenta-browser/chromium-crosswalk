@@ -11,7 +11,6 @@
 #include <cstddef>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -76,7 +75,7 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
 
   // The overhead the framing will add for a packet with one frame.
   static size_t StreamFramePacketOverhead(
-      QuicVersion version,
+      QuicTransportVersion version,
       QuicConnectionIdLength connection_id_length,
       bool include_version,
       bool include_diversification_nonce,
@@ -163,7 +162,7 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
 
   // Creates a version negotiation packet which supports |supported_versions|.
   std::unique_ptr<QuicEncryptedPacket> SerializeVersionNegotiationPacket(
-      const QuicVersionVector& supported_versions);
+      const QuicTransportVersionVector& supported_versions);
 
   // Returns a dummy packet that is valid but contains no useful information.
   static SerializedPacket NoPacket();
@@ -202,13 +201,15 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // Sets the maximum packet length.
   void SetMaxPacketLength(QuicByteCount length);
 
+  // Increases pending_padding_bytes by |size|. Pending padding will be sent by
+  // MaybeAddPadding().
+  void AddPendingPadding(QuicByteCount size);
+
   void set_debug_delegate(DebugDelegate* debug_delegate) {
     debug_delegate_ = debug_delegate;
   }
 
-  bool latched_flag_no_stop_waiting_frames() const {
-    return latched_flag_no_stop_waiting_frames_;
-  }
+  QuicByteCount pending_padding_bytes() const { return pending_padding_bytes_; }
 
  private:
   friend class test::QuicPacketCreatorPeer;
@@ -227,14 +228,6 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
                          bool fin,
                          QuicFrame* frame);
 
-  // Copies |length| bytes from iov starting at offset |iov_offset| into buffer.
-  // |iov| must be at least iov_offset+length total length and buffer must be
-  // at least |length| long.
-  static void CopyToBuffer(QuicIOVector iov,
-                           size_t iov_offset,
-                           size_t length,
-                           char* buffer);
-
   void FillPacketHeader(QuicPacketHeader* header);
 
   // Adds a |frame| if there is space and returns false and flushes all pending
@@ -242,9 +235,8 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // saves the |frame| in the next SerializedPacket.
   bool AddFrame(const QuicFrame& frame, bool save_retransmittable_frames);
 
-  // Adds a padding frame to the current packet only if the current packet
-  // contains a handshake message, and there is sufficient room to fit a
-  // padding frame.
+  // Adds a padding frame to the current packet (if there is space) when (1)
+  // current packet needs full padding or (2) there are pending paddings.
   void MaybeAddPadding();
 
   // Serializes all frames which have been added and adds any which should be
@@ -264,6 +256,11 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // packet's public header.
   bool IncludeNonceInPublicHeader();
 
+  // Returns true if |frame| starts with CHLO.
+  bool StreamFrameStartsWithChlo(QuicIOVector iov,
+                                 size_t iov_offset,
+                                 const QuicStreamFrame& frame) const;
+
   // Does not own these delegates or the framer.
   DelegateInterface* delegate_;
   DebugDelegate* debug_delegate_;
@@ -273,11 +270,6 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
 
   // Controls whether version should be included while serializing the packet.
   bool send_version_in_packet_;
-  // Staging variable to hold next packet number length. When sequence
-  // number length is to be changed, this variable holds the new length until
-  // a packet boundary, when the creator's packet_number_length_ can be changed
-  // to this new value.
-  QuicPacketNumberLength next_packet_number_length_;
   // If true, then |nonce_for_public_header_| will be included in the public
   // header of all packets created at the initial encryption level.
   bool have_diversification_nonce_;
@@ -300,8 +292,15 @@ class QUIC_EXPORT_PRIVATE QuicPacketCreator {
   // Packet used to invoke OnSerializedPacket.
   SerializedPacket packet_;
 
-  // The latched value of FLAGS_quic_reloadable_flag_quic_no_stop_waiting_frames
-  bool latched_flag_no_stop_waiting_frames_;
+  // Pending padding bytes to send. Pending padding bytes will be sent in next
+  // packet(s) (after all other frames) if current constructed packet does not
+  // have room to send all of them.
+  QuicByteCount pending_padding_bytes_;
+
+  // Indicates whether current constructed packet needs full padding to max
+  // packet size. Please note, full padding does not consume pending padding
+  // bytes.
+  bool needs_full_padding_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicPacketCreator);
 };

@@ -10,11 +10,14 @@ import android.os.Bundle;
 import android.os.SystemClock;
 import android.text.TextUtils;
 
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.StatisticsRecorderAndroid;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
+import org.chromium.chrome.browser.preferences.ChromePreferenceManager;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.components.variations.VariationsAssociatedData;
 
 import java.util.HashMap;
@@ -40,6 +43,16 @@ public class FeedbackCollector
     static final String URL_KEY = "URL";
 
     /**
+     * A user visible string describing Chrome Home's current enabled state.
+     */
+    @VisibleForTesting
+    static final String CHROME_HOME_STATE_KEY = "Chrome Home State";
+    private static final String CHROME_HOME_ENABLED_VALUE = "Enabled";
+    private static final String CHROME_HOME_DISABLED_VALUE = "Disabled";
+    private static final String CHROME_HOME_OPT_IN_VALUE = "Opt-In";
+    private static final String CHROME_HOME_OPT_OUT_VALUE = "Opt-Out";
+
+    /**
      * The timeout (ms) for gathering data asynchronously.
      * This timeout is ignored for taking screenshots.
      */
@@ -57,6 +70,7 @@ public class FeedbackCollector
     private final String mUrl;
     private final FeedbackResult mCallback;
     private final long mCollectionStartTime;
+    private final boolean mTakeScreenshot;
     // Not final because created during init. Should be used as a final member.
     protected ConnectivityTask mConnectivityTask;
 
@@ -92,6 +106,11 @@ public class FeedbackCollector
     private boolean mResultPosted;
 
     /**
+     * The CategoryTag for the report. This allows Feedback systems to route the report accordingly.
+     */
+    private String mCategoryTag;
+
+    /**
      * A callback for when the gathering of feedback data has finished. This may be called either
      * when all data has been collected, or after a timeout.
      */
@@ -108,22 +127,25 @@ public class FeedbackCollector
      * @param profile the current Profile.
      * @param url The URL of the current tab to include in the feedback the user sends, if any.
      *            This parameter may be null.
+     * @param takeScreenshot Whether to take screenshot.
      * @param callback The callback which is invoked when feedback gathering is finished.
      * @return the created {@link FeedbackCollector}.
      */
-    public static FeedbackCollector create(
-            Activity activity, Profile profile, @Nullable String url, FeedbackResult callback) {
+    public static FeedbackCollector create(Activity activity, Profile profile, @Nullable String url,
+            boolean takeScreenshot, FeedbackResult callback) {
         ThreadUtils.assertOnUiThread();
-        return new FeedbackCollector(activity, profile, url, callback);
+        return new FeedbackCollector(activity, profile, url, takeScreenshot, callback);
     }
 
     @VisibleForTesting
-    FeedbackCollector(Activity activity, Profile profile, String url, FeedbackResult callback) {
+    FeedbackCollector(Activity activity, Profile profile, String url, boolean takeScreenshot,
+            FeedbackResult callback) {
         mData = new HashMap<>();
         mProfile = profile;
         mUrl = url;
         mCallback = callback;
         mCollectionStartTime = SystemClock.elapsedRealtime();
+        mTakeScreenshot = takeScreenshot;
         init(activity);
     }
 
@@ -131,7 +153,9 @@ public class FeedbackCollector
     void init(Activity activity) {
         postTimeoutTask();
         mConnectivityTask = ConnectivityTask.create(mProfile, CONNECTIVITY_CHECK_TIMEOUT_MS, this);
-        ScreenshotTask.create(activity, this);
+        if (mTakeScreenshot) {
+            ScreenshotTask.create(activity, this);
+        }
         if (!mProfile.isOffTheRecord()) {
             mHistograms = StatisticsRecorderAndroid.toJson();
         }
@@ -169,14 +193,22 @@ public class FeedbackCollector
         }, TIMEOUT_MS);
     }
 
+    private boolean shouldWaitForScreenshot() {
+        // We should always wait for the screenshot unless we're not taking one.
+        return mTakeScreenshot && !mScreenshotTaskFinished;
+    }
+
+    private boolean shouldWaitForConnectivityTask() {
+        return !mConnectivityTaskFinished && !hasTimedOut();
+    }
+
     @VisibleForTesting
     void maybePostResult() {
         ThreadUtils.assertOnUiThread();
         if (mCallback == null) return;
         if (mResultPosted) return;
-        // Always wait for screenshot.
-        if (!mScreenshotTaskFinished) return;
-        if (!mConnectivityTaskFinished && !hasTimedOut()) return;
+        if (shouldWaitForScreenshot() || shouldWaitForConnectivityTask()) return;
+
         mResultPosted = true;
         ThreadUtils.postOnUiThread(new Runnable() {
             @Override
@@ -221,6 +253,23 @@ public class FeedbackCollector
     }
 
     /**
+     * Sets the CategoryTag to invoke feedback with.
+     * @param categoryTag the user visible description.
+     */
+    public void setCategoryTag(String categoryTag) {
+        ThreadUtils.assertOnUiThread();
+        mCategoryTag = categoryTag;
+    }
+
+    /**
+     * @return the CategoryTag for the feedback report.
+     */
+    public String getCategoryTag() {
+        ThreadUtils.assertOnUiThread();
+        return mCategoryTag;
+    }
+
+    /**
      * Sets the screenshot to use for the feedback report.
      * @param screenshot the user visible screenshot.
      */
@@ -256,6 +305,7 @@ public class FeedbackCollector
         addConnectivityData();
         addDataReductionProxyData();
         addVariationsData();
+        addChromeHomeData();
         return asBundle();
     }
 
@@ -281,6 +331,25 @@ public class FeedbackCollector
     private void addVariationsData() {
         if (mProfile.isOffTheRecord()) return;
         mData.putAll(VariationsAssociatedData.getFeedbackMap());
+    }
+
+    private void addChromeHomeData() {
+        if (mProfile.isOffTheRecord()) return;
+
+        boolean userPreferenceSet = false;
+        // Allow disk access for preferences while Chrome Home is in experimentation.
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
+            userPreferenceSet =
+                    ChromePreferenceManager.getInstance().isChromeHomeUserPreferenceSet();
+        }
+
+        String value;
+        if (FeatureUtilities.isChromeHomeEnabled()) {
+            value = userPreferenceSet ? CHROME_HOME_OPT_IN_VALUE : CHROME_HOME_ENABLED_VALUE;
+        } else {
+            value = userPreferenceSet ? CHROME_HOME_OPT_OUT_VALUE : CHROME_HOME_DISABLED_VALUE;
+        }
+        mData.put(CHROME_HOME_STATE_KEY, value);
     }
 
     private Bundle asBundle() {

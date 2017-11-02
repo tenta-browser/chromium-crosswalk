@@ -7,18 +7,21 @@
 #include <utility>
 
 #include "android_webview/browser/aw_browser_policy_connector.h"
+#include "android_webview/browser/aw_download_manager_delegate.h"
 #include "android_webview/browser/aw_form_database_service.h"
 #include "android_webview/browser/aw_metrics_service_client.h"
 #include "android_webview/browser/aw_permission_manager.h"
 #include "android_webview/browser/aw_quota_manager_bridge.h"
 #include "android_webview/browser/aw_resource_context.h"
-#include "android_webview/browser/jni_dependency_factory.h"
+#include "android_webview/browser/aw_safe_browsing_whitelist_manager.h"
+#include "android_webview/browser/aw_web_ui_controller_factory.h"
 #include "android_webview/browser/net/aw_url_request_context_getter.h"
 #include "android_webview/common/aw_content_client.h"
 #include "base/base_paths_android.h"
 #include "base/bind.h"
-#include "base/files/file_util.h"
 #include "base/path_service.h"
+#include "base/single_thread_task_runner.h"
+#include "base/task_scheduler/post_task.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/metrics/metrics_service.h"
 #include "components/policy/core/browser/browser_policy_connector_base.h"
@@ -28,6 +31,8 @@
 #include "components/prefs/in_memory_pref_store.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/pref_service_factory.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/triggers/trigger_manager.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/user_prefs/user_prefs.h"
 #include "components/visitedlink/browser/visitedlink_master.h"
@@ -59,16 +64,10 @@ const char kWebRestrictionsAuthority[] = "web_restrictions_authority";
 
 namespace {
 
+const void* const kDownloadManagerDelegateKey = &kDownloadManagerDelegateKey;
+
 // Shows notifications which correspond to PersistentPrefStore's reading errors.
 void HandleReadError(PersistentPrefStore::PrefReadError error) {
-}
-
-void DeleteDirRecursively(const base::FilePath& path) {
-  if (!base::DeleteFile(path, true)) {
-    // Deleting a non-existent file is considered successful, so this will
-    // trigger only in case of real errors.
-    LOG(WARNING) << "Failed to delete " << path.AsUTF8Unsafe();
-  }
 }
 
 AwBrowserContext* g_browser_context = NULL;
@@ -76,8 +75,7 @@ AwBrowserContext* g_browser_context = NULL;
 std::unique_ptr<net::ProxyConfigService> CreateProxyConfigService() {
   std::unique_ptr<net::ProxyConfigService> config_service =
       net::ProxyService::CreateSystemProxyConfigService(
-          BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-          nullptr /* Ignored on Android */);
+          BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
 
   // TODO(csharrison) Architect the wrapper better so we don't need a cast for
   // android ProxyConfigServices.
@@ -94,9 +92,9 @@ bool OverrideBlacklistForURL(const GURL& url, bool* block, int* reason) {
 
 policy::URLBlacklistManager* CreateURLBlackListManager(
     PrefService* pref_service) {
-  base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
-      pool->GetSequencedTaskRunner(pool->GetSequenceToken());
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND});
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
 
@@ -105,16 +103,22 @@ policy::URLBlacklistManager* CreateURLBlackListManager(
                                          base::Bind(OverrideBlacklistForURL));
 }
 
+std::unique_ptr<AwSafeBrowsingWhitelistManager>
+CreateSafeBrowsingWhitelistManager() {
+  // Should not be called until the end of PreMainMessageLoopRun,
+  scoped_refptr<base::SequencedTaskRunner> background_task_runner =
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND});
+  scoped_refptr<base::SingleThreadTaskRunner> io_task_runner =
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
+  return base::MakeUnique<AwSafeBrowsingWhitelistManager>(
+      background_task_runner, io_task_runner);
+}
+
 }  // namespace
 
-// Delete the legacy cache dir (in the app data dir) in 10 seconds after init.
-int AwBrowserContext::legacy_cache_removal_delay_ms_ = 10000;
-
-AwBrowserContext::AwBrowserContext(
-    const FilePath path,
-    JniDependencyFactory* native_factory)
-    : context_storage_path_(path),
-      native_factory_(native_factory) {
+AwBrowserContext::AwBrowserContext(const FilePath path)
+    : context_storage_path_(path) {
   DCHECK(!g_browser_context);
   g_browser_context = this;
   BrowserContext::Initialize(this, path);
@@ -143,28 +147,11 @@ AwBrowserContext* AwBrowserContext::FromWebContents(
   return static_cast<AwBrowserContext*>(web_contents->GetBrowserContext());
 }
 
-// static
-void AwBrowserContext::SetLegacyCacheRemovalDelayForTest(int delay_ms) {
-  legacy_cache_removal_delay_ms_ = delay_ms;
-}
-
 void AwBrowserContext::PreMainMessageLoopRun() {
   FilePath cache_path;
-  const FilePath fallback_cache_dir =
-      GetPath().Append(FILE_PATH_LITERAL("Cache"));
-  if (PathService::Get(base::DIR_CACHE, &cache_path)) {
-    cache_path = cache_path.Append(
-        FILE_PATH_LITERAL("org.chromium.android_webview"));
-    // Delay the legacy dir removal to not impact startup performance.
-    BrowserThread::PostDelayedTask(
-        BrowserThread::FILE, FROM_HERE,
-        base::Bind(&DeleteDirRecursively, fallback_cache_dir),
-        base::TimeDelta::FromMilliseconds(legacy_cache_removal_delay_ms_));
-  } else {
-    cache_path = fallback_cache_dir;
-    LOG(WARNING) << "Failed to get cache directory for Android WebView. "
-                 << "Using app data directory as a fallback.";
-  }
+  PathService::Get(base::DIR_CACHE, &cache_path);
+  cache_path =
+      cache_path.Append(FILE_PATH_LITERAL("org.chromium.android_webview"));
 
   browser_policy_connector_.reset(new AwBrowserPolicyConnector());
 
@@ -173,11 +160,10 @@ void AwBrowserContext::PreMainMessageLoopRun() {
   url_request_context_getter_ = new AwURLRequestContextGetter(
       cache_path, CreateProxyConfigService(), user_pref_service_.get());
 
-  base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
   scoped_refptr<base::SequencedTaskRunner> db_task_runner =
-      pool->GetSequencedTaskRunnerWithShutdownBehavior(
-          pool->GetSequenceToken(),
-          base::SequencedWorkerPool::SKIP_ON_SHUTDOWN);
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN});
   visitedlink_master_.reset(
       new visitedlink::VisitedLinkMaster(this, this, false));
   visitedlink_master_->Init();
@@ -189,16 +175,10 @@ void AwBrowserContext::PreMainMessageLoopRun() {
 
   blacklist_manager_.reset(CreateURLBlackListManager(user_pref_service_.get()));
 
-  // UMA uses randomly-generated GUIDs (globally unique identifiers) to
-  // anonymously identify logs. Every WebView-using app on every device
-  // is given a GUID, stored in this file in the app's data directory.
-  const FilePath guid_file_path =
-      GetPath().Append(FILE_PATH_LITERAL("metrics_guid"));
   AwMetricsServiceClient::GetInstance()->Initialize(
       user_pref_service_.get(),
-      content::BrowserContext::GetDefaultStoragePartition(this)->
-          GetURLRequestContext(),
-      guid_file_path);
+      content::BrowserContext::GetDefaultStoragePartition(this)
+          ->GetURLRequestContext());
 
   web_restriction_provider_.reset(
       new web_restrictions::WebRestrictionsClient());
@@ -209,9 +189,17 @@ void AwBrowserContext::PreMainMessageLoopRun() {
   web_restriction_provider_->SetAuthority(
       user_pref_service_->GetString(prefs::kWebRestrictionsAuthority));
 
-  safe_browsing_ui_manager_ = new AwSafeBrowsingUIManager();
+  safe_browsing_ui_manager_ = new AwSafeBrowsingUIManager(
+      GetAwURLRequestContext(), user_pref_service_.get());
   safe_browsing_db_manager_ =
       new safe_browsing::RemoteSafeBrowsingDatabaseManager();
+  safe_browsing_trigger_manager_ =
+      base::MakeUnique<safe_browsing::TriggerManager>(
+          safe_browsing_ui_manager_.get());
+  safe_browsing_whitelist_manager_ = CreateSafeBrowsingWhitelistManager();
+
+  content::WebUIControllerFactory::RegisterFactory(
+      AwWebUIControllerFactory::GetInstance());
 }
 
 void AwBrowserContext::OnWebRestrictionsAuthorityChanged() {
@@ -226,7 +214,7 @@ void AwBrowserContext::AddVisitedURLs(const std::vector<GURL>& urls) {
 
 AwQuotaManagerBridge* AwBrowserContext::GetQuotaManagerBridge() {
   if (!quota_manager_bridge_.get()) {
-    quota_manager_bridge_ = native_factory_->CreateAwQuotaManagerBridge(this);
+    quota_manager_bridge_ = AwQuotaManagerBridge::Create(this);
   }
   return quota_manager_bridge_.get();
 }
@@ -256,26 +244,21 @@ void AwBrowserContext::InitUserPrefService() {
                                     std::string());
 
   metrics::MetricsService::RegisterPrefs(pref_registry);
+  safe_browsing::RegisterProfilePrefs(pref_registry);
 
   PrefServiceFactory pref_service_factory;
-  pref_service_factory.set_user_prefs(make_scoped_refptr(
-      new InMemoryPrefStore()));
+  pref_service_factory.set_user_prefs(
+      base::MakeRefCounted<InMemoryPrefStore>());
   pref_service_factory.set_managed_prefs(
-      make_scoped_refptr(new policy::ConfigurationPolicyPrefStore(
+      base::MakeRefCounted<policy::ConfigurationPolicyPrefStore>(
           browser_policy_connector_->GetPolicyService(),
           browser_policy_connector_->GetHandlerList(),
-          policy::POLICY_LEVEL_MANDATORY)));
+          policy::POLICY_LEVEL_MANDATORY));
   pref_service_factory.set_read_error_callback(base::Bind(&HandleReadError));
   user_pref_service_ = pref_service_factory.Create(pref_registry);
   pref_change_registrar_.Init(user_pref_service_.get());
 
   user_prefs::UserPrefs::Set(this, user_pref_service_.get());
-}
-
-std::unique_ptr<content::ZoomLevelDelegate>
-AwBrowserContext::CreateZoomLevelDelegate(
-    const base::FilePath& partition_path) {
-  return nullptr;
 }
 
 base::FilePath AwBrowserContext::GetPath() const {
@@ -297,7 +280,12 @@ content::ResourceContext* AwBrowserContext::GetResourceContext() {
 
 content::DownloadManagerDelegate*
 AwBrowserContext::GetDownloadManagerDelegate() {
-  return &download_manager_delegate_;
+  if (!GetUserData(kDownloadManagerDelegateKey)) {
+    SetUserData(kDownloadManagerDelegateKey,
+                base::MakeUnique<AwDownloadManagerDelegate>());
+  }
+  return static_cast<AwDownloadManagerDelegate*>(
+      GetUserData(kDownloadManagerDelegateKey));
 }
 
 content::BrowserPluginGuestManager* AwBrowserContext::GetGuestManager() {
@@ -327,8 +315,20 @@ content::PermissionManager* AwBrowserContext::GetPermissionManager() {
   return permission_manager_.get();
 }
 
+content::BackgroundFetchDelegate*
+AwBrowserContext::GetBackgroundFetchDelegate() {
+  // TODO(crbug.com/766077): Resolve whether to support or disable background
+  // fetch on WebView.
+  return nullptr;
+}
+
 content::BackgroundSyncController*
 AwBrowserContext::GetBackgroundSyncController() {
+  return nullptr;
+}
+
+content::BrowsingDataRemoverDelegate*
+AwBrowserContext::GetBrowsingDataRemoverDelegate() {
   return nullptr;
 }
 
@@ -381,7 +381,7 @@ AwBrowserContext::GetWebRestrictionProvider() {
   return web_restriction_provider_.get();
 }
 
-AwSafeBrowsingUIManager* AwBrowserContext::GetSafeBrowsingUIManager() {
+AwSafeBrowsingUIManager* AwBrowserContext::GetSafeBrowsingUIManager() const {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   return safe_browsing_ui_manager_.get();
 }
@@ -397,6 +397,18 @@ AwBrowserContext::GetSafeBrowsingDBManager() {
     safe_browsing_db_manager_started_ = true;
   }
   return safe_browsing_db_manager_.get();
+}
+
+safe_browsing::TriggerManager* AwBrowserContext::GetSafeBrowsingTriggerManager()
+    const {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  return safe_browsing_trigger_manager_.get();
+}
+
+AwSafeBrowsingWhitelistManager*
+AwBrowserContext::GetSafeBrowsingWhitelistManager() const {
+  // Should not be called until the end of PreMainMessageLoopRun,
+  return safe_browsing_whitelist_manager_.get();
 }
 
 void AwBrowserContext::RebuildTable(

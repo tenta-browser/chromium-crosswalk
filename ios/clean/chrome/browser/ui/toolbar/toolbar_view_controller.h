@@ -7,24 +7,58 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/clean/chrome/browser/ui/animators/zoom_transition_delegate.h"
+#import "ios/chrome/browser/ui/history_popup/requirements/tab_history_positioner.h"
+#import "ios/chrome/browser/ui/history_popup/requirements/tab_history_presentation.h"
+#import "ios/chrome/browser/ui/history_popup/requirements/tab_history_ui_updater.h"
 #import "ios/clean/chrome/browser/ui/toolbar/toolbar_consumer.h"
+#import "ios/clean/chrome/browser/ui/transitions/animators/zoom_transition_delegate.h"
 
-@protocol ToolsMenuCommands;
 @protocol NavigationCommands;
+@protocol TabGridCommands;
+@protocol TabHistoryPopupCommands;
+@protocol TabStripCommands;
+@class ToolbarButtonFactory;
+@class ToolbarConfiguration;
+@protocol ToolsMenuCommands;
 
 // View controller for a toolbar, which will show a horizontal row of
 // controls and/or labels.
 // This view controller will fill its container; it is up to the containing
 // view controller or presentation controller to configure an appropriate
 // height for it.
-@interface ToolbarViewController
-    : UIViewController<ZoomTransitionDelegate, ToolbarConsumer>
+@interface ToolbarViewController : UIViewController<TabHistoryPositioner,
+                                                    TabHistoryPresentation,
+                                                    TabHistoryUIUpdater,
+                                                    ToolbarConsumer,
+                                                    ZoomTransitionDelegate>
 
-// The dispatcher for this view controller
-@property(nonatomic, weak) id<ToolsMenuCommands, NavigationCommands> dispatcher;
+- (instancetype)initWithDispatcher:(id<NavigationCommands,
+                                       TabGridCommands,
+                                       TabHistoryPopupCommands,
+                                       TabStripCommands,
+                                       ToolsMenuCommands>)dispatcher
+                     buttonFactory:(ToolbarButtonFactory*)buttonFactory
+    NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)initWithCoder:(NSCoder*)aDecoder NS_UNAVAILABLE;
+- (instancetype)initWithNibName:(NSString*)nibNameOrNil
+                         bundle:(NSBundle*)nibBundleOrNil NS_UNAVAILABLE;
+
+// The dispatcher for this view controller.
+@property(nonatomic, weak) id<NavigationCommands,
+                              TabGridCommands,
+                              TabHistoryPopupCommands,
+                              TabStripCommands,
+                              ToolsMenuCommands>
+    dispatcher;
 
 @property(nonatomic, strong) UIViewController* locationBarViewController;
+
+// By default, this view controller does not interact with the tab strip. When
+// |usesTabStrip| is YES, the tab switcher button first displays the tab strip.
+// A second tap on the tab switcher displays the tab grid.
+@property(nonatomic, assign) BOOL usesTabStrip;
 
 @end
 

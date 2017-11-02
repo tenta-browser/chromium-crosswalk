@@ -24,13 +24,13 @@ class WebFaviconDriver : public web::WebStateObserver,
                          public web::WebStateUserData<WebFaviconDriver>,
                          public FaviconDriverImpl {
  public:
+  ~WebFaviconDriver() override;
+
   static void CreateForWebState(web::WebState* web_state,
                                 FaviconService* favicon_service,
-                                history::HistoryService* history_service,
-                                bookmarks::BookmarkModel* bookmark_model);
+                                history::HistoryService* history_service);
 
   // FaviconDriver implementation.
-  void FetchFavicon(const GURL& url) override;
   gfx::Image GetFavicon() const override;
   bool FaviconIsValid() const override;
   GURL GetActiveURL() override;
@@ -39,6 +39,8 @@ class WebFaviconDriver : public web::WebStateObserver,
   int DownloadImage(const GURL& url,
                     int max_image_size,
                     ImageDownloadCallback callback) override;
+  void DownloadManifest(const GURL& url,
+                        ManifestDownloadCallback callback) override;
   bool IsOffTheRecord() override;
   void OnFaviconUpdated(
       const GURL& page_url,
@@ -52,19 +54,23 @@ class WebFaviconDriver : public web::WebStateObserver,
 
   WebFaviconDriver(web::WebState* web_state,
                    FaviconService* favicon_service,
-                   history::HistoryService* history_service,
-                   bookmarks::BookmarkModel* bookmark_model);
-  ~WebFaviconDriver() override;
+                   history::HistoryService* history_service);
 
   // web::WebStateObserver implementation.
+  void DidStartNavigation(web::NavigationContext* navigation_context) override;
+  void DidFinishNavigation(web::NavigationContext* navigation_context) override;
   void FaviconUrlUpdated(
       const std::vector<web::FaviconURL>& candidates) override;
 
-  // The URL passed to FetchFavicon().
-  GURL fetch_favicon_url_;
+  // Invoked when new favicon URL candidates are received.
+  void FaviconUrlUpdatedInternal(
+      const std::vector<favicon::FaviconURL>& candidates);
 
   // Image Fetcher used to fetch favicon.
   image_fetcher::IOSImageDataFetcherWrapper image_fetcher_;
+
+  // Caches the favicon URLs candidates for same-document navigations.
+  std::vector<favicon::FaviconURL> candidates_;
 
   DISALLOW_COPY_AND_ASSIGN(WebFaviconDriver);
 };

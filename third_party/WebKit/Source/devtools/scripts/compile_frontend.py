@@ -27,6 +27,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import argparse
 import os
 import os.path as path
 import re
@@ -92,7 +93,7 @@ invalid_non_object_type_regex = re.compile(r'@(?:' + type_checked_jsdoc_tags_or 
 error_warning_regex = re.compile(r'WARNING|ERROR')
 loaded_css_regex = re.compile(r'(?:registerRequiredCSS|WebInspector\.View\.createStyleElement)\s*\(\s*"(.+)"\s*\)')
 
-java_build_regex = re.compile(r'^\w+ version "(\d+)\.(\d+)')
+java_build_regex = re.compile(r'\w+ version "(\d+)\.(\d+)')
 
 
 def log_error(message):
@@ -109,10 +110,9 @@ sys.excepthook = error_excepthook
 application_descriptors = [
     'inspector.json',
     'toolbox.json',
-    'unit_test_runner.json',
+    'integration_test_runner.json',
     'formatter_worker.json',
     'heap_snapshot_worker.json',
-    'utility_shared_worker.json',
 ]
 
 skipped_namespaces = {
@@ -257,6 +257,8 @@ common_closure_args = [
 def check_conditional_dependencies(modules_by_name):
     errors_found = False
     for name in modules_by_name:
+        if 'test_runner' in name:
+            continue
         for dep_name in modules_by_name[name].get('dependencies', []):
             dependency = modules_by_name[dep_name]
             if dependency.get('experiment') or dependency.get('condition'):
@@ -313,7 +315,7 @@ def generate_namespace_externs(modules_by_name):
     namespace_externs_file = tempfile.NamedTemporaryFile(mode='wt', delete=False)
     try:
         for namespace in namespaces:
-            namespace_externs_file.write('/** @type {!Object} */\n')
+            namespace_externs_file.write('/** @const */\n')
             namespace_externs_file.write('var %s = {};\n' % namespace)
     finally:
         namespace_externs_file.close()
@@ -322,10 +324,17 @@ def generate_namespace_externs(modules_by_name):
 
 
 def main():
+    global protocol_externs_file
     errors_found = False
-    generate_protocol_externs.generate_protocol_externs(protocol_externs_file,
-                                                        path.join(inspector_path, 'browser_protocol.json'),
-                                                        path.join(v8_inspector_path, 'js_protocol.json'))
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--protocol-externs-file')
+    args, _ = parser.parse_known_args()
+    if args.protocol_externs_file:
+        protocol_externs_file = args.protocol_externs_file
+    else:
+        generate_protocol_externs.generate_protocol_externs(protocol_externs_file,
+                                                            path.join(inspector_path, 'browser_protocol.json'),
+                                                            path.join(v8_inspector_path, 'js_protocol.json'))
     loader = modular_build.DescriptorLoader(devtools_frontend_path)
     descriptors = loader.load_applications(application_descriptors)
     modules_by_name = descriptors.modules

@@ -8,25 +8,43 @@
 
 namespace blink {
 
-PassRefPtr<UnacceleratedStaticBitmapImage>
-UnacceleratedStaticBitmapImage::Create(sk_sp<SkImage> image) {
-  return AdoptRef(new UnacceleratedStaticBitmapImage(std::move(image)));
+RefPtr<UnacceleratedStaticBitmapImage> UnacceleratedStaticBitmapImage::Create(
+    sk_sp<SkImage> image) {
+  DCHECK(!image->isTextureBacked());
+  return WTF::AdoptRef(new UnacceleratedStaticBitmapImage(std::move(image)));
 }
 
 UnacceleratedStaticBitmapImage::UnacceleratedStaticBitmapImage(
-    sk_sp<SkImage> image)
-    : image_(std::move(image)) {
-  DCHECK(image_);
+    sk_sp<SkImage> image) {
+  DCHECK(!image->isLazyGenerated());
+
+  paint_image_ =
+      CreatePaintImageBuilder().set_image(std::move(image)).TakePaintImage();
+}
+
+RefPtr<UnacceleratedStaticBitmapImage> UnacceleratedStaticBitmapImage::Create(
+    PaintImage image) {
+  return WTF::AdoptRef(new UnacceleratedStaticBitmapImage(std::move(image)));
+}
+
+UnacceleratedStaticBitmapImage::UnacceleratedStaticBitmapImage(PaintImage image)
+    : paint_image_(std::move(image)) {
+  DCHECK(paint_image_);
 }
 
 UnacceleratedStaticBitmapImage::~UnacceleratedStaticBitmapImage() {}
 
 IntSize UnacceleratedStaticBitmapImage::Size() const {
-  return IntSize(image_->width(), image_->height());
+  return IntSize(paint_image_.width(), paint_image_.height());
+}
+
+bool UnacceleratedStaticBitmapImage::IsPremultiplied() const {
+  return paint_image_.GetSkImage()->alphaType() ==
+         SkAlphaType::kPremul_SkAlphaType;
 }
 
 bool UnacceleratedStaticBitmapImage::CurrentFrameKnownToBeOpaque(MetadataMode) {
-  return image_->isOpaque();
+  return paint_image_.GetSkImage()->isOpaque();
 }
 
 void UnacceleratedStaticBitmapImage::Draw(PaintCanvas* canvas,
@@ -34,13 +52,14 @@ void UnacceleratedStaticBitmapImage::Draw(PaintCanvas* canvas,
                                           const FloatRect& dst_rect,
                                           const FloatRect& src_rect,
                                           RespectImageOrientationEnum,
-                                          ImageClampingMode clamp_mode) {
+                                          ImageClampingMode clamp_mode,
+                                          ImageDecodingMode) {
   StaticBitmapImage::DrawHelper(canvas, flags, dst_rect, src_rect, clamp_mode,
-                                image_);
+                                PaintImageForCurrentFrame());
 }
 
-sk_sp<SkImage> UnacceleratedStaticBitmapImage::ImageForCurrentFrame() {
-  return image_;
+PaintImage UnacceleratedStaticBitmapImage::PaintImageForCurrentFrame() {
+  return paint_image_;
 }
 
 }  // namespace blink

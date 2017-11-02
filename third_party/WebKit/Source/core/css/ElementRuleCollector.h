@@ -37,7 +37,6 @@ namespace blink {
 class CSSStyleSheet;
 class CSSRuleList;
 class RuleData;
-class RuleSet;
 class SelectorFilter;
 class StaticCSSRuleList;
 class StyleRuleUsageTracker;
@@ -107,7 +106,7 @@ class ElementRuleCollector {
  public:
   ElementRuleCollector(const ElementResolveContext&,
                        const SelectorFilter&,
-                       ComputedStyle* = 0);
+                       ComputedStyle* = nullptr);
   ~ElementRuleCollector();
 
   void SetMode(SelectorChecker::Mode mode) { mode_ = mode; }
@@ -119,7 +118,6 @@ class ElementRuleCollector {
   void SetMatchingUARules(bool matching_ua_rules) {
     matching_ua_rules_ = matching_ua_rules;
   }
-  bool HasAnyMatchingRules(RuleSet*);
 
   const MatchResult& MatchedResult() const;
   StyleRuleList* MatchedStyleRuleList();

@@ -21,8 +21,6 @@
 #include "ui/wm/core/transient_window_observer.h"
 
 class Browser;
-class MultiUserNotificationBlockerChromeOS;
-class MultiUserNotificationBlockerChromeOSTest;
 
 namespace content {
 class BrowserContext;
@@ -33,9 +31,7 @@ class Window;
 }  // namespace aura
 
 namespace ash {
-namespace test {
 class MultiUserWindowManagerChromeOSTest;
-}  // namespace test
 }  // namespace ash
 
 namespace chrome {
@@ -183,13 +179,9 @@ class MultiUserWindowManagerChromeOS
   void NotifyAfterUserSwitchAnimationFinished();
 
   const WindowToEntryMap& window_to_entry() { return window_to_entry_; }
-  MultiUserNotificationBlockerChromeOS* notification_blocker() {
-    return notification_blocker_.get();
-  }
 
  private:
-  friend class ::MultiUserNotificationBlockerChromeOSTest;
-  friend class ash::test::MultiUserWindowManagerChromeOSTest;
+  friend class ash::MultiUserWindowManagerChromeOSTest;
 
   typedef std::map<AccountId, AppObserver*> AccountIdToAppWindowObserver;
   typedef std::map<aura::Window*, bool> TransientWindowToVisibility;
@@ -243,10 +235,6 @@ class MultiUserWindowManagerChromeOS
   // visibility state in various cases. The state is stored here instead of
   // being read from the user manager to be in sync while a switch occurs.
   AccountId current_account_id_;
-
-  // The blocker which controls the desktop notification visibility based on the
-  // current multi-user status.
-  std::unique_ptr<MultiUserNotificationBlockerChromeOS> notification_blocker_;
 
   // The notification registrar to track the creation of browser windows.
   content::NotificationRegistrar registrar_;

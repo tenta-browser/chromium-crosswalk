@@ -18,6 +18,7 @@
 #endif
 
 namespace gfx {
+class ColorSpace;
 class Size;
 }
 
@@ -53,15 +54,21 @@ class CONTENT_EXPORT WebContentsViewDelegate {
   virtual void TakeFocus(bool reverse);
   virtual void SizeChanged(const gfx::Size& size);
 
+  // This method allows the embedder to specify the display color space (instead
+  // of using the color space specified by display::Display) and write it in
+  // |*color_space|. The default behavior is to leave |*color_space| unchanged.
+  virtual void OverrideDisplayColorSpace(gfx::ColorSpace* color_space);
+
   // Returns a newly-created delegate for the RenderWidgetHostViewMac, to handle
   // events on the responder chain.
 #if defined(__OBJC__)
   virtual NSObject<RenderWidgetHostViewMacDelegate>*
-      CreateRenderWidgetHostViewDelegate(
-          RenderWidgetHost* render_widget_host);
+  CreateRenderWidgetHostViewDelegate(RenderWidgetHost* render_widget_host,
+                                     bool is_popup);
 #else
   virtual void* CreateRenderWidgetHostViewDelegate(
-      RenderWidgetHost* render_widget_host);
+      RenderWidgetHost* render_widget_host,
+      bool is_popup);
 #endif
 };
 

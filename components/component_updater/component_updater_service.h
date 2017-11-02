@@ -22,10 +22,6 @@
 class ComponentsUI;
 class PluginObserver;
 
-namespace base {
-class SequencedTaskRunner;
-}
-
 namespace policy {
 class ComponentUpdaterPolicyTest;
 }
@@ -49,11 +45,16 @@ using CrxComponent = update_client::CrxComponent;
 using CrxUpdateItem = update_client::CrxUpdateItem;
 
 struct ComponentInfo {
-  ComponentInfo(const std::string& id, const base::string16& name,
+  ComponentInfo(const std::string& id,
+                const std::string& fingerprint,
+                const base::string16& name,
                 const base::Version& version);
+  ComponentInfo(const ComponentInfo& other);
+  ComponentInfo(ComponentInfo&& other);
   ~ComponentInfo();
 
   const std::string id;
+  const std::string fingerprint;
   const base::string16 name;
   const base::Version version;
 };
@@ -110,6 +111,10 @@ class ComponentUpdateService {
   virtual std::unique_ptr<ComponentInfo> GetComponentForMimeType(
       const std::string& mime_type) const = 0;
 
+  // Returns a list of ComponentInfo objects describing all registered
+  // components.
+  virtual std::vector<ComponentInfo> GetComponents() const = 0;
+
   // Returns an interface for on-demand updates. On-demand updates are
   // proactively triggered outside the normal component update service schedule.
   virtual OnDemandUpdater& GetOnDemandUpdater() = 0;
@@ -129,9 +134,6 @@ class ComponentUpdateService {
   virtual void MaybeThrottle(const std::string& id,
                              const base::Closure& callback) = 0;
 
-  // Returns a task runner suitable for use by component installers.
-  virtual scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner() = 0;
-
   virtual ~ComponentUpdateService() {}
 
  private:
@@ -141,7 +143,7 @@ class ComponentUpdateService {
                                    CrxUpdateItem* item) const = 0;
 
   friend class ::ComponentsUI;
-  FRIEND_TEST_ALL_PREFIXES(DefaultComponentInstallerTest, RegisterComponent);
+  FRIEND_TEST_ALL_PREFIXES(ComponentInstallerTest, RegisterComponent);
 };
 
 using ServiceObserver = ComponentUpdateService::Observer;

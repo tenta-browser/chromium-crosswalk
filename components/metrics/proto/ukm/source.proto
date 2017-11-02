@@ -4,21 +4,23 @@
 
 syntax = "proto2";
 
-package ukm;
-
 option optimize_for = LITE_RUNTIME;
 
+package ukm;
+
 // Source contains data related to a top-level navigation.
-// Next tag: 7
+// Next tag: 8
 message Source {
   // An identifier for the source. This should be unique within a session.
-  optional int32 id = 1;
+  optional int64 id = 1;
 
   // The URL of the source, as recorded in history. If this URL has not been
   // discovered by Google's crawler, it should not be recorded.
   optional string url = 2;
 
-  // The origin of the URL. This is reserved to be used by server side only.
+  // The origin of the URL (ex. "http://docs.google.com" if the URL is something
+  // like "http://docs.google.com/some_doc_hash"). This field is populated
+  // server-side and should never be filled in by clients.
   reserved 5;
   reserved "url_origin";
 
@@ -27,11 +29,14 @@ message Source {
   // discovered by Google's crawler, it should not be recorded.
   optional string initial_url = 6;
 
+  // Flag indicating if the metric was collected while inside a "custom tab".
+  optional bool is_custom_tab = 7;
+
   // Timestamp of navigation to this Source, as seen by the client. Time of
   // events related to this Source will generally be relative to this timestamp.
   optional int64 navigation_time_msec = 3;
 
-  // Time between navigation and the first contentful paint, in
-  // milliseconds. Deprecated. Use ukm::Entry instead.
+  // Time between navigation and the first contentful paint, in milliseconds.
+  // Deprecated. Use ukm::Entry instead.
   optional int64 first_contentful_paint_msec = 4 [deprecated = true];
 }

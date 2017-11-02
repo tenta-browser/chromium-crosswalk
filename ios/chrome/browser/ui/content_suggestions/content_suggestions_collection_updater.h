@@ -7,26 +7,39 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/ui/content_suggestions/content_suggestion.h"
-
 @class CollectionViewItem;
-@protocol ContentSuggestionsDataSource;
+@class ContentSuggestionsSectionInformation;
 @class ContentSuggestionsViewController;
+@protocol ContentSuggestionsDataSource;
+@protocol SnackbarCommands;
+@protocol SuggestedContent;
+
+// Enum defining the type of a ContentSuggestions.
+typedef NS_ENUM(NSInteger, ContentSuggestionType) {
+  // Use this type to pass information about an empty section. Suggestion of
+  // this type are empty and should not be displayed. The informations to be
+  // displayed are contained in the SectionInfo.
+  ContentSuggestionTypeEmpty,
+  ContentSuggestionTypeArticle,
+  ContentSuggestionTypeReadingList,
+  ContentSuggestionTypeMostVisited,
+  ContentSuggestionTypePromo,
+  ContentSuggestionTypeLearnMore,
+};
 
 // Updater for a CollectionViewController populating it with some items and
 // handling the items addition.
 @interface ContentSuggestionsCollectionUpdater : NSObject
 
-// Initialize with the |dataSource| used to get the data.
-- (instancetype)initWithDataSource:(id<ContentSuggestionsDataSource>)dataSource
-    NS_DESIGNATED_INITIALIZER;
-
-- (instancetype)init NS_UNAVAILABLE;
+// Data source for this object.
+@property(nonatomic, weak) id<ContentSuggestionsDataSource> dataSource;
 
 // |collectionViewController| this Updater will update. Needs to be set before
 // adding items.
-@property(nonatomic, assign)
+@property(nonatomic, weak)
     ContentSuggestionsViewController* collectionViewController;
+
+@property(nonatomic, weak) id<SnackbarCommands> dispatcher;
 
 // Returns whether the section should use the default, non-card style.
 - (BOOL)shouldUseCustomStyleForSection:(NSInteger)section;
@@ -36,18 +49,47 @@
 
 // Adds the sections for the |suggestions| to the model and returns their
 // indices.
-- (NSIndexSet*)addSectionsForSuggestionsToModel:
-    (NSArray<ContentSuggestion*>*)suggestions;
+- (NSIndexSet*)addSectionsForSectionInfoToModel:
+    (NSArray<ContentSuggestionsSectionInformation*>*)sectionsInfo;
 
-// Adds the |suggestions| to the model and returns their index paths.
-// The caller must ensure the corresponding sections have been added to the
-// model.
-- (NSArray<NSIndexPath*>*)addSuggestionsToModel:
-    (NSArray<ContentSuggestion*>*)suggestions;
+// Removes the empty item in the section corresponding to |sectionInfo| from the
+// model and returns its index path. Returns nil if there is no empty item.
+- (NSIndexPath*)removeEmptySuggestionsForSectionInfo:
+    (ContentSuggestionsSectionInformation*)sectionInfo;
 
-// Adds the empty item to this |section| and returns its index path. The updater
+// Adds the |suggestions| to the model in the section corresponding to
+// |sectionInfo| and returns their index paths. The caller must ensure the
+// corresponding section has been added to the model.
+- (NSArray<NSIndexPath*>*)
+addSuggestionsToModel:
+    (NSArray<CollectionViewItem<SuggestedContent>*>*)suggestions
+      withSectionInfo:(ContentSuggestionsSectionInformation*)sectionInfo;
+
+// Adds an empty item to this |section| and returns its index path. The updater
 // does not do any check about the number of elements in the section.
+// Returns nil if there is no empty item for this section.
 - (NSIndexPath*)addEmptyItemForSection:(NSInteger)section;
+
+// Returns whether |section| contains the Most Visited tiles.
+- (BOOL)isMostVisitedSection:(NSInteger)section;
+
+// Returns whether |section| contains the What's New promo.
+- (BOOL)isPromoSection:(NSInteger)section;
+
+// Returns whether |section| contains the promo if there is one and with a
+// header containing the fake omnibox and the logo.
+- (BOOL)isHeaderSection:(NSInteger)section;
+
+// Returns whether |section| is one of the section containing ContentSuggestions
+// items.
+- (BOOL)isContentSuggestionsSection:(NSInteger)section;
+
+// Updates the number of Most Visited tiles shown for the |size| on the model
+// only. The collection needs to be updated separately.
+- (void)updateMostVisitedForSize:(CGSize)size;
+
+// Dismisses the |item| from the model. Does not change the UI.
+- (void)dismissItem:(CollectionViewItem<SuggestedContent>*)item;
 
 @end
 

@@ -51,7 +51,7 @@ class StyleRuleImport : public StyleRuleBase {
   StyleSheetContents* GetStyleSheet() const { return style_sheet_.Get(); }
 
   bool IsLoading() const;
-  MediaQuerySet* MediaQueries() { return media_queries_.Get(); }
+  MediaQuerySet* MediaQueries() { return media_queries_.get(); }
 
   void RequestStyleSheet();
 
@@ -74,7 +74,7 @@ class StyleRuleImport : public StyleRuleBase {
     void SetCSSStyleSheet(const String& href,
                           const KURL& base_url,
                           ReferrerPolicy referrer_policy,
-                          const String& charset,
+                          const WTF::TextEncoding& charset,
                           const CSSStyleSheetResource* sheet) override {
       owner_rule_->SetCSSStyleSheet(href, base_url, referrer_policy, charset,
                                     sheet);
@@ -93,7 +93,7 @@ class StyleRuleImport : public StyleRuleBase {
   void SetCSSStyleSheet(const String& href,
                         const KURL& base_url,
                         ReferrerPolicy,
-                        const String& charset,
+                        const WTF::TextEncoding&,
                         const CSSStyleSheetResource*);
 
   StyleRuleImport(const String& href, RefPtr<MediaQuerySet>);

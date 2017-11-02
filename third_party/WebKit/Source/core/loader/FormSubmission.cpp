@@ -30,16 +30,16 @@
 
 #include "core/loader/FormSubmission.h"
 
-#include "core/HTMLNames.h"
-#include "core/InputTypeNames.h"
 #include "core/dom/Document.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/UseCounter.h"
-#include "core/html/FormData.h"
-#include "core/html/HTMLFormControlElement.h"
-#include "core/html/HTMLFormElement.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/html/forms/FormData.h"
+#include "core/html/forms/HTMLFormControlElement.h"
+#include "core/html/forms/HTMLFormElement.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
+#include "core/input_type_names.h"
 #include "core/loader/FrameLoadRequest.h"
 #include "core/loader/FrameLoader.h"
 #include "platform/heap/Handle.h"
@@ -78,7 +78,7 @@ static void AppendMailtoPostFormDataToURL(KURL& url,
   body_data.Append("body=", 5);
   FormDataEncoder::EncodeStringAsFormData(body_data, body.Utf8(),
                                           FormDataEncoder::kNormalizeCRLF);
-  body = String(body_data.Data(), body_data.size()).Replace('+', "%20");
+  body = String(body_data.data(), body_data.size()).Replace('+', "%20");
 
   StringBuilder query;
   query.Append(url.Query());
@@ -147,7 +147,7 @@ inline FormSubmission::FormSubmission(SubmitMethod method,
                                       const AtomicString& target,
                                       const AtomicString& content_type,
                                       HTMLFormElement* form,
-                                      PassRefPtr<EncodedFormData> data,
+                                      RefPtr<EncodedFormData> data,
                                       const String& boundary,
                                       Event* event)
     : method_(method),
@@ -200,7 +200,7 @@ FormSubmission* FormSubmission::Create(HTMLFormElement* form,
   if (document.GetInsecureRequestPolicy() & kUpgradeInsecureRequests &&
       action_url.ProtocolIs("http")) {
     UseCounter::Count(document,
-                      UseCounter::kUpgradeInsecureRequestsUpgradedRequest);
+                      WebFeature::kUpgradeInsecureRequestsUpgradedRequest);
     action_url.SetProtocol("https");
     if (action_url.Port() == 80)
       action_url.SetPort(443);
@@ -234,9 +234,9 @@ FormSubmission* FormSubmission::Create(HTMLFormElement* form,
     HTMLElement& element = ToHTMLElement(*control);
     if (!element.IsDisabledFormControl())
       control->AppendToFormData(*dom_form_data);
-    if (isHTMLInputElement(element)) {
-      HTMLInputElement& input = toHTMLInputElement(element);
-      if (input.type() == InputTypeNames::password && !input.value().IsEmpty())
+    if (auto* input = ToHTMLInputElementOrNull(element)) {
+      if (input->type() == InputTypeNames::password &&
+          !input->value().IsEmpty())
         contains_password_data = true;
     }
   }
@@ -248,7 +248,7 @@ FormSubmission* FormSubmission::Create(HTMLFormElement* form,
 
   if (is_multi_part_form) {
     form_data = dom_form_data->EncodeMultiPartFormData();
-    boundary = form_data->Boundary().Data();
+    boundary = form_data->Boundary().data();
   } else {
     form_data = dom_form_data->EncodeFormData(
         attributes.Method() == kGetMethod

@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "quic_test_server.h"
-
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/path_utils.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/test/test_support_android.h"
 #include "base/threading/thread.h"
 #include "components/cronet/android/test/cronet_test_util.h"
@@ -56,8 +55,8 @@ void StartOnServerThread(const base::FilePath& test_files_root,
       directory.Append("quic_test.example.com.key.sct")));
   g_quic_server = new net::QuicSimpleServer(
       std::move(proof_source), config,
-      net::QuicCryptoServerConfig::ConfigOptions(), net::AllSupportedVersions(),
-      g_quic_response_cache);
+      net::QuicCryptoServerConfig::ConfigOptions(),
+      net::AllSupportedTransportVersions(), g_quic_response_cache);
 
   // Start listening.
   int rv = g_quic_server->Listen(
@@ -109,10 +108,6 @@ void ShutdownQuicTestServer(JNIEnv* env,
 
 int GetServerPort(JNIEnv* env, const JavaParamRef<jclass>& /*jcaller*/) {
   return kServerPort;
-}
-
-bool RegisterQuicTestServer(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace cronet

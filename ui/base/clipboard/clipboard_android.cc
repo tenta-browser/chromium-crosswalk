@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
@@ -453,9 +452,10 @@ SkBitmap ClipboardAndroid::ReadImage(ClipboardType type) const {
 
     bmp.allocN32Pixels(size->width(), size->height());
 
-    DCHECK_EQ(sizeof(gfx::Size) + bmp.getSize(), input.size());
+    DCHECK_EQ(sizeof(gfx::Size) + bmp.computeByteSize(), input.size());
 
-    memcpy(bmp.getPixels(), input.data() + sizeof(gfx::Size), bmp.getSize());
+    memcpy(bmp.getPixels(), input.data() + sizeof(gfx::Size),
+           bmp.computeByteSize());
   }
   return bmp;
 }
@@ -540,11 +540,8 @@ void ClipboardAndroid::WriteBitmap(const SkBitmap& bitmap) {
   gfx::Size size(bitmap.width(), bitmap.height());
 
   std::string packed(reinterpret_cast<const char*>(&size), sizeof(size));
-  {
-    SkAutoLockPixels bitmap_lock(bitmap);
-    packed += std::string(static_cast<const char*>(bitmap.getPixels()),
-                          bitmap.getSize());
-  }
+  packed += std::string(static_cast<const char*>(bitmap.getPixels()),
+                        bitmap.computeByteSize());
   g_map.Get().Set(kBitmapFormat, packed);
 }
 
@@ -552,10 +549,6 @@ void ClipboardAndroid::WriteData(const Clipboard::FormatType& format,
                                  const char* data_data,
                                  size_t data_len) {
   g_map.Get().Set(format.ToString(), std::string(data_data, data_len));
-}
-
-bool RegisterClipboardAndroid(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 // Returns a pointer to the current ClipboardAndroid object.

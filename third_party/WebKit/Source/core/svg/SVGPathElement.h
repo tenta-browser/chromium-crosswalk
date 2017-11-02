@@ -21,7 +21,6 @@
 #ifndef SVGPathElement_h
 #define SVGPathElement_h
 
-#include "core/SVGNames.h"
 #include "core/svg/SVGAnimatedPath.h"
 #include "core/svg/SVGGeometryElement.h"
 #include "platform/heap/Handle.h"
@@ -41,7 +40,6 @@ class SVGPathElement final : public SVGGeometryElement {
 
   float getTotalLength() override;
   SVGPointTearOff* getPointAtLength(float distance) override;
-  unsigned getPathSegAtLength(float distance);
 
   SVGAnimatedPath* GetPath() const { return path_.Get(); }
   float ComputePathLength() const override;

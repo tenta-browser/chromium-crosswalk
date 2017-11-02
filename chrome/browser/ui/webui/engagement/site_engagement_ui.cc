@@ -82,18 +82,18 @@ SiteEngagementUI::SiteEngagementUI(content::WebUI* web_ui)
       content::WebUIDataSource::Create(chrome::kChromeUISiteEngagementHost));
   source->AddResourcePath("site_engagement.js", IDR_SITE_ENGAGEMENT_JS);
   source->AddResourcePath(
-      "chrome/browser/engagement/site_engagement_details.mojom",
+      "chrome/browser/engagement/site_engagement_details.mojom.js",
       IDR_SITE_ENGAGEMENT_MOJO_JS);
-  source->AddResourcePath("url/mojo/url.mojom", IDR_URL_MOJO_JS);
+  source->AddResourcePath("url/mojo/url.mojom.js", IDR_URL_MOJO_JS);
   source->SetDefaultResource(IDR_SITE_ENGAGEMENT_HTML);
-  source->UseGzip(std::unordered_set<std::string>());
+  source->UseGzip();
   content::WebUIDataSource::Add(Profile::FromWebUI(web_ui), source.release());
 }
 
 SiteEngagementUI::~SiteEngagementUI() {}
 
 void SiteEngagementUI::BindUIHandler(
-    mojo::InterfaceRequest<mojom::SiteEngagementDetailsProvider> request) {
+    mojom::SiteEngagementDetailsProviderRequest request) {
   ui_handler_.reset(new SiteEngagementDetailsProviderImpl(
       Profile::FromWebUI(web_ui()), std::move(request)));
 }

@@ -11,8 +11,10 @@
 #include "extensions/browser/api/bluetooth/bluetooth_api.h"
 #include "extensions/browser/api/bluetooth/bluetooth_private_api.h"
 #include "extensions/browser/api/bluetooth_socket/bluetooth_socket_event_dispatcher.h"
+#include "extensions/browser/api/cast_channel/cast_channel_api.h"
 #include "extensions/browser/api/clipboard/clipboard_api.h"
 #include "extensions/browser/api/display_source/display_source_event_router_factory.h"
+#include "extensions/browser/api/feedback_private/feedback_private_api.h"
 #include "extensions/browser/api/hid/hid_device_manager.h"
 #include "extensions/browser/api/idle/idle_manager_factory.h"
 #include "extensions/browser/api/management/management_api.h"
@@ -33,7 +35,6 @@
 #include "extensions/browser/api/usb/usb_event_router.h"
 #include "extensions/browser/api/usb/usb_guid_map.h"
 #include "extensions/browser/api/virtual_keyboard_private/virtual_keyboard_private_api.h"
-#include "extensions/browser/api/vpn_provider/vpn_service_factory.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
 #include "extensions/browser/api/webcam_private/webcam_private_api.h"
 #include "extensions/browser/declarative_user_script_manager_factory.h"
@@ -42,6 +43,10 @@
 #include "extensions/browser/extension_prefs_factory.h"
 #include "extensions/browser/process_manager_factory.h"
 #include "extensions/browser/renderer_startup_helper.h"
+
+#if defined(OS_CHROMEOS)
+#include "extensions/browser/api/vpn_provider/vpn_service_factory.h"
+#endif  // defined(OS_CHROMEOS)
 
 namespace extensions {
 
@@ -56,6 +61,7 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   AudioAPI::GetFactoryInstance();
   BluetoothAPI::GetFactoryInstance();
   BluetoothPrivateAPI::GetFactoryInstance();
+  CastChannelAPI::GetFactoryInstance();
 #if defined(OS_CHROMEOS)
   ClipboardAPI::GetFactoryInstance();
   chromeos::VpnServiceFactory::GetInstance();
@@ -69,6 +75,7 @@ void EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   EventRouterFactory::GetInstance();
   ExtensionMessageFilter::EnsureShutdownNotifierFactoryBuilt();
   ExtensionPrefsFactory::GetInstance();
+  FeedbackPrivateAPI::GetFactoryInstance();
   HidDeviceManager::GetFactoryInstance();
   IdleManagerFactory::GetInstance();
   ManagementAPI::GetFactoryInstance();

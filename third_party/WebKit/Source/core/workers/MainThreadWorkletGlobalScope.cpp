@@ -4,12 +4,12 @@
 
 #include "core/workers/MainThreadWorkletGlobalScope.h"
 
-#include "bindings/core/v8/ScriptSourceCode.h"
-#include "bindings/core/v8/WorkerOrWorkletScriptController.h"
+#include "core/dom/Document.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/FrameConsole.h"
 #include "core/frame/LocalFrame.h"
 #include "core/inspector/MainThreadDebugger.h"
+#include "core/probe/CoreProbes.h"
 
 namespace blink {
 
@@ -17,40 +17,26 @@ MainThreadWorkletGlobalScope::MainThreadWorkletGlobalScope(
     LocalFrame* frame,
     const KURL& url,
     const String& user_agent,
-    PassRefPtr<SecurityOrigin> security_origin,
-    v8::Isolate* isolate)
-    : WorkletGlobalScope(url, user_agent, std::move(security_origin), isolate),
+    RefPtr<SecurityOrigin> security_origin,
+    v8::Isolate* isolate,
+    WorkerReportingProxy& reporting_proxy)
+    : WorkletGlobalScope(url,
+                         user_agent,
+                         std::move(security_origin),
+                         isolate,
+                         nullptr /* worker_clients */,
+                         reporting_proxy),
       ContextClient(frame) {}
 
 MainThreadWorkletGlobalScope::~MainThreadWorkletGlobalScope() {}
-
-void MainThreadWorkletGlobalScope::CountFeature(UseCounter::Feature feature) {
-  DCHECK(IsMainThread());
-  // A parent document is on the same thread, so just record API use in the
-  // document's UseCounter.
-  UseCounter::Count(GetFrame(), feature);
-}
-
-void MainThreadWorkletGlobalScope::CountDeprecation(
-    UseCounter::Feature feature) {
-  DCHECK(IsMainThread());
-  // A parent document is on the same thread, so just record API use in the
-  // document's UseCounter.
-  AddDeprecationMessage(feature);
-  Deprecation::CountDeprecation(GetFrame(), feature);
-}
 
 WorkerThread* MainThreadWorkletGlobalScope::GetThread() const {
   NOTREACHED();
   return nullptr;
 }
 
-void MainThreadWorkletGlobalScope::EvaluateScript(
-    const ScriptSourceCode& script_source_code) {
-  ScriptController()->Evaluate(script_source_code);
-}
-
-void MainThreadWorkletGlobalScope::TerminateWorkletGlobalScope() {
+// TODO(nhiroki): Add tests for termination.
+void MainThreadWorkletGlobalScope::Terminate() {
   Dispose();
 }
 
@@ -61,6 +47,15 @@ void MainThreadWorkletGlobalScope::AddConsoleMessage(
 
 void MainThreadWorkletGlobalScope::ExceptionThrown(ErrorEvent* event) {
   MainThreadDebugger::Instance()->ExceptionThrown(this, event);
+}
+
+CoreProbeSink* MainThreadWorkletGlobalScope::GetProbeSink() {
+  return probe::ToCoreProbeSink(GetFrame());
+}
+
+DEFINE_TRACE(MainThreadWorkletGlobalScope) {
+  WorkletGlobalScope::Trace(visitor);
+  ContextClient::Trace(visitor);
 }
 
 }  // namespace blink

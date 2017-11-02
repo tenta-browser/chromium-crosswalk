@@ -21,6 +21,7 @@ NET_EXPORT_PRIVATE extern const char kSizeMultiplierParam[];
 enum class SimpleExperimentType : uint32_t {
   NONE = 0,
   SIZE = 1,
+  EVICT_WITH_SIZE = 2,  // deprecated
 };
 
 struct NET_EXPORT_PRIVATE SimpleExperiment {

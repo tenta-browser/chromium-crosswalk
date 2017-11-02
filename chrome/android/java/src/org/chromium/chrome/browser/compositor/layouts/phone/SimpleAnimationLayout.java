@@ -74,7 +74,6 @@ public class SimpleAnimationLayout
      * @param context     The current Android's context.
      * @param updateHost  The {@link LayoutUpdateHost} view for this layout.
      * @param renderHost  The {@link LayoutRenderHost} view for this layout.
-     * @param eventFilter The {@link EventFilter} that is needed for this view.
      */
     public SimpleAnimationLayout(
             Context context, LayoutUpdateHost updateHost, LayoutRenderHost renderHost) {

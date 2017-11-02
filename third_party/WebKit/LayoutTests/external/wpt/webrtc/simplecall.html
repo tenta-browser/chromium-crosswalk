@@ -24,12 +24,6 @@ property to true in Firefox.
   <!-- These files are in place when executing on W3C. -->
   <script src="/resources/testharness.js"></script>
   <script src="/resources/testharnessreport.js"></script>
-  <script src="/common/vendor-prefix.js"
-          data-prefixed-objects=
-              '[{"ancestors":["navigator"], "name":"getUserMedia"}]'
-          data-prefixed-prototypes=
-               '[{"ancestors":["HTMLMediaElement"],"name":"srcObject"}]'>
-  </script>
   <script type="text/javascript">
   var test = async_test('Can set up a basic WebRTC call.', {timeout: 5000});
 
@@ -47,7 +41,9 @@ property to true in Firefox.
   function getUserMediaOkCallback(localStream) {
     gFirstConnection = new RTCPeerConnection(null);
     gFirstConnection.onicecandidate = onIceCandidateToFirst;
-    gFirstConnection.addStream(localStream);
+    localStream.getTracks().forEach(function(track) {
+      gFirstConnection.addTrack(track, localStream);
+    });
     gFirstConnection.createOffer(onOfferCreated, failed('createOffer'));
 
     var videoTag = document.getElementById('local-view');
@@ -65,7 +61,7 @@ property to true in Firefox.
   function receiveCall(offerSdp) {
     gSecondConnection = new RTCPeerConnection(null);
     gSecondConnection.onicecandidate = onIceCandidateToSecond;
-    gSecondConnection.onaddstream = onRemoteStream;
+    gSecondConnection.ontrack = onRemoteTrack;
 
     var parsedOffer = new RTCSessionDescription({ type: 'offer',
                                                   sdp: offerSdp });
@@ -97,22 +93,22 @@ property to true in Firefox.
     gFirstConnection.addIceCandidate(event.candidate);
   });
 
-  var onRemoteStream = test.step_func(function(event) {
+  var onRemoteTrack = test.step_func(function(event) {
     var videoTag = document.getElementById('remote-view');
-    videoTag.srcObject = event.stream;
+    if (!videoTag.srcObject) {
+      videoTag.srcObject = event.streams[0];
+    }
   });
 
   // Returns a suitable error callback.
   function failed(function_name) {
-    return test.step_func(function() {
-      assert_unreached('WebRTC called error callback for ' + function_name);
-    });
+    return test.unreached_func('WebRTC called error callback for ' + function_name);
   }
 
   // This function starts the test.
   test.step(function() {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(getUserMediaOkCallback, failed('getUserMedia'));
+      .then(test.step_func(getUserMediaOkCallback), failed('getUserMedia'));
   });
 </script>
 

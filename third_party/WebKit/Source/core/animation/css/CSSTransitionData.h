@@ -13,7 +13,7 @@
 
 namespace blink {
 
-class CSSTransitionData final : public CSSTimingData {
+class CORE_EXPORT CSSTransitionData final : public CSSTimingData {
  public:
   enum TransitionPropertyType {
     kTransitionNone,
@@ -54,12 +54,14 @@ class CSSTransitionData final : public CSSTimingData {
     return WTF::WrapUnique(new CSSTransitionData);
   }
 
-  static std::unique_ptr<CSSTransitionData> Create(
-      const CSSTransitionData& transition_data) {
-    return WTF::WrapUnique(new CSSTransitionData(transition_data));
+  std::unique_ptr<CSSTransitionData> Clone() {
+    return WTF::WrapUnique(new CSSTransitionData(*this));
   }
 
   bool TransitionsMatchForStyleRecalc(const CSSTransitionData& other) const;
+  bool operator==(const CSSTransitionData& other) const {
+    return TransitionsMatchForStyleRecalc(other);
+  }
 
   Timing ConvertToTiming(size_t index) const;
 

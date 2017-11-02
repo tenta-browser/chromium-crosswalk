@@ -4,17 +4,20 @@
 
 #include "components/password_manager/core/browser/mock_password_store.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 
 namespace password_manager {
 
-MockPasswordStore::MockPasswordStore()
-    : PasswordStore(base::ThreadTaskRunnerHandle::Get(),
-                    base::ThreadTaskRunnerHandle::Get()) {
+MockPasswordStore::MockPasswordStore() = default;
+
+MockPasswordStore::~MockPasswordStore() = default;
+
+scoped_refptr<base::SequencedTaskRunner>
+MockPasswordStore::CreateBackgroundTaskRunner() const {
+  return base::SequencedTaskRunnerHandle::Get();
 }
 
-MockPasswordStore::~MockPasswordStore() {
-}
+void MockPasswordStore::InitOnBackgroundSequence(
+    const syncer::SyncableService::StartSyncFlare& flare) {}
 
 }  // namespace password_manager

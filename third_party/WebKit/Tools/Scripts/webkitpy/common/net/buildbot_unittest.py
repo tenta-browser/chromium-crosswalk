@@ -26,6 +26,7 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import logging
 import unittest
 
 from webkitpy.common.net.buildbot import BuildBot, Build, filter_latest_builds
@@ -33,6 +34,9 @@ from webkitpy.common.system.log_testing import LoggingTestCase
 
 
 class BuilderTest(LoggingTestCase):
+
+    def setUp(self):
+        self.set_logging_level(logging.DEBUG)
 
     def test_results_url_no_build_number(self):
         self.assertEqual(
@@ -43,6 +47,10 @@ class BuilderTest(LoggingTestCase):
         self.assertEqual(
             BuildBot().results_url('Test Builder', 10),
             'https://storage.googleapis.com/chromium-layout-test-archives/Test_Builder/10/layout-test-results')
+
+    def test_results_url_with_non_numeric_build_number(self):
+        with self.assertRaisesRegexp(AssertionError, 'expected numeric build number'):
+            BuildBot().results_url('Test Builder', 'ba5eba11')
 
     def test_builder_results_url_base(self):
         self.assertEqual(
@@ -64,7 +72,7 @@ class BuilderTest(LoggingTestCase):
         results = buildbot.fetch_layout_test_results(buildbot.results_url('B'))
         self.assertIsNone(results)
         self.assertLog([
-            'WARNING: Got 404 response from:\n'
+            'DEBUG: Got 404 response from:\n'
             'https://storage.googleapis.com/chromium-layout-test-archives/B/results/layout-test-results/failing_results.json\n'
         ])
 
@@ -78,7 +86,7 @@ class BuilderTest(LoggingTestCase):
         results = buildbot.fetch_layout_test_results(buildbot.results_url('B'))
         self.assertIsNone(results)
         self.assertLog([
-            'WARNING: Got 404 response from:\n'
+            'DEBUG: Got 404 response from:\n'
             'https://storage.googleapis.com/chromium-layout-test-archives/B/results/layout-test-results/LAST_CHANGE\n'
         ])
 

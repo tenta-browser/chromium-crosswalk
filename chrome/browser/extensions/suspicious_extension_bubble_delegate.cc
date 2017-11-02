@@ -13,7 +13,6 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/strings/grit/components_strings.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
@@ -47,7 +46,7 @@ bool SuspiciousExtensionBubbleDelegate::ShouldIncludeExtension(
     return false;
 
   int disable_reasons = prefs->GetDisableReasons(extension->id());
-  if (disable_reasons & extensions::Extension::DISABLE_NOT_VERIFIED)
+  if (disable_reasons & extensions::disable_reason::DISABLE_NOT_VERIFIED)
     return !HasBubbleInfoBeenAcknowledged(extension->id());
 
   return false;

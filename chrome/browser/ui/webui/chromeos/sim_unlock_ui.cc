@@ -312,12 +312,13 @@ void SimUnlockUIHTMLSource::StartDataRequest(
       l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_CHOOSE_PIN_TITLE));
   strings.SetString("choosePinMessage",
       l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_CHOOSE_PIN_MESSAGE));
-  strings.SetString("newPin", l10n_util::GetStringUTF16(
-      IDS_OPTIONS_SETTINGS_INTERNET_CELLULAR_CHANGE_PIN_NEW_PIN));
+  strings.SetString(
+      "newPin", l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_CHANGE_PIN_NEW_PIN));
   strings.SetString("retypeNewPin", l10n_util::GetStringUTF16(
-      IDS_OPTIONS_SETTINGS_INTERNET_CELLULAR_CHANGE_PIN_RETYPE_PIN));
-  strings.SetString("pinsDontMatchMessage", l10n_util::GetStringUTF16(
-      IDS_OPTIONS_SETTINGS_INTERNET_CELLULAR_PINS_DONT_MATCH_ERROR));
+                                        IDS_SIM_UNLOCK_CHANGE_PIN_RETYPE_PIN));
+  strings.SetString(
+      "pinsDontMatchMessage",
+      l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_PINS_DONT_MATCH_ERROR));
   strings.SetString("noPukTriesLeft",
       l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_NO_PUK_TRIES_LEFT_MESSAGE));
   strings.SetString("simDisabledTitle",
@@ -325,18 +326,18 @@ void SimUnlockUIHTMLSource::StartDataRequest(
   strings.SetString("simDisabledMessage",
       l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_SIM_DISABLED_MESSAGE));
 
-  strings.SetString("changePinTitle", l10n_util::GetStringUTF16(
-      IDS_OPTIONS_SETTINGS_INTERNET_CELLULAR_CHANGE_PIN_TITLE));
+  strings.SetString("changePinTitle",
+                    l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_CHANGE_PIN_TITLE));
   strings.SetString("changePinMessage", l10n_util::GetStringUTF16(
-      IDS_OPTIONS_SETTINGS_INTERNET_CELLULAR_CHANGE_PIN_MESSAGE));
-  strings.SetString("oldPin", l10n_util::GetStringUTF16(
-      IDS_OPTIONS_SETTINGS_INTERNET_CELLULAR_CHANGE_PIN_OLD_PIN));
+                                            IDS_SIM_UNLOCK_CHANGE_PIN_MESSAGE));
+  strings.SetString(
+      "oldPin", l10n_util::GetStringUTF16(IDS_SIM_UNLOCK_CHANGE_PIN_OLD_PIN));
 
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
   webui::SetLoadTimeDataDefaults(app_locale, &strings);
 
   static const base::StringPiece html(
-      ResourceBundle::GetSharedInstance().GetRawDataResource(
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
           IDR_SIM_UNLOCK_HTML));
 
   std::string full_html = webui::GetI18nTemplateHtml(html, &strings);
@@ -587,8 +588,9 @@ void SimUnlockHandler::HandleChangePinCode(const base::ListValue* args) {
 void SimUnlockHandler::HandleEnterCode(SimUnlockCode code_type,
                                        const std::string& code) {
   scoped_refptr<TaskProxy> task = new TaskProxy(AsWeakPtr(), code, code_type);
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-      base::Bind(&TaskProxy::HandleEnterCode, task.get()));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&TaskProxy::HandleEnterCode, task.get()));
 }
 
 void SimUnlockHandler::HandleEnterPinCode(const base::ListValue* args) {
@@ -622,8 +624,9 @@ void SimUnlockHandler::HandleProceedToPukInput(const base::ListValue* args) {
     return;
   }
   scoped_refptr<TaskProxy> task = new TaskProxy(AsWeakPtr());
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-      base::Bind(&TaskProxy::HandleProceedToPukInput, task.get()));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&TaskProxy::HandleProceedToPukInput, task.get()));
 }
 
 void SimUnlockHandler::HandleSimStatusInitialize(const base::ListValue* args) {
@@ -637,8 +640,9 @@ void SimUnlockHandler::HandleSimStatusInitialize(const base::ListValue* args) {
   dialog_mode_ = static_cast<SimDialogDelegate::SimDialogMode>(mode);
   VLOG(1) << "Initializing SIM dialog in mode: " << dialog_mode_;
   scoped_refptr<TaskProxy> task = new TaskProxy(AsWeakPtr());
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-      base::Bind(&TaskProxy::HandleInitialize, task.get()));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&TaskProxy::HandleInitialize, task.get()));
 }
 
 void SimUnlockHandler::InitializeSimStatus() {

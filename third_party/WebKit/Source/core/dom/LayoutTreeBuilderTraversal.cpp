@@ -26,9 +26,9 @@
 
 #include "core/dom/LayoutTreeBuilderTraversal.h"
 
-#include "core/HTMLNames.h"
+#include "core/dom/FlatTreeTraversal.h"
 #include "core/dom/PseudoElement.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutObject.h"
 
 namespace blink {
@@ -44,7 +44,7 @@ static bool IsLayoutObjectReparented(const LayoutObject* layout_object) {
 }
 
 void LayoutTreeBuilderTraversal::ParentDetails::DidTraverseInsertionPoint(
-    const InsertionPoint* insertion_point) {
+    const V0InsertionPoint* insertion_point) {
   if (!insertion_point_) {
     insertion_point_ = insertion_point;
   }
@@ -161,7 +161,7 @@ static Node* PseudoAwareLastChild(const Node& node) {
 Node* LayoutTreeBuilderTraversal::Previous(const Node& node,
                                            const Node* stay_within) {
   if (node == stay_within)
-    return 0;
+    return nullptr;
 
   if (Node* previous_node = PseudoAwarePreviousSibling(node)) {
     while (Node* previous_last_child = PseudoAwareLastChild(*previous_node))
@@ -212,18 +212,18 @@ static Node* NextAncestorSibling(const Node& node, const Node* stay_within) {
        parent_node;
        parent_node = LayoutTreeBuilderTraversal::Parent(*parent_node)) {
     if (parent_node == stay_within)
-      return 0;
+      return nullptr;
     if (Node* next_node = PseudoAwareNextSibling(*parent_node))
       return next_node;
   }
-  return 0;
+  return nullptr;
 }
 
 Node* LayoutTreeBuilderTraversal::NextSkippingChildren(
     const Node& node,
     const Node* stay_within) {
   if (node == stay_within)
-    return 0;
+    return nullptr;
   if (Node* next_node = PseudoAwareNextSibling(node))
     return next_node;
   return NextAncestorSibling(node, stay_within);
@@ -304,6 +304,11 @@ Node* LayoutTreeBuilderTraversal::PreviousLayoutSibling(const Node& node,
   return nullptr;
 }
 
+Node* LayoutTreeBuilderTraversal::FirstLayoutChild(const Node& node) {
+  int32_t limit = kTraverseAllSiblings;
+  return NextLayoutSiblingInternal(PseudoAwareFirstChild(node), limit);
+}
+
 LayoutObject* LayoutTreeBuilderTraversal::NextSiblingLayoutObject(
     const Node& node,
     int32_t limit) {
@@ -334,7 +339,7 @@ LayoutObject* LayoutTreeBuilderTraversal::PreviousSiblingLayoutObject(
 LayoutObject* LayoutTreeBuilderTraversal::NextInTopLayer(
     const Element& element) {
   if (!element.IsInTopLayer())
-    return 0;
+    return nullptr;
   const HeapVector<Member<Element>>& top_layer_elements =
       element.GetDocument().TopLayerElements();
   size_t position = top_layer_elements.Find(&element);
@@ -343,7 +348,7 @@ LayoutObject* LayoutTreeBuilderTraversal::NextInTopLayer(
     if (LayoutObject* layout_object = top_layer_elements[i]->GetLayoutObject())
       return layout_object;
   }
-  return 0;
+  return nullptr;
 }
 
 }  // namespace blink

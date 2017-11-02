@@ -60,10 +60,6 @@ void ArcProcessTaskProvider::UpdateProcessList(
     nspid_to_remove.insert(entry.first);
 
   for (const auto& entry : processes) {
-    // Skip adding or updating processes we will not display.
-    if (!process_filter_.ShouldDisplayProcess(entry))
-      continue;
-
     if (nspid_to_remove.erase(entry.nspid()) == 0) {
       // New arc process.
       std::unique_ptr<ArcProcessTask>& task = (*pid_to_task)[entry.nspid()];
@@ -93,14 +89,14 @@ void ArcProcessTaskProvider::UpdateProcessList(
 }
 
 void ArcProcessTaskProvider::OnUpdateAppProcessList(
-    const std::vector<ArcProcess>& processes) {
+    std::vector<ArcProcess> processes) {
   TRACE_EVENT0("browser", "ArcProcessTaskProvider::OnUpdateAppProcessList");
   UpdateProcessList(&nspid_to_task_, processes);
   ScheduleNextAppRequest();
 }
 
 void ArcProcessTaskProvider::OnUpdateSystemProcessList(
-    const std::vector<ArcProcess>& processes) {
+    std::vector<ArcProcess> processes) {
   UpdateProcessList(&nspid_to_sys_task_, processes);
   ScheduleNextSystemRequest();
 }

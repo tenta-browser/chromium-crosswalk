@@ -13,8 +13,9 @@
 #include <memory>
 
 #include "base/scoped_generic.h"
+#include "components/exo/wayland/aura-shell-client-protocol.h"
 
-#if defined(OZONE_PLATFORM_GBM)
+#if defined(USE_GBM)
 #include <gbm.h>
 #endif
 
@@ -27,34 +28,38 @@
   };                                    \
   }
 
-DEFAULT_DELETER_FDECL(wl_display)
-DEFAULT_DELETER_FDECL(wl_compositor)
-DEFAULT_DELETER_FDECL(wl_shm)
-DEFAULT_DELETER_FDECL(wl_shm_pool)
 DEFAULT_DELETER_FDECL(wl_buffer)
-DEFAULT_DELETER_FDECL(wl_surface)
+DEFAULT_DELETER_FDECL(wl_callback)
+DEFAULT_DELETER_FDECL(wl_compositor)
+DEFAULT_DELETER_FDECL(wl_display)
+DEFAULT_DELETER_FDECL(wl_pointer)
 DEFAULT_DELETER_FDECL(wl_region)
+DEFAULT_DELETER_FDECL(wl_seat)
 DEFAULT_DELETER_FDECL(wl_shell)
 DEFAULT_DELETER_FDECL(wl_shell_surface)
-DEFAULT_DELETER_FDECL(wl_seat)
-DEFAULT_DELETER_FDECL(wl_pointer)
+DEFAULT_DELETER_FDECL(wl_shm)
+DEFAULT_DELETER_FDECL(wl_shm_pool)
+DEFAULT_DELETER_FDECL(wl_subcompositor)
+DEFAULT_DELETER_FDECL(wl_subsurface)
+DEFAULT_DELETER_FDECL(wl_surface)
 DEFAULT_DELETER_FDECL(wl_touch)
-DEFAULT_DELETER_FDECL(wl_callback)
 DEFAULT_DELETER_FDECL(wp_presentation)
 DEFAULT_DELETER_FDECL(struct wp_presentation_feedback)
+DEFAULT_DELETER_FDECL(zaura_shell)
+DEFAULT_DELETER_FDECL(zaura_surface)
 DEFAULT_DELETER_FDECL(zwp_linux_buffer_params_v1)
 DEFAULT_DELETER_FDECL(zwp_linux_dmabuf_v1)
 
-#if defined(OZONE_PLATFORM_GBM)
-DEFAULT_DELETER_FDECL(gbm_device)
+#if defined(USE_GBM)
 DEFAULT_DELETER_FDECL(gbm_bo)
+DEFAULT_DELETER_FDECL(gbm_device)
 #endif
 
 namespace exo {
 namespace wayland {
 namespace clients {
 
-#if defined(OZONE_PLATFORM_GBM)
+#if defined(USE_GBM)
 struct DeleteTextureTraits {
   static unsigned InvalidValue();
   static void Free(unsigned texture);

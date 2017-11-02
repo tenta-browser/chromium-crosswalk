@@ -8,8 +8,10 @@
 
 #include <list>
 #include <string>
+#include <utility>
 
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/platform_thread.h"
@@ -35,7 +37,15 @@
 
 namespace {
 
-const std::string kUnreachableWebDataURL = "data:text/html,chromewebdata";
+// The error page URL was renamed in
+// https://chromium-review.googlesource.com/c/580169, but because ChromeDriver
+// needs to be backward-compatible with older versions of Chrome, it is
+// necessary to compare against both the old and new error URL.
+static const char kUnreachableWebDataURL[] = "chrome-error://chromewebdata/";
+const char kDeprecatedUnreachableWebDataURL[] = "data:text/html,chromewebdata";
+
+// Defaults to 20 years into the future when adding a cookie.
+const double kDefaultCookieExpiryTime = 20*365*24*60*60;
 
 Status GetMouseButton(const base::DictionaryValue& params,
                       MouseButton* button) {
@@ -102,8 +112,12 @@ std::unique_ptr<base::DictionaryValue> CreateDictionaryFrom(
 
 Status GetVisibleCookies(WebView* web_view,
                          std::list<Cookie>* cookies) {
+  std::string current_page_url;
+  Status status = GetUrl(web_view, std::string(), &current_page_url);
+  if (status.IsError())
+    return status;
   std::unique_ptr<base::ListValue> internal_cookies;
-  Status status = web_view->GetCookies(&internal_cookies);
+  status = web_view->GetCookies(&internal_cookies, current_page_url);
   if (status.IsError())
     return status;
   std::list<Cookie> cookies_tmp;
@@ -122,7 +136,8 @@ Status GetVisibleCookies(WebView* web_view,
     cookie_dict->GetString("path", &path);
     double expiry = 0;
     cookie_dict->GetDouble("expires", &expiry);
-    expiry /= 1000;  // Convert from millisecond to second.
+    if (expiry > 1e12)
+      expiry /= 1000;  // Backwards compatibility ms -> sec.
     bool http_only = false;
     cookie_dict->GetBoolean("httpOnly", &http_only);
     bool session = false;
@@ -358,6 +373,14 @@ Status ExecuteSwitchToFrame(Session* session,
   base::ListValue args;
   const base::DictionaryValue* id_dict;
   if (id->GetAsDictionary(&id_dict)) {
+    std::string element_id;
+    if (!id_dict->GetString("ELEMENT", &element_id))
+      return Status(kUnknownError, "missing 'ELEMENT'");
+    bool is_displayed = false;
+    Status status = IsElementDisplayed(
+          session, web_view, element_id, true, &is_displayed);
+    if (status.IsError())
+      return status;
     script = "function(elem) { return elem; }";
     args.Append(id_dict->CreateDeepCopy());
   } else {
@@ -472,7 +495,8 @@ Status ExecuteGetCurrentUrl(Session* session,
   Status status = GetUrl(web_view, std::string(), &url);
   if (status.IsError())
     return status;
-  if (url == kUnreachableWebDataURL) {
+  if (url == kUnreachableWebDataURL ||
+      url == kDeprecatedUnreachableWebDataURL) {
     // https://bugs.chromium.org/p/chromedriver/issues/detail?id=1272
     const BrowserInfo* browser_info = session->chrome->GetBrowserInfo();
     bool is_kitkat_webview = browser_info->browser_name == "webview" &&
@@ -558,7 +582,7 @@ Status ExecuteMouseMoveTo(Session* session,
 
   std::list<MouseEvent> events;
   events.push_back(
-      MouseEvent(kMovedMouseEventType, kNoneMouseButton,
+      MouseEvent(kMovedMouseEventType, session->pressed_mouse_button,
                  location.x, location.y, session->sticky_modifiers, 0));
   Status status =
       web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
@@ -585,6 +609,7 @@ Status ExecuteMouseClick(Session* session,
       MouseEvent(kReleasedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 1));
+  session->pressed_mouse_button = kNoneMouseButton;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -602,6 +627,7 @@ Status ExecuteMouseButtonDown(Session* session,
       MouseEvent(kPressedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 1));
+  session->pressed_mouse_button = button;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -619,6 +645,7 @@ Status ExecuteMouseButtonUp(Session* session,
       MouseEvent(kReleasedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 1));
+  session->pressed_mouse_button = kNoneMouseButton;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -640,6 +667,7 @@ Status ExecuteMouseDoubleClick(Session* session,
       MouseEvent(kReleasedMouseEventType, button,
                  session->mouse_position.x, session->mouse_position.y,
                  session->sticky_modifiers, 2));
+  session->pressed_mouse_button = kNoneMouseButton;
   return web_view->DispatchMouseEvents(events, session->GetCurrentFrameId());
 }
 
@@ -712,6 +740,79 @@ Status ExecuteTouchPinch(Session* session,
   if (!params.GetDouble("scale", &scale_factor))
     return Status(kUnknownError, "'scale' must be an integer");
   return web_view->SynthesizePinchGesture(location.x, location.y, scale_factor);
+}
+
+Status ProcessInputActionSequence(Session* session,
+                                  const base::DictionaryValue* action_sequence,
+                                  std::unique_ptr<base::ListValue>* result) {
+  return Status(kOk);
+}
+
+Status ExecutePerformActions(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout) {
+  // TODO(kereliuk): check if the current browsing context is still open
+  // or if this error check is handled elsewhere
+
+  // TODO(kereliuk): handle prompts
+
+  // extract action sequence
+  const base::ListValue* actions;
+  if (!params.GetList("actions", &actions))
+    return Status(kInvalidArgument, "'actions' must be an array");
+
+  base::ListValue actions_by_tick;
+  std::unique_ptr<base::ListValue> input_source_actions(new base::ListValue());
+  for (size_t i = 0; i < actions->GetSize(); i++) {
+    // proccess input action sequence
+    const base::DictionaryValue* action_sequence;
+    if (!actions->GetDictionary(i, &action_sequence))
+      return Status(kInvalidArgument, "each argument must be a dictionary");
+
+    Status status = ProcessInputActionSequence(session, action_sequence,
+                                               &input_source_actions);
+    actions_by_tick.Append(std::move(input_source_actions));
+    if (status.IsError())
+      return Status(kInvalidArgument, status);
+  }
+
+  // TODO(kereliuk): dispatch actions
+
+  return Status(kOk);
+}
+
+Status ExecuteSendCommand(Session* session,
+                          WebView* web_view,
+                          const base::DictionaryValue& params,
+                          std::unique_ptr<base::Value>* value,
+                          Timeout* timeout) {
+  std::string cmd;
+  if (!params.GetString("cmd", &cmd)) {
+    return Status(kUnknownError, "command not passed");
+  }
+  const base::DictionaryValue* cmdParams;
+  if (!params.GetDictionary("params", &cmdParams)) {
+    return Status(kUnknownError, "params not passed");
+  }
+  return web_view->SendCommand(cmd, *cmdParams);
+}
+
+Status ExecuteSendCommandAndGetResult(Session* session,
+                                      WebView* web_view,
+                                      const base::DictionaryValue& params,
+                                      std::unique_ptr<base::Value>* value,
+                                      Timeout* timeout) {
+  std::string cmd;
+  if (!params.GetString("cmd", &cmd)) {
+    return Status(kUnknownError, "command not passed");
+  }
+  const base::DictionaryValue* cmdParams;
+  if (!params.GetDictionary("params", &cmdParams)) {
+    return Status(kUnknownError, "params not passed");
+  }
+  return web_view->SendCommandAndGetResult(cmd, *cmdParams, value);
 }
 
 Status ExecuteGetActiveElement(Session* session,
@@ -903,8 +1004,32 @@ Status ExecuteGetCookies(Session* session,
        it != cookies.end(); ++it) {
     cookie_list->Append(CreateDictionaryFrom(*it));
   }
-  value->reset(cookie_list.release());
+  *value = std::move(cookie_list);
   return Status(kOk);
+}
+
+Status ExecuteGetNamedCookie(Session* session,
+                             WebView* web_view,
+                             const base::DictionaryValue& params,
+                             std::unique_ptr<base::Value>* value,
+                             Timeout* timeout) {
+  std::string name;
+  if (!params.GetString("name", &name))
+    return Status(kUnknownError, "missing 'cookie name'");
+
+  std::list<Cookie> cookies;
+  Status status = GetVisibleCookies(web_view, &cookies);
+  if (status.IsError())
+    return status;
+
+  for (std::list<Cookie>::const_iterator it = cookies.begin();
+       it != cookies.end(); ++it) {
+    if (name == it->name) {
+      value->reset(CreateDictionaryFrom(*it)->DeepCopy());
+      return Status(kOk);
+    }
+  }
+  return Status(kNoSuchCookie);
 }
 
 Status ExecuteAddCookie(Session* session,
@@ -915,11 +1040,30 @@ Status ExecuteAddCookie(Session* session,
   const base::DictionaryValue* cookie;
   if (!params.GetDictionary("cookie", &cookie))
     return Status(kUnknownError, "missing 'cookie'");
-  base::ListValue args;
-  args.Append(cookie->CreateDeepCopy());
-  std::unique_ptr<base::Value> result;
-  return web_view->CallFunction(
-      session->GetCurrentFrameId(), kAddCookieScript, args, &result);
+  std::string name;
+  std::string cookie_value;
+  if (!cookie->GetString("name", &name))
+    return Status(kInvalidArgument, "missing 'name'");
+  if (!cookie->GetString("value", &cookie_value))
+    return Status(kInvalidArgument, "missing 'value'");
+  std::string url;
+  Status status = GetUrl(web_view, session->GetCurrentFrameId(), &url);
+  if (status.IsError())
+    return status;
+  std::string domain;
+  cookie->GetString("domain", &domain);
+  std::string path("/");
+  cookie->GetString("path", &path);
+  bool secure = false;
+  cookie->GetBoolean("secure", &secure);
+  bool httpOnly = false;
+  cookie->GetBoolean("httpOnly", &httpOnly);
+  double expiry;
+  if (!cookie->GetDouble("expiry", &expiry))
+    expiry = (base::Time::Now() - base::Time::UnixEpoch()).InSeconds() +
+              kDefaultCookieExpiryTime;
+  return web_view->AddCookie(name, url, cookie_value, domain, path,
+      secure, httpOnly, expiry);
 }
 
 Status ExecuteDeleteCookie(Session* session,
@@ -936,7 +1080,21 @@ Status ExecuteDeleteCookie(Session* session,
   Status status = GetUrl(web_view, session->GetCurrentFrameId(), &url);
   if (status.IsError())
     return status;
-  return web_view->DeleteCookie(name, url);
+
+  std::list<Cookie> cookies;
+  status = GetVisibleCookies(web_view, &cookies);
+  if (status.IsError())
+    return status;
+
+  for (std::list<Cookie>::const_iterator it = cookies.begin();
+       it != cookies.end(); ++it) {
+    if (name == it->name) {
+      status = web_view->DeleteCookie(it->name, url, it->domain, it->path);
+      if (status.IsError())
+        return status;
+    }
+  }
+  return Status(kOk);
 }
 
 Status ExecuteDeleteAllCookies(Session* session,
@@ -958,7 +1116,7 @@ Status ExecuteDeleteAllCookies(Session* session,
       return status;
     for (std::list<Cookie>::const_iterator it = cookies.begin();
          it != cookies.end(); ++it) {
-      status = web_view->DeleteCookie(it->name, url);
+      status = web_view->DeleteCookie(it->name, url, it->domain, it->path);
       if (status.IsError())
         return status;
     }

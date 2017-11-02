@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
+#include <termios.h>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -65,6 +66,7 @@ int ProcessProxy::Open(const std::string& command) {
 
 bool ProcessProxy::StartWatchingOutput(
     const scoped_refptr<base::SingleThreadTaskRunner>& watcher_runner,
+    const scoped_refptr<base::SequencedTaskRunner>& callback_runner,
     const OutputCallback& callback) {
   DCHECK(process_launched_);
   CHECK(!output_watcher_.get());
@@ -78,7 +80,7 @@ bool ProcessProxy::StartWatchingOutput(
 
   callback_set_ = true;
   callback_ = callback;
-  callback_runner_ = base::ThreadTaskRunnerHandle::Get();
+  callback_runner_ = callback_runner;
   watcher_runner_ = watcher_runner;
 
   // This object will delete itself once watching is stopped.
@@ -200,21 +202,34 @@ bool ProcessProxy::CreatePseudoTerminalPair(int *pt_pair) {
     return false;
   }
 
+  // Get the current tty settings so we can overlay our updates.
+  struct termios termios;
+  if (tcgetattr(pt_pair_[PT_SLAVE_FD], &termios) != 0) {
+    CloseFdPair(pt_pair);
+    return false;
+  }
+
+  // Set the IUTF8 bit on the tty as we should be UTF-8 clean everywhere.
+  termios.c_iflag |= IUTF8;
+  if (tcsetattr(pt_pair_[PT_SLAVE_FD], TCSANOW, &termios) != 0) {
+    CloseFdPair(pt_pair);
+    return false;
+  }
+
   return true;
 }
 
 int ProcessProxy::LaunchProcess(const std::string& command, int slave_fd) {
-  // Redirect crosh  process' output and input so we can read it.
-  base::FileHandleMappingVector fds_mapping;
-  fds_mapping.push_back(std::make_pair(slave_fd, STDIN_FILENO));
-  fds_mapping.push_back(std::make_pair(slave_fd, STDOUT_FILENO));
-  fds_mapping.push_back(std::make_pair(slave_fd, STDERR_FILENO));
   base::LaunchOptions options;
+
+  // Redirect crosh  process' output and input so we can read it.
+  options.fds_to_remap.push_back(std::make_pair(slave_fd, STDIN_FILENO));
+  options.fds_to_remap.push_back(std::make_pair(slave_fd, STDOUT_FILENO));
+  options.fds_to_remap.push_back(std::make_pair(slave_fd, STDERR_FILENO));
   // Do not set NO_NEW_PRIVS on processes if the system is in dev-mode. This
   // permits sudo in the crosh shell when in developer mode.
   options.allow_new_privs = base::CommandLine::ForCurrentProcess()->
       HasSwitch(chromeos::switches::kSystemInDevMode);
-  options.fds_to_remap = &fds_mapping;
   options.ctrl_terminal_fd = slave_fd;
   options.environ["TERM"] = "xterm";
 

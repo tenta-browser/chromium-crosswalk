@@ -4,13 +4,15 @@
 
 #include "modules/accessibility/InspectorAccessibilityAgent.h"
 
-#include "core/HTMLNames.h"
+#include <memory>
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/DOMNodeIds.h"
 #include "core/dom/Element.h"
+#include "core/dom/ElementShadow.h"
+#include "core/dom/FlatTreeTraversal.h"
 #include "core/dom/Node.h"
 #include "core/dom/NodeList.h"
-#include "core/dom/shadow/ElementShadow.h"
+#include "core/html_names.h"
 #include "core/inspector/IdentifiersFactory.h"
 #include "core/inspector/InspectorDOMAgent.h"
 #include "core/inspector/InspectorStyleSheet.h"
@@ -18,7 +20,6 @@
 #include "modules/accessibility/AXObject.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
 #include "modules/accessibility/InspectorTypeBuilderHelper.h"
-#include <memory>
 
 namespace blink {
 
@@ -59,9 +60,6 @@ void FillLiveRegionProperties(AXObject& ax_object,
       CreateProperty(AXLiveRegionAttributesEnum::Relevant,
                      CreateValue(ax_object.ContainerLiveRegionRelevant(),
                                  AXValueTypeEnum::TokenList)));
-  properties.addItem(
-      CreateProperty(AXLiveRegionAttributesEnum::Busy,
-                     CreateBooleanValue(ax_object.ContainerLiveRegionBusy())));
 
   if (!ax_object.IsLiveRegion()) {
     properties.addItem(CreateProperty(
@@ -72,7 +70,7 @@ void FillLiveRegionProperties(AXObject& ax_object,
 
 void FillGlobalStates(AXObject& ax_object,
                       protocol::Array<AXProperty>& properties) {
-  if (!ax_object.IsEnabled())
+  if (ax_object.Restriction() == kDisabled)
     properties.addItem(
         CreateProperty(AXGlobalStatesEnum::Disabled, CreateBooleanValue(true)));
 
@@ -149,13 +147,6 @@ bool RoleAllowsSort(AccessibilityRole role) {
   return role == kColumnHeaderRole || role == kRowHeaderRole;
 }
 
-bool RoleAllowsChecked(AccessibilityRole role) {
-  return role == kMenuItemCheckBoxRole || role == kMenuItemRadioRole ||
-         role == kRadioButtonRole || role == kCheckBoxRole ||
-         role == kTreeItemRole || role == kListBoxOptionRole ||
-         role == kSwitchRole;
-}
-
 bool RoleAllowsSelected(AccessibilityRole role) {
   return role == kCellRole || role == kListBoxOptionRole || role == kRowRole ||
          role == kTabRole || role == kColumnHeaderRole ||
@@ -172,8 +163,8 @@ void FillWidgetProperties(AXObject& ax_object,
         CreateProperty(AXWidgetAttributesEnum::Autocomplete,
                        CreateValue(autocomplete, AXValueTypeEnum::Token)));
 
-  if (ax_object.HasAttribute(HTMLNames::aria_haspopupAttr)) {
-    bool has_popup = ax_object.AriaHasPopup();
+  bool has_popup = ax_object.AriaHasPopup();
+  if (has_popup || ax_object.HasAttribute(HTMLNames::aria_haspopupAttr)) {
     properties.addItem(CreateProperty(AXWidgetAttributesEnum::Haspopup,
                                       CreateBooleanValue(has_popup)));
   }
@@ -221,9 +212,9 @@ void FillWidgetProperties(AXObject& ax_object,
   }
 
   if (RoleAllowsReadonly(role)) {
-    properties.addItem(
-        CreateProperty(AXWidgetAttributesEnum::Readonly,
-                       CreateBooleanValue(ax_object.IsReadOnly())));
+    properties.addItem(CreateProperty(
+        AXWidgetAttributesEnum::Readonly,
+        CreateBooleanValue(ax_object.Restriction() == kReadOnly)));
   }
 
   if (RoleAllowsRequired(role)) {
@@ -237,12 +228,18 @@ void FillWidgetProperties(AXObject& ax_object,
   }
 
   if (ax_object.IsRange()) {
-    properties.addItem(
-        CreateProperty(AXWidgetAttributesEnum::Valuemin,
-                       CreateValue(ax_object.MinValueForRange())));
-    properties.addItem(
-        CreateProperty(AXWidgetAttributesEnum::Valuemax,
-                       CreateValue(ax_object.MaxValueForRange())));
+    float min_value;
+    if (ax_object.MinValueForRange(&min_value)) {
+      properties.addItem(CreateProperty(AXWidgetAttributesEnum::Valuemin,
+                                        CreateValue(min_value)));
+    }
+
+    float max_value;
+    if (ax_object.MaxValueForRange(&max_value)) {
+      properties.addItem(CreateProperty(AXWidgetAttributesEnum::Valuemax,
+                                        CreateValue(max_value)));
+    }
+
     properties.addItem(
         CreateProperty(AXWidgetAttributesEnum::Valuetext,
                        CreateValue(ax_object.ValueDescription())));
@@ -252,25 +249,27 @@ void FillWidgetProperties(AXObject& ax_object,
 void FillWidgetStates(AXObject& ax_object,
                       protocol::Array<AXProperty>& properties) {
   AccessibilityRole role = ax_object.RoleValue();
-  if (RoleAllowsChecked(role)) {
-    AccessibilityButtonState checked = ax_object.CheckboxOrRadioValue();
-    switch (checked) {
-      case kButtonStateOff:
-        properties.addItem(
-            CreateProperty(AXWidgetStatesEnum::Checked,
-                           CreateValue("false", AXValueTypeEnum::Tristate)));
-        break;
-      case kButtonStateOn:
-        properties.addItem(
-            CreateProperty(AXWidgetStatesEnum::Checked,
-                           CreateValue("true", AXValueTypeEnum::Tristate)));
-        break;
-      case kButtonStateMixed:
-        properties.addItem(
-            CreateProperty(AXWidgetStatesEnum::Checked,
-                           CreateValue("mixed", AXValueTypeEnum::Tristate)));
-        break;
-    }
+  const char* checked_prop_val = 0;
+  switch (ax_object.CheckedState()) {
+    case kCheckedStateTrue:
+      checked_prop_val = "true";
+      break;
+    case kCheckedStateMixed:
+      checked_prop_val = "mixed";
+      break;
+    case kCheckedStateFalse:
+      checked_prop_val = "false";
+      break;
+    case kCheckedStateUndefined:
+      break;
+  }
+  if (checked_prop_val) {
+    const auto checked_prop_name = role == kToggleButtonRole
+                                       ? AXWidgetStatesEnum::Pressed
+                                       : AXWidgetStatesEnum::Checked;
+    properties.addItem(CreateProperty(
+        checked_prop_name,
+        CreateValue(checked_prop_val, AXValueTypeEnum::Tristate)));
   }
 
   AccessibilityExpanded expanded = ax_object.IsExpanded();
@@ -287,25 +286,6 @@ void FillWidgetStates(AXObject& ax_object,
           AXWidgetStatesEnum::Expanded,
           CreateBooleanValue(true, AXValueTypeEnum::BooleanOrUndefined)));
       break;
-  }
-
-  if (role == kToggleButtonRole) {
-    if (!ax_object.IsPressed()) {
-      properties.addItem(
-          CreateProperty(AXWidgetStatesEnum::Pressed,
-                         CreateValue("false", AXValueTypeEnum::Tristate)));
-    } else {
-      const AtomicString& pressed_attr =
-          ax_object.GetAttribute(HTMLNames::aria_pressedAttr);
-      if (EqualIgnoringASCIICase(pressed_attr, "mixed"))
-        properties.addItem(
-            CreateProperty(AXWidgetStatesEnum::Pressed,
-                           CreateValue("mixed", AXValueTypeEnum::Tristate)));
-      else
-        properties.addItem(
-            CreateProperty(AXWidgetStatesEnum::Pressed,
-                           CreateValue("true", AXValueTypeEnum::Tristate)));
-    }
   }
 
   if (RoleAllowsSelected(role)) {
@@ -354,7 +334,13 @@ class SparseAttributeAXPropertyAdapter
   protocol::Array<AXProperty>& properties_;
 
   void AddBoolAttribute(AXBoolAttribute attribute, bool value) {
-    // Implement this when we add the first sparse bool attribute.
+    switch (attribute) {
+      case AXBoolAttribute::kAriaBusy:
+        properties_.addItem(
+            CreateProperty(AXGlobalStatesEnum::Busy,
+                           CreateValue(value, AXValueTypeEnum::Boolean)));
+        break;
+    }
   }
 
   void AddStringAttribute(AXStringAttribute attribute, const String& value) {
@@ -379,6 +365,11 @@ class SparseAttributeAXPropertyAdapter
             CreateProperty(AXRelationshipAttributesEnum::Activedescendant,
                            CreateRelatedNodeListValue(object)));
         break;
+      case AXObjectAttribute::kAriaDetails:
+        properties_.addItem(
+            CreateProperty(AXRelationshipAttributesEnum::Details,
+                           CreateRelatedNodeListValue(object)));
+        break;
       case AXObjectAttribute::kAriaErrorMessage:
         properties_.addItem(
             CreateProperty(AXRelationshipAttributesEnum::Errormessage,
@@ -393,11 +384,6 @@ class SparseAttributeAXPropertyAdapter
       case AXObjectVectorAttribute::kAriaControls:
         properties_.addItem(CreateRelatedNodeListProperty(
             AXRelationshipAttributesEnum::Controls, objects, aria_controlsAttr,
-            *ax_object_));
-        break;
-      case AXObjectVectorAttribute::kAriaDetails:
-        properties_.addItem(CreateRelatedNodeListProperty(
-            AXRelationshipAttributesEnum::Details, objects, aria_controlsAttr,
             *ax_object_));
         break;
       case AXObjectVectorAttribute::kAriaFlowTo:
@@ -417,13 +403,13 @@ void FillRelationships(AXObject& ax_object,
     properties.addItem(CreateRelatedNodeListProperty(
         AXRelationshipAttributesEnum::Describedby, results,
         aria_describedbyAttr, ax_object));
-  results.Clear();
+  results.clear();
 
   ax_object.AriaOwnsElements(results);
   if (!results.IsEmpty())
     properties.addItem(CreateRelatedNodeListProperty(
         AXRelationshipAttributesEnum::Owns, results, aria_ownsAttr, ax_object));
-  results.Clear();
+  results.clear();
 }
 
 std::unique_ptr<AXValue> CreateRoleNameValue(AccessibilityRole role) {
@@ -667,7 +653,9 @@ void InspectorAccessibilityAgent::FillCoreProperties(
   }
   // Value.
   if (ax_object.SupportsRangeValue()) {
-    node_object.setValue(CreateValue(ax_object.ValueForRange()));
+    float value;
+    if (ax_object.ValueForRange(&value))
+      node_object.setValue(CreateValue(value));
   } else {
     String string_value = ax_object.StringValue();
     if (!string_value.IsEmpty())
@@ -698,10 +686,9 @@ void InspectorAccessibilityAgent::PopulateRelatives(
   std::unique_ptr<protocol::Array<AXNodeId>> child_ids =
       protocol::Array<AXNodeId>::create();
 
-  if (&ax_object != inspected_ax_object ||
-      (inspected_ax_object && !inspected_ax_object->AccessibilityIsIgnored())) {
+  if (!ax_object.AccessibilityIsIgnored())
     AddChildren(ax_object, inspected_ax_object, child_ids, nodes, cache);
-  }
+
   node_object.setChildIds(std::move(child_ids));
 }
 
@@ -723,10 +710,12 @@ void InspectorAccessibilityAgent::AddChildren(
     child_ids->addItem(String::Number(child_ax_object.AxObjectID()));
     if (&child_ax_object == inspected_ax_object)
       continue;
-    if (&ax_object != inspected_ax_object &&
-        (ax_object.GetNode() ||
-         ax_object.ParentObjectUnignored() != inspected_ax_object)) {
-      continue;
+    if (&ax_object != inspected_ax_object) {
+      if (!inspected_ax_object)
+        continue;
+      if (&ax_object != inspected_ax_object->ParentObjectUnignored() &&
+          ax_object.GetNode())
+        continue;
     }
 
     // Only add children of inspected node (or un-inspectable children of

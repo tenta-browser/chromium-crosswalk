@@ -5,15 +5,21 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OFFLINE_OFFLINE_INTERNALS_UI_MESSAGE_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OFFLINE_OFFLINE_INTERNALS_UI_MESSAGE_HANDLER_H_
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/memory/weak_ptr.h"
 #include "base/values.h"
 #include "components/offline_pages/core/background/request_coordinator.h"
 #include "components/offline_pages/core/background/save_page_request.h"
 #include "components/offline_pages/core/offline_page_model.h"
 #include "components/offline_pages/core/offline_store_types.h"
+#include "components/offline_pages/core/prefetch/prefetch_types.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
 namespace offline_pages {
+class PrefetchService;
 enum class GetRequestsResult;
 }
 
@@ -27,6 +33,7 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
 
   // WebUIMessageHandler implementation.
   void RegisterMessages() override;
+  void OnJavascriptDisallowed() override;
 
  private:
   // Delete selected list of page ids from the store.
@@ -47,7 +54,10 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
   // Set whether to record request queue events.
   void HandleSetRecordRequestQueue(const base::ListValue* args);
 
-  // Load both Page Model and Request Queue event logs.
+  // Set whether to record prefetch service events.
+  void HandleSetRecordPrefetchService(const base::ListValue* args);
+
+  // Load all offline services' event logs.
   void HandleGetEventLogs(const base::ListValue* args);
 
   // Load whether logs are being recorded.
@@ -58,6 +68,24 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
 
   // Load whether device is currently offline.
   void HandleGetNetworkStatus(const base::ListValue* args);
+
+  // Schedules an NWake signal.
+  void HandleScheduleNwake(const base::ListValue* args);
+
+  // Cancels an NWake signal.
+  void HandleCancelNwake(const base::ListValue* args);
+
+  // Shows an example prefetching notification.
+  void HandleShowPrefetchNotification(const base::ListValue* args);
+
+  // Sends and processes the request to generate page bundle.
+  void HandleGeneratePageBundle(const base::ListValue* args);
+
+  // Sends and processes a request to get the info about an operation.
+  void HandleGetOperation(const base::ListValue* args);
+
+  // Downloads an archive.
+  void HandleDownloadArchive(const base::ListValue* args);
 
   // Callback for async GetAllPages calls.
   void HandleStoredPagesCallback(
@@ -79,22 +107,14 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
       std::string callback_id,
       const offline_pages::MultipleItemStatuses& results);
 
-  // Turns a DeletePageResult enum into logical string.
-  std::string GetStringFromDeletePageResult(
-      offline_pages::DeletePageResult value);
-
-  // Summarizes the MultipleItemStatuses vector with a string.
-  std::string GetStringFromDeleteRequestResults(
-      const offline_pages::MultipleItemStatuses& result);
-
-  // Turns a SavePageRequest::Status into logical string.
-  std::string GetStringFromSavePageStatus();
-
   // Offline page model to call methods on.
   offline_pages::OfflinePageModel* offline_page_model_;
 
   // Request coordinator for background offline actions.
   offline_pages::RequestCoordinator* request_coordinator_;
+
+  // Prefetch service for prefetching service logs and actions.
+  offline_pages::PrefetchService* prefetch_service_;
 
   // Factory for creating references in callbacks.
   base::WeakPtrFactory<OfflineInternalsUIMessageHandler> weak_ptr_factory_;
@@ -104,4 +124,4 @@ class OfflineInternalsUIMessageHandler : public content::WebUIMessageHandler {
 
 }  // namespace offline_internals
 
-#endif // CHROME_BROWSER_UI_WEBUI_OFFLINE_OFFLINE_INTERNALS_UI_MESSAGE_HANDLER_H_
+#endif  // CHROME_BROWSER_UI_WEBUI_OFFLINE_OFFLINE_INTERNALS_UI_MESSAGE_HANDLER_H_

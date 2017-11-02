@@ -8,12 +8,11 @@
 
 #include "base/bind.h"
 #include "mojo/public/cpp/system/message_pipe.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 
 namespace content {
 
 BlinkInterfaceRegistryImpl::BlinkInterfaceRegistryImpl(
-    base::WeakPtr<service_manager::InterfaceRegistry> interface_registry)
+    base::WeakPtr<service_manager::BinderRegistry> interface_registry)
     : interface_registry_(interface_registry) {}
 
 BlinkInterfaceRegistryImpl::~BlinkInterfaceRegistryImpl() = default;

@@ -26,13 +26,16 @@
 #include "core/editing/commands/FormatBlockCommand.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Element.h"
 #include "core/dom/Range.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/EphemeralRange.h"
+#include "core/editing/Position.h"
+#include "core/editing/VisiblePosition.h"
 #include "core/editing/VisibleUnits.h"
 #include "core/html/HTMLBRElement.h"
 #include "core/html/HTMLElement.h"
+#include "core/html_names.h"
 
 namespace blink {
 
@@ -114,8 +117,8 @@ void FormatBlockCommand::FormatRange(const Position& start,
   }
 
   Position last_paragraph_in_block_node =
-      block_element->LastChild()
-          ? Position::AfterNode(block_element->LastChild())
+      block_element->lastChild()
+          ? Position::AfterNode(*block_element->lastChild())
           : Position();
   bool was_end_of_paragraph =
       IsEndOfParagraph(CreateVisiblePosition(last_paragraph_in_block_node));
@@ -177,7 +180,7 @@ Node* EnclosingBlockToSplitTreeTo(Node* start_node) {
   for (Node& runner : NodeTraversal::InclusiveAncestorsOf(*start_node)) {
     if (!HasEditableStyle(runner))
       return last_block;
-    if (IsTableCell(&runner) || isHTMLBodyElement(&runner) ||
+    if (IsTableCell(&runner) || IsHTMLBodyElement(&runner) ||
         !runner.parentNode() || !HasEditableStyle(*runner.parentNode()) ||
         IsElementForFormatBlock(&runner))
       return &runner;

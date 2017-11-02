@@ -4,8 +4,8 @@
 
 #include "core/layout/LayoutBox.h"
 
+#include "build/build_config.h"
 #include "core/html/HTMLElement.h"
-#include "core/layout/ImageQualityController.h"
 #include "core/layout/LayoutTestHelper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -225,15 +225,15 @@ TEST_F(LayoutBoxTest, ControlClip) {
   EXPECT_TRUE(target->HasControlClip());
   EXPECT_TRUE(target->HasClipRelatedProperty());
   EXPECT_TRUE(target->ShouldClipOverflow());
-#if OS(MACOSX)
-  EXPECT_EQ(LayoutRect(0, 0, 100, 18), target->ClippingRect());
+#if defined(OS_MACOSX)
+  EXPECT_EQ(LayoutRect(0, 0, 100, 18), target->ClippingRect(LayoutPoint()));
 #else
-  EXPECT_EQ(LayoutRect(2, 2, 96, 46), target->ClippingRect());
+  EXPECT_EQ(LayoutRect(2, 2, 96, 46), target->ClippingRect(LayoutPoint()));
 #endif
 }
 
 TEST_F(LayoutBoxTest, LocalVisualRectWithMask) {
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return;
 
   SetBodyInnerHTML(
@@ -244,11 +244,12 @@ TEST_F(LayoutBoxTest, LocalVisualRectWithMask) {
 
   LayoutBox* target = ToLayoutBox(GetLayoutObjectByElementId("target"));
   EXPECT_TRUE(target->HasMask());
-  EXPECT_EQ(LayoutRect(0, 0, 300, 100), target->LocalVisualRect());
+  EXPECT_EQ(LayoutRect(0, 0, 100, 100), target->LocalVisualRect());
+  EXPECT_EQ(LayoutRect(0, 0, 100, 100), target->VisualOverflowRect());
 }
 
 TEST_F(LayoutBoxTest, LocalVisualRectWithMaskAndOverflowClip) {
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return;
 
   SetBodyInnerHTML(
@@ -261,6 +262,92 @@ TEST_F(LayoutBoxTest, LocalVisualRectWithMaskAndOverflowClip) {
   EXPECT_TRUE(target->HasMask());
   EXPECT_TRUE(target->HasOverflowClip());
   EXPECT_EQ(LayoutRect(0, 0, 100, 100), target->LocalVisualRect());
+  EXPECT_EQ(LayoutRect(0, 0, 100, 100), target->VisualOverflowRect());
+}
+
+TEST_F(LayoutBoxTest, LocalVisualRectWithMaskWithOutset) {
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
+    return;
+
+  SetBodyInnerHTML(
+      "<div id='target' style='-webkit-mask-box-image-source: url(#a); "
+      "-webkit-mask-box-image-outset: 10px 20px;"
+      "     width: 100px; height: 100px; background: blue'>"
+      "  <div style='width: 300px; height: 10px; background: green'></div>"
+      "</div>");
+
+  LayoutBox* target = ToLayoutBox(GetLayoutObjectByElementId("target"));
+  EXPECT_TRUE(target->HasMask());
+  EXPECT_EQ(LayoutRect(-20, -10, 140, 120), target->LocalVisualRect());
+  EXPECT_EQ(LayoutRect(-20, -10, 140, 120), target->VisualOverflowRect());
+}
+
+TEST_F(LayoutBoxTest, LocalVisualRectWithMaskWithOutsetAndOverflowClip) {
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
+    return;
+
+  SetBodyInnerHTML(
+      "<div id='target' style='-webkit-mask-box-image-source: url(#a); "
+      "-webkit-mask-box-image-outset: 10px 20px; overflow: hidden;"
+      "     width: 100px; height: 100px; background: blue'>"
+      "  <div style='width: 300px; height: 10px; background: green'></div>"
+      "</div>");
+
+  LayoutBox* target = ToLayoutBox(GetLayoutObjectByElementId("target"));
+  EXPECT_TRUE(target->HasMask());
+  EXPECT_TRUE(target->HasOverflowClip());
+  EXPECT_EQ(LayoutRect(-20, -10, 140, 120), target->LocalVisualRect());
+  EXPECT_EQ(LayoutRect(-20, -10, 140, 120), target->VisualOverflowRect());
+}
+
+TEST_F(LayoutBoxTest, ContentsVisualOverflowPropagation) {
+  SetBodyInnerHTML(
+      "<style>"
+      "  div { width: 100px; height: 100px }"
+      "</style>"
+      "<div id='a'>"
+      "  <div style='height: 50px'></div>"
+      "  <div id='b' style='writing-mode: vertical-rl; margin-left: 60px'>"
+      "    <div style='width: 30px'></div>"
+      "    <div id='c' style='margin-top: 40px'>"
+      "      <div style='width: 10px'></div>"
+      "      <div style='margin-top: 20px; margin-left: 10px'></div>"
+      "    </div>"
+      "    <div id='d' style='writing-mode: vertical-lr; margin-top: 40px'>"
+      "      <div style='width: 10px'></div>"
+      "      <div style='margin-top: 20px'></div>"
+      "    </div>"
+      "  </div>"
+      "</div>");
+
+  auto* c = ToLayoutBox(GetLayoutObjectByElementId("c"));
+  EXPECT_EQ(LayoutRect(0, 0, 100, 100), c->SelfVisualOverflowRect());
+  EXPECT_EQ(LayoutRect(10, 20, 100, 100), c->ContentsVisualOverflowRect());
+  EXPECT_EQ(LayoutRect(0, 0, 110, 120), c->VisualOverflowRect());
+  // C and its parent b have the same blocks direction.
+  EXPECT_EQ(LayoutRect(0, 0, 110, 120), c->VisualOverflowRectForPropagation());
+
+  auto* d = ToLayoutBox(GetLayoutObjectByElementId("d"));
+  EXPECT_EQ(LayoutRect(0, 0, 100, 100), d->SelfVisualOverflowRect());
+  EXPECT_EQ(LayoutRect(10, 20, 100, 100), d->ContentsVisualOverflowRect());
+  EXPECT_EQ(LayoutRect(0, 0, 110, 120), d->VisualOverflowRect());
+  // D and its parent b have different blocks direction.
+  EXPECT_EQ(LayoutRect(-10, 0, 110, 120),
+            d->VisualOverflowRectForPropagation());
+
+  auto* b = ToLayoutBox(GetLayoutObjectByElementId("b"));
+  EXPECT_EQ(LayoutRect(0, 0, 100, 100), b->SelfVisualOverflowRect());
+  // Union of VisualOverflowRectForPropagations offset by locations of c and d.
+  EXPECT_EQ(LayoutRect(30, 40, 200, 120), b->ContentsVisualOverflowRect());
+  EXPECT_EQ(LayoutRect(0, 0, 230, 160), b->VisualOverflowRect());
+  // B and its parent A have different blocks direction.
+  EXPECT_EQ(LayoutRect(-130, 0, 230, 160),
+            b->VisualOverflowRectForPropagation());
+
+  auto* a = ToLayoutBox(GetLayoutObjectByElementId("a"));
+  EXPECT_EQ(LayoutRect(0, 0, 100, 100), a->SelfVisualOverflowRect());
+  EXPECT_EQ(LayoutRect(-70, 50, 230, 160), a->ContentsVisualOverflowRect());
+  EXPECT_EQ(LayoutRect(-70, 0, 230, 210), a->VisualOverflowRect());
 }
 
 }  // namespace blink

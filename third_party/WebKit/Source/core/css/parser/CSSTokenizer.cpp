@@ -16,7 +16,8 @@ namespace blink {
 
 namespace blink {
 
-CSSTokenizer::CSSTokenizer(const String& string) : input_(string) {
+CSSTokenizer::CSSTokenizer(const String& string, size_t offset)
+    : input_(string) {
   // According to the spec, we should perform preprocessing here.
   // See: http://dev.w3.org/csswg/css-syntax/#input-preprocessing
   //
@@ -25,54 +26,46 @@ CSSTokenizer::CSSTokenizer(const String& string) : input_(string) {
   // * Do not count white spaces
   // * CSSTokenizerInputStream::NextInputChar() replaces NULLs for replacement
   //   characters
+  input_.Advance(offset);
+}
 
-  if (string.IsEmpty())
-    return;
-
+Vector<CSSParserToken, 32> CSSTokenizer::TokenizeToEOF() {
   // To avoid resizing we err on the side of reserving too much space.
   // Most strings we tokenize have about 3.5 to 5 characters per token.
-  tokens_.ReserveInitialCapacity(string.length() / 3);
+  Vector<CSSParserToken, 32> tokens;
+  tokens.ReserveInitialCapacity((input_.length() - Offset()) / 3);
 
   while (true) {
-    CSSParserToken token = NextToken();
+    const CSSParserToken token = NextToken();
+    switch (token.GetType()) {
+      case kCommentToken:
+        continue;
+      case kEOFToken:
+        return tokens;
+      default:
+        tokens.push_back(token);
+        break;
+    }
+  }
+}
+
+CSSParserToken CSSTokenizer::TokenizeSingle() {
+  while (true) {
+    prev_offset_ = input_.Offset();
+    const CSSParserToken token = NextToken();
     if (token.GetType() == kCommentToken)
       continue;
-    if (token.GetType() == kEOFToken)
-      return;
-    tokens_.push_back(token);
+    return token;
   }
 }
 
-CSSTokenizer::CSSTokenizer(const String& string,
-                           CSSParserObserverWrapper& wrapper)
-    : input_(string) {
-  if (string.IsEmpty())
-    return;
-
-  unsigned offset = 0;
-  while (true) {
-    CSSParserToken token = NextToken();
-    if (token.GetType() == kEOFToken)
-      break;
-    if (token.GetType() == kCommentToken) {
-      wrapper.AddComment(offset, input_.Offset(), tokens_.size());
-    } else {
-      tokens_.push_back(token);
-      wrapper.AddToken(offset);
-    }
-    offset = input_.Offset();
-  }
-
-  wrapper.AddToken(offset);
-  wrapper.FinalizeConstruction(tokens_.begin());
-}
-
-CSSParserTokenRange CSSTokenizer::TokenRange() {
-  return tokens_;
+CSSParserToken CSSTokenizer::TokenizeSingleWithComments() {
+  prev_offset_ = input_.Offset();
+  return NextToken();
 }
 
 unsigned CSSTokenizer::TokenCount() {
-  return tokens_.size();
+  return token_count_;
 }
 
 static bool IsNewLine(UChar cc) {
@@ -314,6 +307,7 @@ CSSParserToken CSSTokenizer::NextToken() {
     code_point_func = &CSSTokenizer::NameStart;
   }
 
+  ++token_count_;
   if (code_point_func)
     return ((this)->*(code_point_func))(cc);
   return CSSParserToken(kDelimiterToken, cc);
@@ -620,7 +614,7 @@ UChar32 CSSTokenizer::ConsumeEscape() {
     };
     ConsumeSingleWhitespaceIfNext();
     bool ok = false;
-    UChar32 code_point = hex_chars.ToString().ToUIntStrict(&ok, 16);
+    UChar32 code_point = hex_chars.ToString().HexToUIntStrict(&ok);
     DCHECK(ok);
     if (code_point == 0 || (0xD800 <= code_point && code_point <= 0xDFFF) ||
         code_point > 0x10FFFF)

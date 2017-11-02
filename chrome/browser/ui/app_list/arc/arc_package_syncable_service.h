@@ -63,7 +63,7 @@ class ArcPackageSyncableService : public syncer::SyncableService,
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
-      const tracked_objects::Location& from_here,
+      const base::Location& from_here,
       const syncer::SyncChangeList& change_list) override;
 
   bool SyncStarted();
@@ -77,7 +77,8 @@ class ArcPackageSyncableService : public syncer::SyncableService,
   // ArcAppListPrefs::Observer:
   void OnPackageInstalled(const mojom::ArcPackageInfo& package_info) override;
   void OnPackageModified(const mojom::ArcPackageInfo& package_info) override;
-  void OnPackageRemoved(const std::string& package_name) override;
+  void OnPackageRemoved(const std::string& package_name,
+                        bool uninstalled) override;
 
   // Sends adds/updates sync change to sync server.
   void SendSyncChange(

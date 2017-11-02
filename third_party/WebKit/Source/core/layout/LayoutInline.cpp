@@ -23,8 +23,9 @@
 
 #include "core/layout/LayoutInline.h"
 
-#include "core/dom/Fullscreen.h"
-#include "core/dom/StyleEngine.h"
+#include "core/css/StyleEngine.h"
+#include "core/editing/PositionWithAffinity.h"
+#include "core/fullscreen/Fullscreen.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutBlock.h"
 #include "core/layout/LayoutFullScreen.h"
@@ -37,7 +38,6 @@
 #include "core/paint/InlinePainter.h"
 #include "core/paint/ObjectPainter.h"
 #include "core/paint/PaintLayer.h"
-#include "core/style/StyleInheritedData.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/geometry/Region.h"
 #include "platform/geometry/TransformState.h"
@@ -55,6 +55,12 @@ static_assert(sizeof(LayoutInline) == sizeof(SameSizeAsLayoutInline),
 
 LayoutInline::LayoutInline(Element* element) : LayoutBoxModelObject(element) {
   SetChildrenInline(true);
+}
+
+LayoutInline* LayoutInline::CreateAnonymous(Document* document) {
+  LayoutInline* layout_inline = new LayoutInline(nullptr);
+  layout_inline->SetDocumentForAnonymous(document);
+  return layout_inline;
 }
 
 void LayoutInline::WillBeDestroyed() {
@@ -76,6 +82,13 @@ void LayoutInline::WillBeDestroyed() {
 
   if (!DocumentBeingDestroyed()) {
     if (FirstLineBox()) {
+      // We can't wait for LayoutBoxModelObject::destroy to clear the selection,
+      // because by then we will have nuked the line boxes.
+      // FIXME: The FrameSelection should be responsible for this when it
+      // is notified of DOM mutations.
+      if (IsSelectionBorder())
+        View()->ClearSelection();
+
       // If line boxes are contained inside a root, that means we're an inline.
       // In that case, we need to remove all the line boxes so that the parent
       // lines aren't pointing to deleted children. If the first line box does
@@ -231,7 +244,7 @@ void LayoutInline::UpdateAlwaysCreateLineBoxes(bool full_layout) {
       (parent_layout_inline &&
        parent_style.VerticalAlign() != EVerticalAlign::kBaseline) ||
       Style()->VerticalAlign() != EVerticalAlign::kBaseline ||
-      Style()->GetTextEmphasisMark() != kTextEmphasisMarkNone ||
+      Style()->GetTextEmphasisMark() != TextEmphasisMark::kNone ||
       (check_fonts &&
        (!StyleRef().HasIdenticalAscentDescentAndLineGap(parent_style) ||
         parent_style.LineHeight() != StyleRef().LineHeight()));
@@ -256,9 +269,9 @@ void LayoutInline::UpdateAlwaysCreateLineBoxes(bool full_layout) {
 }
 
 LayoutRect LayoutInline::LocalCaretRect(
-    InlineBox* inline_box,
+    const InlineBox* inline_box,
     int,
-    LayoutUnit* extra_width_to_end_of_line) {
+    LayoutUnit* extra_width_to_end_of_line) const {
   if (FirstChild()) {
     // This condition is possible if the LayoutInline is at an editing boundary,
     // i.e. the VisiblePosition is:
@@ -343,8 +356,18 @@ void LayoutInline::AddChildIgnoringContinuation(LayoutObject* new_child,
     // of this inline. We take all of the children after |beforeChild| and put
     // them in a clone of this object.
     RefPtr<ComputedStyle> new_style =
-        ComputedStyle::CreateAnonymousStyleWithDisplay(
-            ContainingBlock()->StyleRef(), EDisplay::kBlock);
+        ComputedStyle::CreateAnonymousStyleWithDisplay(StyleRef(),
+                                                       EDisplay::kBlock);
+    // The anon block we create here doesn't exist in the CSS spec, so
+    // we need to ensure that any blocks it contains inherit properly
+    // from its true parent. This means they must use the direction set by the
+    // anon block's containing block, so we need to prevent the anon block
+    // from inheriting direction from the inline. If there are any other
+    // inheritable properties that apply to block and inline elements
+    // but only affect the layout of children we will want to special-case
+    // them here too. Writing-mode would be one if it didn't create a
+    // formatting context of its own, removing the need for continuations.
+    new_style->SetDirection(ContainingBlock()->StyleRef().Direction());
 
     // If inside an inline affected by in-flow positioning the block needs to be
     // affected by it too. Giving the block a layer like this allows it to
@@ -400,9 +423,9 @@ void LayoutInline::SplitInlines(LayoutBlockFlow* from_block,
   // not its parent. Since the splitting logic expects |this| to be the parent,
   // set |beforeChild| to be the LayoutFullScreen.
   if (Fullscreen* fullscreen = Fullscreen::FromIfExists(GetDocument())) {
-    const Element* full_screen_element = fullscreen->CurrentFullScreenElement();
-    if (full_screen_element && before_child &&
-        before_child->GetNode() == full_screen_element)
+    const Element* fullscreen_element = fullscreen->FullscreenElement();
+    if (fullscreen_element && before_child &&
+        before_child->GetNode() == fullscreen_element)
       before_child = fullscreen->FullScreenLayoutObject();
   }
 
@@ -697,8 +720,7 @@ void LayoutInline::GenerateCulledLineBoxRects(
       }
     } else if (curr->IsText()) {
       LayoutText* curr_text = ToLayoutText(curr);
-      for (InlineTextBox* child_text = curr_text->FirstTextBox(); child_text;
-           child_text = child_text->NextTextBox()) {
+      for (InlineTextBox* child_text : InlineTextBoxesOf(*curr_text)) {
         RootInlineBox& root_box = child_text->Root();
         ComputeItemTopHeight(container, root_box, &logical_top,
                              &logical_height);
@@ -814,11 +836,6 @@ static LayoutUnit ComputeMargin(const LayoutInline* layout_object,
   return LayoutUnit();
 }
 
-LayoutRectOutsets LayoutInline::MarginBoxOutsets() const {
-  return LayoutRectOutsets(MarginTop(), MarginRight(), MarginBottom(),
-                           MarginLeft());
-}
-
 LayoutUnit LayoutInline::MarginLeft() const {
   return ComputeMargin(this, Style()->MarginLeft());
 }
@@ -833,34 +850,6 @@ LayoutUnit LayoutInline::MarginTop() const {
 
 LayoutUnit LayoutInline::MarginBottom() const {
   return ComputeMargin(this, Style()->MarginBottom());
-}
-
-LayoutUnit LayoutInline::MarginStart(const ComputedStyle* other_style) const {
-  return ComputeMargin(
-      this, Style()->MarginStartUsing(other_style ? other_style : Style()));
-}
-
-LayoutUnit LayoutInline::MarginEnd(const ComputedStyle* other_style) const {
-  return ComputeMargin(
-      this, Style()->MarginEndUsing(other_style ? other_style : Style()));
-}
-
-LayoutUnit LayoutInline::MarginBefore(const ComputedStyle* other_style) const {
-  return ComputeMargin(
-      this, Style()->MarginBeforeUsing(other_style ? other_style : Style()));
-}
-
-LayoutUnit LayoutInline::MarginAfter(const ComputedStyle* other_style) const {
-  return ComputeMargin(
-      this, Style()->MarginAfterUsing(other_style ? other_style : Style()));
-}
-
-LayoutUnit LayoutInline::MarginOver() const {
-  return ComputeMargin(this, Style()->MarginOver());
-}
-
-LayoutUnit LayoutInline::MarginUnder() const {
-  return ComputeMargin(this, Style()->MarginUnder());
 }
 
 bool LayoutInline::NodeAtPoint(HitTestResult& result,
@@ -1070,7 +1059,7 @@ LayoutRect LayoutInline::CulledInlineVisualOverflowBoundingBox() const {
       LayoutBox* curr_box = ToLayoutBox(curr);
       if (!curr_box->HasSelfPaintingLayer() && curr_box->InlineBoxWrapper()) {
         LayoutRect logical_rect =
-            curr_box->LogicalVisualOverflowRectForPropagation(StyleRef());
+            curr_box->LogicalVisualOverflowRectForPropagation();
         if (is_horizontal) {
           logical_rect.MoveBy(curr_box->Location());
           result.UniteIfNonZero(logical_rect);
@@ -1167,12 +1156,9 @@ LayoutRect LayoutInline::AbsoluteVisualRect() const {
   return LayoutRect();
 }
 
-LayoutRect LayoutInline::LocalVisualRect() const {
+LayoutRect LayoutInline::LocalVisualRectIgnoringVisibility() const {
   // If we don't create line boxes, we don't have any invalidations to do.
   if (!AlwaysCreateLineBoxes())
-    return LayoutRect();
-
-  if (Style()->Visibility() != EVisibility::kVisible)
     return LayoutRect();
 
   return VisualOverflowRect();
@@ -1268,7 +1254,7 @@ LayoutSize LayoutInline::OffsetFromContainer(
 PaintLayerType LayoutInline::LayerTypeRequired() const {
   return IsInFlowPositioned() || CreatesGroup() || HasClipPath() ||
                  Style()->ShouldCompositeForCurrentAnimations() ||
-                 Style()->HasCompositorProxy() || Style()->ContainsPaint()
+                 Style()->ContainsPaint()
              ? kNormalPaintLayer
              : kNoPaintLayer;
 }
@@ -1331,8 +1317,7 @@ void LayoutInline::DirtyLineBoxes(bool full_layout) {
             child_line->Root().MarkDirty();
         } else if (curr->IsText()) {
           LayoutText* curr_text = ToLayoutText(curr);
-          for (InlineTextBox* child_text = curr_text->FirstTextBox();
-               child_text; child_text = child_text->NextTextBox())
+          for (InlineTextBox* child_text : InlineTextBoxesOf(*curr_text))
             child_text->Root().MarkDirty();
         }
       }
@@ -1366,21 +1351,22 @@ LayoutUnit LayoutInline::LineHeight(
   return LayoutUnit(Style()->ComputedLineHeight());
 }
 
-int LayoutInline::BaselinePosition(FontBaseline baseline_type,
-                                   bool first_line,
-                                   LineDirectionMode direction,
-                                   LinePositionMode line_position_mode) const {
+LayoutUnit LayoutInline::BaselinePosition(
+    FontBaseline baseline_type,
+    bool first_line,
+    LineDirectionMode direction,
+    LinePositionMode line_position_mode) const {
   DCHECK_EQ(line_position_mode, kPositionOnContainingLine);
   const SimpleFontData* font_data = Style(first_line)->GetFont().PrimaryFont();
   DCHECK(font_data);
   if (!font_data)
-    return -1;
+    return LayoutUnit(-1);
   const FontMetrics& font_metrics = font_data->GetFontMetrics();
-  return (font_metrics.Ascent(baseline_type) +
-          (LineHeight(first_line, direction, line_position_mode) -
-           font_metrics.Height()) /
-              2)
-      .ToInt();
+  return LayoutUnit((font_metrics.Ascent(baseline_type) +
+                     (LineHeight(first_line, direction, line_position_mode) -
+                      font_metrics.Height()) /
+                         2)
+                        .ToInt());
 }
 
 LayoutSize LayoutInline::OffsetForInFlowPositionedInline(
@@ -1432,7 +1418,7 @@ void LayoutInline::ImageChanged(WrappedImagePtr, const IntRect*) {
     return;
 
   // FIXME: We can do better.
-  SetShouldDoFullPaintInvalidation();
+  SetShouldDoFullPaintInvalidation(PaintInvalidationReason::kImage);
 }
 
 namespace {
@@ -1515,11 +1501,12 @@ void LayoutInline::AddAnnotatedRegions(Vector<AnnotatedRegionValue>& regions) {
   if (Style()->Visibility() != EVisibility::kVisible)
     return;
 
-  if (Style()->GetDraggableRegionMode() == kDraggableRegionNone)
+  if (Style()->DraggableRegionMode() == EDraggableRegionMode::kNone)
     return;
 
   AnnotatedRegionValue region;
-  region.draggable = Style()->GetDraggableRegionMode() == kDraggableRegionDrag;
+  region.draggable =
+      Style()->DraggableRegionMode() == EDraggableRegionMode::kDrag;
   region.bounds = LayoutRect(LinesBoundingBox());
 
   LayoutObject* container = ContainingBlock();
@@ -1542,7 +1529,7 @@ void LayoutInline::InvalidateDisplayItemClients(
     paint_invalidator.InvalidateDisplayItemClient(*box, invalidation_reason);
 }
 
-// TODO(lunalu): Not to just dump 0, 0 as the x and y here
+// TODO(loonybear): Not to just dump 0, 0 as the x and y here
 LayoutRect LayoutInline::DebugRect() const {
   IntRect lines_box = EnclosingIntRect(LinesBoundingBox());
   return LayoutRect(IntRect(0, 0, lines_box.Width(), lines_box.Height()));

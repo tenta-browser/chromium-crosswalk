@@ -42,7 +42,7 @@ namespace blink {
 namespace {
 
 // A mapping from the algorithm ID to information about the algorithm.
-const WebCryptoAlgorithmInfo kAlgorithmIdToInfo[] = {
+constexpr WebCryptoAlgorithmInfo kAlgorithmIdToInfo[] = {
     {// Index 0
      "AES-CBC",
      {
@@ -325,7 +325,8 @@ class WebCryptoAlgorithmPrivate
 WebCryptoAlgorithm::WebCryptoAlgorithm(
     WebCryptoAlgorithmId id,
     std::unique_ptr<WebCryptoAlgorithmParams> params)
-    : private_(AdoptRef(new WebCryptoAlgorithmPrivate(id, std::move(params)))) {
+    : private_(
+          WTF::AdoptRef(new WebCryptoAlgorithmPrivate(id, std::move(params)))) {
 }
 
 WebCryptoAlgorithm WebCryptoAlgorithm::CreateNull() {

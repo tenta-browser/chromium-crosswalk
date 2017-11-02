@@ -18,21 +18,21 @@ namespace blink {
 namespace {
 
 class UnderlyingCompatibilityChecker
-    : public InterpolationType::ConversionChecker {
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<UnderlyingCompatibilityChecker> Create(
-      PassRefPtr<NonInterpolableValue> underlying_non_interpolable_value) {
+      RefPtr<NonInterpolableValue> underlying_non_interpolable_value) {
     return WTF::WrapUnique(new UnderlyingCompatibilityChecker(
         std::move(underlying_non_interpolable_value)));
   }
 
  private:
   UnderlyingCompatibilityChecker(
-      PassRefPtr<NonInterpolableValue> underlying_non_interpolable_value)
+      RefPtr<NonInterpolableValue> underlying_non_interpolable_value)
       : underlying_non_interpolable_value_(
             std::move(underlying_non_interpolable_value)) {}
 
-  bool IsValid(const InterpolationEnvironment&,
+  bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     return BasicShapeInterpolationFunctions::ShapesAreCompatible(
         *underlying_non_interpolable_value_,
@@ -42,26 +42,26 @@ class UnderlyingCompatibilityChecker
   RefPtr<NonInterpolableValue> underlying_non_interpolable_value_;
 };
 
-class InheritedShapeChecker : public InterpolationType::ConversionChecker {
+class InheritedShapeChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedShapeChecker> Create(
       CSSPropertyID property,
-      PassRefPtr<BasicShape> inherited_shape) {
+      RefPtr<BasicShape> inherited_shape) {
     return WTF::WrapUnique(
         new InheritedShapeChecker(property, std::move(inherited_shape)));
   }
 
  private:
   InheritedShapeChecker(CSSPropertyID property,
-                        PassRefPtr<BasicShape> inherited_shape)
+                        RefPtr<BasicShape> inherited_shape)
       : property_(property), inherited_shape_(std::move(inherited_shape)) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
-    return DataEquivalent(
-        inherited_shape_.Get(),
-        BasicShapePropertyFunctions::GetBasicShape(
-            property_, *environment.GetState().ParentStyle()));
+    return DataEquivalent(inherited_shape_.get(),
+                          BasicShapePropertyFunctions::GetBasicShape(
+                              property_, *state.ParentStyle()));
   }
 
   const CSSPropertyID property_;
@@ -76,7 +76,7 @@ InterpolationValue CSSBasicShapeInterpolationType::MaybeConvertNeutral(
   // const_cast is for taking refs.
   NonInterpolableValue* non_interpolable_value =
       const_cast<NonInterpolableValue*>(
-          underlying.non_interpolable_value.Get());
+          underlying.non_interpolable_value.get());
   conversion_checkers.push_back(
       UnderlyingCompatibilityChecker::Create(non_interpolable_value));
   return InterpolationValue(

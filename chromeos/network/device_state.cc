@@ -5,8 +5,10 @@
 #include "chromeos/network/device_state.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/values.h"
 #include "chromeos/network/network_event_log.h"
 #include "chromeos/network/shill_property_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -30,7 +32,7 @@ DeviceState::~DeviceState() {
 bool DeviceState::PropertyChanged(const std::string& key,
                                   const base::Value& value) {
   // All property values get stored in |properties_|.
-  properties_.SetWithoutPathExpansion(key, value.DeepCopy());
+  properties_.SetKey(key, value.Clone());
 
   if (ManagedStatePropertyChanged(key, value))
     return true;
@@ -68,6 +70,7 @@ bool DeviceState::PropertyChanged(const std::string& key,
     // Set default values for SIM properties.
     sim_lock_type_.erase();
     sim_retries_left_ = 0;
+    sim_lock_enabled_ = false;
 
     const base::Value* out_value = nullptr;
     if (dict->GetWithoutPathExpansion(shill::kSIMLockTypeProperty,
@@ -76,8 +79,13 @@ bool DeviceState::PropertyChanged(const std::string& key,
     }
     if (dict->GetWithoutPathExpansion(shill::kSIMLockRetriesLeftProperty,
                                       &out_value)) {
-      GetUInt32Value(shill::kSIMLockRetriesLeftProperty, *out_value,
-                     &sim_retries_left_);
+      GetIntegerValue(shill::kSIMLockRetriesLeftProperty, *out_value,
+                      &sim_retries_left_);
+    }
+    if (dict->GetWithoutPathExpansion(shill::kSIMLockEnabledProperty,
+                                      &out_value)) {
+      GetBooleanValue(shill::kSIMLockEnabledProperty, *out_value,
+                      &sim_lock_enabled_);
     }
     return true;
   } else if (key == shill::kMeidProperty) {
@@ -122,8 +130,8 @@ void DeviceState::IPConfigPropertiesChanged(
     ip_config->Clear();
   } else {
     NET_LOG_EVENT("IPConfig Added: " + ip_config_path, path());
-    ip_config = new base::DictionaryValue;
-    ip_configs_.SetWithoutPathExpansion(ip_config_path, ip_config);
+    ip_config = ip_configs_.SetDictionaryWithoutPathExpansion(
+        ip_config_path, base::MakeUnique<base::DictionaryValue>());
   }
   ip_config->MergeDictionary(&properties);
 }
@@ -150,7 +158,7 @@ std::string DeviceState::GetIpAddressByType(const std::string& type) const {
 }
 
 bool DeviceState::IsSimAbsent() const {
-  return technology_family_ == shill::kTechnologyFamilyGsm && !sim_present_;
+  return technology_family_ != shill::kTechnologyFamilyCdma && !sim_present_;
 }
 
 }  // namespace chromeos

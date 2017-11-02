@@ -1,19 +1,28 @@
-<link rel="import" href="chrome://resources/html/cr.html">
 <link rel="import" href="chrome://resources/html/polymer.html">
+
+<link rel="import" href="chrome://resources/cr_elements/hidden_style_css.html">
+<link rel="import" href="chrome://resources/html/cr.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-styles/color.html">
 
 <dom-module id="extensions-code-section">
   <template>
-    <style>
-      [hidden] {
-        display: none !important;
+    <style include="cr-hidden-style">
+      :host {
+        display: block;
+      }
+
+      #scroll-container {
+        border: 1px solid var(--paper-grey-500);
+        height: 100%;
+        overflow: auto;
+        position: relative;
       }
 
       #main {
-        border: 1px solid var(--paper-grey-500);
         color: var(--paper-grey-800);
         display: flex;
         font-family: monospace;
+        min-height: 100%;
         white-space: pre;
       }
 
@@ -31,7 +40,7 @@
         flex-direction: column;
       }
 
-      .highlight {
+      #highlight {
         background: var(--paper-red-100);
       }
 
@@ -40,18 +49,20 @@
         text-align: center;
       }
     </style>
-    <div id="main" hidden$="[[isEmpty(code)]]">
-      <div id="line-numbers">
-        <span>[[computeLineNumbersContent_(code.*)]]</span>
-      </div>
-      <div id="source">
-        <span>[[code.beforeHighlight]]<!-- No whitespace allowed
-       --><span class="highlight" title="[[code.message]]"><!--
-         -->[[code.highlight]]<!--
-     --></span>[[code.afterHighlight]]</span>
+    <div id="scroll-container" hidden$="[[isEmpty(code)]]">
+      <div id="main">
+        <div id="line-numbers">
+          <span>[[computeLineNumbersContent_(code.*)]]</span>
+        </div>
+        <div id="source">
+          <span>[[code.beforeHighlight]]<!-- No whitespace allowed
+         --><span id="highlight" title="[[code.message]]"><!--
+           -->[[code.highlight]]<!--
+       --></span>[[code.afterHighlight]]</span>
+        </div>
       </div>
     </div>
     <div id="no-code" hidden$="[[!isEmpty(code)]]">[[couldNotDisplayCode]]</div>
   </template>
-  <script src="chrome://extensions/code_section.js"></script>
+  <script src="code_section.js"></script>
 </dom-module>

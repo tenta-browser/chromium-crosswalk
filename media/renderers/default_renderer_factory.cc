@@ -14,9 +14,9 @@
 #include "media/base/media_log.h"
 #include "media/filters/gpu_video_decoder.h"
 #include "media/renderers/audio_renderer_impl.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
 #include "media/renderers/renderer_impl.h"
 #include "media/renderers/video_renderer_impl.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 
 #if !defined(MEDIA_DISABLE_FFMPEG)
 #include "media/filters/ffmpeg_audio_decoder.h"
@@ -32,24 +32,24 @@
 namespace media {
 
 DefaultRendererFactory::DefaultRendererFactory(
-    const scoped_refptr<MediaLog>& media_log,
+    MediaLog* media_log,
     DecoderFactory* decoder_factory,
     const GetGpuFactoriesCB& get_gpu_factories_cb)
     : media_log_(media_log),
       decoder_factory_(decoder_factory),
       get_gpu_factories_cb_(get_gpu_factories_cb) {}
 
-DefaultRendererFactory::~DefaultRendererFactory() {
-}
+DefaultRendererFactory::~DefaultRendererFactory() {}
 
-ScopedVector<AudioDecoder> DefaultRendererFactory::CreateAudioDecoders(
+std::vector<std::unique_ptr<AudioDecoder>>
+DefaultRendererFactory::CreateAudioDecoders(
     const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner) {
   // Create our audio decoders and renderer.
-  ScopedVector<AudioDecoder> audio_decoders;
+  std::vector<std::unique_ptr<AudioDecoder>> audio_decoders;
 
 #if !defined(MEDIA_DISABLE_FFMPEG)
   audio_decoders.push_back(
-      new FFmpegAudioDecoder(media_task_runner, media_log_));
+      base::MakeUnique<FFmpegAudioDecoder>(media_task_runner, media_log_));
 #endif
 
   // Use an external decoder only if we cannot otherwise decode in the
@@ -60,12 +60,14 @@ ScopedVector<AudioDecoder> DefaultRendererFactory::CreateAudioDecoders(
   return audio_decoders;
 }
 
-ScopedVector<VideoDecoder> DefaultRendererFactory::CreateVideoDecoders(
+std::vector<std::unique_ptr<VideoDecoder>>
+DefaultRendererFactory::CreateVideoDecoders(
     const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
-    const RequestSurfaceCB& request_surface_cb,
+    const RequestOverlayInfoCB& request_overlay_info_cb,
+    const gfx::ColorSpace& target_color_space,
     GpuVideoAcceleratorFactories* gpu_factories) {
   // Create our video decoders and renderer.
-  ScopedVector<VideoDecoder> video_decoders;
+  std::vector<std::unique_ptr<VideoDecoder>> video_decoders;
 
   // Prefer an external decoder since one will only exist if it is hardware
   // accelerated.
@@ -77,18 +79,21 @@ ScopedVector<VideoDecoder> DefaultRendererFactory::CreateVideoDecoders(
 
     if (decoder_factory_) {
       decoder_factory_->CreateVideoDecoders(media_task_runner, gpu_factories,
+                                            media_log_, request_overlay_info_cb,
                                             &video_decoders);
     }
-    video_decoders.push_back(
-        new GpuVideoDecoder(gpu_factories, request_surface_cb, media_log_));
+
+    video_decoders.push_back(base::MakeUnique<GpuVideoDecoder>(
+        gpu_factories, request_overlay_info_cb, target_color_space,
+        media_log_));
   }
 
 #if !defined(MEDIA_DISABLE_LIBVPX)
-  video_decoders.push_back(new VpxVideoDecoder());
+  video_decoders.push_back(base::MakeUnique<VpxVideoDecoder>());
 #endif
 
 #if !defined(MEDIA_DISABLE_FFMPEG) && !defined(DISABLE_FFMPEG_VIDEO_DECODERS)
-  video_decoders.push_back(new FFmpegVideoDecoder(media_log_));
+  video_decoders.push_back(base::MakeUnique<FFmpegVideoDecoder>(media_log_));
 #endif
 
   return video_decoders;
@@ -99,7 +104,8 @@ std::unique_ptr<Renderer> DefaultRendererFactory::CreateRenderer(
     const scoped_refptr<base::TaskRunner>& worker_task_runner,
     AudioRendererSink* audio_renderer_sink,
     VideoRendererSink* video_renderer_sink,
-    const RequestSurfaceCB& request_surface_cb) {
+    const RequestOverlayInfoCB& request_overlay_info_cb,
+    const gfx::ColorSpace& target_color_space) {
   DCHECK(audio_renderer_sink);
 
   std::unique_ptr<AudioRenderer> audio_renderer(new AudioRendererImpl(
@@ -127,8 +133,8 @@ std::unique_ptr<Renderer> DefaultRendererFactory::CreateRenderer(
       // RendererFactory is owned by WMPI and gets called after WMPI destructor
       // finishes.
       base::Bind(&DefaultRendererFactory::CreateVideoDecoders,
-                 base::Unretained(this), media_task_runner, request_surface_cb,
-                 gpu_factories),
+                 base::Unretained(this), media_task_runner,
+                 request_overlay_info_cb, target_color_space, gpu_factories),
       true, gpu_factories, media_log_));
 
   return base::MakeUnique<RendererImpl>(

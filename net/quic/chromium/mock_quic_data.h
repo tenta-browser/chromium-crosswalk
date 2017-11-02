@@ -38,6 +38,10 @@ class MockQuicData {
   // |packet|.
   void AddWrite(std::unique_ptr<QuicEncryptedPacket> packet);
 
+  // Adds an asynchronous write at the next sequence number which will write
+  // |packet|.
+  void AddAsyncWrite(std::unique_ptr<QuicEncryptedPacket> packet);
+
   // Adds a write at the next sequence number which will return |rv| either
   // synchronously or asynchronously based on |mode|.
   void AddWrite(IoMode mode, int rv);
@@ -53,6 +57,12 @@ class MockQuicData {
 
   // Resumes I/O after it is paused.
   void Resume();
+
+  // Creates a new SequencedSocketData owned by this instance of MockQuicData.
+  // Returns a pointer to the newly created SequencedSocketData.
+  SequencedSocketData* InitializeAndGetSequencedSocketData();
+
+  SequencedSocketData* GetSequencedSocketData();
 
  private:
   std::vector<std::unique_ptr<QuicEncryptedPacket>> packets_;

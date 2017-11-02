@@ -195,7 +195,26 @@ function to retrieve the text properties (font family, font size,
 weight, etc.) at a specific character position.
 
 Parameterized attributes are particularly tricky to implement because
-of Chromium's multi-process architecture. More on this in the next section.
+of Chromium's multi-process architecture. More on this below.
+
+### Tools for inspecting the Accessibility tree
+
+Developers can inspect the accessibility tree in several ways:
+
+* By navigating to [chrome://accessibility/](chrome://accessibility)
+and inspecting a tree directly. Note that you may want to enable the
+'Internal' option. Click 'show accessibility tree' for a particular tab,
+then click again to refresh that tree.
+* Using the [https://developer.chrome.com/extensions/automation](
+Automation API).
+* Installing the [https://github.com/google/automation-inspector](
+Automation Inspector Chrome extension).
+* Or by using native tools:
+
+  - Android: UIAutomatorViewer
+  - macOS: Accessibility Inspector
+  - Windows: Inspect, AViewer, accProbe (and many others)
+
 
 ## Chromium's multi-process architecture
 
@@ -493,7 +512,7 @@ is defined by [automation.idl], which must be kept synchronized with
 [AXContentNodeData]: https://cs.chromium.org/chromium/src/content/common/ax_content_node_data.h
 [AXLayoutObject]: https://cs.chromium.org/chromium/src/third_party/WebKit/Source/modules/accessibility/AXLayoutObject.h
 [AXNodeObject]: https://cs.chromium.org/chromium/src/third_party/WebKit/Source/modules/accessibility/AXNodeObject.h
-[AXObject]: https://cs.chromium.org/chromium/src/third_party/WebKit/Source/modules/accessibility/AXObject.h
+[AXObjectImpl]: https://cs.chromium.org/chromium/src/third_party/WebKit/Source/modules/accessibility/AXObjectImpl.h
 [AXObjectCacheImpl]: https://cs.chromium.org/chromium/src/third_party/WebKit/Source/modules/accessibility/AXObjectCacheImpl.h
 [AXPlatformNode]: https://cs.chromium.org/chromium/src/ui/accessibility/platform/ax_platform_node.h
 [AXTreeSerializer]: https://cs.chromium.org/chromium/src/ui/accessibility/ax_tree_serializer.h

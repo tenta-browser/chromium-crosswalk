@@ -6,9 +6,8 @@
 
 #include <memory>
 
-#include "base/metrics/histogram_macros.h"
 #include "base/win/windows_version.h"
-#include "gpu/ipc/service/child_window_surface_win.h"
+#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/ipc/service/direct_composition_surface_win.h"
 #include "gpu/ipc/service/gpu_vsync_provider_win.h"
 #include "gpu/ipc/service/pass_through_image_transport_surface.h"
@@ -25,9 +24,9 @@ namespace gpu {
 
 namespace {
 bool IsGpuVSyncSignalSupported() {
-  // TODO(stanisc): http://crbug.com/467617 Limit to Windows 8+ for now because
-  // of locking issue caused by waiting for VSync on Win7.
-  return base::win::GetVersion() >= base::win::VERSION_WIN8 &&
+  // TODO(stanisc): http://crbug.com/467617 Limit to Windows 8.1+ for now
+  // because of locking issue caused by waiting for VSync on Win7 and Win 8.0.
+  return base::win::GetVersion() >= base::win::VERSION_WIN8_1 &&
          base::FeatureList::IsEnabled(features::kD3DVsync);
 }
 
@@ -52,25 +51,12 @@ scoped_refptr<gl::GLSurface> ImageTransportSurface::CreateNativeSurface(
       vsync_provider.reset(new gl::VSyncProviderWin(surface_handle));
 
     if (gl::GLSurfaceEGL::IsDirectCompositionSupported()) {
-      bool overlays_supported =
-          DirectCompositionSurfaceWin::AreOverlaysSupported();
-      UMA_HISTOGRAM_BOOLEAN("GPU.DirectComposition.OverlaysSupported",
-                            overlays_supported);
-      if (overlays_supported) {
-        scoped_refptr<DirectCompositionSurfaceWin> egl_surface =
-            make_scoped_refptr(new DirectCompositionSurfaceWin(
-                std::move(vsync_provider), delegate, surface_handle));
-        if (!egl_surface->Initialize())
-          return nullptr;
-        surface = egl_surface;
-      } else {
-        scoped_refptr<ChildWindowSurfaceWin> egl_surface =
-            make_scoped_refptr(new ChildWindowSurfaceWin(
-                std::move(vsync_provider), delegate, surface_handle));
-        if (!egl_surface->Initialize())
-          return nullptr;
-        surface = egl_surface;
-      }
+      scoped_refptr<DirectCompositionSurfaceWin> egl_surface =
+          base::MakeRefCounted<DirectCompositionSurfaceWin>(
+              std::move(vsync_provider), delegate, surface_handle);
+      if (!egl_surface->Initialize())
+        return nullptr;
+      surface = egl_surface;
     } else {
       surface = gl::init::CreateNativeViewGLSurfaceEGL(
           surface_handle, std::move(vsync_provider));

@@ -4,10 +4,14 @@
 
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_request_options.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/safe_sprintf.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
@@ -17,6 +21,7 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
+#include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_switches.h"
@@ -77,7 +82,7 @@ DataReductionProxyRequestOptions::DataReductionProxyRequestOptions(
     : client_(util::GetStringForClient(client)),
       use_assigned_credentials_(false),
       data_reduction_proxy_config_(config),
-      current_page_id_(0u) {
+      current_page_id_(base::RandUint64()) {
   DCHECK(data_reduction_proxy_config_);
   util::GetChromiumBuildAndPatch(version, &build_, &patch_);
 }
@@ -100,12 +105,13 @@ std::string DataReductionProxyRequestOptions::GetHeaderValueForTesting() const {
 }
 
 void DataReductionProxyRequestOptions::UpdateExperiments() {
-  // TODO(bengr): Simplify this so there's only one way to set experiment via
-  // flags. See crbug.com/656195.
+  experiments_.clear();
   std::string experiments =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           data_reduction_proxy::switches::kDataReductionProxyExperiment);
 
+  // The command line override takes precedence over field trial "exp"
+  // directives.
   if (!experiments.empty()) {
     base::StringTokenizer experiment_tokenizer(experiments, ", ");
     experiment_tokenizer.set_quote_chars("\"");
@@ -113,7 +119,14 @@ void DataReductionProxyRequestOptions::UpdateExperiments() {
       if (!experiment_tokenizer.token().empty())
         experiments_.push_back(experiment_tokenizer.token());
     }
+  } else if (params::AreLitePagesEnabledViaFlags()) {
+    experiments_.push_back(chrome_proxy_experiment_force_lite_page());
+  } else if (params::IsLoFiAlwaysOnViaFlags() ||
+             params::IsLoFiCellularOnlyViaFlags()) {
+    experiments_.push_back(chrome_proxy_experiment_force_empty_image());
   } else {
+    // If no other "exp" directive is forced by flags, add the field trial
+    // value.
     AddServerExperimentFromFieldTrial();
   }
 
@@ -171,12 +184,17 @@ void DataReductionProxyRequestOptions::AddRequestHeader(
   header_value += header_value_;
 
   if (page_id) {
-    char page_id_buffer[16];
+    // 64 bit uint fits in 16 characters when represented in hexadecimal, but
+    // there needs to be a trailing null termianted character in the buffer.
+    char page_id_buffer[17];
     if (base::strings::SafeSPrintf(page_id_buffer, "%x", page_id.value()) > 0) {
       header_value += ", " + FormatOption(kPageIdOption, page_id_buffer);
     }
+    uint64_t page_id_tested;
+    DCHECK(base::HexStringToUInt64(page_id_buffer, &page_id_tested) &&
+           page_id_tested == page_id.value());
+    ALLOW_UNUSED_LOCAL(page_id_tested);
   }
-
   request_headers->SetHeader(kChromeProxyHeader, header_value);
 }
 
@@ -222,6 +240,7 @@ void DataReductionProxyRequestOptions::SetSecureSession(
   session_.clear();
   credentials_.clear();
   secure_session_ = secure_session;
+  // Reset Page ID, so users can't be tracked across sessions.
   ResetPageId();
   // Force skipping of credential regeneration. It should be handled by the
   // caller.
@@ -318,8 +337,7 @@ uint64_t DataReductionProxyRequestOptions::GeneratePageId() {
 }
 
 void DataReductionProxyRequestOptions::ResetPageId() {
-  // Caller should not depend on reset setting the page ID to 0.
-  current_page_id_ = 0;
+  current_page_id_ = base::RandUint64();
 }
 
 }  // namespace data_reduction_proxy

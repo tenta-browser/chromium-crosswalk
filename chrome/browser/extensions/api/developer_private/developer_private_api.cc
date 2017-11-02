@@ -22,7 +22,6 @@
 #include "chrome/browser/extensions/api/developer_private/entry_picker.h"
 #include "chrome/browser/extensions/api/developer_private/extension_info_generator.h"
 #include "chrome/browser/extensions/api/developer_private/show_permissions_dialog_helper.h"
-#include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/devtools_util.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -30,7 +29,6 @@
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_verifier.h"
-#include "chrome/browser/extensions/path_util.h"
 #include "chrome/browser/extensions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/shared_module_service.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
@@ -69,8 +67,9 @@
 #include "extensions/browser/file_highlighter.h"
 #include "extensions/browser/management_policy.h"
 #include "extensions/browser/notification_types.h"
+#include "extensions/browser/path_util.h"
 #include "extensions/browser/warning_service.h"
-#include "extensions/common/constants.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/install_warning.h"
@@ -78,7 +77,7 @@
 #include "extensions/common/manifest_handlers/options_page_info.h"
 #include "extensions/common/manifest_url_handlers.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "extensions/grit/extensions_browser_resources.h"
+#include "storage/browser/blob/shareable_file_reference.h"
 #include "storage/browser/fileapi/external_mount_points.h"
 #include "storage/browser/fileapi/file_system_context.h"
 #include "storage/browser/fileapi/file_system_operation.h"
@@ -158,7 +157,7 @@ void PerformVerificationCheck(content::BrowserContext* context) {
   for (const scoped_refptr<const Extension>& extension : *extensions) {
     if (ui_util::ShouldDisplayInExtensionSettings(extension.get(), context) &&
         prefs->HasDisableReason(extension->id(),
-                                Extension::DISABLE_NOT_VERIFIED)) {
+                                disable_reason::DISABLE_NOT_VERIFIED)) {
       should_do_verification_check = true;
       break;
     }
@@ -198,7 +197,8 @@ namespace PackDirectory = api::developer_private::PackDirectory;
 namespace Reload = api::developer_private::Reload;
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<DeveloperPrivateAPI>>::
-    DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;
+    DestructorAtExit g_developer_private_api_factory =
+        LAZY_INSTANCE_INITIALIZER;
 
 class DeveloperPrivateAPI::WebContentsTracker
     : public content::WebContentsObserver {
@@ -224,7 +224,7 @@ class DeveloperPrivateAPI::WebContentsTracker
 // static
 BrowserContextKeyedAPIFactory<DeveloperPrivateAPI>*
 DeveloperPrivateAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_developer_private_api_factory.Pointer();
 }
 
 // static
@@ -243,7 +243,6 @@ DeveloperPrivateEventRouter::DeveloperPrivateEventRouter(Profile* profile)
       error_console_observer_(this),
       process_manager_observer_(this),
       app_window_registry_observer_(this),
-      extension_action_api_observer_(this),
       warning_service_observer_(this),
       extension_prefs_observer_(this),
       extension_management_observer_(this),
@@ -255,7 +254,6 @@ DeveloperPrivateEventRouter::DeveloperPrivateEventRouter(Profile* profile)
   error_console_observer_.Add(ErrorConsole::Get(profile));
   process_manager_observer_.Add(ProcessManager::Get(profile));
   app_window_registry_observer_.Add(AppWindowRegistry::Get(profile));
-  extension_action_api_observer_.Add(ExtensionActionAPI::Get(profile));
   warning_service_observer_.Add(WarningService::Get(profile));
   extension_prefs_observer_.Add(ExtensionPrefs::Get(profile));
   extension_management_observer_.Add(
@@ -293,7 +291,7 @@ void DeveloperPrivateEventRouter::OnExtensionLoaded(
 void DeveloperPrivateEventRouter::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   DCHECK(profile_->IsSameProfile(Profile::FromBrowserContext(browser_context)));
   BroadcastItemStateChanged(developer::EVENT_TYPE_UNLOADED, extension->id());
 }
@@ -369,12 +367,6 @@ void DeveloperPrivateEventRouter::OnExtensionCommandRemoved(
     const Command& removed_command) {
   BroadcastItemStateChanged(developer::EVENT_TYPE_PREFS_CHANGED,
                             extension_id);
-}
-
-void DeveloperPrivateEventRouter::OnExtensionActionVisibilityChanged(
-    const std::string& extension_id,
-    bool is_now_visible) {
-  BroadcastItemStateChanged(developer::EVENT_TYPE_PREFS_CHANGED, extension_id);
 }
 
 void DeveloperPrivateEventRouter::OnExtensionDisableReasonsChanged(
@@ -721,11 +713,6 @@ DeveloperPrivateUpdateExtensionConfigurationFunction::Run() {
     }
     modifier.SetAllowedOnAllUrls(*update.run_on_all_urls);
   }
-  if (update.show_action_button) {
-    ExtensionActionAPI::Get(browser_context())->SetBrowserActionVisibility(
-        extension->id(),
-        *update.show_action_button);
-  }
 
   return RespondNow(NoArguments());
 }
@@ -917,6 +904,7 @@ void DeveloperPrivatePackDirectoryFunction::OnPackSuccess(
       PackExtensionJob::StandardSuccessMessage(crx_file, pem_file));
   response.status = developer::PACK_STATUS_SUCCESS;
   Respond(OneArgument(response.ToValue()));
+  pack_job_.reset();
   Release();  // Balanced in Run().
 }
 
@@ -934,6 +922,7 @@ void DeveloperPrivatePackDirectoryFunction::OnPackFailure(
     response.status = developer::PACK_STATUS_ERROR;
   }
   Respond(OneArgument(response.ToValue()));
+  pack_job_.reset();
   Release();  // Balanced in Run().
 }
 
@@ -973,8 +962,8 @@ ExtensionFunction::ResponseAction DeveloperPrivatePackDirectoryFunction::Run() {
 
   AddRef();  // Balanced in OnPackSuccess / OnPackFailure.
 
-  // TODO(devlin): Why is PackExtensionJob ref-counted?
-  pack_job_ = new PackExtensionJob(this, root_directory, key_file, flags);
+  pack_job_ =
+      base::MakeUnique<PackExtensionJob>(this, root_directory, key_file, flags);
   pack_job_->Start();
   return RespondLater();
 }
@@ -1072,11 +1061,12 @@ bool DeveloperPrivateLoadDirectoryFunction::LoadByFileSystemAPI(
 
   project_base_path_ = project_path;
 
-  content::BrowserThread::PostTask(content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&DeveloperPrivateLoadDirectoryFunction::
-                     ClearExistingDirectoryContent,
-                 this,
-                 project_base_path_));
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      base::BindOnce(
+          &DeveloperPrivateLoadDirectoryFunction::ClearExistingDirectoryContent,
+          this, project_base_path_));
   return true;
 }
 
@@ -1092,16 +1082,16 @@ void DeveloperPrivateLoadDirectoryFunction::Load() {
 
 void DeveloperPrivateLoadDirectoryFunction::ClearExistingDirectoryContent(
     const base::FilePath& project_path) {
-
   // Clear the project directory before copying new files.
   base::DeleteFile(project_path, true /*recursive*/);
 
   pending_copy_operations_count_ = 1;
 
-  content::BrowserThread::PostTask(content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&DeveloperPrivateLoadDirectoryFunction::
-                 ReadDirectoryByFileSystemAPI,
-                 this, project_path, project_path.BaseName()));
+  content::BrowserThread::PostTask(
+      content::BrowserThread::IO, FROM_HERE,
+      base::BindOnce(
+          &DeveloperPrivateLoadDirectoryFunction::ReadDirectoryByFileSystemAPI,
+          this, project_path, project_path.BaseName()));
 }
 
 void DeveloperPrivateLoadDirectoryFunction::ReadDirectoryByFileSystemAPI(
@@ -1111,16 +1101,16 @@ void DeveloperPrivateLoadDirectoryFunction::ReadDirectoryByFileSystemAPI(
   storage::FileSystemURL url = context_->CrackURL(project_url);
 
   context_->operation_runner()->ReadDirectory(
-      url, base::Bind(&DeveloperPrivateLoadDirectoryFunction::
-                      ReadDirectoryByFileSystemAPICb,
-                      this, project_path, destination_path));
+      url, base::BindRepeating(&DeveloperPrivateLoadDirectoryFunction::
+                                   ReadDirectoryByFileSystemAPICb,
+                               this, project_path, destination_path));
 }
 
 void DeveloperPrivateLoadDirectoryFunction::ReadDirectoryByFileSystemAPICb(
     const base::FilePath& project_path,
     const base::FilePath& destination_path,
     base::File::Error status,
-    const storage::FileSystemOperation::FileEntryList& file_list,
+    storage::FileSystemOperation::FileEntryList file_list,
     bool has_more) {
   if (status != base::File::FILE_OK) {
     DLOG(ERROR) << "Error in copying files from sync filesystem.";
@@ -1164,9 +1154,8 @@ void DeveloperPrivateLoadDirectoryFunction::ReadDirectoryByFileSystemAPICb(
     if (!pending_copy_operations_count_) {
       content::BrowserThread::PostTask(
           content::BrowserThread::UI, FROM_HERE,
-          base::Bind(&DeveloperPrivateLoadDirectoryFunction::SendResponse,
-                     this,
-                     success_));
+          base::BindOnce(&DeveloperPrivateLoadDirectoryFunction::SendResponse,
+                         this, success_));
     }
   }
 }
@@ -1176,18 +1165,18 @@ void DeveloperPrivateLoadDirectoryFunction::SnapshotFileCallback(
     base::File::Error result,
     const base::File::Info& file_info,
     const base::FilePath& src_path,
-    const scoped_refptr<storage::ShareableFileReference>& file_ref) {
+    scoped_refptr<storage::ShareableFileReference> file_ref) {
   if (result != base::File::FILE_OK) {
     SetError("Error in copying files from sync filesystem.");
     success_ = false;
     return;
   }
 
-  content::BrowserThread::PostTask(content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&DeveloperPrivateLoadDirectoryFunction::CopyFile,
-                 this,
-                 src_path,
-                 target_path));
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
+      base::BindOnce(&DeveloperPrivateLoadDirectoryFunction::CopyFile, this,
+                     src_path, target_path));
 }
 
 void DeveloperPrivateLoadDirectoryFunction::CopyFile(
@@ -1205,9 +1194,9 @@ void DeveloperPrivateLoadDirectoryFunction::CopyFile(
   pending_copy_operations_count_--;
 
   if (!pending_copy_operations_count_) {
-    content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
-        base::Bind(&DeveloperPrivateLoadDirectoryFunction::Load,
-                   this));
+    content::BrowserThread::PostTask(
+        content::BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&DeveloperPrivateLoadDirectoryFunction::Load, this));
   }
 }
 
@@ -1311,8 +1300,7 @@ DeveloperPrivateRequestFileSourceFunction::Run() {
     return RespondNow(Error(kManifestKeyIsRequiredError));
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::USER_VISIBLE),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::Bind(&ReadFileToString, extension->path().Append(path_suffix)),
       base::Bind(&DeveloperPrivateRequestFileSourceFunction::Finish, this));
 
@@ -1468,7 +1456,8 @@ DeveloperPrivateRepairExtensionFunction::Run() {
     return RespondNow(Error(kNoSuchExtensionError));
 
   if (!ExtensionPrefs::Get(browser_context())
-           ->HasDisableReason(extension->id(), Extension::DISABLE_CORRUPTED)) {
+           ->HasDisableReason(extension->id(),
+                              disable_reason::DISABLE_CORRUPTED)) {
     return RespondNow(Error(kCannotRepairHealthyExtension));
   }
 

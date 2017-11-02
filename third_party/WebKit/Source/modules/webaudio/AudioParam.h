@@ -30,13 +30,13 @@
 #define AudioParam_h
 
 #include <sys/types.h>
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "modules/webaudio/AudioParamTimeline.h"
 #include "modules/webaudio/AudioSummingJunction.h"
 #include "modules/webaudio/BaseAudioContext.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/ThreadSafeRefCounted.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -83,6 +83,7 @@ enum AudioParamType {
   kParamTypeAudioListenerUpY,
   kParamTypeAudioListenerUpZ,
   kParamTypeConstantSourceValue,
+  kParamTypeAudioWorklet,
 };
 
 // AudioParamHandler is an actual implementation of web-exposed AudioParam
@@ -103,13 +104,13 @@ class AudioParamHandler final : public ThreadSafeRefCounted<AudioParamHandler>,
   static const double kDefaultSmoothingConstant;
   static const double kSnapThreshold;
 
-  static PassRefPtr<AudioParamHandler> Create(BaseAudioContext& context,
-                                              AudioParamType param_type,
-                                              double default_value,
-                                              float min_value,
-                                              float max_value) {
-    return AdoptRef(new AudioParamHandler(context, param_type, default_value,
-                                          min_value, max_value));
+  static RefPtr<AudioParamHandler> Create(BaseAudioContext& context,
+                                          AudioParamType param_type,
+                                          double default_value,
+                                          float min_value,
+                                          float max_value) {
+    return WTF::AdoptRef(new AudioParamHandler(
+        context, param_type, default_value, min_value, max_value));
   }
 
   // This should be used only in audio rendering thread.
@@ -232,6 +233,13 @@ class AudioParam final : public GarbageCollectedFinalized<AudioParam>,
   float value() const;
   void setValue(float);
   float defaultValue() const;
+  // Use when setting the initial value of an AudioParam when creating
+  // the AudioParam.  This bypasses any deprecation messages about
+  // using the value setter that has dezippering.
+  //
+  // TODO(rtoy): Replace all calls to this with just setValue() when
+  // dezippering deprecation messages are removed.
+  void setInitialValue(float);
 
   float minValue() const;
   float maxValue() const;

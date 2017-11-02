@@ -9,12 +9,16 @@
 #include "core/dom/ExecutionContext.h"
 #include "core/workers/ThreadedWorkletGlobalScope.h"
 #include "modules/ModulesExport.h"
+#include "modules/webaudio/AudioParamDescriptor.h"
+#include "platform/audio/AudioArray.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
-class AudioBuffer;
+class AudioBus;
 class AudioWorkletProcessor;
 class AudioWorkletProcessorDefinition;
+class CrossThreadAudioWorkletProcessorInfo;
 class ExceptionState;
 
 // This is constructed and destroyed on a worker thread, and all methods also
@@ -26,11 +30,11 @@ class MODULES_EXPORT AudioWorkletGlobalScope final
  public:
   static AudioWorkletGlobalScope* Create(const KURL&,
                                          const String& user_agent,
-                                         PassRefPtr<SecurityOrigin>,
+                                         RefPtr<SecurityOrigin>,
                                          v8::Isolate*,
-                                         WorkerThread*);
+                                         WorkerThread*,
+                                         WorkerClients*);
   ~AudioWorkletGlobalScope() override;
-  void Dispose() final;
   bool IsAudioWorkletGlobalScope() const final { return true; }
   void registerProcessor(const String& name,
                          const ScriptValue& class_definition,
@@ -39,32 +43,56 @@ class MODULES_EXPORT AudioWorkletGlobalScope final
   // Creates an instance of AudioWorkletProcessor from a registered name. This
   // function may return nullptr when 1) a definition cannot be found or 2) a
   // new V8 object cannot be constructed for some reason.
-  AudioWorkletProcessor* CreateInstance(const String& name);
+  AudioWorkletProcessor* CreateInstance(const String& name, float sample_rate);
 
   // Invokes the JS audio processing function from an instance of
   // AudioWorkletProcessor, along with given AudioBuffer from the audio graph.
-  bool Process(AudioWorkletProcessor*,
-               AudioBuffer* input_buffer,
-               AudioBuffer* output_buffer);
+  bool Process(
+      AudioWorkletProcessor*,
+      Vector<AudioBus*>* input_buses,
+      Vector<AudioBus*>* output_buses,
+      HashMap<String, std::unique_ptr<AudioFloatArray>>* param_value_map,
+      double current_time);
 
   AudioWorkletProcessorDefinition* FindDefinition(const String& name);
 
+  unsigned NumberOfRegisteredDefinitions();
+
+  std::unique_ptr<Vector<CrossThreadAudioWorkletProcessorInfo>>
+      WorkletProcessorInfoListForSynchronization();
+
+  // IDL
+  double currentTime() const { return current_time_; }
+  float sampleRate() const { return sample_rate_; }
+
   DECLARE_TRACE();
+  DECLARE_TRACE_WRAPPERS();
 
  private:
   AudioWorkletGlobalScope(const KURL&,
                           const String& user_agent,
-                          PassRefPtr<SecurityOrigin>,
+                          RefPtr<SecurityOrigin>,
                           v8::Isolate*,
-                          WorkerThread*);
+                          WorkerThread*,
+                          WorkerClients*);
 
-  typedef HeapHashMap<String, Member<AudioWorkletProcessorDefinition>>
+  typedef HeapHashMap<String,
+                      TraceWrapperMember<AudioWorkletProcessorDefinition>>
       ProcessorDefinitionMap;
-  typedef HeapVector<Member<AudioWorkletProcessor>> ProcessorInstances;
+  typedef HeapVector<TraceWrapperMember<AudioWorkletProcessor>>
+      ProcessorInstances;
 
   ProcessorDefinitionMap processor_definition_map_;
   ProcessorInstances processor_instances_;
+  double current_time_ = 0.0;
+  float sample_rate_ = 0.0;
 };
+
+DEFINE_TYPE_CASTS(AudioWorkletGlobalScope,
+                  ExecutionContext,
+                  context,
+                  context->IsAudioWorkletGlobalScope(),
+                  context.IsAudioWorkletGlobalScope());
 
 }  // namespace blink
 

@@ -31,8 +31,8 @@
 #ifndef WebViewClient_h
 #define WebViewClient_h
 
-#include "../platform/WebPageVisibilityState.h"
-#include "../platform/WebString.h"
+#include "public/platform/WebPageVisibilityState.h"
+#include "public/platform/WebString.h"
 #include "WebAXEnums.h"
 #include "WebFrame.h"
 #include "WebPopupType.h"
@@ -50,8 +50,8 @@ class WebURL;
 class WebURLRequest;
 class WebView;
 class WebWidget;
+enum class WebSandboxFlags;
 struct WebDateTimeChooserParams;
-struct WebPoint;
 struct WebRect;
 struct WebSize;
 struct WebWindowFeatures;
@@ -76,7 +76,8 @@ class WebViewClient : protected WebWidgetClient {
                               const WebWindowFeatures& features,
                               const WebString& name,
                               WebNavigationPolicy policy,
-                              bool suppress_opener) {
+                              bool suppress_opener,
+                              WebSandboxFlags) {
     return 0;
   }
 
@@ -144,9 +145,6 @@ class WebViewClient : protected WebWidgetClient {
   virtual void MoveValidationMessage(const WebRect& anchor_in_viewport) {}
 
   // UI ------------------------------------------------------------------
-
-  // Called when script modifies window.status
-  virtual void SetStatusText(const WebString&) {}
 
   // Called when hovering over an anchor with the given URL.
   virtual void SetMouseOverURL(const WebURL&) {}
@@ -230,10 +228,7 @@ class WebViewClient : protected WebWidgetClient {
   // Informs the browser that the page scale has changed.
   virtual void PageScaleFactorChanged() {}
 
-  // Draggable regions ----------------------------------------------------
-
-  // Informs the browser that the draggable regions have been updated.
-  virtual void DraggableRegionsChanged() {}
+  // Gestures -------------------------------------------------------------
 
   virtual bool CanHandleGestureEvent() { return false; }
 
@@ -248,14 +243,13 @@ class WebViewClient : protected WebWidgetClient {
   void DidOverscroll(const WebFloatSize& overscroll_delta,
                      const WebFloatSize& accumulated_overscroll,
                      const WebFloatPoint& position_in_viewport,
-                     const WebFloatSize& velocity_in_viewport) override {}
+                     const WebFloatSize& velocity_in_viewport,
+                     const WebScrollBoundaryBehavior& behavior) override {}
   void HasTouchEventHandlers(bool) override {}
   WebLayerTreeView* InitializeLayerTreeView() override { return nullptr; }
   WebScreenInfo GetScreenInfo() override { return WebScreenInfo(); }
   void SetTouchAction(WebTouchAction touch_action) override {}
-  void ShowUnhandledTapUIIfNeeded(const WebPoint& tapped_position,
-                                  const WebNode& tapped_node,
-                                  bool page_changed) override {}
+  void ShowUnhandledTapUIIfNeeded(const WebTappedInfo& tapped_info) override {}
   void Show(WebNavigationPolicy) override {}
   virtual WebWidgetClient* WidgetClient() { return this; }
 

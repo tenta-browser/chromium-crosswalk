@@ -20,7 +20,7 @@
 
 #include "core/svg/SVGForeignObjectElement.h"
 
-#include "core/dom/StyleChangeReason.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/frame/UseCounter.h"
 #include "core/layout/svg/LayoutSVGForeignObject.h"
 #include "core/svg/SVGLength.h"
@@ -52,7 +52,7 @@ inline SVGForeignObjectElement::SVGForeignObjectElement(Document& document)
   AddToPropertyMap(width_);
   AddToPropertyMap(height_);
 
-  UseCounter::Count(document, UseCounter::kSVGForeignObjectElement);
+  UseCounter::Count(document, WebFeature::kSVGForeignObjectElement);
 }
 
 DEFINE_TRACE(SVGForeignObjectElement) {

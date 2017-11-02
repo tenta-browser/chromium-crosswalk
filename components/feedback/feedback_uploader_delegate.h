@@ -5,32 +5,35 @@
 #ifndef COMPONENTS_FEEDBACK_FEEDBACK_UPLOADER_DELEGATE_H_
 #define COMPONENTS_FEEDBACK_FEEDBACK_UPLOADER_DELEGATE_H_
 
-#include <string>
-
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "components/feedback/feedback_uploader.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
 namespace feedback {
 
-// FeedbackUploaderDelegate is a simple http uploader for a feedback report. On
-// succes or failure, it deletes itself, but on failure it also notifies the
-// error callback specified when constructing the class instance.
+// Type of the callback that gets invoked when uploading a feedback report
+// fails. |should_retry| is set to true when it's OK to retry sending the
+// report; e.g. when the failure is not a client error and retries is likely to
+// fail again.
+using ReportFailureCallback = base::Callback<void(bool should_retry)>;
+
+// FeedbackUploaderDelegate is a simple HTTP uploader for a feedback report.
+// When finished, it runs the appropriate callback passed in via the
+// constructor, and then deletes itself.
 class FeedbackUploaderDelegate : public net::URLFetcherDelegate {
  public:
-  FeedbackUploaderDelegate(const std::string& post_body,
-                           const base::Closure& success_callback,
-                           const ReportDataCallback& error_callback);
+  FeedbackUploaderDelegate(const base::Closure& success_callback,
+                           const ReportFailureCallback& error_callback);
   ~FeedbackUploaderDelegate() override;
 
  private:
   // Overridden from net::URLFetcherDelegate.
   void OnURLFetchComplete(const net::URLFetcher* source) override;
 
-  std::string post_body_;
   base::Closure success_callback_;
-  ReportDataCallback error_callback_;
+  ReportFailureCallback error_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(FeedbackUploaderDelegate);
 };

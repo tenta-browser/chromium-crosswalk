@@ -1694,6 +1694,565 @@ TEST(LayerAnimatorTest, ImplicitAnimationObservers) {
   EXPECT_FLOAT_EQ(0.0f, delegate.GetBrightnessForAnimation());
 }
 
+// Tests that caching render surface added to a scoped settings object is still
+// reset when the object goes out of scope.
+TEST(LayerAnimatorTest, CacheRenderSurface) {
+  ui::Layer layer;
+  scoped_refptr<LayerAnimator> animator(layer.GetAnimator());
+  animator->set_disable_timer_for_test(true);
+  TestImplicitAnimationObserver observer(false);
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_FALSE(layer.cc_layer_for_testing()->cache_render_surface());
+  animator->SetOpacity(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    settings.AddObserver(&observer);
+    animator->SetOpacity(0.0f);
+  }
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+  animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+  EXPECT_TRUE(observer.animations_completed());
+  EXPECT_TRUE(observer.WasAnimationCompletedForProperty(
+      LayerAnimationElement::OPACITY));
+  EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+  EXPECT_FALSE(layer.cc_layer_for_testing()->cache_render_surface());
+}
+
+// Tests that caching render surface added to a scoped settings object will not
+// crash when the layer was destroyed.
+TEST(LayerAnimatorTest, CacheRenderSurfaceOnWillBeDestroyedLayer) {
+  // Case 1: layer is a pointer.
+  auto layer1 = base::MakeUnique<Layer>();
+  scoped_refptr<LayerAnimator> animator(layer1->GetAnimator());
+  animator->set_disable_timer_for_test(true);
+  TestImplicitAnimationObserver observer1(false);
+
+  EXPECT_FALSE(observer1.animations_completed());
+  animator->SetOpacity(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    settings.AddObserver(&observer1);
+    animator->SetOpacity(0.0f);
+  }
+
+  EXPECT_FALSE(observer1.animations_completed());
+  layer1.reset();
+  animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+  EXPECT_TRUE(observer1.animations_completed());
+
+  // Case 2: layer is a local variable.
+  TestImplicitAnimationObserver observer2(false);
+  {
+    ui::Layer layer2;
+    animator = layer2.GetAnimator();
+
+    EXPECT_FALSE(observer2.animations_completed());
+    animator->SetBrightness(1.0f);
+
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    settings.AddObserver(&observer2);
+    animator->SetBrightness(0.0f);
+  }
+
+  EXPECT_FALSE(observer2.animations_completed());
+  animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+  EXPECT_TRUE(observer2.animations_completed());
+
+  // Case 3: Animation finishes before layer is destroyed.
+  ui::Layer layer3;
+  animator = layer3.GetAnimator();
+  TestImplicitAnimationObserver observer3(false);
+
+  EXPECT_FALSE(observer3.animations_completed());
+  animator->SetGrayscale(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    settings.AddObserver(&observer3);
+    animator->SetGrayscale(0.0f);
+  }
+
+  EXPECT_FALSE(observer3.animations_completed());
+  animator->StopAnimatingProperty(LayerAnimationElement::GRAYSCALE);
+  EXPECT_TRUE(observer3.animations_completed());
+}
+
+// Tests that caching render surface added to two scoped settings objects is
+// still reset when animation finishes.
+TEST(LayerAnimatorTest, CacheRenderSurfaceInTwoAnimations) {
+  ui::Layer layer;
+  scoped_refptr<LayerAnimator> animator(layer.GetAnimator());
+  animator->set_disable_timer_for_test(true);
+
+  // Case 1: the original cache status if false.
+  EXPECT_FALSE(layer.cc_layer_for_testing()->cache_render_surface());
+  animator->SetBrightness(1.0f);
+  animator->SetOpacity(1.0f);
+
+  // Start the brightness animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    animator->SetBrightness(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+
+  // Start the opacity animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    animator->SetOpacity(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+
+  // Finish the brightness animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+    EXPECT_FLOAT_EQ(0.0f, layer.layer_brightness());
+    EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+  }
+
+  // Finish the opacity animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+    EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+    EXPECT_FALSE(layer.cc_layer_for_testing()->cache_render_surface());
+  }
+
+  // Case 2: the original cache status if true.
+  layer.AddCacheRenderSurfaceRequest();
+  EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+  animator->SetBrightness(1.0f);
+  animator->SetOpacity(1.0f);
+
+  // Start the brightness animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    animator->SetBrightness(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+
+  // Start the opacity animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.CacheRenderSurface();
+    animator->SetOpacity(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+
+  // Finish the brightness animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+    EXPECT_FLOAT_EQ(0.0f, layer.layer_brightness());
+    EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+  }
+
+  // Finish the opacity animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+    EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+    EXPECT_TRUE(layer.cc_layer_for_testing()->cache_render_surface());
+  }
+}
+
+// Tests that deferred painting request added to a scoped settings object is
+// still reset when the object goes out of scope.
+TEST(LayerAnimatorTest, DeferredPaint) {
+  ui::Layer layer;
+  scoped_refptr<LayerAnimator> animator(layer.GetAnimator());
+  animator->set_disable_timer_for_test(true);
+  TestImplicitAnimationObserver observer(false);
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_FALSE(layer.IsPaintDeferredForTesting());
+  animator->SetOpacity(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    settings.AddObserver(&observer);
+    animator->SetOpacity(0.0f);
+  }
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+  animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+  EXPECT_TRUE(observer.animations_completed());
+  EXPECT_TRUE(observer.WasAnimationCompletedForProperty(
+      LayerAnimationElement::OPACITY));
+  EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+  EXPECT_FALSE(layer.IsPaintDeferredForTesting());
+}
+
+// Tests that deferred painting request is added to child layers and will be
+// removed even the child layer was reparented.
+TEST(LayerAnimatorTest, DeferredPaintOnChildLayer) {
+  ui::Layer layer;
+  ui::Layer child_layer1;
+  ui::Layer child_layer2;
+  layer.Add(&child_layer1);
+  layer.Add(&child_layer2);
+
+  scoped_refptr<LayerAnimator> animator(layer.GetAnimator());
+  animator->set_disable_timer_for_test(true);
+  TestImplicitAnimationObserver observer(false);
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_FALSE(layer.IsPaintDeferredForTesting());
+  EXPECT_FALSE(child_layer1.IsPaintDeferredForTesting());
+  EXPECT_FALSE(child_layer2.IsPaintDeferredForTesting());
+  animator->SetOpacity(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    settings.AddObserver(&observer);
+    animator->SetOpacity(0.0f);
+  }
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+  EXPECT_TRUE(child_layer1.IsPaintDeferredForTesting());
+  EXPECT_TRUE(child_layer2.IsPaintDeferredForTesting());
+
+  // Reparent child_layer2.
+  ui::Layer new_parent_layer;
+  new_parent_layer.Add(&child_layer2);
+  EXPECT_TRUE(child_layer2.IsPaintDeferredForTesting());
+
+  animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+  EXPECT_TRUE(observer.animations_completed());
+  EXPECT_TRUE(observer.WasAnimationCompletedForProperty(
+      LayerAnimationElement::OPACITY));
+  EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+  EXPECT_FALSE(layer.IsPaintDeferredForTesting());
+  EXPECT_FALSE(child_layer1.IsPaintDeferredForTesting());
+  EXPECT_FALSE(child_layer2.IsPaintDeferredForTesting());
+}
+
+// Tests that deffered paint request added to two scoped settings objects is
+// still reset when animation finishes.
+TEST(LayerAnimatorTest, DeferredPaintInTwoAnimations) {
+  ui::Layer layer;
+  scoped_refptr<LayerAnimator> animator(layer.GetAnimator());
+  animator->set_disable_timer_for_test(true);
+
+  // Case 1: the original deferred paint status if false.
+  EXPECT_FALSE(layer.IsPaintDeferredForTesting());
+  animator->SetBrightness(1.0f);
+  animator->SetOpacity(1.0f);
+
+  // Start the brightness animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    animator->SetBrightness(0.0f);
+  }
+  EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+
+  // Start the opacity animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    animator->SetOpacity(0.0f);
+  }
+  EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+
+  // Finish the brightness animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+    EXPECT_FLOAT_EQ(0.0f, layer.layer_brightness());
+    EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+  }
+
+  // Finish the opacity animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+    EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+    EXPECT_FALSE(layer.IsPaintDeferredForTesting());
+  }
+
+  // Case 2: the original cache status if true.
+  layer.AddDeferredPaintRequest();
+  EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+  animator->SetBrightness(1.0f);
+  animator->SetOpacity(1.0f);
+
+  // Start the brightness animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    animator->SetBrightness(0.0f);
+  }
+  EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+
+  // Start the opacity animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    animator->SetOpacity(0.0f);
+  }
+  EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+
+  // Finish the brightness animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+    EXPECT_FLOAT_EQ(0.0f, layer.layer_brightness());
+    EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+  }
+
+  // Finish the opacity animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+    EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+    EXPECT_TRUE(layer.IsPaintDeferredForTesting());
+  }
+}
+
+// Tests that deferred paint request added to a scoped settings object will
+// not crash when the layer was destroyed.
+TEST(LayerAnimatorTest, DeferredPaintOnWillBeDestroyedLayer) {
+  // Case 1: layer is a pointer.
+  auto layer1 = base::MakeUnique<Layer>();
+  scoped_refptr<LayerAnimator> animator(layer1->GetAnimator());
+  animator->set_disable_timer_for_test(true);
+  TestImplicitAnimationObserver observer1(false);
+
+  EXPECT_FALSE(observer1.animations_completed());
+  animator->SetOpacity(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    settings.AddObserver(&observer1);
+    animator->SetOpacity(0.0f);
+  }
+
+  EXPECT_FALSE(observer1.animations_completed());
+  layer1.reset();
+  animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+  EXPECT_TRUE(observer1.animations_completed());
+
+  // Case 2: layer is a local variable.
+  TestImplicitAnimationObserver observer2(false);
+  {
+    ui::Layer layer2;
+    animator = layer2.GetAnimator();
+
+    EXPECT_FALSE(observer2.animations_completed());
+    animator->SetBrightness(1.0f);
+
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    settings.AddObserver(&observer2);
+    animator->SetBrightness(0.0f);
+  }
+
+  EXPECT_FALSE(observer2.animations_completed());
+  animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+  EXPECT_TRUE(observer2.animations_completed());
+
+  // Case 3: Animation finishes before layer is destroyed.
+  ui::Layer layer3;
+  animator = layer3.GetAnimator();
+  TestImplicitAnimationObserver observer3(false);
+
+  EXPECT_FALSE(observer3.animations_completed());
+  animator->SetGrayscale(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.DeferPaint();
+    settings.AddObserver(&observer3);
+    animator->SetGrayscale(0.0f);
+  }
+
+  EXPECT_FALSE(observer3.animations_completed());
+  animator->StopAnimatingProperty(LayerAnimationElement::GRAYSCALE);
+  EXPECT_TRUE(observer3.animations_completed());
+}
+
+// Tests that trilinear filtering request added to a scoped settings object is
+// still reset when the object goes out of scope.
+TEST(LayerAnimatorTest, TrilinearFiltering) {
+  ui::Layer layer;
+  scoped_refptr<LayerAnimator> animator(layer.GetAnimator());
+  animator->set_disable_timer_for_test(true);
+  TestImplicitAnimationObserver observer(false);
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_FALSE(layer.cc_layer_for_testing()->trilinear_filtering());
+  animator->SetOpacity(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    settings.AddObserver(&observer);
+    animator->SetOpacity(0.0f);
+  }
+
+  EXPECT_FALSE(observer.animations_completed());
+  EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+  animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+  EXPECT_TRUE(observer.animations_completed());
+  EXPECT_TRUE(observer.WasAnimationCompletedForProperty(
+      LayerAnimationElement::OPACITY));
+  EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+  EXPECT_FALSE(layer.cc_layer_for_testing()->trilinear_filtering());
+}
+
+// Tests that trilinear filtering request added to a scoped settings object will
+// not crash when the layer was destroyed.
+TEST(LayerAnimatorTest, TrilinearFilteringOnWillBeDestroyedLayer) {
+  // Case 1: layer is a pointer.
+  auto layer1 = base::MakeUnique<Layer>();
+  scoped_refptr<LayerAnimator> animator(layer1->GetAnimator());
+  animator->set_disable_timer_for_test(true);
+  TestImplicitAnimationObserver observer1(false);
+
+  EXPECT_FALSE(observer1.animations_completed());
+  animator->SetOpacity(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    settings.AddObserver(&observer1);
+    animator->SetOpacity(0.0f);
+  }
+
+  EXPECT_FALSE(observer1.animations_completed());
+  layer1.reset();
+  animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+  EXPECT_TRUE(observer1.animations_completed());
+
+  // Case 2: layer is a local variable.
+  TestImplicitAnimationObserver observer2(false);
+  {
+    ui::Layer layer2;
+    animator = layer2.GetAnimator();
+
+    EXPECT_FALSE(observer2.animations_completed());
+    animator->SetBrightness(1.0f);
+
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    settings.AddObserver(&observer2);
+    animator->SetBrightness(0.0f);
+  }
+
+  EXPECT_FALSE(observer2.animations_completed());
+  animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+  EXPECT_TRUE(observer2.animations_completed());
+
+  // Case 3: Animation finishes before layer is destroyed.
+  ui::Layer layer3;
+  animator = layer3.GetAnimator();
+  TestImplicitAnimationObserver observer3(false);
+
+  EXPECT_FALSE(observer3.animations_completed());
+  animator->SetGrayscale(1.0f);
+
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    settings.AddObserver(&observer3);
+    animator->SetGrayscale(0.0f);
+  }
+
+  EXPECT_FALSE(observer3.animations_completed());
+  animator->StopAnimatingProperty(LayerAnimationElement::GRAYSCALE);
+  EXPECT_TRUE(observer3.animations_completed());
+}
+
+// Tests that trilinear filtering request added to two scoped settings objects
+// is still reset when animation finishes.
+TEST(LayerAnimatorTest, TrilinearFilteringInTwoAnimations) {
+  ui::Layer layer;
+  scoped_refptr<LayerAnimator> animator(layer.GetAnimator());
+  animator->set_disable_timer_for_test(true);
+
+  // Case 1: the original trilinear filtering status if false.
+  EXPECT_FALSE(layer.cc_layer_for_testing()->trilinear_filtering());
+  animator->SetBrightness(1.0f);
+  animator->SetOpacity(1.0f);
+
+  // Start the brightness animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    animator->SetBrightness(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+
+  // Start the opacity animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    animator->SetOpacity(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+
+  // Finish the brightness animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+    EXPECT_FLOAT_EQ(0.0f, layer.layer_brightness());
+    EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+  }
+
+  // Finish the opacity animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+    EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+    EXPECT_FALSE(layer.cc_layer_for_testing()->trilinear_filtering());
+  }
+
+  // Case 2: the original original trilinear status if true.
+  layer.AddTrilinearFilteringRequest();
+  EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+  animator->SetBrightness(1.0f);
+  animator->SetOpacity(1.0f);
+
+  // Start the brightness animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    animator->SetBrightness(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+
+  // Start the opacity animation.
+  {
+    ScopedLayerAnimationSettings settings(animator.get());
+    settings.TrilinearFiltering();
+    animator->SetOpacity(0.0f);
+  }
+  EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+
+  // Finish the brightness animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::BRIGHTNESS);
+    EXPECT_FLOAT_EQ(0.0f, layer.layer_brightness());
+    EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+  }
+
+  // Finish the opacity animation.
+  {
+    animator->StopAnimatingProperty(LayerAnimationElement::OPACITY);
+    EXPECT_FLOAT_EQ(0.0f, layer.opacity());
+    EXPECT_TRUE(layer.cc_layer_for_testing()->trilinear_filtering());
+  }
+}
+
 // Tests that an observer added to a scoped settings object is still notified
 // when the object goes out of scope due to the animation being interrupted.
 TEST(LayerAnimatorTest, InterruptedImplicitAnimationObservers) {
@@ -2251,6 +2810,39 @@ TEST(LayerAnimatorTest, Color) {
             ColorToString(delegate.GetColorForAnimation()));
 }
 
+// Verifies temperature property is modified appropriately.
+TEST(LayerAnimatorTest, Temperature) {
+  TestLayerAnimationDelegate delegate;
+  scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator(&delegate));
+
+  float start_temperature = 0.0f;
+  float middle_temperature = 0.5f;
+  float target_temperature = 1.0f;
+
+  base::TimeDelta delta = base::TimeDelta::FromSeconds(1);
+
+  delegate.SetTemperatureFromAnimation(start_temperature);
+
+  animator->ScheduleAnimation(new LayerAnimationSequence(
+      LayerAnimationElement::CreateTemperatureElement(target_temperature,
+                                                      delta)));
+
+  EXPECT_TRUE(animator->is_animating());
+  EXPECT_EQ(start_temperature, delegate.GetTemperatureFromAnimation());
+
+  base::TimeTicks start_time = animator->last_step_time();
+
+  animator->Step(start_time + base::TimeDelta::FromMilliseconds(500));
+
+  EXPECT_TRUE(animator->is_animating());
+  EXPECT_EQ(middle_temperature, delegate.GetTemperatureFromAnimation());
+
+  animator->Step(start_time + base::TimeDelta::FromMilliseconds(1000));
+
+  EXPECT_FALSE(animator->is_animating());
+  EXPECT_EQ(target_temperature, delegate.GetTemperatureFromAnimation());
+}
+
 // Verifies SchedulePauseForProperties().
 TEST(LayerAnimatorTest, SchedulePauseForProperties) {
   scoped_refptr<LayerAnimator> animator(CreateDefaultTestAnimator());
@@ -2634,6 +3226,7 @@ TEST(LayerAnimatorTest, LayerMovedBetweenCompositorsDuringAnimation) {
   EXPECT_FALSE(compositor_2->layer_animator_collection()->HasActiveAnimators());
 
   Layer layer;
+  layer.SetOpacity(0.5f);
   root_1.Add(&layer);
   LayerAnimator* animator = layer.GetAnimator();
   EXPECT_FALSE(layer.cc_layer_for_testing()->HasTickingAnimationForTesting());
@@ -2674,6 +3267,7 @@ TEST(LayerAnimatorTest, ThreadedAnimationSurvivesIfLayerRemovedAdded) {
   compositor->SetRootLayer(&root);
 
   Layer layer;
+  layer.SetOpacity(0.5f);
   root.Add(&layer);
 
   LayerAnimator* animator = layer.GetAnimator();

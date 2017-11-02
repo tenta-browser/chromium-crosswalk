@@ -54,14 +54,10 @@ class CORE_EXPORT CSSStyleRule final : public CSSRule {
 
   DECLARE_VIRTUAL_TRACE();
 
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
-
  private:
   CSSStyleRule(StyleRule*, CSSStyleSheet*);
 
   CSSRule::Type type() const override { return kStyleRule; }
-
-  String GenerateSelectorText() const;
 
   Member<StyleRule> style_rule_;
   mutable Member<StyleRuleCSSStyleDeclaration> properties_cssom_wrapper_;

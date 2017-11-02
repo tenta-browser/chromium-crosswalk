@@ -14,7 +14,6 @@
 #include "chrome/browser/chromeos/login/signin/oauth2_login_verifier.h"
 #include "chrome/browser/chromeos/login/signin/oauth2_token_fetcher.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "google_apis/gaia/gaia_oauth_client.h"
 #include "google_apis/gaia/oauth2_token_service.h"
 #include "net/url_request/url_request_context_getter.h"
 
@@ -27,7 +26,6 @@ namespace chromeos {
 // This class is responsible for restoring authenticated web sessions out of
 // OAuth2 refresh tokens or pre-authenticated cookie jar.
 class OAuth2LoginManager : public KeyedService,
-                           public gaia::GaiaOAuthClient::Delegate,
                            public OAuth2LoginVerifier::Delegate,
                            public OAuth2TokenFetcher::Delegate,
                            public OAuth2TokenService::Observer {
@@ -133,7 +131,7 @@ class OAuth2LoginManager : public KeyedService,
   // This enum is used for an UMA histogram, and hence new items should only be
   // appended at the end.
   enum MergeVerificationOutcome {
-    POST_MERGE_UNDEFINED  = 0,
+    POST_MERGE_UNDEFINED = 0,
     POST_MERGE_SUCCESS = 1,
     POST_MERGE_NO_ACCOUNTS = 2,
     POST_MERGE_MISSING_PRIMARY_ACCOUNT = 3,
@@ -145,14 +143,6 @@ class OAuth2LoginManager : public KeyedService,
 
   // KeyedService implementation.
   void Shutdown() override;
-
-  // gaia::GaiaOAuthClient::Delegate overrides.
-  void OnRefreshTokenResponse(const std::string& access_token,
-                              int expires_in_seconds) override;
-  void OnGetUserInfoResponse(
-      std::unique_ptr<base::DictionaryValue> user_info) override;
-  void OnOAuthError() override;
-  void OnNetworkError(int response_code) override;
 
   // OAuth2LoginVerifier::Delegate overrides.
   void OnSessionMergeSuccess() override;
@@ -177,16 +167,13 @@ class OAuth2LoginManager : public KeyedService,
   ProfileOAuth2TokenService* GetTokenService();
 
   // Retrieves the primary account for |user_profile_|.
-  const std::string& GetPrimaryAccountId();
+  std::string GetPrimaryAccountId();
 
   // Records |refresh_token_| to token service. The associated account id is
   // assumed to be the primary account id of the user profile. If the primary
   // account id is not present, GetAccountInfoOfRefreshToken will be called to
   // retrieve the associated account info.
   void StoreOAuth2Token();
-
-  // Get the account info corresponding to the specified refresh token.
-  void GetAccountInfoOfRefreshToken(const std::string& refresh_token);
 
   // Update the token service and inform listeners of a new refresh token.
   void UpdateCredentials(const std::string& account_id);
@@ -224,9 +211,8 @@ class OAuth2LoginManager : public KeyedService,
 
   // Records |outcome| of merge verification check. |is_pre_merge| specifies
   // if this is pre or post merge session verification.
-  static void RecordCookiesCheckOutcome(
-      bool is_pre_merge,
-      MergeVerificationOutcome outcome);
+  static void RecordCookiesCheckOutcome(bool is_pre_merge,
+                                        MergeVerificationOutcome outcome);
 
   // Keeps the track if we have already reported OAuth2 token being loaded
   // by OAuth2TokenService.
@@ -240,7 +226,6 @@ class OAuth2LoginManager : public KeyedService,
 
   std::unique_ptr<OAuth2TokenFetcher> oauth2_token_fetcher_;
   std::unique_ptr<OAuth2LoginVerifier> login_verifier_;
-  std::unique_ptr<gaia::GaiaOAuthClient> account_info_fetcher_;
 
   // OAuth2 refresh token.
   std::string refresh_token_;

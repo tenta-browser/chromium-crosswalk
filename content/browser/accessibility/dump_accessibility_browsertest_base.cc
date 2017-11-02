@@ -23,7 +23,7 @@
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/accessibility/browser_accessibility_state_impl.h"
-#include "content/browser/frame_host/render_widget_host_view_child_frame.h"
+#include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
@@ -52,8 +52,14 @@ const char kSignalDiff[] = "*";
 // that represents a fully loaded web document with the given url.
 bool AccessibilityTreeContainsLoadedDocWithUrl(BrowserAccessibility* node,
                                                const std::string& url) {
-  if ((node->GetRole() == ui::AX_ROLE_WEB_AREA ||
-       node->GetRole() == ui::AX_ROLE_ROOT_WEB_AREA) &&
+  if (node->GetRole() == ui::AX_ROLE_ROOT_WEB_AREA &&
+      node->GetStringAttribute(ui::AX_ATTR_URL) == url) {
+    // Ensure the doc has finished loading and has a non-zero size.
+    return node->manager()->GetTreeData().loaded &&
+           (node->GetData().location.width() > 0 &&
+            node->GetData().location.height() > 0);
+  }
+  if (node->GetRole() == ui::AX_ROLE_WEB_AREA &&
       node->GetStringAttribute(ui::AX_ATTR_URL) == url) {
     // Ensure the doc has finished loading.
     return node->manager()->GetTreeData().loaded;
@@ -195,6 +201,12 @@ void DumpAccessibilityTestBase::RunTestForPlatform(
   BrowserAccessibilityStateImpl::GetInstance()->
       set_disable_hot_tracking_for_testing(true);
 
+  // Normally some accessibility events that would be fired are suppressed or
+  // delayed, depending on what has focus or the type of event. For testing,
+  // we want all events to fire immediately to make tests predictable and not
+  // flaky.
+  BrowserAccessibilityManager::NeverSuppressOrDelayEventsForTesting();
+
   NavigateToURL(shell(), GURL(url::kAboutBlankURL));
 
   std::string html_contents;
@@ -242,6 +254,7 @@ void DumpAccessibilityTestBase::RunTestForPlatform(
 
   // Parse filters and other directives in the test file.
   std::vector<std::string> wait_for;
+  filters_.clear();
   AddDefaultFilters(&filters_);
   ParseHtmlForExtraDirectives(html_contents, &filters_, &wait_for);
 
@@ -256,13 +269,13 @@ void DumpAccessibilityTestBase::RunTestForPlatform(
     // Load the url, then enable accessibility.
     NavigateToURL(shell(), url);
     AccessibilityNotificationWaiter accessibility_waiter(
-        web_contents, kAccessibilityModeComplete, ui::AX_EVENT_NONE);
+        web_contents, ui::kAXModeComplete, ui::AX_EVENT_NONE);
     accessibility_waiter.WaitForNotification();
   } else {
     // Enable accessibility, then load the test html and wait for the
     // "load complete" AX event.
     AccessibilityNotificationWaiter accessibility_waiter(
-        web_contents, kAccessibilityModeComplete, ui::AX_EVENT_LOAD_COMPLETE);
+        web_contents, ui::kAXModeComplete, ui::AX_EVENT_LOAD_COMPLETE);
     NavigateToURL(shell(), url);
     accessibility_waiter.WaitForNotification();
   }

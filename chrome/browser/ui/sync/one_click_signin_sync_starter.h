@@ -69,11 +69,6 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
     // to configure which data types to sync before sync is enabled.
     CONFIGURE_SYNC_FIRST,
 
-    // Starts the process of re-authenticating the user via SigninManager,
-    // and once completed, redirects the user to the settings page, but doesn't
-    // display the configure sync UI.
-    SHOW_SETTINGS_WITHOUT_CONFIGURE,
-
     // The process should be aborted because the undo button has been pressed.
     UNDO_SYNC
   };
@@ -124,6 +119,19 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
                             const GURL& continue_url,
                             Callback callback);
 
+  // Convenience method to create a sign-in sync starter for an account that
+  // is already available in the token service with the following properties:
+  // * sign-in is done in the current profile;
+  // * sync confirmation dialog is presented after sign-in.
+  //
+  // This is only available when DICE is enabled.
+  OneClickSigninSyncStarter(Profile* profile,
+                            Browser* browser,
+                            const std::string& gaia_id,
+                            const std::string& email,
+                            content::WebContents* web_contents,
+                            Callback callback);
+
   // chrome::BrowserListObserver override.
   void OnBrowserRemoved(Browser* browser) override;
 
@@ -163,7 +171,7 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
    public:
     SigninDialogDelegate(
         base::WeakPtr<OneClickSigninSyncStarter> sync_starter);
-    virtual ~SigninDialogDelegate();
+    ~SigninDialogDelegate() override;
     void OnCancelSignin() override;
     void OnContinueSignin() override;
     void OnSigninWithNewProfile() override;
@@ -220,25 +228,11 @@ class OneClickSigninSyncStarter : public SigninTracker::Observer,
 
   void FinishProfileSyncServiceSetup();
 
-  // Displays the settings UI and brings up the advanced sync settings
-  // dialog if |configure_sync| is true. The web contents provided to the
-  // constructor is used if it's showing a blank page and not about to be
-  // closed. Otherwise, a new tab or an existing settings tab is used.
-  void ShowSettingsPage(bool configure_sync);
-
-  // Displays a settings page in the provided web contents. |sub_page| can be
-  // empty to show the main settings page.
-  void ShowSettingsPageInWebContents(content::WebContents* contents,
-                                     const std::string& sub_page);
-
   // Shows the post-signin confirmation bubble. If |custom_message| is empty,
   // the default "You are signed in" message is displayed.
   void DisplayFinalConfirmationBubble(const base::string16& custom_message);
 
   void DisplayModalSyncConfirmationWindow();
-
-  // Loads the |continue_url_| in the current tab.
-  void LoadContinueUrl();
 
   Profile* profile_;
   Browser* browser_;

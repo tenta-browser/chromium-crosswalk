@@ -9,7 +9,9 @@
 
 #include <vector>
 
-namespace tracked_objects {
+#include "components/sync/syncable/directory.h"
+
+namespace base {
 class Location;
 }
 
@@ -28,11 +30,11 @@ void ChangeEntryIDAndUpdateChildren(BaseWriteTransaction* trans,
 bool IsLegalNewParent(BaseTransaction* trans, const Id& id, const Id& parentid);
 
 bool SyncAssert(bool condition,
-                const tracked_objects::Location& location,
+                const base::Location& location,
                 const char* msg,
                 BaseTransaction* trans);
 
-int GetUnsyncedEntries(BaseTransaction* trans, std::vector<int64_t>* handles);
+int GetUnsyncedEntries(BaseTransaction* trans, Directory::Metahandles* handles);
 
 }  // namespace syncable
 }  // namespace syncer

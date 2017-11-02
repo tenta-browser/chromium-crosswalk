@@ -23,8 +23,8 @@ InspectorTest.dumpIndexedDBTree = function()
                 InspectorTest.addResult("            (no indexes)");
                 continue;
             }
-            for (var j = 0; j < objectStoreTreeElement.childCount(); ++j) {
-                var indexTreeElement = objectStoreTreeElement.childAt(j);
+            for (var k = 0; k < objectStoreTreeElement.childCount(); ++k) {
+                var indexTreeElement = objectStoreTreeElement.childAt(k);
                 InspectorTest.addResult("            Index: " + indexTreeElement.title);
             }
         }
@@ -104,6 +104,18 @@ InspectorTest.createIndexedDBModel = function()
     var indexedDBModel = new Resources.IndexedDBModel(SDK.targetManager.mainTarget(), InspectorTest.securityOriginManager);
     indexedDBModel.enable();
     return indexedDBModel;
+};
+
+InspectorTest.createDatabaseAsync = function(databaseName) {
+    return InspectorTest.evaluateInPageAsync("createDatabaseAsync('" + databaseName + "')");
+};
+
+InspectorTest.createObjectStoreAsync = function(databaseName, objectStoreName, indexName, keyPath) {
+    return InspectorTest.evaluateInPageAsync("createObjectStoreAsync('" + databaseName + "', '" + objectStoreName + "', '" + indexName + "', '" + keyPath + "')");
+};
+
+InspectorTest.addIDBValueAsync = function(databaseName, objectStoreName, key, value) {
+    return InspectorTest.evaluateInPageAsync("addIDBValueAsync('" + databaseName + "', '" + objectStoreName + "', '" + key + "', '" + value + "')");
 };
 };
 
@@ -259,4 +271,64 @@ function addIDBValue(callback, databaseName, objectStoreName, value, key)
         request.onerror = onIndexedDBError;
         request.onsuccess = commitCallback;
     }
+}
+
+function createDatabaseAsync(databaseName) {
+    var callback;
+    var promise = new Promise((fulfill) => callback = fulfill);
+    var request = indexedDB.open(databaseName);
+    request.onerror = onIndexedDBError;
+    request.onsuccess = function(event) {
+        request.result.close();
+        callback();
+    }
+    return promise;
+}
+
+function createObjectStoreAsync(databaseName, objectStoreName, indexName, keyPath) {
+    var callback;
+    var promise = new Promise((fulfill) => callback = fulfill);
+    var request = indexedDB.open(databaseName);
+    request.onerror = onIndexedDBError;
+    request.onsuccess = function(event) {
+        var db = request.result;
+        var version = db.version;
+        db.close();
+
+        var upgradeRequest = indexedDB.open(databaseName, version + 1);
+
+        upgradeRequest.onerror = onIndexedDBError;
+        upgradeRequest.onupgradeneeded = function(e) {
+            var upgradeDb = e.target.result;
+            var store = upgradeDb.createObjectStore(objectStoreName, { keyPath: "test", autoIncrement: false });
+            store.createIndex(indexName, "test", { unique: false, multiEntry: false });
+            callback();
+        }
+        upgradeRequest.onsuccess = function(e) {
+            var upgradeDb = e.target.result;
+            upgradeDb.close();
+            callback();
+        }
+    }
+    return promise;
+}
+
+function addIDBValueAsync(databaseName, objectStoreName, key, value) {
+    var callback;
+    var promise = new Promise((fulfill) => callback = fulfill);
+    var request = indexedDB.open(databaseName);
+    request.onerror = onIndexedDBError;
+    request.onsuccess = function(event) {
+        var db = request.result;
+        var transaction = db.transaction(objectStoreName, "readwrite");
+        var store = transaction.objectStore(objectStoreName);
+        store.put({ test: key, testValue: value });
+
+        transaction.onerror = onIndexedDBError;
+        transaction.oncomplete = function() {
+            db.close();
+            callback();
+        };
+    }
+    return promise;
 }

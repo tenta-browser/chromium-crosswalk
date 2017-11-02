@@ -39,7 +39,9 @@ class APP_LIST_EXPORT FolderHeaderView : public views::View,
   void SetTextFocus();
 
   // Overridden from views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
+
+  views::View* GetFolderNameViewForTest() const;
 
  private:
   class FolderNameView;
@@ -57,6 +59,11 @@ class APP_LIST_EXPORT FolderHeaderView : public views::View,
 
   // Returns true if folder name is enabled, only for testing use.
   bool IsFolderNameEnabledForTest() const;
+
+  int GetMaxFolderNameWidth() const;
+
+  // Returns elided folder name from |folder_name|.
+  base::string16 GetElidedFolderName(const base::string16& folder_name) const;
 
   // views::View overrides:
   void Layout() override;
@@ -82,6 +89,7 @@ class APP_LIST_EXPORT FolderHeaderView : public views::View,
   FolderHeaderViewDelegate* delegate_;
 
   bool folder_name_visible_;
+  bool is_fullscreen_app_list_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(FolderHeaderView);
 };

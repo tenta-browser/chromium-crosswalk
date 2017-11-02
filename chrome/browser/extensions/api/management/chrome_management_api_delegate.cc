@@ -21,7 +21,6 @@
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
-#include "chrome/common/extensions/chrome_utility_extensions_messages.h"
 #include "chrome/common/extensions/extension_metrics.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/web_application_info.h"
@@ -36,7 +35,7 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/common/constants.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 
 namespace {
@@ -303,7 +302,7 @@ void ChromeManagementAPIDelegate::EnableExtension(
 void ChromeManagementAPIDelegate::DisableExtension(
     content::BrowserContext* context,
     const std::string& extension_id,
-    extensions::Extension::DisableReason disable_reason) const {
+    extensions::disable_reason::DisableReason disable_reason) const {
   extensions::ExtensionSystem::Get(context)
       ->extension_service()
       ->DisableExtension(extension_id, disable_reason);

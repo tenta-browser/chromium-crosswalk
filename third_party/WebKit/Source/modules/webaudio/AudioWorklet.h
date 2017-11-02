@@ -11,9 +11,9 @@
 
 namespace blink {
 
+class AudioWorkletMessagingProxy;
+class BaseAudioContext;
 class LocalFrame;
-class ThreadedWorkletMessagingProxy;
-class WorkletGlobalScopeProxy;
 
 class MODULES_EXPORT AudioWorklet final : public Worklet {
   WTF_MAKE_NONCOPYABLE(AudioWorklet);
@@ -22,19 +22,25 @@ class MODULES_EXPORT AudioWorklet final : public Worklet {
   static AudioWorklet* Create(LocalFrame*);
   ~AudioWorklet() override;
 
-  void Initialize() final;
-  bool IsInitialized() const final;
+  void RegisterContext(BaseAudioContext*);
+  void UnregisterContext(BaseAudioContext*);
 
-  WorkletGlobalScopeProxy* GetWorkletGlobalScopeProxy() const final;
+  AudioWorkletMessagingProxy* FindAvailableMessagingProxy();
 
   DECLARE_VIRTUAL_TRACE();
 
  private:
   explicit AudioWorklet(LocalFrame*);
 
-  // The proxy outlives the worklet as it is used to perform thread shutdown,
-  // it deletes itself once this has occurred.
-  ThreadedWorkletMessagingProxy* worklet_messaging_proxy_;
+  // Implements Worklet.
+  bool NeedsToCreateGlobalScope() final;
+  WorkletGlobalScopeProxy* CreateGlobalScope() final;
+
+  bool IsWorkletMessagingProxyCreated() const;
+
+  // AudioWorklet keeps the reference of all active BaseAudioContexts, so it
+  // can notify the contexts when a script is loaded in AudioWorkletGlobalScope.
+  HeapHashSet<Member<BaseAudioContext>> contexts_;
 };
 
 }  // namespace blink

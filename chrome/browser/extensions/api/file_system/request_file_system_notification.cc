@@ -11,7 +11,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/file_manager/volume_manager.h"
-#include "chrome/browser/extensions/extension_app_icon_loader.h"
+#include "chrome/browser/extensions/chrome_app_icon_loader.h"
 #include "chrome/grit/generated_resources.h"
 #include "extensions/common/extension.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -43,7 +43,6 @@ std::unique_ptr<Notification> CreateAutoGrantedNotification(
   const std::string notification_id =
       extension.id() + "-" + volume->volume_id();
   message_center::RichNotificationData data;
-  data.clickable = false;
 
   // TODO(mtomasz): Share this code with RequestFileSystemDialogView.
   const base::string16 display_name =
@@ -78,7 +77,7 @@ void RequestFileSystemNotification::ShowAutoGrantedNotification(
     bool writable) {
   DCHECK(profile);
   scoped_refptr<RequestFileSystemNotification>
-      request_file_system_notification = make_scoped_refptr(
+      request_file_system_notification = base::WrapRefCounted(
           new RequestFileSystemNotification(profile, extension));
   std::unique_ptr<message_center::Notification> notification(
       CreateAutoGrantedNotification(
@@ -104,7 +103,7 @@ RequestFileSystemNotification::RequestFileSystemNotification(
     Profile* profile,
     const extensions::Extension& extension)
     : icon_loader_(
-          new extensions::ExtensionAppIconLoader(profile, kIconSize, this)) {
+          new extensions::ChromeAppIconLoader(profile, kIconSize, this)) {
   icon_loader_->FetchImage(extension.id());
 }
 

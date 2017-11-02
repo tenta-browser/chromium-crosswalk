@@ -15,9 +15,12 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "cc/trees/layer_tree_frame_sink.h"
+#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/cursor_client.h"
@@ -28,11 +31,11 @@
 #include "ui/aura/client/window_stacking_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/layout_manager.h"
+#include "ui/aura/local/layer_tree_frame_sink_local.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_observer.h"
 #include "ui/aura/window_port.h"
-#include "ui/aura/window_port_local.h"
 #include "ui/aura/window_tracker.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/compositor/compositor.h"
@@ -46,12 +49,12 @@
 
 namespace aura {
 
-Window::Window(WindowDelegate* delegate, ui::wm::WindowType type)
+Window::Window(WindowDelegate* delegate, client::WindowType type)
     : Window(delegate, nullptr, type) {}
 
 Window::Window(WindowDelegate* delegate,
                std::unique_ptr<WindowPort> port,
-               ui::wm::WindowType type)
+               client::WindowType type)
     : port_owner_(std::move(port)),
       port_(port_owner_.get()),
       host_(nullptr),
@@ -62,7 +65,8 @@ Window::Window(WindowDelegate* delegate,
       visible_(false),
       id_(kInitialId),
       transparent_(false),
-      ignore_events_(false),
+      event_targeting_policy_(
+          ui::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS),
       // Don't notify newly added observers during notification. This causes
       // problems for code that adds an observer as part of an observer
       // notification (such as the workspace code).
@@ -148,7 +152,7 @@ void Window::Init(ui::LayerType layer_type) {
   Env::GetInstance()->NotifyWindowInitialized(this);
 }
 
-void Window::SetType(ui::wm::WindowType type) {
+void Window::SetType(client::WindowType type) {
   // Cannot change type after the window is initialized.
   DCHECK(!layer());
   type_ = type;
@@ -260,10 +264,11 @@ gfx::Rect Window::GetBoundsInScreen() const {
 void Window::SetTransform(const gfx::Transform& transform) {
   for (WindowObserver& observer : observers_)
     observer.OnWindowTransforming(this);
+  gfx::Transform old_transform = layer()->transform();
   layer()->SetTransform(transform);
+  port_->OnDidChangeTransform(old_transform, transform);
   for (WindowObserver& observer : observers_)
     observer.OnWindowTransformed(this);
-  NotifyAncestorWindowTransformed(this);
 }
 
 void Window::SetLayoutManager(LayoutManager* layout_manager) {
@@ -357,8 +362,7 @@ void Window::AddChild(Window* child) {
 
   port_->OnWillAddChild(child);
 
-  DCHECK(std::find(children_.begin(), children_.end(), child) ==
-      children_.end());
+  DCHECK(!base::ContainsValue(children_, child));
   if (child->parent())
     child->parent()->RemoveChildImpl(child, this);
 
@@ -466,6 +470,10 @@ gfx::NativeCursor Window::GetCursor(const gfx::Point& point) const {
   return delegate_ ? delegate_->GetCursor(point) : gfx::kNullCursor;
 }
 
+bool Window::ShouldRestackTransientChildren() {
+  return port_->ShouldRestackTransientChildren();
+}
+
 void Window::AddObserver(WindowObserver* observer) {
   observer->OnObservingWindow(this);
   observers_.AddObserver(observer);
@@ -478,6 +486,15 @@ void Window::RemoveObserver(WindowObserver* observer) {
 
 bool Window::HasObserver(const WindowObserver* observer) const {
   return observers_.HasObserver(observer);
+}
+
+void Window::SetEventTargetingPolicy(ui::mojom::EventTargetingPolicy policy) {
+  if (event_targeting_policy_ == policy)
+    return;
+
+  event_targeting_policy_ = policy;
+  if (port_)
+    port_->OnEventTargetingPolicyChanged();
 }
 
 bool Window::ContainsPointInRoot(const gfx::Point& point_in_root) const {
@@ -598,8 +615,10 @@ void* Window::GetNativeWindowProperty(const char* key) const {
   return reinterpret_cast<void*>(GetPropertyInternal(key, 0));
 }
 
-void Window::OnDeviceScaleFactorChanged(float device_scale_factor) {
-  port_->OnDeviceScaleFactorChanged(device_scale_factor);
+void Window::OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                        float new_device_scale_factor) {
+  port_->OnDeviceScaleFactorChanged(old_device_scale_factor,
+                                    new_device_scale_factor);
 }
 
 #if !defined(NDEBUG)
@@ -632,8 +651,7 @@ void Window::RemoveOrDestroyChildren() {
     if (child->owned_by_parent_) {
       delete child;
       // Deleting the child so remove it from out children_ list.
-      DCHECK(std::find(children_.begin(), children_.end(), child) ==
-             children_.end());
+      DCHECK(!base::ContainsValue(children_, child));
     } else {
       // Even if we can't delete the child, we still need to remove it from the
       // parent so that relevant bookkeeping (parent_ back-pointers etc) are
@@ -728,23 +746,11 @@ Window* Window::GetWindowForPoint(const gfx::Point& local_point,
                                   bool return_tightest,
                                   bool for_event_handling) {
   if (!IsVisible())
-    return NULL;
+    return nullptr;
 
   if ((for_event_handling && !HitTest(local_point)) ||
-      (!for_event_handling && !ContainsPoint(local_point)))
-    return NULL;
-
-  // Check if I should claim this event and not pass it to my children because
-  // the location is inside my hit test override area.  For details, see
-  // set_hit_test_bounds_override_inner().
-  if (for_event_handling && !hit_test_bounds_override_inner_.IsEmpty()) {
-    gfx::Rect inset_local_bounds(gfx::Point(), bounds().size());
-    inset_local_bounds.Inset(hit_test_bounds_override_inner_);
-    // We know we're inside the normal local bounds, so if we're outside the
-    // inset bounds we must be in the special hit test override area.
-    DCHECK(HitTest(local_point));
-    if (!inset_local_bounds.Contains(local_point))
-      return delegate_ ? this : NULL;
+      (!for_event_handling && !ContainsPoint(local_point))) {
+    return nullptr;
   }
 
   if (!return_tightest && delegate_)
@@ -756,15 +762,20 @@ Window* Window::GetWindowForPoint(const gfx::Point& local_point,
     Window* child = *it;
 
     if (for_event_handling) {
-      if (child->ignore_events_)
+      if (child->event_targeting_policy_ ==
+          ui::mojom::EventTargetingPolicy::NONE) {
         continue;
+      }
+
       // The client may not allow events to be processed by certain subtrees.
       client::EventClient* client = client::GetEventClient(GetRootWindow());
       if (client && !client->CanProcessEventsWithinSubtree(child))
         continue;
+
       if (delegate_ && !delegate_->ShouldDescendIntoChildForEventHandling(
-              child, local_point))
+                           child, local_point)) {
         continue;
+      }
     }
 
     gfx::Point point_in_child_coords(local_point);
@@ -772,11 +783,26 @@ Window* Window::GetWindowForPoint(const gfx::Point& local_point,
     Window* match = child->GetWindowForPoint(point_in_child_coords,
                                              return_tightest,
                                              for_event_handling);
-    if (match)
-      return match;
+    if (!match)
+      continue;
+
+    switch (child->event_targeting_policy_) {
+      case ui::mojom::EventTargetingPolicy::TARGET_ONLY:
+        if (child->delegate_)
+          return child;
+        break;
+      case ui::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS:
+        return match;
+      case ui::mojom::EventTargetingPolicy::DESCENDANTS_ONLY:
+        if (match != child)
+          return match;
+        break;
+      case ui::mojom::EventTargetingPolicy::NONE:
+        NOTREACHED();  // This case is handled early on.
+    }
   }
 
-  return delegate_ ? this : NULL;
+  return delegate_ ? this : nullptr;
 }
 
 void Window::RemoveChildImpl(Window* child, Window* new_parent) {
@@ -859,6 +885,7 @@ void Window::OnStackingChanged() {
 }
 
 void Window::NotifyRemovingFromRootWindow(Window* new_root) {
+  port_->OnWillRemoveWindowFromRootWindow();
   for (WindowObserver& observer : observers_)
     observer.OnWindowRemovingFromRootWindow(this, new_root);
   for (Window::Windows::const_iterator it = children_.begin();
@@ -868,6 +895,7 @@ void Window::NotifyRemovingFromRootWindow(Window* new_root) {
 }
 
 void Window::NotifyAddedToRootWindow() {
+  port_->OnWindowAddedToRootWindow();
   for (WindowObserver& observer : observers_)
     observer.OnWindowAddedToRootWindow(this);
   for (Window::Windows::const_iterator it = children_.begin();
@@ -975,15 +1003,6 @@ void Window::NotifyWindowVisibilityChangedUp(aura::Window* target,
   }
 }
 
-void Window::NotifyAncestorWindowTransformed(Window* source) {
-  for (WindowObserver& observer : observers_)
-    observer.OnAncestorWindowTransformed(source, this);
-  for (Window::Windows::const_iterator it = children_.begin();
-       it != children_.end(); ++it) {
-    (*it)->NotifyAncestorWindowTransformed(source);
-  }
-}
-
 bool Window::CleanupGestureState() {
   bool state_modified = false;
   state_modified |= ui::GestureRecognizer::Get()->CancelActiveTouches(this);
@@ -995,6 +1014,26 @@ bool Window::CleanupGestureState() {
     state_modified |= (*iter)->CleanupGestureState();
   }
   return state_modified;
+}
+
+std::unique_ptr<cc::LayerTreeFrameSink> Window::CreateLayerTreeFrameSink() {
+  return port_->CreateLayerTreeFrameSink();
+}
+
+viz::SurfaceId Window::GetSurfaceId() const {
+  return port_->GetSurfaceId();
+}
+
+void Window::AllocateLocalSurfaceId() {
+  port_->AllocateLocalSurfaceId();
+}
+
+const viz::LocalSurfaceId& Window::GetLocalSurfaceId() const {
+  return port_->GetLocalSurfaceId();
+}
+
+viz::FrameSinkId Window::GetFrameSinkId() const {
+  return port_->GetFrameSinkId();
 }
 
 void Window::OnPaintLayer(const ui::PaintContext& context) {
@@ -1020,6 +1059,11 @@ void Window::OnLayerBoundsChanged(const gfx::Rect& old_bounds) {
     delegate_->OnBoundsChanged(old_bounds, bounds_);
   for (auto& observer : observers_)
     observer.OnWindowBoundsChanged(this, old_bounds, bounds_);
+}
+
+void Window::OnLayerOpacityChanged(float old_opacity, float new_opacity) {
+  for (WindowObserver& observer : observers_)
+    observer.OnWindowOpacityChanged(this, old_opacity, new_opacity);
 }
 
 bool Window::CanAcceptEvent(const ui::Event& event) {
@@ -1070,6 +1114,18 @@ void Window::ConvertEventToTarget(ui::EventTarget* target,
                                   ui::LocatedEvent* event) {
   event->ConvertLocationToTarget(this,
                                  static_cast<Window*>(target));
+}
+
+std::unique_ptr<ui::Layer> Window::RecreateLayer() {
+  std::unique_ptr<ui::Layer> old_layer = LayerOwner::RecreateLayer();
+
+  // If a frame sink is attached to the window, then allocate a new surface
+  // id when layers are recreated, so the old layer contents are not affected
+  // by a frame sent to the frame sink.
+  if (GetFrameSinkId().is_valid() && old_layer)
+    AllocateLocalSurfaceId();
+
+  return old_layer;
 }
 
 void Window::UpdateLayerName() {

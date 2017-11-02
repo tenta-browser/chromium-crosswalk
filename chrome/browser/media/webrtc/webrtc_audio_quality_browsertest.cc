@@ -18,6 +18,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_audio.h"
 #include "chrome/browser/media/webrtc/webrtc_browsertest_base.h"
@@ -61,10 +62,12 @@ const int kMaxAgcSegmentDiffMs =
   200;
 #endif
 
-#if defined(OS_LINUX) || defined(OS_WIN) || defined(OS_MACOSX)
+#if defined(OS_LINUX) || defined(OS_MACOSX)
 #define MAYBE_WebRtcAudioQualityBrowserTest WebRtcAudioQualityBrowserTest
 #else
 // Not implemented on Android, ChromeOS etc.
+// Also disabled on Windows due to
+// https://bugs.chromium.org/p/chromium/issues/detail?id=677256
 #define MAYBE_WebRtcAudioQualityBrowserTest DISABLED_WebRtcAudioQualityBrowserTest
 #endif
 
@@ -661,9 +664,9 @@ void MAYBE_WebRtcAudioQualityBrowserTest::SetupAndRecordAudioCall(
 void MAYBE_WebRtcAudioQualityBrowserTest::TestWithFakeDeviceGetUserMedia(
     const std::string& constraints,
     const std::string& perf_modifier) {
-  if (OnWin8()) {
+  if (OnWin8OrHigher()) {
     // http://crbug.com/379798.
-    LOG(ERROR) << "This test is not implemented for Windows XP/Win8.";
+    LOG(ERROR) << "This test is not implemented for Win8 or higher.";
     return;
   }
 
@@ -681,14 +684,16 @@ void MAYBE_WebRtcAudioQualityBrowserTest::TestWithFakeDeviceGetUserMedia(
 
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcAudioQualityBrowserTest,
                        MANUAL_TestCallQualityWithAudioFromFakeDevice) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   TestWithFakeDeviceGetUserMedia(kAudioOnlyCallConstraints, "_getusermedia");
 }
 
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcAudioQualityBrowserTest,
                        MANUAL_TestCallQualityWithAudioFromWebAudio) {
-  if (OnWin8()) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
+  if (OnWin8OrHigher()) {
     // http://crbug.com/379798.
-    LOG(ERROR) << "This test is not implemented for Windows XP/Win8.";
+    LOG(ERROR) << "This test is not implemented for Win8 or higher.";
     return;
   }
   ASSERT_TRUE(test::HasReferenceFilesInCheckout());
@@ -761,9 +766,9 @@ void MAYBE_WebRtcAudioQualityBrowserTest::TestAutoGainControl(
     const base::FilePath::StringType& reference_filename,
     const std::string& constraints,
     const std::string& perf_modifier) {
-  if (OnWin8()) {
+  if (OnWin8OrHigher()) {
     // http://crbug.com/379798.
-    LOG(ERROR) << "This test is not implemented for Windows XP/Win8.";
+    LOG(ERROR) << "This test is not implemented for Win8 or higher.";
     return;
   }
   base::FilePath reference_file =
@@ -801,6 +806,7 @@ void MAYBE_WebRtcAudioQualityBrowserTest::TestAutoGainControl(
 // The AGC should apply non-zero gain here.
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcAudioQualityBrowserTest,
                        MANUAL_TestAutoGainControlOnLowAudio) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   ASSERT_NO_FATAL_FAILURE(TestAutoGainControl(
       kReferenceFile, kAudioOnlyCallConstraints, "_with_agc"));
 }
@@ -808,6 +814,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcAudioQualityBrowserTest,
 // Since the AGC is off here there should be no gain at all.
 IN_PROC_BROWSER_TEST_F(MAYBE_WebRtcAudioQualityBrowserTest,
                        MANUAL_TestAutoGainIsOffWithAudioProcessingOff) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   const char* kAudioCallWithoutAudioProcessing =
       "{audio: { mandatory: { echoCancellation: false } } }";
   ASSERT_NO_FATAL_FAILURE(TestAutoGainControl(

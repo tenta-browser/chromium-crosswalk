@@ -19,7 +19,6 @@
 #include "gin/function_template.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "v8/include/v8.h"
@@ -105,7 +104,7 @@ void SandboxStatusExtension::GetSandboxStatus(gin::Arguments* args) {
       base::MakeUnique<v8::Global<v8::Function>>(args->isolate(), callback);
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock(),
+      FROM_HERE, {base::MayBlock()},
       base::Bind(&SandboxStatusExtension::ReadSandboxStatus, this),
       base::Bind(&SandboxStatusExtension::RunCallback, this,
                  base::Passed(&global_callback)));
@@ -148,10 +147,8 @@ void SandboxStatusExtension::RunCallback(
   v8::Local<v8::Function> callback_local =
       v8::Local<v8::Function>::New(isolate, *callback);
 
-  std::unique_ptr<content::V8ValueConverter> converter(
-      content::V8ValueConverter::create());
-
-  v8::Local<v8::Value> argv[] = {converter->ToV8Value(status.get(), context)};
+  v8::Local<v8::Value> argv[] = {
+      content::V8ValueConverter::Create()->ToV8Value(status.get(), context)};
   render_frame()->GetWebFrame()->CallFunctionEvenIfScriptDisabled(
       callback_local, v8::Object::New(isolate), 1, argv);
 }

@@ -4,8 +4,8 @@
 
 #include "core/layout/LayoutProgress.h"
 
-#include "core/HTMLNames.h"
 #include "core/html/HTMLElement.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutTestHelper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -24,7 +24,7 @@ TEST_F(LayoutProgressTest, AnimationScheduling) {
       "<progress id=\"progressElement\" value=0.3 max=1.0></progress>");
   GetDocument().View()->UpdateAllLifecyclePhases();
   Element* progress_element =
-      GetDocument().GetElementById(AtomicString("progressElement"));
+      GetDocument().getElementById(AtomicString("progressElement"));
   LayoutProgress* layout_progress =
       ToLayoutProgress(progress_element->GetLayoutObject());
 

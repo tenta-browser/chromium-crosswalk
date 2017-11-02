@@ -7,6 +7,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/views/view.h"
 
@@ -21,12 +22,13 @@ class VIEWS_EXPORT ProgressBar : public View, public gfx::AnimationDelegate {
  public:
   // The preferred height parameter makes it easier to use a ProgressBar with
   // layout managers that size to preferred size.
-  explicit ProgressBar(int preferred_height = 5);
+  explicit ProgressBar(int preferred_height = 5,
+                       bool allow_round_corner = true);
   ~ProgressBar() override;
 
   // Overridden from View:
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   const char* GetClassName() const override;
   void OnPaint(gfx::Canvas* canvas) override;
 
@@ -36,12 +38,14 @@ class VIEWS_EXPORT ProgressBar : public View, public gfx::AnimationDelegate {
   // be displayed with an infinite loading animation.
   void SetValue(double value);
 
- protected:
   // The color of the progress portion.
   SkColor GetForegroundColor() const;
+  void set_foreground_color(SkColor color) { foreground_color_ = color; }
   // The color of the portion that displays potential progress.
   SkColor GetBackgroundColor() const;
+  void set_background_color(SkColor color) { background_color_ = color; }
 
+ protected:
   int preferred_height() const { return preferred_height_; }
 
  private:
@@ -59,6 +63,11 @@ class VIEWS_EXPORT ProgressBar : public View, public gfx::AnimationDelegate {
 
   // In DP, the preferred height of this progress bar.
   const int preferred_height_;
+
+  const bool allow_round_corner_;
+
+  base::Optional<SkColor> foreground_color_;
+  base::Optional<SkColor> background_color_;
 
   std::unique_ptr<gfx::LinearAnimation> indeterminate_bar_animation_;
 

@@ -5,13 +5,11 @@
 #include "chrome/browser/ui/webui/webapks_ui.h"
 
 #include <string>
-#include <unordered_set>
 
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/webapks_handler.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/webapks_ui_resources.h"
-#include "components/grit/components_resources.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 
@@ -26,7 +24,7 @@ WebUIDataSource* CreateWebApksUIDataSource() {
   html_source->AddResourcePath("webapks.js", IDR_WEBAPKS_UI_JS);
   html_source->AddResourcePath("about_webapks.css", IDR_WEBAPKS_UI_CSS);
   html_source->SetDefaultResource(IDR_WEBAPKS_UI_HTML);
-  html_source->UseGzip(std::unordered_set<std::string>());
+  html_source->UseGzip();
 
   return html_source;
 }

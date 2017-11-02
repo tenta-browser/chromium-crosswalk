@@ -303,7 +303,7 @@ to binder function:
 
 ``` cpp
 void BindFrobinator(mojom::FrobinatorRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<FrobinatorImpl>, std::move(request));
+  mojo::MakeStrongBinding(std::make_unique<FrobinatorImpl>, std::move(request));
 }
 
 // |registry| will hereby handle all incoming requests for "mojom::Frobinator"
@@ -548,19 +548,7 @@ the wire format used is defined entirely by `IPC::ParamTraits<T>` for whatever
 `foo::mojom::MyGiganticStructure` to `foo::MyGiganticStructure`, your typemap
 must point to some header which defines
 `IPC::ParamTraits<foo::MyGiganticStructure>`.
-
-Note that if your `ParamTraits` are defined manually (*i.e.* not by invocation
-of `IPC_STRUCT_TRAITS*` macros) you must also ensure that they define the new
-`GetSize` method:
-
-``` cpp
-static void GetSize(base::PickleSizer* sizer, const param_type& p) {
-  // ...
-}
 ```
-
-`base::PickleSizer` has an interface analogous to `base::Pickle`, except that it
-merely accumulates a byte count rather than accumulating serialized data.
 
 There are several examples of this traits implementation in common IPC traits
 defined [here](https://code.google.com/p/chromium/codesearch#chromium/src/ipc/ipc_message_utils.h).
@@ -604,7 +592,7 @@ and add a typemap like [url_request.typemap](https://cs.chromium.org/chromium/sr
 to define the mapping:
 
 ```
-mojom = "//content/common/url_loader.mojom"
+mojom = "//content/public/common/url_loader.mojom"
 public_headers = [ "//content/common/resource_request.h" ]
 traits_headers = [ "//content/common/resource_messages.h" ]
 ...

@@ -5,6 +5,8 @@
 #ifndef THIRD_PARTY_WEBKIT_SOURCE_PLATFORM_SCHEDULER_RENDERER_WEBTHREAD_IMPL_FOR_RENDERER_SCHEDULER_H_
 #define THIRD_PARTY_WEBKIT_SOURCE_PLATFORM_SCHEDULER_RENDERER_WEBTHREAD_IMPL_FOR_RENDERER_SCHEDULER_H_
 
+#include "base/message_loop/message_loop.h"
+#include "platform/PlatformExport.h"
 #include "platform/wtf/RefPtr.h"
 #include "public/platform/scheduler/child/webthread_base.h"
 
@@ -18,8 +20,7 @@ class RendererSchedulerImpl;
 class WebSchedulerImpl;
 class WebTaskRunnerImpl;
 
-class BLINK_PLATFORM_EXPORT WebThreadImplForRendererScheduler
-    : public WebThreadBase {
+class PLATFORM_EXPORT WebThreadImplForRendererScheduler : public WebThreadBase {
  public:
   explicit WebThreadImplForRendererScheduler(RendererSchedulerImpl* scheduler);
   ~WebThreadImplForRendererScheduler() override;
@@ -30,7 +31,7 @@ class BLINK_PLATFORM_EXPORT WebThreadImplForRendererScheduler
   WebTaskRunner* GetWebTaskRunner() override;
 
   // WebThreadBase implementation.
-  base::SingleThreadTaskRunner* GetTaskRunner() const override;
+  SingleThreadTaskRunnerRefPtr GetTaskRunner() const override;
   SingleThreadIdleTaskRunner* GetIdleTaskRunner() const override;
   void Init() override;
 

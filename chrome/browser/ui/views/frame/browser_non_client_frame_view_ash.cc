@@ -11,14 +11,14 @@
 #include "ash/frame/default_header_painter.h"
 #include "ash/frame/frame_border_hit_test.h"
 #include "ash/frame/header_painter_util.h"
+#include "ash/public/cpp/app_types.h"
 #include "ash/shell.h"
-#include "ash/wm_window.h"
-#include "base/feature_list.h"
-#include "build/build_config.h"
+#include "ash/wm/window_util.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
+#include "chrome/browser/ui/ash/tablet_mode_client.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/extensions/hosted_app_browser_controller.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/frame/browser_frame.h"
 #include "chrome/browser/ui/views/frame/browser_header_painter_ash.h"
@@ -29,8 +29,6 @@
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/browser/web_applications/web_app.h"
-#include "chrome/common/chrome_features.h"
-#include "chrome/grit/theme_resources.h"
 #include "content/public/browser/web_contents.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/accessibility/ax_node_data.h"
@@ -38,19 +36,11 @@
 #include "ui/aura/window.h"
 #include "ui/base/hit_test.h"
 #include "ui/base/layout.h"
-#include "ui/base/theme_provider.h"
-#include "ui/compositor/layer_animator.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/gfx/scoped_canvas.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
-
-#if defined(OS_CHROMEOS)
-#include "ash/shared/app_types.h"
-#endif
 
 namespace {
 
@@ -75,12 +65,14 @@ BrowserNonClientFrameViewAsh::BrowserNonClientFrameViewAsh(
     : BrowserNonClientFrameView(frame, browser_view),
       caption_button_container_(nullptr),
       window_icon_(nullptr) {
-  ash::WmWindow::Get(frame->GetNativeWindow())
-      ->InstallResizeHandleWindowTargeter(nullptr);
+  ash::wm::InstallResizeHandleWindowTargeterForWindow(frame->GetNativeWindow(),
+                                                      nullptr);
   ash::Shell::Get()->AddShellObserver(this);
 }
 
 BrowserNonClientFrameViewAsh::~BrowserNonClientFrameViewAsh() {
+  if (TabletModeClient::Get())
+    TabletModeClient::Get()->RemoveObserver(this);
   ash::Shell::Get()->RemoveShellObserver(this);
 }
 
@@ -103,11 +95,9 @@ void BrowserNonClientFrameViewAsh::Init() {
     header_painter->Init(frame(), this, caption_button_container_);
     if (window_icon_)
       header_painter->UpdateLeftHeaderView(window_icon_);
-    if (base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
-      // For non app (i.e. WebUI) windows (e.g. Settings) use MD frame color.
-      if (!browser_view()->browser()->is_app())
-        header_painter->SetFrameColors(kMdWebUIFrameColor, kMdWebUIFrameColor);
-    }
+    // For non app (i.e. WebUI) windows (e.g. Settings) use MD frame color.
+    if (!browser_view()->browser()->is_app())
+      header_painter->SetFrameColors(kMdWebUIFrameColor, kMdWebUIFrameColor);
   } else {
     BrowserHeaderPainterAsh* header_painter = new BrowserHeaderPainterAsh;
     header_painter_.reset(header_painter);
@@ -115,7 +105,6 @@ void BrowserNonClientFrameViewAsh::Init() {
                          caption_button_container_);
   }
 
-#if defined(OS_CHROMEOS)
   if (browser_view()->browser()->is_app()) {
     frame()->GetNativeWindow()->SetProperty(
         aura::client::kAppType, static_cast<int>(ash::AppType::CHROME_APP));
@@ -123,7 +112,10 @@ void BrowserNonClientFrameViewAsh::Init() {
     frame()->GetNativeWindow()->SetProperty(
         aura::client::kAppType, static_cast<int>(ash::AppType::BROWSER));
   }
-#endif
+
+  // TabletModeClient may not be initialized during unit tests.
+  if (TabletModeClient::Get())
+    TabletModeClient::Get()->AddObserver(this);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -173,6 +165,17 @@ int BrowserNonClientFrameViewAsh::GetThemeBackgroundXInset() const {
 void BrowserNonClientFrameViewAsh::UpdateThrobber(bool running) {
   if (window_icon_)
     window_icon_->Update();
+}
+
+void BrowserNonClientFrameViewAsh::UpdateMinimumSize() {
+  gfx::Size min_size = GetMinimumSize();
+  aura::Window* frame_window = frame()->GetNativeWindow();
+  const gfx::Size* previous_min_size =
+      frame_window->GetProperty(aura::client::kMinimumSize);
+  if (!previous_min_size || *previous_min_size != min_size) {
+    frame_window->SetProperty(aura::client::kMinimumSize,
+                              new gfx::Size(min_size));
+  }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -325,21 +328,52 @@ void BrowserNonClientFrameViewAsh::OnOverviewModeEnded() {
   caption_button_container_->SetVisible(true);
 }
 
-void BrowserNonClientFrameViewAsh::OnMaximizeModeStarted() {
-  caption_button_container_->UpdateSizeButtonVisibility();
-  InvalidateLayout();
-  frame()->client_view()->InvalidateLayout();
-  frame()->GetRootView()->Layout();
-}
+///////////////////////////////////////////////////////////////////////////////
+// ash::mojom::TabletModeClient:
 
-void BrowserNonClientFrameViewAsh::OnMaximizeModeEnded() {
-  OnMaximizeModeStarted();
+void BrowserNonClientFrameViewAsh::OnTabletModeToggled(bool enabled) {
+  caption_button_container_->UpdateSizeButtonVisibility();
+
+  if (enabled) {
+    // Enter immersive mode if the feature is enabled and the widget is not
+    // already in fullscreen mode. Popups that are not activated but not
+    // minimized are still put in immersive mode, since they may still be
+    // visible but not activated due to something transparent and/or not
+    // fullscreen (ie. fullscreen launcher).
+    if (TabletModeClient::Get()->auto_hide_title_bars() &&
+        !frame()->IsFullscreen() && !browser_view()->IsBrowserTypeNormal() &&
+        !frame()->IsMinimized()) {
+      browser_view()->immersive_mode_controller()->SetEnabled(true);
+      return;
+    }
+  } else {
+    // Exit immersive mode if the feature is enabled and the widget is not in
+    // fullscreen mode.
+    if (TabletModeClient::Get()->auto_hide_title_bars() &&
+        !frame()->IsFullscreen() && !browser_view()->IsBrowserTypeNormal()) {
+      browser_view()->immersive_mode_controller()->SetEnabled(false);
+      return;
+    }
+  }
+
+  InvalidateLayout();
+  // Can be null in tests.
+  if (frame()->client_view())
+    frame()->client_view()->InvalidateLayout();
+  if (frame()->GetRootView())
+    frame()->GetRootView()->Layout();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // TabIconViewModel:
 
 bool BrowserNonClientFrameViewAsh::ShouldTabIconViewAnimate() const {
+  // Hosted apps use their app icon and shouldn't show a throbber.
+  if (extensions::HostedAppBrowserController::IsForExperimentalHostedAppBrowser(
+          browser_view()->browser())) {
+    return false;
+  }
+
   // This function is queried during the creation of the window as the
   // TabIconView we host is initialized, so we need to null check the selected
   // WebContents because in this condition there is not yet a selected tab.
@@ -392,10 +426,6 @@ bool BrowserNonClientFrameViewAsh::UsePackagedAppHeaderStyle() const {
 
 void BrowserNonClientFrameViewAsh::LayoutProfileIndicatorIcon() {
   DCHECK(profile_indicator_icon());
-#if !defined(OS_CHROMEOS)
-  // ChromeOS shows avatar on V1 app.
-  DCHECK(browser_view()->IsTabStripVisible());
-#endif
 
   const gfx::ImageSkia incognito_icon = GetIncognitoAvatarIcon();
   const int avatar_bottom = GetTopInset(false) +
@@ -419,43 +449,4 @@ bool BrowserNonClientFrameViewAsh::ShouldPaint() const {
       browser_view()->immersive_mode_controller();
   return immersive_mode_controller->IsEnabled() &&
          immersive_mode_controller->IsRevealed();
-}
-
-void BrowserNonClientFrameViewAsh::PaintToolbarBackground(gfx::Canvas* canvas) {
-  gfx::Rect toolbar_bounds(browser_view()->GetToolbarBounds());
-  if (toolbar_bounds.IsEmpty())
-    return;
-  gfx::Point toolbar_origin(toolbar_bounds.origin());
-  View::ConvertPointToTarget(browser_view(), this, &toolbar_origin);
-  toolbar_bounds.set_origin(toolbar_origin);
-  const ui::ThemeProvider* tp = GetThemeProvider();
-
-  // Background.
-  if (tp->HasCustomImage(IDR_THEME_TOOLBAR)) {
-    const int bg_y = GetTopInset(false) + GetLayoutInsets(TAB).top();
-    const int x = toolbar_bounds.x();
-    const int y = toolbar_bounds.y();
-    canvas->TileImageInt(*tp->GetImageSkiaNamed(IDR_THEME_TOOLBAR),
-                         x + GetThemeBackgroundXInset(), y - bg_y, x, y,
-                         toolbar_bounds.width(), toolbar_bounds.height());
-  } else {
-    canvas->FillRect(toolbar_bounds,
-                     tp->GetColor(ThemeProperties::COLOR_TOOLBAR));
-  }
-
-  // Top stroke.
-  gfx::ScopedCanvas scoped_canvas(canvas);
-  gfx::Rect tabstrip_bounds(GetBoundsForTabStrip(browser_view()->tabstrip()));
-  tabstrip_bounds.set_x(GetMirroredXForRect(tabstrip_bounds));
-  canvas->ClipRect(tabstrip_bounds, SkClipOp::kDifference);
-  const gfx::Rect separator_rect(toolbar_bounds.x(), tabstrip_bounds.bottom(),
-                                 toolbar_bounds.width(), 0);
-  BrowserView::Paint1pxHorizontalLine(canvas, GetToolbarTopSeparatorColor(),
-                                      separator_rect, true);
-
-  // Toolbar/content separator.
-  toolbar_bounds.Inset(kClientEdgeThickness, 0);
-  BrowserView::Paint1pxHorizontalLine(
-      canvas, tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BOTTOM_SEPARATOR),
-      toolbar_bounds, true);
 }

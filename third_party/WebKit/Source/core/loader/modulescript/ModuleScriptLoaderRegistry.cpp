@@ -16,13 +16,12 @@ ModuleScriptLoader* ModuleScriptLoaderRegistry::Fetch(
     const ModuleScriptFetchRequest& request,
     ModuleGraphLevel level,
     Modulator* modulator,
-    ResourceFetcher* fetcher,
     ModuleScriptLoaderClient* client) {
   ModuleScriptLoader* loader =
       ModuleScriptLoader::Create(modulator, this, client);
   DCHECK(loader->IsInitialState());
   active_loaders_.insert(loader);
-  loader->Fetch(request, fetcher, level);
+  loader->Fetch(request, level);
   return loader;
 }
 
@@ -30,7 +29,7 @@ void ModuleScriptLoaderRegistry::ReleaseFinishedLoader(
     ModuleScriptLoader* loader) {
   DCHECK(loader->HasFinished());
 
-  auto it = active_loaders_.Find(loader);
+  auto it = active_loaders_.find(loader);
   DCHECK_NE(it, active_loaders_.end());
   active_loaders_.erase(it);
 }

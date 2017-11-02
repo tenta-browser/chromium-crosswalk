@@ -34,9 +34,6 @@ from xml.dom import minidom
 import action_utils
 import print_style
 
-sys.path.insert(1, os.path.join(sys.path[0], '..', '..', 'python'))
-from google import path_utils
-
 # Import the metrics/common module for pretty print xml.
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'common'))
 import presubmit_util
@@ -158,7 +155,7 @@ INPUT_METHOD_IDS = (
 )
 
 # The path to the root of the repository.
-REPOSITORY_ROOT = os.path.join(path_utils.ScriptDir(), '..', '..', '..')
+REPOSITORY_ROOT = os.path.join(os.path.dirname(__file__), '..', '..', '..')
 
 number_of_files_total = 0
 
@@ -622,9 +619,9 @@ def _CreateActionTag(doc, action_name, action_object):
 
   Format of an action tag:
   <action name="name" not_user_triggered="true">
+    <obsolete>Deprecated.</obsolete>
     <owner>Owner</owner>
     <description>Description.</description>
-    <obsolete>Deprecated.</obsolete>
   </action>
 
   not_user_triggered is an optional attribute. If set, it implies that the
@@ -653,6 +650,13 @@ def _CreateActionTag(doc, action_name, action_object):
   if action_object and action_object.not_user_triggered:
     action_dom.setAttribute('not_user_triggered', 'true')
 
+  # Create obsolete tag.
+  if action_object and action_object.obsolete:
+    obsolete_dom = doc.createElement('obsolete')
+    action_dom.appendChild(obsolete_dom)
+    obsolete_dom.appendChild(doc.createTextNode(
+        action_object.obsolete))
+
   # Create owner tag.
   if action_object and action_object.owners:
     # If owners for this action is not None, use the stored value. Otherwise,
@@ -678,13 +682,6 @@ def _CreateActionTag(doc, action_name, action_object):
   else:
     description_dom.appendChild(doc.createTextNode(
         TAGS.get('description', '')))
-
-  # Create obsolete tag.
-  if action_object and action_object.obsolete:
-    obsolete_dom = doc.createElement('obsolete')
-    action_dom.appendChild(obsolete_dom)
-    obsolete_dom.appendChild(doc.createTextNode(
-        action_object.obsolete))
 
   return action_dom
 

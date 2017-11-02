@@ -31,12 +31,11 @@
 #include "core/frame/ContentSettingsClient.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/VisualViewport.h"
-#include "core/html/HTMLFormElement.h"
 #include "core/html/forms/ColorChooser.h"
 #include "core/html/forms/DateTimeChooser.h"
+#include "core/html/forms/FileChooser.h"
+#include "core/html/forms/HTMLFormElement.h"
 #include "core/loader/DocumentLoader.h"
-#include "platform/FileChooser.h"
-#include "platform/FrameViewBase.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebApplicationCacheHost.h"
@@ -72,28 +71,55 @@ class EmptyPopupMenu : public PopupMenu {
 class EmptyFrameScheduler : public WebFrameScheduler {
  public:
   EmptyFrameScheduler() { DCHECK(IsMainThread()); }
+
+  RefPtr<WebTaskRunner> LoadingTaskRunner() override {
+    return Platform::Current()->MainThread()->GetWebTaskRunner();
+  }
+  RefPtr<WebTaskRunner> LoadingControlTaskRunner() override {
+    return Platform::Current()->MainThread()->GetWebTaskRunner();
+  }
+  RefPtr<WebTaskRunner> ThrottleableTaskRunner() override {
+    return Platform::Current()->MainThread()->GetWebTaskRunner();
+  }
+  RefPtr<WebTaskRunner> DeferrableTaskRunner() override {
+    return Platform::Current()->MainThread()->GetWebTaskRunner();
+  }
+  RefPtr<WebTaskRunner> PausableTaskRunner() override {
+    return Platform::Current()->MainThread()->GetWebTaskRunner();
+  }
+  RefPtr<WebTaskRunner> UnpausableTaskRunner() override {
+    return Platform::Current()->MainThread()->GetWebTaskRunner();
+  }
+
+  void AddThrottlingObserver(ObserverType, Observer*) override {}
+  void RemoveThrottlingObserver(ObserverType, Observer*) override {}
   void SetFrameVisible(bool) override {}
-  RefPtr<WebTaskRunner> LoadingTaskRunner() override;
-  RefPtr<WebTaskRunner> TimerTaskRunner() override;
-  RefPtr<WebTaskRunner> UnthrottledTaskRunner() override;
-  RefPtr<WebTaskRunner> SuspendableTaskRunner() override;
+  bool IsFrameVisible() const override { return false; }
+  void SetPageVisible(bool) override {}
+  bool IsPageVisible() const override { return false; }
+  void SetPaused(bool) override {}
+  void SetCrossOrigin(bool) override {}
+  bool IsCrossOrigin() const override { return false; }
+  WebFrameScheduler::FrameType GetFrameType() const override {
+    return WebFrameScheduler::FrameType::kSubframe;
+  }
+  WebViewScheduler* GetWebViewScheduler() override { return nullptr; }
+  void DidStartLoading(unsigned long identifier) override {}
+  void DidStopLoading(unsigned long identifier) override {}
+  void WillNavigateBackForwardSoon() override {}
+  void DidStartProvisionalLoad(bool is_main_frame) override {}
+  void DidFailProvisionalLoad() override {}
+  void DidCommitProvisionalLoad(bool is_web_history_inert_commit,
+                                bool is_reload,
+                                bool is_main_frame) override {}
+  void SetDocumentParsingInBackground(
+      bool background_parsing_enabled) override {}
+  void OnFirstMeaningfulPaint() override {}
+  std::unique_ptr<ActiveConnectionHandle> OnActiveConnectionCreated() override {
+    return nullptr;
+  }
+  bool IsExemptFromThrottling() const override { return false; }
 };
-
-RefPtr<WebTaskRunner> EmptyFrameScheduler::LoadingTaskRunner() {
-  return Platform::Current()->MainThread()->GetWebTaskRunner();
-}
-
-RefPtr<WebTaskRunner> EmptyFrameScheduler::TimerTaskRunner() {
-  return Platform::Current()->MainThread()->GetWebTaskRunner();
-}
-
-RefPtr<WebTaskRunner> EmptyFrameScheduler::UnthrottledTaskRunner() {
-  return Platform::Current()->MainThread()->GetWebTaskRunner();
-}
-
-RefPtr<WebTaskRunner> EmptyFrameScheduler::SuspendableTaskRunner() {
-  return Platform::Current()->MainThread()->GetWebTaskRunner();
-}
 
 PopupMenu* EmptyChromeClient::OpenPopupMenu(LocalFrame&, HTMLSelectElement&) {
   return new EmptyPopupMenu();
@@ -113,7 +139,7 @@ DateTimeChooser* EmptyChromeClient::OpenDateTimeChooser(
 
 void EmptyChromeClient::OpenTextDataListChooser(HTMLInputElement&) {}
 
-void EmptyChromeClient::OpenFileChooser(LocalFrame*, PassRefPtr<FileChooser>) {}
+void EmptyChromeClient::OpenFileChooser(LocalFrame*, RefPtr<FileChooser>) {}
 
 void EmptyChromeClient::AttachRootGraphicsLayer(GraphicsLayer* layer,
                                                 LocalFrame* local_root) {
@@ -128,17 +154,20 @@ String EmptyChromeClient::AcceptLanguages() {
 }
 
 std::unique_ptr<WebFrameScheduler> EmptyChromeClient::CreateFrameScheduler(
-    BlameContext*) {
+    BlameContext* blame_context,
+    WebFrameScheduler::FrameType frame_type) {
   return WTF::MakeUnique<EmptyFrameScheduler>();
 }
 
 NavigationPolicy EmptyLocalFrameClient::DecidePolicyForNavigation(
     const ResourceRequest&,
+    Document* origin_document,
     DocumentLoader*,
     NavigationType,
     NavigationPolicy,
     bool,
     bool,
+    WebTriggeringEventInfo,
     HTMLFormElement*,
     ContentSecurityPolicyDisposition) {
   return kNavigationPolicyIgnore;
@@ -159,13 +188,12 @@ DocumentLoader* EmptyLocalFrameClient::CreateDocumentLoader(
                                 client_redirect_policy);
 }
 
-LocalFrame* EmptyLocalFrameClient::CreateFrame(const FrameLoadRequest&,
-                                               const AtomicString&,
+LocalFrame* EmptyLocalFrameClient::CreateFrame(const AtomicString&,
                                                HTMLFrameOwnerElement*) {
   return nullptr;
 }
 
-PluginView* EmptyLocalFrameClient::CreatePlugin(HTMLPlugInElement*,
+PluginView* EmptyLocalFrameClient::CreatePlugin(HTMLPlugInElement&,
                                                 const KURL&,
                                                 const Vector<String>&,
                                                 const Vector<String>&,
@@ -178,7 +206,8 @@ PluginView* EmptyLocalFrameClient::CreatePlugin(HTMLPlugInElement*,
 std::unique_ptr<WebMediaPlayer> EmptyLocalFrameClient::CreateWebMediaPlayer(
     HTMLMediaElement&,
     const WebMediaPlayerSource&,
-    WebMediaPlayerClient*) {
+    WebMediaPlayerClient*,
+    WebLayerTreeView*) {
   return nullptr;
 }
 
@@ -212,5 +241,10 @@ EmptyLocalFrameClient::CreateApplicationCacheHost(
 }
 
 EmptyRemoteFrameClient::EmptyRemoteFrameClient() = default;
+
+bool EmptyContextMenuClient::ShowContextMenu(const ContextMenu*,
+                                             WebMenuSourceType source_type) {
+  return false;
+}
 
 }  // namespace blink

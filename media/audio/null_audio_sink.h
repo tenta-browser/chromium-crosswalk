@@ -20,8 +20,7 @@ class AudioBus;
 class AudioHash;
 class FakeAudioWorker;
 
-class MEDIA_EXPORT NullAudioSink
-    : NON_EXPORTED_BASE(public SwitchableAudioRendererSink) {
+class MEDIA_EXPORT NullAudioSink : public SwitchableAudioRendererSink {
  public:
   NullAudioSink(const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
 
@@ -34,6 +33,7 @@ class MEDIA_EXPORT NullAudioSink
   void Play() override;
   bool SetVolume(double volume) override;
   OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool IsOptimizedForHardwareParameters() override;
   bool CurrentThreadIsRenderingThread() override;
   void SwitchOutputDevice(const std::string& device_id,
                           const url::Origin& security_origin,

@@ -32,10 +32,11 @@
 #ifndef EditingStyleUtilities_h
 #define EditingStyleUtilities_h
 
-#include "core/CSSPropertyNames.h"
 #include "core/CSSValueKeywords.h"
-#include "core/editing/VisibleSelection.h"
-#include "core/editing/WritingDirection.h"
+#include "core/css/CSSValue.h"
+#include "core/dom/ContainerNode.h"
+#include "core/editing/Forward.h"
+#include "platform/wtf/Allocator.h"
 
 namespace blink {
 

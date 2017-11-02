@@ -4,9 +4,12 @@
 
 #include "platform/fonts/shaping/ShapeResultBloberizer.h"
 
+#include <memory>
+#include "platform/fonts/CharacterRange.h"
 #include "platform/fonts/Font.h"
 #include "platform/fonts/SimpleFontData.h"
 #include "platform/fonts/opentype/OpenTypeVerticalData.h"
+#include "platform/fonts/shaping/CachingWordShaper.h"
 #include "platform/fonts/shaping/ShapeResultTestInfo.h"
 #include "platform/wtf/Optional.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,26 +22,51 @@ namespace {
 // Font has no glyphs, but that's okay.
 class TestSimpleFontData : public SimpleFontData {
  public:
-  static PassRefPtr<TestSimpleFontData> Create(bool force_rotation = false) {
+  static RefPtr<TestSimpleFontData> Create(bool force_rotation = false) {
     FontPlatformData platform_data(
         SkTypeface::MakeDefault(), nullptr, 10, false, false,
         force_rotation ? FontOrientation::kVerticalUpright
                        : FontOrientation::kHorizontal);
     RefPtr<OpenTypeVerticalData> vertical_data(
         force_rotation ? OpenTypeVerticalData::Create(platform_data) : nullptr);
-    return AdoptRef(
+    return WTF::AdoptRef(
         new TestSimpleFontData(platform_data, std::move(vertical_data)));
   }
 
  private:
   TestSimpleFontData(const FontPlatformData& platform_data,
-                     PassRefPtr<OpenTypeVerticalData> vertical_data)
+                     RefPtr<OpenTypeVerticalData> vertical_data)
       : SimpleFontData(platform_data, std::move(vertical_data)) {}
+};
+
+class ShapeResultBloberizerTest : public ::testing::Test {
+ protected:
+  void SetUp() override {
+    font_description.SetComputedSize(12.0);
+    font_description.SetLocale(LayoutLocale::Get("en"));
+    ASSERT_EQ(USCRIPT_LATIN, font_description.GetScript());
+    font_description.SetGenericFamily(FontDescription::kStandardFamily);
+
+    font = Font(font_description);
+    font.Update(nullptr);
+    ASSERT_TRUE(font.CanShapeWordByWord());
+    fallback_fonts = nullptr;
+    cache = std::make_unique<ShapeCache>();
+  }
+
+  FontCachePurgePreventer font_cache_purge_preventer;
+  FontDescription font_description;
+  Font font;
+  std::unique_ptr<ShapeCache> cache;
+  HashSet<const SimpleFontData*>* fallback_fonts;
+  unsigned start_index = 0;
+  unsigned num_glyphs = 0;
+  hb_script_t script = HB_SCRIPT_INVALID;
 };
 
 }  // anonymous namespace
 
-TEST(ShapeResultBloberizerTest, StartsEmpty) {
+TEST_F(ShapeResultBloberizerTest, StartsEmpty) {
   Font font;
   ShapeResultBloberizer bloberizer(font, 1);
 
@@ -57,7 +85,7 @@ TEST(ShapeResultBloberizerTest, StartsEmpty) {
   EXPECT_TRUE(bloberizer.Blobs().IsEmpty());
 }
 
-TEST(ShapeResultBloberizerTest, StoresGlyphsOffsets) {
+TEST_F(ShapeResultBloberizerTest, StoresGlyphsOffsets) {
   Font font;
   ShapeResultBloberizer bloberizer(font, 1);
 
@@ -65,11 +93,11 @@ TEST(ShapeResultBloberizerTest, StoresGlyphsOffsets) {
   RefPtr<SimpleFontData> font2 = TestSimpleFontData::Create();
 
   // 2 pending glyphs
-  bloberizer.Add(42, font1.Get(), 10);
-  bloberizer.Add(43, font1.Get(), 15);
+  bloberizer.Add(42, font1.get(), 10);
+  bloberizer.Add(43, font1.get(), 15);
 
   EXPECT_EQ(ShapeResultBloberizerTestInfo::PendingRunFontData(bloberizer),
-            font1.Get());
+            font1.get());
   EXPECT_FALSE(
       ShapeResultBloberizerTestInfo::HasPendingRunVerticalOffsets(bloberizer));
   {
@@ -91,10 +119,10 @@ TEST(ShapeResultBloberizerTest, StoresGlyphsOffsets) {
   EXPECT_EQ(ShapeResultBloberizerTestInfo::CommittedBlobCount(bloberizer), 0ul);
 
   // one more glyph, different font => pending run flush
-  bloberizer.Add(44, font2.Get(), 12);
+  bloberizer.Add(44, font2.get(), 12);
 
   EXPECT_EQ(ShapeResultBloberizerTestInfo::PendingRunFontData(bloberizer),
-            font2.Get());
+            font2.get());
   EXPECT_FALSE(
       ShapeResultBloberizerTestInfo::HasPendingRunVerticalOffsets(bloberizer));
   {
@@ -117,7 +145,7 @@ TEST(ShapeResultBloberizerTest, StoresGlyphsOffsets) {
   EXPECT_EQ(bloberizer.Blobs().size(), 1ul);
 }
 
-TEST(ShapeResultBloberizerTest, StoresGlyphsVerticalOffsets) {
+TEST_F(ShapeResultBloberizerTest, StoresGlyphsVerticalOffsets) {
   Font font;
   ShapeResultBloberizer bloberizer(font, 1);
 
@@ -125,11 +153,11 @@ TEST(ShapeResultBloberizerTest, StoresGlyphsVerticalOffsets) {
   RefPtr<SimpleFontData> font2 = TestSimpleFontData::Create();
 
   // 2 pending glyphs
-  bloberizer.Add(42, font1.Get(), FloatPoint(10, 0));
-  bloberizer.Add(43, font1.Get(), FloatPoint(15, 0));
+  bloberizer.Add(42, font1.get(), FloatPoint(10, 0));
+  bloberizer.Add(43, font1.get(), FloatPoint(15, 0));
 
   EXPECT_EQ(ShapeResultBloberizerTestInfo::PendingRunFontData(bloberizer),
-            font1.Get());
+            font1.get());
   EXPECT_TRUE(
       ShapeResultBloberizerTestInfo::HasPendingRunVerticalOffsets(bloberizer));
   {
@@ -153,10 +181,10 @@ TEST(ShapeResultBloberizerTest, StoresGlyphsVerticalOffsets) {
   EXPECT_EQ(ShapeResultBloberizerTestInfo::CommittedBlobCount(bloberizer), 0ul);
 
   // one more glyph, different font => pending run flush
-  bloberizer.Add(44, font2.Get(), FloatPoint(12, 2));
+  bloberizer.Add(44, font2.get(), FloatPoint(12, 2));
 
   EXPECT_EQ(ShapeResultBloberizerTestInfo::PendingRunFontData(bloberizer),
-            font2.Get());
+            font2.get());
   EXPECT_TRUE(
       ShapeResultBloberizerTestInfo::HasPendingRunVerticalOffsets(bloberizer));
   {
@@ -180,7 +208,7 @@ TEST(ShapeResultBloberizerTest, StoresGlyphsVerticalOffsets) {
   EXPECT_EQ(bloberizer.Blobs().size(), 1ul);
 }
 
-TEST(ShapeResultBloberizerTest, MixedBlobRotation) {
+TEST_F(ShapeResultBloberizerTest, MixedBlobRotation) {
   Font font;
   ShapeResultBloberizer bloberizer(font, 1);
 
@@ -201,23 +229,23 @@ TEST(ShapeResultBloberizerTest, MixedBlobRotation) {
     size_t expected_committed_blobs;
   } append_ops[] = {
       // append 2 horizontal glyphs -> these go into the pending glyph buffer
-      {font_normal.Get(), 1u, 0u, 0u},
-      {font_normal.Get(), 2u, 0u, 0u},
+      {font_normal.get(), 1u, 0u, 0u},
+      {font_normal.get(), 2u, 0u, 0u},
 
       // append 3 vertical rotated glyphs -> push the prev pending (horizontal)
       // glyphs into a new run in the current (horizontal) blob
-      {font_rotated.Get(), 1u, 1u, 0u},
-      {font_rotated.Get(), 2u, 1u, 0u},
-      {font_rotated.Get(), 3u, 1u, 0u},
+      {font_rotated.get(), 1u, 1u, 0u},
+      {font_rotated.get(), 2u, 1u, 0u},
+      {font_rotated.get(), 3u, 1u, 0u},
 
       // append 2 more horizontal glyphs -> flush the current (horizontal) blob,
       // push prev (vertical) pending glyphs into new vertical blob run
-      {font_normal.Get(), 1u, 1u, 1u},
-      {font_normal.Get(), 2u, 1u, 1u},
+      {font_normal.get(), 1u, 1u, 1u},
+      {font_normal.get(), 2u, 1u, 1u},
 
       // append 1 more vertical glyph -> flush current (vertical) blob, push
       // prev (horizontal) pending glyphs into a new horizontal blob run
-      {font_rotated.Get(), 1u, 1u, 2u},
+      {font_rotated.get(), 1u, 1u, 2u},
   };
 
   for (const auto& op : append_ops) {
@@ -233,6 +261,107 @@ TEST(ShapeResultBloberizerTest, MixedBlobRotation) {
 
   // flush everything -> 4 blobs total
   EXPECT_EQ(4u, bloberizer.Blobs().size());
+}
+
+// Tests that filling a glyph buffer for a specific range returns the same
+// results when shaping word by word as when shaping the full run in one go.
+TEST_F(ShapeResultBloberizerTest, CommonAccentLeftToRightFillGlyphBuffer) {
+  // "/. ." with an accent mark over the first dot.
+  const UChar kStr[] = {0x2F, 0x301, 0x2E, 0x20, 0x2E, 0x0};
+  TextRun text_run(kStr, 5);
+  TextRunPaintInfo run_info(text_run);
+  run_info.to = 3;
+
+  ShapeResultBloberizer bloberizer(font, 1);
+  CachingWordShaper word_shaper(font);
+  ShapeResultBuffer buffer;
+  word_shaper.FillResultBuffer(run_info, &buffer);
+  bloberizer.FillGlyphs(run_info, buffer);
+
+  Font reference_font(font_description);
+  reference_font.Update(nullptr);
+  reference_font.SetCanShapeWordByWordForTesting(false);
+
+  ShapeResultBloberizer reference_bloberizer(reference_font, 1);
+  CachingWordShaper reference_word_shaper(font);
+  ShapeResultBuffer reference_buffer;
+  reference_word_shaper.FillResultBuffer(run_info, &reference_buffer);
+  reference_bloberizer.FillGlyphs(run_info, reference_buffer);
+
+  const auto& glyphs =
+      ShapeResultBloberizerTestInfo::PendingRunGlyphs(bloberizer);
+  ASSERT_EQ(glyphs.size(), 3ul);
+  const auto reference_glyphs =
+      ShapeResultBloberizerTestInfo::PendingRunGlyphs(reference_bloberizer);
+  ASSERT_EQ(reference_glyphs.size(), 3ul);
+
+  EXPECT_EQ(reference_glyphs[0], glyphs[0]);
+  EXPECT_EQ(reference_glyphs[1], glyphs[1]);
+  EXPECT_EQ(reference_glyphs[2], glyphs[2]);
+}
+
+// Tests that filling a glyph buffer for a specific range returns the same
+// results when shaping word by word as when shaping the full run in one go.
+TEST_F(ShapeResultBloberizerTest, CommonAccentRightToLeftFillGlyphBuffer) {
+  // "[] []" with an accent mark over the last square bracket.
+  const UChar kStr[] = {0x5B, 0x5D, 0x20, 0x5B, 0x301, 0x5D, 0x0};
+  TextRun text_run(kStr, 6);
+  text_run.SetDirection(TextDirection::kRtl);
+  TextRunPaintInfo run_info(text_run);
+  run_info.from = 1;
+
+  ShapeResultBloberizer bloberizer(font, 1);
+  CachingWordShaper word_shaper(font);
+  ShapeResultBuffer buffer;
+  word_shaper.FillResultBuffer(run_info, &buffer);
+  bloberizer.FillGlyphs(run_info, buffer);
+
+  Font reference_font(font_description);
+  reference_font.Update(nullptr);
+  reference_font.SetCanShapeWordByWordForTesting(false);
+
+  ShapeResultBloberizer reference_bloberizer(reference_font, 1);
+  CachingWordShaper reference_word_shaper(font);
+  ShapeResultBuffer reference_buffer;
+  reference_word_shaper.FillResultBuffer(run_info, &reference_buffer);
+  reference_bloberizer.FillGlyphs(run_info, reference_buffer);
+
+  const auto& glyphs =
+      ShapeResultBloberizerTestInfo::PendingRunGlyphs(bloberizer);
+  ASSERT_EQ(5u, glyphs.size());
+  const auto reference_glyphs =
+      ShapeResultBloberizerTestInfo::PendingRunGlyphs(reference_bloberizer);
+  ASSERT_EQ(5u, reference_glyphs.size());
+
+  EXPECT_EQ(reference_glyphs[0], glyphs[0]);
+  EXPECT_EQ(reference_glyphs[1], glyphs[1]);
+  EXPECT_EQ(reference_glyphs[2], glyphs[2]);
+  EXPECT_EQ(reference_glyphs[3], glyphs[3]);
+  EXPECT_EQ(reference_glyphs[4], glyphs[4]);
+}
+
+// Tests that runs with zero glyphs (the ZWJ non-printable character in this
+// case) are handled correctly. This test passes if it does not cause a crash.
+TEST_F(ShapeResultBloberizerTest, SubRunWithZeroGlyphs) {
+  // "Foo &zwnj; bar"
+  const UChar kStr[] = {0x46, 0x6F, 0x6F, 0x20, 0x200C,
+                        0x20, 0x62, 0x61, 0x71, 0x0};
+  TextRun text_run(kStr, 9);
+
+  CachingWordShaper shaper(font);
+  FloatRect glyph_bounds;
+  ASSERT_GT(shaper.Width(text_run, nullptr, &glyph_bounds), 0);
+
+  ShapeResultBloberizer bloberizer(font, 1);
+  TextRunPaintInfo run_info(text_run);
+  run_info.to = 8;
+
+  CachingWordShaper word_shaper(font);
+  ShapeResultBuffer buffer;
+  word_shaper.FillResultBuffer(run_info, &buffer);
+  bloberizer.FillGlyphs(run_info, buffer);
+
+  shaper.GetCharacterRange(text_run, 0, 8);
 }
 
 }  // namespace blink

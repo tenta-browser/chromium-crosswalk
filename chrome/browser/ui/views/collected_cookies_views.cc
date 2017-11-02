@@ -19,25 +19,27 @@
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/collected_cookies_infobar_delegate.h"
 #include "chrome/browser/ui/views/cookie_info_view.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/locale_settings.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
 #include "net/cookies/canonical_cookie.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/resource_bundle.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
+#include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/image_view.h"
@@ -47,7 +49,6 @@
 #include "ui/views/controls/tree/tree_view.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/grid_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 
 namespace {
@@ -55,9 +56,6 @@ namespace {
 // Spacing between the infobar frame and its contents.
 const int kInfobarVerticalPadding = 3;
 const int kInfobarHorizontalPadding = 8;
-
-// Width of the infobar frame.
-const int kInfobarBorderSize = 1;
 
 // Dimensions of the tree views.
 const int kTreeViewWidth = 400;
@@ -75,9 +73,10 @@ void StartNewButtonColumnSet(views::GridLayout* layout,
   const int button_padding =
       provider->GetDistanceMetric(views::DISTANCE_RELATED_BUTTON_HORIZONTAL);
   const int button_size_limit =
-      provider->GetDistanceMetric(DISTANCE_BUTTON_MAX_LINKABLE_WIDTH);
+      provider->GetDistanceMetric(views::DISTANCE_BUTTON_MAX_LINKABLE_WIDTH);
 
   views::ColumnSet* column_set = layout->AddColumnSet(column_layout_id);
+  column_set->AddPaddingColumn(100.0, 0);
   column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 0,
                         views::GridLayout::USE_PREF, 0, 0);
   column_set->AddPaddingColumn(0, button_padding);
@@ -90,18 +89,59 @@ void StartNewButtonColumnSet(views::GridLayout* layout,
 
 }  // namespace
 
+// This DrawingProvider keeps track of a set of ui::TreeModelNode*s which are
+// considered "invalidated", and marks them as such by lightening their text
+// color and adding auxiliary text to them.
+class CookiesTreeViewDrawingProvider : public views::TreeViewDrawingProvider {
+ public:
+  explicit CookiesTreeViewDrawingProvider(
+      const base::string16& invalidated_text)
+      : invalidated_text_(invalidated_text) {}
+  ~CookiesTreeViewDrawingProvider() override {}
+
+  void MarkNodeAsInvalidated(ui::TreeModelNode* node);
+
+  SkColor GetTextColorForNode(views::TreeView* tree_view,
+                              ui::TreeModelNode* node) override;
+  base::string16 GetAuxiliaryTextForNode(views::TreeView* tree_view,
+                                         ui::TreeModelNode* node) override;
+
+ private:
+  base::string16 invalidated_text_;
+  std::set<ui::TreeModelNode*> invalidated_nodes_;
+};
+
+void CookiesTreeViewDrawingProvider::MarkNodeAsInvalidated(
+    ui::TreeModelNode* node) {
+  invalidated_nodes_.insert(node);
+}
+
+SkColor CookiesTreeViewDrawingProvider::GetTextColorForNode(
+    views::TreeView* tree_view,
+    ui::TreeModelNode* node) {
+  SkColor color = TreeViewDrawingProvider::GetTextColorForNode(tree_view, node);
+  if (invalidated_nodes_.find(node) != invalidated_nodes_.end())
+    color = SkColorSetA(color, 0x80);
+  return color;
+}
+
+base::string16 CookiesTreeViewDrawingProvider::GetAuxiliaryTextForNode(
+    views::TreeView* tree_view,
+    ui::TreeModelNode* node) {
+  if (invalidated_nodes_.find(node) != invalidated_nodes_.end())
+    return invalidated_text_;
+  return TreeViewDrawingProvider::GetAuxiliaryTextForNode(tree_view, node);
+}
+
 // A custom view that conditionally displays an infobar.
 class InfobarView : public views::View {
  public:
   InfobarView() {
     content_ = new views::View;
-    SkColor border_color = SK_ColorGRAY;
-    content_->SetBorder(
-        views::CreateSolidBorder(kInfobarBorderSize, border_color));
 
-    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     info_image_ = new views::ImageView();
-    info_image_->SetImage(rb.GetImageSkiaNamed(IDR_INFO));
+    info_image_->SetImage(gfx::CreateVectorIcon(vector_icons::kInfoOutlineIcon,
+                                                16, gfx::kChromeIconGrey));
     label_ = new views::Label();
   }
   ~InfobarView() override {}
@@ -145,18 +185,18 @@ class InfobarView : public views::View {
   // Initialize contents and layout.
   void Init() {
     AddChildView(content_);
-    content_->SetLayoutManager(
-        new views::BoxLayout(views::BoxLayout::kHorizontal,
-                             kInfobarHorizontalPadding,
-                             kInfobarVerticalPadding,
-                             views::kRelatedControlSmallHorizontalSpacing));
+    content_->SetLayoutManager(new views::BoxLayout(
+        views::BoxLayout::kHorizontal,
+        gfx::Insets(kInfobarVerticalPadding, kInfobarHorizontalPadding),
+        ChromeLayoutProvider::Get()->GetDistanceMetric(
+            DISTANCE_RELATED_CONTROL_HORIZONTAL_SMALL)));
     content_->AddChildView(info_image_);
     content_->AddChildView(label_);
     UpdateVisibility(false, CONTENT_SETTING_BLOCK, base::string16());
   }
 
   // views::View overrides.
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     // Always return the preferred size, even if not currently visible. This
     // ensures that the layout manager always reserves space within the view
     // so it can be made visible when necessary. Otherwise, changing the
@@ -165,14 +205,17 @@ class InfobarView : public views::View {
 
     // Add space around the banner.
     gfx::Size size(content_->GetPreferredSize());
-    size.Enlarge(0, 2 * views::kRelatedControlVerticalSpacing);
+    size.Enlarge(0, 2 * ChromeLayoutProvider::Get()->GetDistanceMetric(
+        views::DISTANCE_RELATED_CONTROL_VERTICAL));
     return size;
   }
 
   void Layout() override {
+    ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
+    const int vertical_spacing =
+        provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL);
     content_->SetBounds(
-        0, views::kRelatedControlVerticalSpacing,
-        width(), height() - views::kRelatedControlVerticalSpacing);
+        0, vertical_spacing, width(), height() - vertical_spacing);
   }
 
   void ViewHierarchyChanged(
@@ -212,6 +255,14 @@ CollectedCookiesViews::CollectedCookiesViews(content::WebContents* web_contents)
   registrar_.Add(this, chrome::NOTIFICATION_COLLECTED_COOKIES_SHOWN,
                  content::Source<TabSpecificContentSettings>(content_settings));
   constrained_window::ShowWebModalDialogViews(this, web_contents);
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::COLLECTED_COOKIES);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// CollectedCookiesViews, views::WidgetDelegate implementation:
+
+bool CollectedCookiesViews::ShouldShowCloseButton() const {
+  return false;
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -222,7 +273,7 @@ base::string16 CollectedCookiesViews::GetWindowTitle() const {
 }
 
 int CollectedCookiesViews::GetDialogButtons() const {
-  return ui::DIALOG_BUTTON_CANCEL;
+  return ui::DIALOG_BUTTON_OK;
 }
 
 base::string16 CollectedCookiesViews::GetDialogButtonLabel(
@@ -230,7 +281,7 @@ base::string16 CollectedCookiesViews::GetDialogButtonLabel(
   return l10n_util::GetStringUTF16(IDS_CLOSE);
 }
 
-bool CollectedCookiesViews::Cancel() {
+bool CollectedCookiesViews::Accept() {
   // If the user closes our parent tab while we're still open, this method will
   // (eventually) be called in response to a WebContentsDestroyed() call from
   // the WebContentsImpl to its observers.  But since the InfoBarService is also
@@ -290,13 +341,6 @@ gfx::Size CollectedCookiesViews::GetMinimumSize() const {
   return gfx::Size(0, View::GetMinimumSize().height());
 }
 
-gfx::Size CollectedCookiesViews::GetPreferredSize() const {
-  int preferred =
-      ChromeLayoutProvider::Get()->GetDialogPreferredWidth(DialogWidth::MEDIUM);
-  return gfx::Size(preferred ? preferred : View::GetPreferredSize().width(),
-                   View::GetPreferredSize().height());
-}
-
 void CollectedCookiesViews::ViewHierarchyChanged(
     const ViewHierarchyChangedDetails& details) {
   views::DialogDelegateView::ViewHierarchyChanged(details);
@@ -315,11 +359,12 @@ CollectedCookiesViews::~CollectedCookiesViews() {
 void CollectedCookiesViews::Init() {
   using views::GridLayout;
 
-  GridLayout* layout = new GridLayout(this);
+  GridLayout* layout = GridLayout::CreateAndInstall(this);
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
-  if (provider->UseExtraDialogPadding())
-    layout->SetInsets(gfx::Insets(kTabbedPaneTopPadding, 0, 0, 0));
-  SetLayoutManager(layout);
+  if (provider->UseExtraDialogPadding()) {
+    SetBorder(
+        views::CreateEmptyBorder(gfx::Insets(kTabbedPaneTopPadding, 0, 0, 0)));
+  }
 
   const int single_column_layout_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(single_column_layout_id);
@@ -369,8 +414,14 @@ views::View* CollectedCookiesViews::CreateAllowedPane() {
 
   allowed_cookies_tree_model_ =
       content_settings->allowed_local_shared_objects().CreateCookiesTreeModel();
+  std::unique_ptr<CookiesTreeViewDrawingProvider> allowed_drawing_provider =
+      base::MakeUnique<CookiesTreeViewDrawingProvider>(
+          l10n_util::GetStringUTF16(IDS_COLLECTED_COOKIES_BLOCKED_AUX_TEXT));
+  allowed_cookies_drawing_provider_ = allowed_drawing_provider.get();
   allowed_cookies_tree_ = new views::TreeView();
   allowed_cookies_tree_->SetModel(allowed_cookies_tree_model_.get());
+  allowed_cookies_tree_->SetDrawingProvider(
+      std::move(allowed_drawing_provider));
   allowed_cookies_tree_->SetRootShown(false);
   allowed_cookies_tree_->SetEditable(false);
   allowed_cookies_tree_->set_auto_expand_children(true);
@@ -387,10 +438,13 @@ views::View* CollectedCookiesViews::CreateAllowedPane() {
   using views::GridLayout;
 
   views::View* pane = new views::View();
-  GridLayout* layout = GridLayout::CreatePanel(pane);
+  GridLayout* layout = GridLayout::CreateAndInstall(pane);
+  pane->SetBorder(
+      views::CreateEmptyBorder(ChromeLayoutProvider::Get()->GetInsetsMetric(
+          views::INSETS_DIALOG_SUBSECTION)));
   int unrelated_vertical_distance =
       ChromeLayoutProvider::Get()->GetDistanceMetric(
-          DISTANCE_UNRELATED_CONTROL_VERTICAL);
+          views::DISTANCE_UNRELATED_CONTROL_VERTICAL);
 
   const int single_column_layout_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(single_column_layout_id);
@@ -433,8 +487,14 @@ views::View* CollectedCookiesViews::CreateBlockedPane() {
   blocked_label_->SizeToFit(kTreeViewWidth);
   blocked_cookies_tree_model_ =
       content_settings->blocked_local_shared_objects().CreateCookiesTreeModel();
+  std::unique_ptr<CookiesTreeViewDrawingProvider> blocked_drawing_provider =
+      base::MakeUnique<CookiesTreeViewDrawingProvider>(
+          l10n_util::GetStringUTF16(IDS_COLLECTED_COOKIES_ALLOWED_AUX_TEXT));
+  blocked_cookies_drawing_provider_ = blocked_drawing_provider.get();
   blocked_cookies_tree_ = new views::TreeView();
   blocked_cookies_tree_->SetModel(blocked_cookies_tree_model_.get());
+  blocked_cookies_tree_->SetDrawingProvider(
+      std::move(blocked_drawing_provider));
   blocked_cookies_tree_->SetRootShown(false);
   blocked_cookies_tree_->SetEditable(false);
   blocked_cookies_tree_->set_auto_expand_children(true);
@@ -451,10 +511,13 @@ views::View* CollectedCookiesViews::CreateBlockedPane() {
   using views::GridLayout;
 
   views::View* pane = new views::View();
-  GridLayout* layout = GridLayout::CreatePanel(pane);
+  GridLayout* layout = GridLayout::CreateAndInstall(pane);
+  pane->SetBorder(
+      views::CreateEmptyBorder(ChromeLayoutProvider::Get()->GetInsetsMetric(
+          views::INSETS_DIALOG_SUBSECTION)));
   int unrelated_vertical_distance =
       ChromeLayoutProvider::Get()->GetDistanceMetric(
-          DISTANCE_UNRELATED_CONTROL_VERTICAL);
+          views::DISTANCE_UNRELATED_CONTROL_VERTICAL);
 
   const int single_column_layout_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(single_column_layout_id);
@@ -546,6 +609,12 @@ void CollectedCookiesViews::AddContentException(views::TreeView* tree_view,
       CookieSettingsFactory::GetForProfile(profile).get(), setting);
   infobar_->UpdateVisibility(true, setting, host_node->GetTitle());
   status_changed_ = true;
+
+  CookiesTreeViewDrawingProvider* provider =
+      (tree_view == allowed_cookies_tree_) ? allowed_cookies_drawing_provider_
+                                           : blocked_cookies_drawing_provider_;
+  provider->MarkNodeAsInvalidated(tree_view->GetSelectedNode());
+  tree_view->SchedulePaint();
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -4,22 +4,48 @@
 
 #import "ios/clean/chrome/browser/ui/tab_collection/tab_collection_mediator.h"
 
+#include "base/mac/bind_objc_block.h"
 #include "base/memory/ptr_util.h"
+#include "base/scoped_observer.h"
 #include "base/strings/sys_string_conversions.h"
+#import "ios/chrome/browser/snapshots/snapshot_cache.h"
+#import "ios/chrome/browser/snapshots/snapshot_constants.h"
+#import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/clean/chrome/browser/ui/tab_collection/tab_collection_consumer.h"
+#import "ios/clean/chrome/browser/ui/tab_collection/tab_collection_item.h"
 #include "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state/web_state_observer_bridge.h"
+#include "ui/gfx/image/image.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
 
+@interface TabCollectionMediator ()<CRWWebStateObserver>
+@end
+
 @implementation TabCollectionMediator {
   std::unique_ptr<WebStateListObserverBridge> _webStateListObserver;
+  std::unique_ptr<ScopedObserver<WebStateList, WebStateListObserverBridge>>
+      _scopedWebStateListObserver;
+  std::unique_ptr<web::WebStateObserverBridge> _webStateObserver;
 }
 
 @synthesize webStateList = _webStateList;
 @synthesize consumer = _consumer;
+@synthesize snapshotCache = _snapshotCache;
+
+- (instancetype)init {
+  self = [super init];
+  if (self) {
+    _webStateListObserver = base::MakeUnique<WebStateListObserverBridge>(self);
+    _scopedWebStateListObserver = base::MakeUnique<
+        ScopedObserver<WebStateList, WebStateListObserverBridge>>(
+        _webStateListObserver.get());
+  }
+  return self;
+}
 
 - (void)dealloc {
   [self disconnect];
@@ -27,69 +53,92 @@
 
 #pragma mark - Public
 
+- (void)takeSnapshot {
+  web::WebState* webState = self.webStateList->GetActiveWebState();
+  TabIdTabHelper* tabHelper = TabIdTabHelper::FromWebState(webState);
+  DCHECK(tabHelper);
+  NSString* tabID = tabHelper->tab_id();
+  SnapshotCache* snapshotCache = self.snapshotCache;
+  webState->TakeSnapshot(base::BindBlockArc(^(const gfx::Image& snapshot) {
+                           [snapshotCache setImage:snapshot.ToUIImage()
+                                     withSessionID:tabID];
+                         }),
+                         kSnapshotThumbnailSize);
+}
+
 - (void)disconnect {
-  self.webStateList = nullptr;
+  _webStateList = nullptr;
+  _webStateObserver.reset();
+  _scopedWebStateListObserver->RemoveAll();
+  self.snapshotCache = nil;
 }
 
 #pragma mark - Properties
 
 - (void)setWebStateList:(WebStateList*)webStateList {
-  if (_webStateList) {
-    _webStateList->RemoveObserver(_webStateListObserver.get());
-    _webStateListObserver.reset();
-  }
+  DCHECK(webStateList);
+  _scopedWebStateListObserver->RemoveAll();
   _webStateList = webStateList;
-  if (!_webStateList) {
-    return;
+  _scopedWebStateListObserver->Add(_webStateList);
+  _webStateObserver = base::MakeUnique<web::WebStateObserverBridge>(
+      self.webStateList->GetActiveWebState(), self);
+  [self populateConsumerItems];
+}
+
+- (void)setConsumer:(id<TabCollectionConsumer>)consumer {
+  DCHECK(consumer);
+  _consumer = consumer;
+  [self populateConsumerItems];
+}
+
+- (void)setSnapshotCache:(SnapshotCache*)snapshotCache {
+  if (_snapshotCache) {
+    [_snapshotCache removeObserver:self];
   }
-  _webStateListObserver = base::MakeUnique<WebStateListObserverBridge>(self);
-  _webStateList->AddObserver(_webStateListObserver.get());
-}
-
-#pragma mark - TabCollectionDataSource
-
-- (int)numberOfTabs {
-  return self.webStateList->count();
-}
-
-- (NSString*)titleAtIndex:(int)index {
-  return [self titleFromWebState:self.webStateList->GetWebStateAt(index)];
-}
-
-- (int)indexOfActiveTab {
-  return self.webStateList->active_index();
+  _snapshotCache = snapshotCache;
+  if (snapshotCache) {
+    [snapshotCache addObserver:self];
+  }
 }
 
 #pragma mark - WebStateListObserving
 
 - (void)webStateList:(WebStateList*)webStateList
     didInsertWebState:(web::WebState*)webState
-              atIndex:(int)index {
-  [self.consumer insertItemAtIndex:index];
+              atIndex:(int)index
+           activating:(BOOL)activating {
+  DCHECK(self.consumer);
+  [self.consumer insertItem:[self tabCollectionItemFromWebState:webState]
+                    atIndex:index
+              selectedIndex:webStateList->active_index()];
 }
 
 - (void)webStateList:(WebStateList*)webStateList
      didMoveWebState:(web::WebState*)webState
            fromIndex:(int)fromIndex
              toIndex:(int)toIndex {
-  int minIndex = std::min(fromIndex, toIndex);
-  int length = std::abs(fromIndex - toIndex) + 1;
-  NSIndexSet* indexes =
-      [[NSIndexSet alloc] initWithIndexesInRange:NSMakeRange(minIndex, length)];
-  [self.consumer reloadItemsAtIndexes:indexes];
+  DCHECK(self.consumer);
+  [self.consumer moveItemFromIndex:fromIndex
+                           toIndex:toIndex
+                     selectedIndex:webStateList->active_index()];
 }
 
 - (void)webStateList:(WebStateList*)webStateList
     didReplaceWebState:(web::WebState*)oldWebState
           withWebState:(web::WebState*)newWebState
                atIndex:(int)index {
-  [self.consumer reloadItemsAtIndexes:[NSIndexSet indexSetWithIndex:index]];
+  DCHECK(self.consumer);
+  [self.consumer
+      replaceItemAtIndex:index
+                withItem:[self tabCollectionItemFromWebState:newWebState]];
 }
 
 - (void)webStateList:(WebStateList*)webStateList
     didDetachWebState:(web::WebState*)webState
               atIndex:(int)index {
-  [self.consumer deleteItemAtIndex:index];
+  DCHECK(self.consumer);
+  [self.consumer deleteItemAtIndex:index
+                     selectedIndex:webStateList->active_index()];
 }
 
 - (void)webStateList:(WebStateList*)webStateList
@@ -97,27 +146,74 @@
                 oldWebState:(web::WebState*)oldWebState
                     atIndex:(int)atIndex
                  userAction:(BOOL)userAction {
-  int fromIndex = webStateList->GetIndexOfWebState(oldWebState);
-  NSMutableIndexSet* indexes = [[NSMutableIndexSet alloc] init];
-  if (fromIndex >= 0 && fromIndex < [self numberOfTabs]) {
-    [indexes addIndex:fromIndex];
+  DCHECK(self.consumer);
+  [self.consumer setSelectedIndex:atIndex];
+  _webStateObserver =
+      base::MakeUnique<web::WebStateObserverBridge>(newWebState, self);
+}
+
+#pragma mark - CRWWebStateObserver
+
+// Navigational changes to the web state update the tab collection, such as
+// the title and snapshot.
+- (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
+  DCHECK(self.webStateList);
+  DCHECK(self.consumer);
+  int index = self.webStateList->GetIndexOfWebState(webState);
+  [self.consumer
+      replaceItemAtIndex:index
+                withItem:[self tabCollectionItemFromWebState:webState]];
+}
+
+#pragma mark - SnapshotCacheObserver
+
+- (void)snapshotCache:(SnapshotCache*)snapshotCache
+    didUpdateSnapshotForTab:(NSString*)tabID {
+  for (int i = 0; i < self.webStateList->count(); i++) {
+    TabIdTabHelper* tabHelper =
+        TabIdTabHelper::FromWebState(self.webStateList->GetWebStateAt(i));
+    DCHECK(tabHelper);
+    if ([tabID isEqualToString:tabHelper->tab_id()]) {
+      [self.consumer updateSnapshotAtIndex:i];
+      return;
+    }
   }
-  if (atIndex >= 0 && atIndex < [self numberOfTabs]) {
-    [indexes addIndex:atIndex];
-  }
-  [self.consumer reloadItemsAtIndexes:indexes];
 }
 
 #pragma mark - Private
 
-- (NSString*)titleFromWebState:(const web::WebState*)webState {
-  // PLACEHOLDER: Use real webstate title in the future.
-  GURL url = webState->GetVisibleURL();
-  NSString* urlText = @"<New Tab>";
-  if (url.is_valid()) {
-    urlText = base::SysUTF8ToNSString(url.spec());
+// Constructs a TabCollectionItem from a |webState|.
+- (TabCollectionItem*)tabCollectionItemFromWebState:(web::WebState*)webState {
+  DCHECK(webState);
+  TabIdTabHelper* tabHelper = TabIdTabHelper::FromWebState(webState);
+  DCHECK(tabHelper);
+  TabCollectionItem* item = [[TabCollectionItem alloc] init];
+  item.tabID = tabHelper->tab_id();
+  item.title = base::SysUTF16ToNSString(webState->GetTitle());
+  return item;
+}
+
+// Constructs an array of TabCollectionItems from a |webStateList|.
+- (NSArray<TabCollectionItem*>*)tabCollectionItemsFromWebStateList:
+    (const WebStateList*)webStateList {
+  DCHECK(webStateList);
+  NSMutableArray<TabCollectionItem*>* items = [[NSMutableArray alloc] init];
+  for (int i = 0; i < webStateList->count(); i++) {
+    web::WebState* webState = webStateList->GetWebStateAt(i);
+    [items addObject:[self tabCollectionItemFromWebState:webState]];
   }
-  return urlText;
+  return [items copy];
+}
+
+// Constructs an array of TabCollectionItems from the current webStateList
+// and pushes them to the consumer.
+- (void)populateConsumerItems {
+  if (self.consumer && self.webStateList) {
+    [self.consumer
+        populateItems:[self
+                          tabCollectionItemsFromWebStateList:self.webStateList]
+        selectedIndex:self.webStateList->active_index()];
+  }
 }
 
 @end

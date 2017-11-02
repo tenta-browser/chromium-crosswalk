@@ -177,12 +177,12 @@ bool DeliverException(thread_t thread,
 
 void SimulateCrash(const NativeCPUContext& cpu_context) {
 #if defined(ARCH_CPU_X86)
-  DCHECK_EQ(cpu_context.tsh.flavor,
+  DCHECK_EQ(implicit_cast<thread_state_flavor_t>(cpu_context.tsh.flavor),
             implicit_cast<thread_state_flavor_t>(x86_THREAD_STATE32));
   DCHECK_EQ(implicit_cast<mach_msg_type_number_t>(cpu_context.tsh.count),
             x86_THREAD_STATE32_COUNT);
 #elif defined(ARCH_CPU_X86_64)
-  DCHECK_EQ(cpu_context.tsh.flavor,
+  DCHECK_EQ(implicit_cast<thread_state_flavor_t>(cpu_context.tsh.flavor),
             implicit_cast<thread_state_flavor_t>(x86_THREAD_STATE64));
   DCHECK_EQ(implicit_cast<mach_msg_type_number_t>(cpu_context.tsh.count),
             x86_THREAD_STATE64_COUNT);
@@ -196,7 +196,7 @@ void SimulateCrash(const NativeCPUContext& cpu_context) {
   // Look up the handler for EXC_CRASH exceptions in the same way that the
   // kernel would: try a thread handler, then a task handler, and finally a host
   // handler. 10.9.5 xnu-2422.115.4/osfmk/kern/exception.c exception_triage().
-  const ExceptionPorts::TargetType kTargetTypes[] = {
+  static constexpr ExceptionPorts::TargetType kTargetTypes[] = {
       ExceptionPorts::kTargetTypeThread,
       ExceptionPorts::kTargetTypeTask,
 

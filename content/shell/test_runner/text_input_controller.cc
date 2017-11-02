@@ -14,8 +14,8 @@
 #include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
 #include "third_party/WebKit/public/platform/WebInputEventResult.h"
 #include "third_party/WebKit/public/platform/WebKeyboardEvent.h"
-#include "third_party/WebKit/public/web/WebCompositionUnderline.h"
 #include "third_party/WebKit/public/web/WebFrameWidget.h"
+#include "third_party/WebKit/public/web/WebImeTextSpan.h"
 #include "third_party/WebKit/public/web/WebInputMethodController.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
@@ -173,7 +173,7 @@ void TextInputController::Install(blink::WebLocalFrame* frame) {
 void TextInputController::InsertText(const std::string& text) {
   if (auto* controller = GetInputMethodController()) {
     controller->CommitText(blink::WebString::FromUTF8(text),
-                           std::vector<blink::WebCompositionUnderline>(),
+                           std::vector<blink::WebImeTextSpan>(),
                            blink::WebRange(), 0);
   }
 }
@@ -202,28 +202,28 @@ void TextInputController::SetMarkedText(const std::string& text,
   blink::WebString web_text(blink::WebString::FromUTF8(text));
 
   // Split underline into up to 3 elements (before, selection, and after).
-  std::vector<blink::WebCompositionUnderline> underlines;
-  blink::WebCompositionUnderline underline;
+  std::vector<blink::WebImeTextSpan> ime_text_spans;
+  blink::WebImeTextSpan ime_text_span;
   if (!start) {
-    underline.end_offset = length;
+    ime_text_span.end_offset = length;
   } else {
-    underline.end_offset = start;
-    underlines.push_back(underline);
-    underline.start_offset = start;
-    underline.end_offset = start + length;
+    ime_text_span.end_offset = start;
+    ime_text_spans.push_back(ime_text_span);
+    ime_text_span.start_offset = start;
+    ime_text_span.end_offset = start + length;
   }
-  underline.thick = true;
-  underlines.push_back(underline);
+  ime_text_span.thick = true;
+  ime_text_spans.push_back(ime_text_span);
   if (start + length < static_cast<int>(web_text.length())) {
-    underline.start_offset = underline.end_offset;
-    underline.end_offset = web_text.length();
-    underline.thick = false;
-    underlines.push_back(underline);
+    ime_text_span.start_offset = ime_text_span.end_offset;
+    ime_text_span.end_offset = web_text.length();
+    ime_text_span.thick = false;
+    ime_text_spans.push_back(ime_text_span);
   }
 
   if (auto* controller = GetInputMethodController()) {
-    controller->SetComposition(web_text, underlines, blink::WebRange(), start,
-                               start + length);
+    controller->SetComposition(web_text, ime_text_spans, blink::WebRange(),
+                               start, start + length);
   }
 }
 
@@ -311,19 +311,24 @@ void TextInputController::SetComposition(const std::string& text) {
   blink::WebString newText = blink::WebString::FromUTF8(text);
   size_t textLength = newText.length();
 
-  std::vector<blink::WebCompositionUnderline> underlines;
-  underlines.push_back(blink::WebCompositionUnderline(
-      0, textLength, SK_ColorBLACK, false, SK_ColorTRANSPARENT));
+  std::vector<blink::WebImeTextSpan> ime_text_spans;
+  ime_text_spans.push_back(blink::WebImeTextSpan(
+      blink::WebImeTextSpan::Type::kComposition, 0, textLength, SK_ColorBLACK,
+      false, SK_ColorTRANSPARENT));
   if (auto* controller = GetInputMethodController()) {
     controller->SetComposition(
-        newText, blink::WebVector<blink::WebCompositionUnderline>(underlines),
+        newText, blink::WebVector<blink::WebImeTextSpan>(ime_text_spans),
         blink::WebRange(), textLength, textLength);
   }
 }
 
 void TextInputController::ForceTextInputStateUpdate() {
+  // TODO(lukasza): Finish adding OOPIF support to the layout tests harness.
+  CHECK(view()->MainFrame()->IsWebLocalFrame())
+      << "WebView does not have a local main frame and"
+         " cannot handle input method controller tasks.";
   web_view_test_proxy_base_->delegate()->ForceTextInputStateUpdate(
-      view()->MainFrame());
+      view()->MainFrame()->ToWebLocalFrame());
 }
 
 blink::WebView* TextInputController::view() {
@@ -335,12 +340,16 @@ TextInputController::GetInputMethodController() {
   if (!view()->MainFrame())
     return nullptr;
 
-  blink::WebLocalFrame* mainFrame = view()->MainFrame()->ToWebLocalFrame();
-  if (!mainFrame) {
-    CHECK(false) << "WebView does not have a local main frame and"
-                    " cannot handle input method controller tasks.";
-  }
-  return mainFrame->FrameWidget()->GetActiveWebInputMethodController();
+  // TODO(lukasza): Finish adding OOPIF support to the layout tests harness.
+  CHECK(view()->MainFrame()->IsWebLocalFrame())
+      << "WebView does not have a local main frame and"
+         " cannot handle input method controller tasks.";
+
+  return view()
+      ->MainFrame()
+      ->ToWebLocalFrame()
+      ->FrameWidget()
+      ->GetActiveWebInputMethodController();
 }
 
 }  // namespace test_runner

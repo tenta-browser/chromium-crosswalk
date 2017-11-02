@@ -7,16 +7,16 @@
 
 #import "ios/chrome/browser/ui/bookmarks/bookmark_home_view_controller.h"
 
+#import <UIKit/UIKit.h>
+
+#include <set>
+#include <vector>
+
+@protocol UrlLoader;
+
 // Navigate/edit the bookmark hierarchy on a handset.
 @interface BookmarkHomeHandsetViewController : BookmarkHomeViewController
-// Designated initializer.
-- (instancetype)initWithLoader:(id<UrlLoader>)loader
-                  browserState:(ios::ChromeBrowserState*)browserState;
-@end
 
-@interface BookmarkHomeHandsetViewController (ExposedForTesting)
-// Creates the default view to show all bookmarks, if it doesn't already exist.
-- (void)ensureAllViewExists;
 @end
 
 #endif  // IOS_CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_HOME_HANDSET_VIEW_CONTROLLER_H_

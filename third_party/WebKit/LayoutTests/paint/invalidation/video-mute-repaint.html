@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <title>Test for crbug.com/190880</title>
+<script src="../../resources/run-after-layout-and-paint.js"></script>
 <script src="resources/text-based-repaint.js"></script>
 <style>
     video { width: 700px; }
@@ -9,11 +10,6 @@
 </video>
 
 <script>
-    // Disable under-invalidation checking because we allow short period of
-    // under-invalidation of buffered ranges.
-    if (window.internals)
-        internals.runtimeFlags.paintUnderInvalidationCheckingEnabled = false;
-
     window.testIsAsync = true;
 
     var video = document.getElementById("v");
@@ -21,6 +17,7 @@
 
     function repaintTest() {
         video.volume = 0;
-        finishRepaintTest();
+        // Volume change is handled in another document cycle.
+        runAfterLayoutAndPaint(finishRepaintTest);
     }
 </script>

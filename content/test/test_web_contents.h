@@ -10,6 +10,7 @@
 #include <list>
 #include <map>
 #include <string>
+#include <utility>
 
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/test/web_contents_tester.h"
@@ -23,6 +24,10 @@ class SkBitmap;
 
 namespace gfx {
 class Size;
+}
+
+namespace net {
+class HttpResponseHeaders;
 }
 
 namespace content {
@@ -43,7 +48,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
                                  scoped_refptr<SiteInstance> instance);
 
   // WebContentsImpl overrides (returning the same values, but in Test* types)
-  TestRenderFrameHost* GetMainFrame() override;
+  TestRenderFrameHost* GetMainFrame() const override;
   TestRenderViewHost* GetRenderViewHost() const override;
   // Overrides to avoid establishing Mojo connection with renderer process.
   int DownloadImage(const GURL& url,
@@ -51,11 +56,11 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
                     uint32_t max_bitmap_size,
                     bool bypass_cache,
                     const ImageDownloadCallback& callback) override;
+  const GURL& GetLastCommittedURL() const override;
 
   // WebContentsTester implementation.
   void CommitPendingNavigation() override;
-  TestRenderFrameHost* GetPendingMainFrame() const override;
-  void StartNavigation(const GURL& url) override;
+  TestRenderFrameHost* GetPendingMainFrame() override;
   void NavigateAndCommit(const GURL& url) override;
   void TestSetIsLoading(bool value) override;
   void ProceedWithCrossSiteNavigation() override;
@@ -86,6 +91,8 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
       int http_status_code,
       const std::vector<SkBitmap>& bitmaps,
       const std::vector<gfx::Size>& original_bitmap_sizes) override;
+  void SetLastCommittedURL(const GURL& url) override;
+  void SetWasRecentlyAudible(bool audible) override;
 
   // True if a cross-site navigation is pending.
   bool CrossProcessNavigationPending();
@@ -95,6 +102,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
       RenderViewHost* render_view_host,
       int opener_frame_routing_id,
       int proxy_routing_id,
+      const base::UnguessableToken& devtools_frame_token,
       const FrameReplicationState& replicated_frame_state) override;
   void UpdateRenderViewSizeForRenderManager() override {}
 
@@ -129,12 +137,15 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   void TestDidFinishLoad(const GURL& url);
   void TestDidFailLoadWithError(const GURL& url,
                                 int error_code,
-                                const base::string16& error_description,
-                                bool was_ignored_by_handler);
+                                const base::string16& error_description);
 
   void SetNavigationData(
       NavigationHandle* navigation_handle,
       std::unique_ptr<NavigationData> navigation_data) override;
+
+  void SetHttpResponseHeaders(
+      NavigationHandle* navigation_handle,
+      scoped_refptr<net::HttpResponseHeaders> response_headers) override;
 
  protected:
   // The deprecated WebContentsTester still needs to subclass this.
@@ -143,7 +154,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
  private:
   // WebContentsImpl overrides
   void CreateNewWindow(
-      SiteInstance* source_site_instance,
+      RenderFrameHost* opener,
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
@@ -151,9 +162,11 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
       SessionStorageNamespace* session_storage_namespace) override;
   void CreateNewWidget(int32_t render_process_id,
                        int32_t route_id,
+                       mojom::WidgetPtr widget,
                        blink::WebPopupType popup_type) override;
   void CreateNewFullscreenWidget(int32_t render_process_id,
-                                 int32_t route_id) override;
+                                 int32_t route_id,
+                                 mojom::WidgetPtr widget) override;
   void ShowCreatedWindow(int process_id,
                          int route_id,
                          WindowOpenDisposition disposition,
@@ -177,6 +190,7 @@ class TestWebContents : public WebContentsImpl, public WebContentsTester {
   // Map keyed by image URL. Values are <id, callback> pairs.
   std::map<GURL, std::list<std::pair<int, ImageDownloadCallback>>>
       pending_image_downloads_;
+  GURL last_committed_url_;
 };
 
 }  // namespace content

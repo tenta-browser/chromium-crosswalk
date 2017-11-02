@@ -6,6 +6,7 @@
 #define REMOTING_HOST_ME2ME_DESKTOP_ENVIRONMENT_H_
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "remoting/host/basic_desktop_environment.h"
 
 namespace remoting {
@@ -31,6 +32,7 @@ class Me2MeDesktopEnvironment : public BasicDesktopEnvironment {
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      ui::SystemInputInjectorFactory* system_input_injector_factory,
       const DesktopEnvironmentOptions& options);
 
   // Initializes security features of the desktop environment (the curtain mode
@@ -59,7 +61,8 @@ class Me2MeDesktopEnvironmentFactory : public BasicDesktopEnvironmentFactory {
       scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      ui::SystemInputInjectorFactory* system_input_injector_factory);
   ~Me2MeDesktopEnvironmentFactory() override;
 
   // DesktopEnvironmentFactory interface.

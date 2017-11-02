@@ -24,6 +24,10 @@ namespace base {
 class Lock;
 }
 
+namespace ui {
+class LatencyInfo;
+}
+
 namespace gpu {
 class GpuControlClient;
 struct SyncToken;
@@ -36,7 +40,7 @@ class GPU_EXPORT GpuControl {
 
   virtual void SetGpuControlClient(GpuControlClient* gpu_control_client) = 0;
 
-  virtual Capabilities GetCapabilities() = 0;
+  virtual const Capabilities& GetCapabilities() const = 0;
 
   // Create an image for a client buffer with the given dimensions and
   // format. Returns its ID or -1 on error.
@@ -73,7 +77,9 @@ class GPU_EXPORT GpuControl {
   // the CanWaitUnverifiedSyncToken() function.
   virtual CommandBufferNamespace GetNamespaceID() const = 0;
   virtual CommandBufferId GetCommandBufferID() const = 0;
-  virtual int32_t GetExtraCommandBufferData() const = 0;
+
+  // Flush any outstanding ordering barriers on all contexts.
+  virtual void FlushPendingWork() = 0;
 
   // Generates a fence sync which should be inserted into the GL command stream.
   // When the service executes the fence sync it is released. Fence syncs are
@@ -114,6 +120,11 @@ class GPU_EXPORT GpuControl {
   // channel as the wait command guarantee that the fence sync will be enqueued
   // first so does not need to be flushed.
   virtual bool CanWaitUnverifiedSyncToken(const SyncToken& sync_token) = 0;
+
+  // Add |latency_info| to be reported and augumented with GPU latency
+  // components next time there is a GPU buffer swap.
+  virtual void AddLatencyInfo(
+      const std::vector<ui::LatencyInfo>& latency_info) = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(GpuControl);

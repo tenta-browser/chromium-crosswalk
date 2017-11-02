@@ -40,7 +40,6 @@ class GLES2Interface;
 }
 
 namespace blink {
-class ExceptionState;
 class ImageBitmapOptions;
 class MediaCustomControlsFullscreenDetector;
 class MediaRemotingInterstitial;
@@ -54,7 +53,7 @@ class CORE_EXPORT HTMLVideoElement final : public HTMLMediaElement,
   static HTMLVideoElement* Create(Document&);
   DECLARE_VIRTUAL_TRACE();
 
-  enum class MediaRemotingStatus { kNotStarted, kStarted, kDisabled };
+  bool HasPendingActivity() const final;
 
   // Node override.
   Node::InsertionNotificationRequest InsertedInto(ContainerNode*) override;
@@ -62,6 +61,8 @@ class CORE_EXPORT HTMLVideoElement final : public HTMLMediaElement,
 
   unsigned videoWidth() const;
   unsigned videoHeight() const;
+
+  IntSize videoVisibleSize() const;
 
   // Fullscreen
   void webkitEnterFullscreen();
@@ -75,21 +76,32 @@ class CORE_EXPORT HTMLVideoElement final : public HTMLMediaElement,
   unsigned webkitDroppedFrameCount() const;
 
   // Used by canvas to gain raw pixel access
-  void PaintCurrentFrame(PaintCanvas*, const IntRect&, const PaintFlags*) const;
+  void PaintCurrentFrame(
+      PaintCanvas*,
+      const IntRect&,
+      const PaintFlags*,
+      int already_uploaded_id = -1,
+      WebMediaPlayer::VideoFrameUploadMetadata* = nullptr) const;
 
   // Used by WebGL to do GPU-GPU textures copy if possible.
-  bool CopyVideoTextureToPlatformTexture(gpu::gles2::GLES2Interface*,
-                                         GLuint texture,
-                                         GLenum internal_format,
-                                         GLenum format,
-                                         GLenum type,
-                                         bool premultiply_alpha,
-                                         bool flip_y);
+  bool CopyVideoTextureToPlatformTexture(
+      gpu::gles2::GLES2Interface*,
+      GLenum target,
+      GLuint texture,
+      GLenum internal_format,
+      GLenum format,
+      GLenum type,
+      GLint level,
+      bool premultiply_alpha,
+      bool flip_y,
+      int already_uploaded_id = -1,
+      WebMediaPlayer::VideoFrameUploadMetadata* out_metadata = nullptr);
 
   // Used by WebGL to do CPU-GPU texture upload if possible.
   bool TexImageImpl(WebMediaPlayer::TexImageFunctionID,
                     GLenum target,
                     gpu::gles2::GLES2Interface*,
+                    GLuint texture,
                     GLint level,
                     GLint internalformat,
                     GLenum format,
@@ -107,10 +119,10 @@ class CORE_EXPORT HTMLVideoElement final : public HTMLMediaElement,
   KURL PosterImageURL() const override;
 
   // CanvasImageSource implementation
-  PassRefPtr<Image> GetSourceImageForCanvas(SourceImageStatus*,
-                                            AccelerationHint,
-                                            SnapshotReason,
-                                            const FloatSize&) const override;
+  RefPtr<Image> GetSourceImageForCanvas(SourceImageStatus*,
+                                        AccelerationHint,
+                                        SnapshotReason,
+                                        const FloatSize&) override;
   bool IsVideoElement() const override { return true; }
   bool WouldTaintOrigin(SecurityOrigin*) const override;
   FloatSize ElementSize(const FloatSize&) const override;
@@ -127,18 +139,19 @@ class CORE_EXPORT HTMLVideoElement final : public HTMLMediaElement,
   ScriptPromise CreateImageBitmap(ScriptState*,
                                   EventTarget&,
                                   Optional<IntRect> crop_rect,
-                                  const ImageBitmapOptions&,
-                                  ExceptionState&) override;
+                                  const ImageBitmapOptions&) override;
 
   // WebMediaPlayerClient implementation.
   void OnBecamePersistentVideo(bool) final;
 
   bool IsPersistent() const;
 
-  MediaRemotingStatus GetMediaRemotingStatus() const {
-    return media_remoting_status_;
-  }
+  bool IsRemotingInterstitialVisible() const;
   void DisableMediaRemoting();
+
+  void MediaRemotingStarted(const WebString& remote_device_friendly_name) final;
+  void MediaRemotingStopped() final;
+  WebMediaPlayer::DisplayType DisplayType() const final;
 
  private:
   friend class MediaCustomControlsFullscreenDetectorTest;
@@ -152,7 +165,7 @@ class CORE_EXPORT HTMLVideoElement final : public HTMLMediaElement,
 
   bool LayoutObjectIsNeeded(const ComputedStyle&) override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
   void ParseAttribute(const AttributeModificationParams&) override;
   bool IsPresentationAttribute(const QualifiedName&) const override;
   void CollectStyleForPresentationAttribute(const QualifiedName&,
@@ -164,20 +177,21 @@ class CORE_EXPORT HTMLVideoElement final : public HTMLMediaElement,
   void UpdateDisplayState() override;
   void DidMoveToNewDocument(Document& old_document) override;
   void SetDisplayMode(DisplayMode) override;
-  void MediaRemotingStarted() final;
-  void MediaRemotingStopped() final;
 
   Member<HTMLImageLoader> image_loader_;
   Member<MediaCustomControlsFullscreenDetector>
       custom_controls_fullscreen_detector_;
 
-  MediaRemotingStatus media_remoting_status_;
-
   Member<MediaRemotingInterstitial> remoting_interstitial_;
 
   AtomicString default_poster_url_;
 
+  // TODO(mlamouri): merge these later. At the moment, the former is used for
+  // CSS rules used to hide the custom controls and the latter is used to report
+  // the display type. It's unclear whether using the CSS rules also when native
+  // controls are used would or would not have side effects.
   bool is_persistent_ = false;
+  bool is_picture_in_picture_ = false;
 };
 
 }  // namespace blink

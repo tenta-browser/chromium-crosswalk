@@ -7,21 +7,59 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/feature_list.h"
-#include "base/metrics/field_trial.h"
+#include "base/logging.h"
+#include "base/metrics/field_trial_params.h"
 #include "build/build_config.h"
+#include "components/signin/core/common/signin_features.h"
 #include "components/signin/core/common/signin_switches.h"
 
-namespace switches {
+namespace signin {
 
-bool IsEnableAccountConsistency() {
-#if defined(OS_ANDROID) || defined(OS_IOS)
-  // Account consistency is enabled on Android and iOS.
-  return true;
+// base::Feature definitions.
+const base::Feature kAccountConsistencyFeature{
+    "AccountConsistency", base::FEATURE_DISABLED_BY_DEFAULT};
+const char kAccountConsistencyFeatureMethodParameter[] = "method";
+const char kAccountConsistencyFeatureMethodMirror[] = "mirror";
+const char kAccountConsistencyFeatureMethodDiceFixAuthErrors[] =
+    "dice_fix_auth_errors";
+const char kAccountConsistencyFeatureMethodDice[] = "dice";
+
+AccountConsistencyMethod GetAccountConsistencyMethod() {
+#if BUILDFLAG(ENABLE_MIRROR)
+  // Mirror is always enabled on Android and iOS.
+  return AccountConsistencyMethod::kMirror;
+#else
+  if (!base::FeatureList::IsEnabled(kAccountConsistencyFeature))
+    return AccountConsistencyMethod::kDisabled;
+
+  std::string method_value = base::GetFieldTrialParamValueByFeature(
+      kAccountConsistencyFeature, kAccountConsistencyFeatureMethodParameter);
+
+  if (method_value == kAccountConsistencyFeatureMethodMirror)
+    return AccountConsistencyMethod::kMirror;
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  else if (method_value == kAccountConsistencyFeatureMethodDiceFixAuthErrors)
+    return AccountConsistencyMethod::kDiceFixAuthErrors;
+  else if (method_value == kAccountConsistencyFeatureMethodDice)
+    return AccountConsistencyMethod::kDice;
 #endif
 
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableAccountConsistency);
+  return AccountConsistencyMethod::kDisabled;
+#endif  // BUILDFLAG(ENABLE_MIRROR)
+}
+
+bool IsAccountConsistencyMirrorEnabled() {
+  return GetAccountConsistencyMethod() == AccountConsistencyMethod::kMirror;
+}
+
+bool IsAccountConsistencyDiceEnabled() {
+  return (GetAccountConsistencyMethod() == AccountConsistencyMethod::kDice);
+}
+
+bool IsDiceFixAuthErrorsEnabled() {
+  AccountConsistencyMethod method = GetAccountConsistencyMethod();
+  return (method == AccountConsistencyMethod::kDiceFixAuthErrors) ||
+         (method == AccountConsistencyMethod::kDice);
 }
 
 bool IsExtensionsMultiAccount() {
@@ -33,16 +71,7 @@ bool IsExtensionsMultiAccount() {
 
   return base::CommandLine::ForCurrentProcess()->HasSwitch(
              switches::kExtensionsMultiAccount) ||
-         IsEnableAccountConsistency();
+         GetAccountConsistencyMethod() == AccountConsistencyMethod::kMirror;
 }
 
-bool UsePasswordSeparatedSigninFlow() {
-  return base::FeatureList::IsEnabled(
-      switches::kUsePasswordSeparatedSigninFlow);
-}
-
-void EnableAccountConsistencyForTesting(base::CommandLine* command_line) {
-  command_line->AppendSwitch(switches::kEnableAccountConsistency);
-}
-
-}  // namespace switches
+}  // namespace signin

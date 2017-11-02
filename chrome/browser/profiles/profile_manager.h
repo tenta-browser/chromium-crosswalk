@@ -17,9 +17,8 @@
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_checker.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_metrics.h"
@@ -32,8 +31,7 @@
 class ProfileAttributesStorage;
 class ProfileInfoCache;
 
-class ProfileManager : public base::NonThreadSafe,
-                       public content::NotificationObserver,
+class ProfileManager : public content::NotificationObserver,
                        public Profile::Delegate {
  public:
   typedef base::Callback<void(Profile*, Profile::CreateStatus)> CreateCallback;
@@ -81,6 +79,12 @@ class ProfileManager : public base::NonThreadSafe,
   // TODO(skuhne): Move into ash's new user management function.
   static Profile* GetActiveUserProfile();
 
+  // Load and return the initial profile for browser. On ChromeOS, this returns
+  // either the sign-in profile or the active user profile depending on whether
+  // browser is started normally or is restarted after crash. On other
+  // platforms, this returns the default profile.
+  static Profile* CreateInitialProfile();
+
   // Returns a profile for a specific profile directory within the user data
   // dir. This will return an existing profile it had already been created,
   // otherwise it will create and manage it.
@@ -105,6 +109,9 @@ class ProfileManager : public base::NonThreadSafe,
   bool LoadProfile(const std::string& profile_name,
                    bool incognito,
                    const ProfileLoadedCallback& callback);
+  bool LoadProfileByPath(const base::FilePath& profile_path,
+                         bool incognito,
+                         const ProfileLoadedCallback& callback);
 
   // Explicit asynchronous creation of a profile located at |profile_path|.
   // If the profile has already been created then callback is called
@@ -315,6 +322,8 @@ class ProfileManager : public base::NonThreadSafe,
   // and marks the new profile as active.
   void FinishDeletingProfile(const base::FilePath& profile_dir,
                              const base::FilePath& new_active_profile_dir);
+  void OnLoadProfileForProfileDeletion(const base::FilePath& profile_dir,
+                                       Profile* profile);
 #endif
 
   // Registers profile with given info. Returns pointer to created ProfileInfo
@@ -414,7 +423,8 @@ class ProfileManager : public base::NonThreadSafe,
   // Maps profile path to ProfileInfo (if profile has been created). Use
   // RegisterProfile() to add into this map. This map owns all loaded profile
   // objects in a running instance of Chrome.
-  typedef std::map<base::FilePath, linked_ptr<ProfileInfo> > ProfilesInfoMap;
+  using ProfilesInfoMap =
+      std::map<base::FilePath, std::unique_ptr<ProfileInfo>>;
   ProfilesInfoMap profiles_info_;
 
   // Manages the process of creating, deleteing and updating Desktop shortcuts.
@@ -426,6 +436,13 @@ class ProfileManager : public base::NonThreadSafe,
   // during the last run. This is why they are kept in a list, not in a set.
   std::vector<Profile*> active_profiles_;
   bool closing_all_browsers_;
+
+  // TODO(chrome/browser/profiles/OWNERS): Usage of this in profile_manager.cc
+  // should likely be turned into DCHECK_CURRENTLY_ON(BrowserThread::UI) for
+  // consistency with surrounding code in the same file but that wasn't trivial
+  // enough to do as part of the mass refactor CL which introduced
+  // |thread_checker_|, ref. https://codereview.chromium.org/2907253003/#msg37.
+  THREAD_CHECKER(thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(ProfileManager);
 };

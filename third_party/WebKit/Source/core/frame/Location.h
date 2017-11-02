@@ -30,18 +30,19 @@
 #define Location_h
 
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/dom/DOMStringList.h"
 #include "core/frame/DOMWindow.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class Document;
-class LocalDOMWindow;
 class ExceptionState;
 class KURL;
+class LocalDOMWindow;
+class StringOrTrustedURL;
 
 // This class corresponds to the Location interface. Location is the only
 // interface besides Window that is accessible cross-origin and must handle
@@ -58,14 +59,12 @@ class CORE_EXPORT Location final : public GarbageCollected<Location>,
   }
 
   DOMWindow* DomWindow() const { return dom_window_.Get(); }
-  // TODO(dcheng): Deprecated and will be removed. Do not use in new code!
-  Frame* GetFrame() const { return dom_window_->GetFrame(); }
 
   void setHref(LocalDOMWindow* current_window,
                LocalDOMWindow* entered_window,
-               const String&,
+               const StringOrTrustedURL&,
                ExceptionState&);
-  String href() const;
+  void href(StringOrTrustedURL&) const;
 
   void assign(LocalDOMWindow* current_window,
               LocalDOMWindow* entered_window,
@@ -121,6 +120,8 @@ class CORE_EXPORT Location final : public GarbageCollected<Location>,
   // that it cannot be overwritten on location objects, since that would provide
   // a hook to change the string conversion behavior of location objects.
   ScriptValue valueOf(const ScriptValue& this_object) { return this_object; }
+
+  String toString() const;
 
   DECLARE_VIRTUAL_TRACE();
 

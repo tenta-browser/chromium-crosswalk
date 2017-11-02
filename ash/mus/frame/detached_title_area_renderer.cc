@@ -4,11 +4,12 @@
 
 #include "ash/mus/frame/detached_title_area_renderer.h"
 
+#include <memory>
+
 #include "ash/frame/header_view.h"
 #include "ash/mus/property_util.h"
 #include "ash/mus/window_manager.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm_window.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/transient_window_client.h"
 #include "ui/aura/mus/property_converter.h"
@@ -40,7 +41,7 @@ enum class Source {
 std::unique_ptr<views::Widget::InitParams> CreateInitParams(
     const char* debug_name) {
   std::unique_ptr<views::Widget::InitParams> params =
-      base::MakeUnique<views::Widget::InitParams>(
+      std::make_unique<views::Widget::InitParams>(
           views::Widget::InitParams::TYPE_POPUP);
   params->name = debug_name;
   params->activatable = views::Widget::InitParams::ACTIVATABLE_NO;
@@ -53,7 +54,7 @@ void ConfigureCommonWidgetProperties(views::Widget* widget) {
   // Default animations conflict with the reveal animation, so turn off the
   // default animation.
   window->SetProperty(aura::client::kAnimationsDisabledKey, true);
-  WmWindow::Get(window)->GetWindowState()->set_ignored_by_shelf(true);
+  wm::GetWindowState(window)->set_ignored_by_shelf(true);
 }
 
 void CreateHeaderView(views::Widget* frame,
@@ -75,7 +76,7 @@ void CreateHeaderView(views::Widget* frame,
 
 DetachedTitleAreaRendererForInternal::DetachedTitleAreaRendererForInternal(
     views::Widget* frame)
-    : widget_(base::MakeUnique<views::Widget>()) {
+    : widget_(std::make_unique<views::Widget>()) {
   std::unique_ptr<views::Widget::InitParams> params =
       CreateInitParams("DetachedTitleAreaRendererForInternal");
   params->ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;

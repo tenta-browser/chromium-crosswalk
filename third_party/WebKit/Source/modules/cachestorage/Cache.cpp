@@ -4,12 +4,14 @@
 
 #include "modules/cachestorage/Cache.h"
 
+#include <memory>
+#include <utility>
 #include "bindings/core/v8/CallbackPromiseAdapter.h"
 #include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/IDLTypes.h"
+#include "bindings/core/v8/NativeValueTraitsImpl.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8ThrowException.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/modules/v8/V8Response.h"
 #include "core/dom/DOMException.h"
 #include "core/inspector/ConsoleMessage.h"
@@ -19,11 +21,11 @@
 #include "modules/fetch/GlobalFetch.h"
 #include "modules/fetch/Request.h"
 #include "modules/fetch/Response.h"
-#include "platform/HTTPNames.h"
 #include "platform/Histogram.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8ThrowException.h"
+#include "platform/http_names.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerCache.h"
-#include <memory>
-#include <utility>
 
 namespace blink {
 
@@ -196,25 +198,21 @@ void RecordResponseTypeForAdd(const Member<Response>& response) {
       type = ResponseType::kOpaqueRedirectType;
       break;
   }
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      EnumerationHistogram, response_type_histogram,
-      new EnumerationHistogram("ServiceWorkerCache.Cache.AddResponseType",
-                               static_cast<int>(ResponseType::kEnumMax)));
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(EnumerationHistogram, response_type_histogram,
+                                  ("ServiceWorkerCache.Cache.AddResponseType",
+                                   static_cast<int>(ResponseType::kEnumMax)));
   response_type_histogram.Count(static_cast<int>(type));
 };
 
 bool VaryHeaderContainsAsterisk(const Response* response) {
   const FetchHeaderList* headers = response->headers()->HeaderList();
-  for (size_t i = 0; i < headers->size(); ++i) {
-    const FetchHeaderList::Header& header = headers->Entry(i);
-    if (header.first == "vary") {
-      Vector<String> fields;
-      header.second.Split(',', fields);
-      for (size_t j = 0; j < fields.size(); ++j) {
-        if (fields[j].StripWhiteSpace() == "*")
-          return true;
-      }
-    }
+  String varyHeader;
+  if (headers->Get("vary", varyHeader)) {
+    Vector<String> fields;
+    varyHeader.Split(',', fields);
+    return std::any_of(fields.begin(), fields.end(), [](const String& field) {
+      return field.StripWhiteSpace() == "*";
+    });
   }
   return false;
 }
@@ -236,9 +234,9 @@ class Cache::FetchResolvedForAdd final : public ScriptFunction {
 
   ScriptValue Call(ScriptValue value) override {
     NonThrowableExceptionState exception_state;
-    HeapVector<Member<Response>> responses = ToMemberNativeArray<Response>(
-        value.V8Value(), requests_.size(), GetScriptState()->GetIsolate(),
-        exception_state);
+    HeapVector<Member<Response>> responses =
+        NativeValueTraits<IDLSequence<Response>>::NativeValue(
+            GetScriptState()->GetIsolate(), value.V8Value(), exception_state);
 
     for (const auto& response : responses) {
       if (!response->ok()) {
@@ -290,13 +288,13 @@ class Cache::BarrierCallbackForPut final
       : number_of_remaining_operations_(number_of_operations),
         cache_(cache),
         resolver_(resolver) {
-    ASSERT(0 < number_of_remaining_operations_);
-    batch_operations_.Resize(number_of_operations);
+    DCHECK_LT(0, number_of_remaining_operations_);
+    batch_operations_.resize(number_of_operations);
   }
 
   void OnSuccess(size_t index,
                  const WebServiceWorkerCache::BatchOperation& batch_operation) {
-    ASSERT(index < batch_operations_.size());
+    DCHECK_LT(index, batch_operations_.size());
     if (completed_)
       return;
     if (!resolver_->GetExecutionContext() ||
@@ -353,8 +351,7 @@ class Cache::BlobHandleCallbackForPut final
   }
   ~BlobHandleCallbackForPut() override {}
 
-  void DidFetchDataLoadedBlobHandle(
-      PassRefPtr<BlobDataHandle> handle) override {
+  void DidFetchDataLoadedBlobHandle(RefPtr<BlobDataHandle> handle) override {
     WebServiceWorkerCache::BatchOperation batch_operation;
     batch_operation.operation_type = WebServiceWorkerCache::kOperationTypePut;
     batch_operation.request = web_request_;
@@ -389,11 +386,11 @@ ScriptPromise Cache::match(ScriptState* script_state,
                            const RequestInfo& request,
                            const CacheQueryOptions& options,
                            ExceptionState& exception_state) {
-  ASSERT(!request.isNull());
-  if (request.isRequest())
-    return MatchImpl(script_state, request.getAsRequest(), options);
+  DCHECK(!request.IsNull());
+  if (request.IsRequest())
+    return MatchImpl(script_state, request.GetAsRequest(), options);
   Request* new_request =
-      Request::Create(script_state, request.getAsUSVString(), exception_state);
+      Request::Create(script_state, request.GetAsUSVString(), exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
   return MatchImpl(script_state, new_request, options);
@@ -408,11 +405,11 @@ ScriptPromise Cache::matchAll(ScriptState* script_state,
                               const RequestInfo& request,
                               const CacheQueryOptions& options,
                               ExceptionState& exception_state) {
-  ASSERT(!request.isNull());
-  if (request.isRequest())
-    return MatchAllImpl(script_state, request.getAsRequest(), options);
+  DCHECK(!request.IsNull());
+  if (request.IsRequest())
+    return MatchAllImpl(script_state, request.GetAsRequest(), options);
   Request* new_request =
-      Request::Create(script_state, request.getAsUSVString(), exception_state);
+      Request::Create(script_state, request.GetAsUSVString(), exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
   return MatchAllImpl(script_state, new_request, options);
@@ -421,12 +418,12 @@ ScriptPromise Cache::matchAll(ScriptState* script_state,
 ScriptPromise Cache::add(ScriptState* script_state,
                          const RequestInfo& request,
                          ExceptionState& exception_state) {
-  ASSERT(!request.isNull());
+  DCHECK(!request.IsNull());
   HeapVector<Member<Request>> requests;
-  if (request.isRequest()) {
-    requests.push_back(request.getAsRequest());
+  if (request.IsRequest()) {
+    requests.push_back(request.GetAsRequest());
   } else {
-    requests.push_back(Request::Create(script_state, request.getAsUSVString(),
+    requests.push_back(Request::Create(script_state, request.GetAsUSVString(),
                                        exception_state));
     if (exception_state.HadException())
       return ScriptPromise();
@@ -440,10 +437,10 @@ ScriptPromise Cache::addAll(ScriptState* script_state,
                             ExceptionState& exception_state) {
   HeapVector<Member<Request>> requests;
   for (RequestInfo request : raw_requests) {
-    if (request.isRequest()) {
-      requests.push_back(request.getAsRequest());
+    if (request.IsRequest()) {
+      requests.push_back(request.GetAsRequest());
     } else {
-      requests.push_back(Request::Create(script_state, request.getAsUSVString(),
+      requests.push_back(Request::Create(script_state, request.GetAsUSVString(),
                                          exception_state));
       if (exception_state.HadException())
         return ScriptPromise();
@@ -457,11 +454,11 @@ ScriptPromise Cache::deleteFunction(ScriptState* script_state,
                                     const RequestInfo& request,
                                     const CacheQueryOptions& options,
                                     ExceptionState& exception_state) {
-  ASSERT(!request.isNull());
-  if (request.isRequest())
-    return DeleteImpl(script_state, request.getAsRequest(), options);
+  DCHECK(!request.IsNull());
+  if (request.IsRequest())
+    return DeleteImpl(script_state, request.GetAsRequest(), options);
   Request* new_request =
-      Request::Create(script_state, request.getAsUSVString(), exception_state);
+      Request::Create(script_state, request.GetAsUSVString(), exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
   return DeleteImpl(script_state, new_request, options);
@@ -471,13 +468,13 @@ ScriptPromise Cache::put(ScriptState* script_state,
                          const RequestInfo& request,
                          Response* response,
                          ExceptionState& exception_state) {
-  ASSERT(!request.isNull());
-  if (request.isRequest())
+  DCHECK(!request.IsNull());
+  if (request.IsRequest())
     return PutImpl(script_state,
-                   HeapVector<Member<Request>>(1, request.getAsRequest()),
+                   HeapVector<Member<Request>>(1, request.GetAsRequest()),
                    HeapVector<Member<Response>>(1, response));
   Request* new_request =
-      Request::Create(script_state, request.getAsUSVString(), exception_state);
+      Request::Create(script_state, request.GetAsUSVString(), exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
   return PutImpl(script_state, HeapVector<Member<Request>>(1, new_request),
@@ -492,11 +489,11 @@ ScriptPromise Cache::keys(ScriptState* script_state,
                           const RequestInfo& request,
                           const CacheQueryOptions& options,
                           ExceptionState& exception_state) {
-  ASSERT(!request.isNull());
-  if (request.isRequest())
-    return KeysImpl(script_state, request.getAsRequest(), options);
+  DCHECK(!request.IsNull());
+  if (request.IsRequest())
+    return KeysImpl(script_state, request.GetAsRequest(), options);
   Request* new_request =
-      Request::Create(script_state, request.getAsUSVString(), exception_state);
+      Request::Create(script_state, request.GetAsUSVString(), exception_state);
   if (exception_state.HadException())
     return ScriptPromise();
   return KeysImpl(script_state, new_request, options);
@@ -572,9 +569,9 @@ ScriptPromise Cache::AddAllImpl(ScriptState* script_state,
     return ScriptPromise::CastUndefined(script_state);
 
   HeapVector<RequestInfo> request_infos;
-  request_infos.Resize(requests.size());
+  request_infos.resize(requests.size());
   Vector<ScriptPromise> promises;
-  promises.Resize(requests.size());
+  promises.resize(requests.size());
   for (size_t i = 0; i < requests.size(); ++i) {
     if (!requests[i]->url().ProtocolIsInHTTPFamily())
       return ScriptPromise::Reject(script_state,
@@ -588,7 +585,7 @@ ScriptPromise Cache::AddAllImpl(ScriptState* script_state,
           V8ThrowException::CreateTypeError(
               script_state->GetIsolate(),
               "Add/AddAll only supports the GET request method."));
-    request_infos[i].setRequest(requests[i]);
+    request_infos[i].SetRequest(requests[i]);
 
     promises[i] = scoped_fetcher_->Fetch(script_state, request_infos[i],
                                          Dictionary(), exception_state);
@@ -627,7 +624,7 @@ ScriptPromise Cache::PutImpl(ScriptState* script_state,
       new BarrierCallbackForPut(requests.size(), this, resolver);
 
   for (size_t i = 0; i < requests.size(); ++i) {
-    KURL url(KURL(), requests[i]->url());
+    KURL url(NullURL(), requests[i]->url());
     if (!url.ProtocolIsInHTTPFamily()) {
       barrier_callback->OnError("Request scheme '" + url.Protocol() +
                                 "' is unsupported");
@@ -638,7 +635,7 @@ ScriptPromise Cache::PutImpl(ScriptState* script_state,
                                 "' is unsupported");
       return promise;
     }
-    ASSERT(!requests[i]->HasBody());
+    DCHECK(!requests[i]->HasBody());
 
     if (VaryHeaderContainsAsterisk(responses[i])) {
       barrier_callback->OnError("Vary header contains *");

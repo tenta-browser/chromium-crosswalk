@@ -9,6 +9,8 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 
+import org.chromium.base.BuildInfo;
+import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
@@ -24,10 +26,10 @@ import org.chromium.chrome.browser.historyreport.AppIndexingReporter;
 import org.chromium.chrome.browser.init.ProcessInitializationHandler;
 import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
 import org.chromium.chrome.browser.locale.LocaleManager;
-import org.chromium.chrome.browser.media.VideoPersister;
 import org.chromium.chrome.browser.metrics.VariationsSession;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.net.qualityprovider.ExternalEstimateProviderAndroid;
+import org.chromium.chrome.browser.offlinepages.CCTRequestStatus;
 import org.chromium.chrome.browser.omaha.RequestGenerator;
 import org.chromium.chrome.browser.physicalweb.PhysicalWebBleClient;
 import org.chromium.chrome.browser.policy.PolicyAuditor;
@@ -35,15 +37,18 @@ import org.chromium.chrome.browser.preferences.LocationSettings;
 import org.chromium.chrome.browser.rlz.RevenueStats;
 import org.chromium.chrome.browser.services.AndroidEduOwnerCheckCallback;
 import org.chromium.chrome.browser.signin.GoogleActivityController;
+import org.chromium.chrome.browser.survey.SurveyController;
 import org.chromium.chrome.browser.sync.GmsCoreSyncListener;
 import org.chromium.chrome.browser.tab.AuthenticatorNavigationInterceptor;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.webapps.ChromeShortcutManager;
 import org.chromium.chrome.browser.webapps.GooglePlayWebApkInstallDelegate;
 import org.chromium.components.signin.AccountManagerDelegate;
 import org.chromium.components.signin.SystemAccountManagerDelegate;
 import org.chromium.policy.AppRestrictionsProvider;
 import org.chromium.policy.CombinedPolicyProvider;
+
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Base class for defining methods where different behavior is required by downstream targets.
@@ -74,12 +79,7 @@ public abstract class AppHooks {
      * @param callback Callback that should receive the results of the AndroidEdu device check.
      */
     public void checkIsAndroidEduDevice(final AndroidEduOwnerCheckCallback callback) {
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
-            @Override
-            public void run() {
-                callback.onSchoolCheckDone(false);
-            }
-        });
+        new Handler(Looper.getMainLooper()).post(() -> callback.onSchoolCheckDone(false));
     }
 
     /**
@@ -114,17 +114,20 @@ public abstract class AppHooks {
         return null;
     }
 
-    /** Returns the singleton instance of ChromeShortcutManager */
-    public ChromeShortcutManager createChromeShortcutManager() {
-        return new ChromeShortcutManager();
-    }
-
     /**
      * @return An instance of {@link CustomTabsConnection}. Should not be called
      * outside of {@link CustomTabsConnection#getInstance()}.
      */
     public CustomTabsConnection createCustomTabsConnection() {
-        return new CustomTabsConnection(((ChromeApplication) ContextUtils.getApplicationContext()));
+        return new CustomTabsConnection();
+    }
+
+    /**
+     * Creates a new {@link SurveyController}.
+     * @return The created {@link SurveyController}.
+     */
+    public SurveyController createSurveyController() {
+        return new SurveyController();
     }
 
     /**
@@ -251,13 +254,6 @@ public abstract class AppHooks {
         return new VariationsSession();
     }
 
-    /**
-     * @return An instance of VideoPersister to be installed as a singleton.
-     */
-    public VideoPersister createVideoPersister() {
-        return new VideoPersister();
-    }
-
     /** Returns the singleton instance of GooglePlayWebApkInstallDelegate. */
     public GooglePlayWebApkInstallDelegate getGooglePlayWebApkInstallDelegate() {
         return null;
@@ -295,6 +291,24 @@ public abstract class AppHooks {
      */
     @CalledByNative
     public boolean shouldDetectVideoFullscreen() {
-        return false;
+        return BuildInfo.isAtLeastO();
+    }
+
+    /**
+     * @return A callback that will be run each time an offline page is saved in the custom tabs
+     * namespace.
+     */
+    @CalledByNative
+    public Callback<CCTRequestStatus> getOfflinePagesCCTRequestDoneCallback() {
+        return null;
+    }
+
+    /**
+     * @return A list of whitelisted apps that are allowed to receive notification when the
+     * set of offlined pages downloaded on their behalf has changed. Apps are listed by their
+     * package name.
+     */
+    public List<String> getOfflinePagesCctWhitelist() {
+        return Collections.emptyList();
     }
 }

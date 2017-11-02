@@ -106,10 +106,11 @@ class PLATFORM_EXPORT Cursor {
 
   explicit Cursor(Type);
   Type GetType() const {
-    ASSERT(type_ >= 0 && type_ <= kCustom);
+    DCHECK_GE(type_, 0);
+    DCHECK_LE(type_, kCustom);
     return type_;
   }
-  Image* GetImage() const { return image_.Get(); }
+  Image* GetImage() const { return image_.get(); }
   const IntPoint& HotSpot() const { return hot_spot_; }
   // Image scale in image pixels per logical (UI) pixel.
   float ImageScaleFactor() const { return image_scale_factor_; }

@@ -13,6 +13,9 @@
 
 namespace blink {
 
+class Font;
+class TextMetrics;
+
 class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
     : public CanvasRenderingContext,
       public BaseRenderingContext2D {
@@ -26,10 +29,11 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
     ~Factory() override {}
 
     CanvasRenderingContext* Create(
-        ScriptState* script_state,
-        OffscreenCanvas* canvas,
+        CanvasRenderingContextHost* host,
         const CanvasContextCreationAttributes& attrs) override {
-      return new OffscreenCanvasRenderingContext2D(script_state, canvas, attrs);
+      DCHECK(host->IsOffscreenCanvas());
+      return new OffscreenCanvasRenderingContext2D(
+          static_cast<OffscreenCanvas*>(host), attrs);
     }
 
     CanvasRenderingContext::ContextType GetContextType() const override {
@@ -37,6 +41,10 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
     }
   };
 
+  OffscreenCanvas* offscreenCanvasForBinding() const {
+    DCHECK(!Host() || Host()->IsOffscreenCanvas());
+    return static_cast<OffscreenCanvas*>(Host());
+  }
   ScriptPromise commit(ScriptState*, ExceptionState&);
 
   // CanvasRenderingContext implementation
@@ -49,12 +57,28 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   void SetIsHidden(bool) final { NOTREACHED(); }
   void Stop() final { NOTREACHED(); }
   void SetCanvasGetContextResult(RenderingContext&) final {}
-  void clearRect(double x, double y, double width, double height) override {
+  void ClearRect(double x, double y, double width, double height) override {
     BaseRenderingContext2D::clearRect(x, y, width, height);
   }
-  PassRefPtr<Image> GetImage(AccelerationHint, SnapshotReason) const final;
+  RefPtr<StaticBitmapImage> GetImage(AccelerationHint,
+                                     SnapshotReason) const final;
   ImageData* ToImageData(SnapshotReason) override;
   void Reset() override;
+  void RestoreCanvasMatrixClipStack(PaintCanvas* c) const override {
+    RestoreMatrixClipStack(c);
+  }
+
+  String font() const;
+  void setFont(const String&) override;
+
+  String direction() const;
+  void setDirection(const String&);
+
+  void fillText(const String& text, double x, double y);
+  void fillText(const String& text, double x, double y, double max_width);
+  void strokeText(const String& text, double x, double y);
+  void strokeText(const String& text, double x, double y, double max_width);
+  TextMetrics* measureText(const String& text);
 
   // BaseRenderingContext2D implementation
   bool OriginClean() const final;
@@ -89,11 +113,8 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
 
   ImageBitmap* TransferToImageBitmap(ScriptState*) final;
 
-  ColorBehavior DrawImageColorBehavior() const final;
-
  protected:
   OffscreenCanvasRenderingContext2D(
-      ScriptState*,
       OffscreenCanvas*,
       const CanvasContextCreationAttributes& attrs);
   DECLARE_VIRTUAL_TRACE();
@@ -103,19 +124,28 @@ class MODULES_EXPORT OffscreenCanvasRenderingContext2D final
   }
 
  private:
-  bool needs_matrix_clip_restore_ = false;
-  std::unique_ptr<ImageBuffer> image_buffer_;
-
   bool IsPaintable() const final;
 
+  void DrawTextInternal(const String&,
+                        double,
+                        double,
+                        CanvasRenderingContext2DState::PaintType,
+                        double* max_width = nullptr);
+  const Font& AccessFont();
+
   RefPtr<StaticBitmapImage> TransferToStaticBitmapImage();
+
+  CanvasColorSpace ColorSpace() const override;
+  String ColorSpaceAsString() const override;
+  CanvasPixelFormat PixelFormat() const override;
+  SkIRect dirty_rect_for_commit_;
 };
 
 DEFINE_TYPE_CASTS(OffscreenCanvasRenderingContext2D,
                   CanvasRenderingContext,
                   context,
-                  context->Is2d() && context->offscreenCanvas(),
-                  context.Is2d() && context.offscreenCanvas());
+                  context->Is2d() && context->Host(),
+                  context.Is2d() && context.Host());
 
 }  // namespace blink
 

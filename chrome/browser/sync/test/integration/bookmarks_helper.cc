@@ -8,13 +8,13 @@
 
 #include <memory>
 #include <set>
-#include <stack>
 #include <vector>
 
 #include "base/bind.h"
+#include "base/containers/stack.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
@@ -24,6 +24,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
@@ -127,7 +128,7 @@ class FaviconChangeObserver : public bookmarks::BookmarkModelObserver {
                                   const BookmarkNode* node) override {
     if (model == model_ && node == node_) {
       if (!wait_for_load_ || (wait_for_load_ && node->is_favicon_loaded()))
-        base::MessageLoopForUI::current()->QuitWhenIdle();
+        base::RunLoop::QuitCurrentWhenIdleDeprecated();
     }
   }
 
@@ -179,24 +180,23 @@ int CountNodes(BookmarkModel* model, BookmarkNode::Type node_type) {
 // Returns true if they match.
 bool FaviconRawBitmapsMatch(const SkBitmap& bitmap_a,
                             const SkBitmap& bitmap_b) {
-  if (bitmap_a.getSize() == 0U && bitmap_b.getSize() == 0U)
+  if (bitmap_a.computeByteSize() == 0U && bitmap_b.computeByteSize() == 0U)
     return true;
-  if ((bitmap_a.getSize() != bitmap_b.getSize()) ||
+  if ((bitmap_a.computeByteSize() != bitmap_b.computeByteSize()) ||
       (bitmap_a.width() != bitmap_b.width()) ||
       (bitmap_a.height() != bitmap_b.height())) {
-    LOG(ERROR) << "Favicon size mismatch: " << bitmap_a.getSize() << " ("
-               << bitmap_a.width() << "x" << bitmap_a.height() << ") vs. "
-               << bitmap_b.getSize() << " (" << bitmap_b.width() << "x"
-               << bitmap_b.height() << ")";
+    LOG(ERROR) << "Favicon size mismatch: " << bitmap_a.computeByteSize()
+               << " (" << bitmap_a.width() << "x" << bitmap_a.height()
+               << ") vs. " << bitmap_b.computeByteSize() << " ("
+               << bitmap_b.width() << "x" << bitmap_b.height() << ")";
     return false;
   }
-  SkAutoLockPixels bitmap_lock_a(bitmap_a);
-  SkAutoLockPixels bitmap_lock_b(bitmap_b);
   void* node_pixel_addr_a = bitmap_a.getPixels();
   EXPECT_TRUE(node_pixel_addr_a);
   void* node_pixel_addr_b = bitmap_b.getPixels();
   EXPECT_TRUE(node_pixel_addr_b);
-  if (memcmp(node_pixel_addr_a, node_pixel_addr_b, bitmap_a.getSize()) !=  0) {
+  if (memcmp(node_pixel_addr_a, node_pixel_addr_b,
+             bitmap_a.computeByteSize()) != 0) {
     LOG(ERROR) << "Favicon bitmap mismatch";
     return false;
   } else {
@@ -235,7 +235,8 @@ FaviconData GetFaviconData(BookmarkModel* model,
     model->GetFavicon(node);
     observer.WaitForGetFavicon();
   }
-  return FaviconData(model->GetFavicon(node), node->icon_url());
+  return FaviconData(model->GetFavicon(node),
+                     node->icon_url() ? *node->icon_url() : GURL());
 }
 
 // Sets the favicon for |profile| and |node|. |profile| may be
@@ -252,7 +253,7 @@ void SetFaviconImpl(Profile* profile,
       FaviconServiceFactory::GetForProfile(profile,
                                            ServiceAccessType::EXPLICIT_ACCESS);
   if (favicon_source == bookmarks_helper::FROM_UI) {
-    favicon_service->SetFavicons(node->url(), icon_url, favicon_base::FAVICON,
+    favicon_service->SetFavicons({node->url()}, icon_url, favicon_base::FAVICON,
                                  image);
     } else {
       browser_sync::ProfileSyncService* pss =
@@ -312,7 +313,7 @@ void WaitForHistoryToProcessPendingTasks() {
     base::CancelableTaskTracker task_tracker;
     // Post a task that signals |done|. Since tasks run in posting order, all
     // previously posted tasks have run when |done| is signaled.
-    history_service->ScheduleDBTask(base::MakeUnique<SignalEventTask>(&done),
+    history_service->ScheduleDBTask(std::make_unique<SignalEventTask>(&done),
                                     &task_tracker);
     done.Wait();
   }
@@ -417,7 +418,7 @@ void FindNodeInVerifier(BookmarkModel* foreign_model,
                         const BookmarkNode* foreign_node,
                         const BookmarkNode** result) {
   // Climb the tree.
-  std::stack<int> path;
+  base::stack<int> path;
   const BookmarkNode* walker = foreign_node;
   while (walker != foreign_model->root_node()) {
     path.push(walker->parent()->GetIndexOf(walker));
@@ -854,6 +855,7 @@ gfx::Image CreateFavicon(SkColor color) {
 }
 
 gfx::Image Create1xFaviconFromPNGFile(const std::string& path) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   const char* kPNGExtension = ".png";
   if (!base::EndsWith(path, kPNGExtension,
                       base::CompareCase::INSENSITIVE_ASCII))

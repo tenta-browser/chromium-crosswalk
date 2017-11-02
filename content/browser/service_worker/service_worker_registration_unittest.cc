@@ -7,24 +7,32 @@
 #include <stdint.h>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
 #include "base/run_loop.h"
+#include "base/test/simple_test_tick_clock.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
+#include "content/browser/service_worker/service_worker_dispatcher_host.h"
 #include "content/browser/service_worker/service_worker_registration_handle.h"
 #include "content/browser/service_worker/service_worker_test_utils.h"
 #include "content/common/service_worker/service_worker_utils.h"
+#include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
 
 namespace {
+
+// From service_worker_registration.cc.
+constexpr base::TimeDelta kMaxLameDuckTime = base::TimeDelta::FromMinutes(5);
 
 int CreateInflightRequest(ServiceWorkerVersion* version) {
   version->StartWorker(ServiceWorkerMetrics::EventType::PUSH,
@@ -45,7 +53,8 @@ class ServiceWorkerRegistrationTest : public testing::Test {
   void SetUp() override {
     helper_.reset(new EmbeddedWorkerTestHelper(base::FilePath()));
 
-    helper_->context()->storage()->LazyInitialize(base::Bind(&base::DoNothing));
+    context()->storage()->LazyInitializeForTest(
+        base::BindOnce(&base::DoNothing));
     base::RunLoop().RunUntilIdle();
   }
 
@@ -94,7 +103,7 @@ class ServiceWorkerRegistrationTest : public testing::Test {
     ServiceWorkerRegistrationInfo observed_info_;
   };
 
- private:
+ protected:
   std::unique_ptr<EmbeddedWorkerTestHelper> helper_;
   TestBrowserThreadBundle thread_bundle_;
 };
@@ -104,8 +113,9 @@ TEST_F(ServiceWorkerRegistrationTest, SetAndUnsetVersions) {
   const GURL kScript("http://www.example.not/service_worker.js");
   int64_t kRegistrationId = 1L;
   scoped_refptr<ServiceWorkerRegistration> registration =
-      new ServiceWorkerRegistration(kScope, kRegistrationId,
-                                    context()->AsWeakPtr());
+      new ServiceWorkerRegistration(
+          blink::mojom::ServiceWorkerRegistrationOptions(kScope),
+          kRegistrationId, context()->AsWeakPtr());
 
   const int64_t version_1_id = 1L;
   const int64_t version_2_id = 2L;
@@ -170,13 +180,18 @@ TEST_F(ServiceWorkerRegistrationTest, SetAndUnsetVersions) {
 TEST_F(ServiceWorkerRegistrationTest, FailedRegistrationNoCrash) {
   const GURL kScope("http://www.example.not/");
   int64_t kRegistrationId = 1L;
-  scoped_refptr<ServiceWorkerRegistration> registration =
-      new ServiceWorkerRegistration(kScope, kRegistrationId,
-                                    context()->AsWeakPtr());
-  std::unique_ptr<ServiceWorkerRegistrationHandle> handle(
-      new ServiceWorkerRegistrationHandle(
-          context()->AsWeakPtr(), base::WeakPtr<ServiceWorkerProviderHost>(),
-          registration.get()));
+  auto registration = base::MakeRefCounted<ServiceWorkerRegistration>(
+      blink::mojom::ServiceWorkerRegistrationOptions(kScope), kRegistrationId,
+      context()->AsWeakPtr());
+  auto dispatcher_host = base::MakeRefCounted<ServiceWorkerDispatcherHost>(
+      helper_->mock_render_process_id(),
+      helper_->browser_context()->GetResourceContext());
+  // ServiceWorkerRegistrationHandle ctor will make |handle| be owned by
+  // |dispatcher_host|.
+  auto* handle = new ServiceWorkerRegistrationHandle(
+      context()->AsWeakPtr(), dispatcher_host.get(),
+      base::WeakPtr<ServiceWorkerProviderHost>(), registration.get());
+  ALLOW_UNUSED_LOCAL(handle);
   registration->NotifyRegistrationFailed();
   // Don't crash when handle gets destructed.
 }
@@ -186,8 +201,9 @@ TEST_F(ServiceWorkerRegistrationTest, NavigationPreload) {
   const GURL kScript("https://www.example.not/service_worker.js");
   // Setup.
   scoped_refptr<ServiceWorkerRegistration> registration =
-      new ServiceWorkerRegistration(kScope, storage()->NewRegistrationId(),
-                                    context()->AsWeakPtr());
+      new ServiceWorkerRegistration(
+          blink::mojom::ServiceWorkerRegistrationOptions(kScope),
+          storage()->NewRegistrationId(), context()->AsWeakPtr());
   scoped_refptr<ServiceWorkerVersion> version_1 = new ServiceWorkerVersion(
       registration.get(), kScript, storage()->NewVersionId(),
       context()->AsWeakPtr());
@@ -230,7 +246,8 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest {
     const GURL kScript("https://www.example.not/service_worker.js");
 
     registration_ = new ServiceWorkerRegistration(
-        kScope, storage()->NewRegistrationId(), context()->AsWeakPtr());
+        blink::mojom::ServiceWorkerRegistrationOptions(kScope),
+        storage()->NewRegistrationId(), context()->AsWeakPtr());
 
     // Create an active version.
     scoped_refptr<ServiceWorkerVersion> version_1 = new ServiceWorkerVersion(
@@ -257,8 +274,11 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest {
 
     // Give the active version a controllee.
     host_ = CreateProviderHostForWindow(
-        33 /* dummy render process id */, 1 /* dummy provider_id */,
-        true /* is_parent_frame_secure */, context()->AsWeakPtr());
+        helper_->mock_render_process_id(), 1 /* dummy provider_id */,
+        true /* is_parent_frame_secure */, context()->AsWeakPtr(),
+        &remote_endpoint_);
+    DCHECK(remote_endpoint_.client_request()->is_pending());
+    DCHECK(remote_endpoint_.host_ptr()->is_bound());
     version_1->AddControllee(host_.get());
 
     // Give the active version an in-flight request.
@@ -271,6 +291,8 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest {
     version_2->set_fetch_handler_existence(
         ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
     registration_->SetWaitingVersion(version_2);
+    version_2->StartWorker(ServiceWorkerMetrics::EventType::INSTALL,
+                           base::Bind(&ServiceWorkerUtils::NoOpStatusCallback));
     version_2->SetStatus(ServiceWorkerVersion::INSTALLED);
 
     // Set it to activate when ready. The original version should still be
@@ -289,9 +311,20 @@ class ServiceWorkerActivationTest : public ServiceWorkerRegistrationTest {
   ServiceWorkerProviderHost* controllee() { return host_.get(); }
   int inflight_request_id() const { return inflight_request_id_; }
 
+  bool IsLameDuckTimerRunning() {
+    return registration_->lame_duck_timer_.IsRunning();
+  }
+
+  void RunLameDuckTimer() { registration_->RemoveLameDuckIfNeeded(); }
+
+  void SimulateSkipWaiting(ServiceWorkerVersion* version, int request_id) {
+    version->OnSkipWaiting(request_id);
+  }
+
  private:
   scoped_refptr<ServiceWorkerRegistration> registration_;
   std::unique_ptr<ServiceWorkerProviderHost> host_;
+  ServiceWorkerRemoteProviderEndpoint remote_endpoint_;
   int inflight_request_id_ = -1;
 };
 
@@ -347,7 +380,7 @@ TEST_F(ServiceWorkerActivationTest, SkipWaiting) {
   EXPECT_EQ(version_1.get(), reg->active_version());
 
   // Call skipWaiting. Activation should happen.
-  version_2->OnSkipWaiting(77 /* dummy request_id */);
+  SimulateSkipWaiting(version_2.get(), 77 /* dummy request_id */);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(version_2.get(), reg->active_version());
 }
@@ -360,7 +393,7 @@ TEST_F(ServiceWorkerActivationTest, SkipWaitingWithInflightRequest) {
 
   // Set skip waiting flag. Since there is still an in-flight request,
   // activation should not happen.
-  version_2->OnSkipWaiting(77 /* dummy request_id */);
+  SimulateSkipWaiting(version_2.get(), 77 /* dummy request_id */);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(version_1.get(), reg->active_version());
 
@@ -369,6 +402,122 @@ TEST_F(ServiceWorkerActivationTest, SkipWaitingWithInflightRequest) {
                            base::Time::Now());
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(version_2.get(), reg->active_version());
+}
+
+TEST_F(ServiceWorkerActivationTest, TimeSinceSkipWaiting_Installing) {
+  scoped_refptr<ServiceWorkerRegistration> reg = registration();
+  scoped_refptr<ServiceWorkerVersion> version = reg->waiting_version();
+  base::SimpleTestTickClock* clock = new base::SimpleTestTickClock();
+  clock->SetNowTicks(base::TimeTicks::Now());
+  version->SetTickClockForTesting(base::WrapUnique(clock));
+
+  // Reset version to the installing phase.
+  reg->UnsetVersion(version.get());
+  version->SetStatus(ServiceWorkerVersion::INSTALLING);
+
+  // Call skipWaiting(). The time ticks since skip waiting shouldn't start
+  // since the version is not yet installed.
+  SimulateSkipWaiting(version.get(), 77 /* dummy request_id */);
+  base::RunLoop().RunUntilIdle();
+  clock->Advance(base::TimeDelta::FromSeconds(11));
+  EXPECT_EQ(base::TimeDelta(), version->TimeSinceSkipWaiting());
+
+  // Install the version. Now the skip waiting time starts ticking.
+  version->SetStatus(ServiceWorkerVersion::INSTALLED);
+  reg->SetWaitingVersion(version);
+  base::RunLoop().RunUntilIdle();
+  clock->Advance(base::TimeDelta::FromSeconds(33));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(33), version->TimeSinceSkipWaiting());
+
+  // Call skipWaiting() again. It doesn't reset the time.
+  SimulateSkipWaiting(version.get(), 88 /* dummy request_id */);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(base::TimeDelta::FromSeconds(33), version->TimeSinceSkipWaiting());
+}
+
+// Test lame duck timer triggered by skip waiting.
+TEST_F(ServiceWorkerActivationTest, LameDuckTime_SkipWaiting) {
+  scoped_refptr<ServiceWorkerRegistration> reg = registration();
+  scoped_refptr<ServiceWorkerVersion> version_1 = reg->active_version();
+  scoped_refptr<ServiceWorkerVersion> version_2 = reg->waiting_version();
+  base::SimpleTestTickClock* clock_1 = new base::SimpleTestTickClock();
+  base::SimpleTestTickClock* clock_2 = new base::SimpleTestTickClock();
+  clock_1->SetNowTicks(base::TimeTicks::Now());
+  clock_2->SetNowTicks(clock_1->NowTicks());
+  version_1->SetTickClockForTesting(base::WrapUnique(clock_1));
+  version_2->SetTickClockForTesting(base::WrapUnique(clock_2));
+
+  // Set skip waiting flag. Since there is still an in-flight request,
+  // activation should not happen. But the lame duck timer should start.
+  EXPECT_FALSE(IsLameDuckTimerRunning());
+  SimulateSkipWaiting(version_2.get(), 77 /* dummy request_id */);
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(version_1.get(), reg->active_version());
+  EXPECT_TRUE(IsLameDuckTimerRunning());
+
+  // Move forward by lame duck time.
+  clock_2->Advance(kMaxLameDuckTime + base::TimeDelta::FromSeconds(1));
+
+  // Activation should happen by the lame duck timer.
+  RunLameDuckTimer();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(version_2.get(), reg->active_version());
+  EXPECT_FALSE(IsLameDuckTimerRunning());
+}
+
+// Test lame duck timer triggered by loss of controllee.
+TEST_F(ServiceWorkerActivationTest, LameDuckTime_NoControllee) {
+  scoped_refptr<ServiceWorkerRegistration> reg = registration();
+  scoped_refptr<ServiceWorkerVersion> version_1 = reg->active_version();
+  scoped_refptr<ServiceWorkerVersion> version_2 = reg->waiting_version();
+  base::SimpleTestTickClock* clock_1 = new base::SimpleTestTickClock();
+  base::SimpleTestTickClock* clock_2 = new base::SimpleTestTickClock();
+  clock_1->SetNowTicks(base::TimeTicks::Now());
+  clock_2->SetNowTicks(clock_1->NowTicks());
+  version_1->SetTickClockForTesting(base::WrapUnique(clock_1));
+  version_2->SetTickClockForTesting(base::WrapUnique(clock_2));
+
+  // Remove the controllee. Since there is still an in-flight request,
+  // activation should not happen. But the lame duck timer should start.
+  EXPECT_FALSE(IsLameDuckTimerRunning());
+  version_1->RemoveControllee(controllee());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(version_1.get(), reg->active_version());
+  EXPECT_TRUE(IsLameDuckTimerRunning());
+
+  // Move clock forward by a little bit.
+  constexpr base::TimeDelta kLittleBit = base::TimeDelta::FromMinutes(1);
+  clock_1->Advance(kLittleBit);
+
+  // Add a controllee again to reset the lame duck period.
+  version_1->AddControllee(controllee());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(IsLameDuckTimerRunning());
+
+  // Remove the controllee.
+  version_1->RemoveControllee(controllee());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(IsLameDuckTimerRunning());
+
+  // Move clock forward to the next lame duck timer tick.
+  clock_1->Advance(kMaxLameDuckTime - kLittleBit +
+                   base::TimeDelta::FromSeconds(1));
+
+  // Run the lame duck timer. Activation should not yet happen
+  // since the lame duck period has not expired.
+  RunLameDuckTimer();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(version_1.get(), reg->active_version());
+  EXPECT_TRUE(IsLameDuckTimerRunning());
+
+  // Continue on to the next lame duck timer tick.
+  clock_1->Advance(kMaxLameDuckTime + base::TimeDelta::FromSeconds(1));
+
+  // Activation should happen by the lame duck timer.
+  RunLameDuckTimer();
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(version_2.get(), reg->active_version());
+  EXPECT_FALSE(IsLameDuckTimerRunning());
 }
 
 }  // namespace content

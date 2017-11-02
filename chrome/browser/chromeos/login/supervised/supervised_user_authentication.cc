@@ -10,7 +10,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_constants.h"
 #include "chrome/browser/chromeos/login/users/supervised_user_manager.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
@@ -18,7 +18,6 @@
 #include "chromeos/login/auth/key.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
-#include "content/public/browser/browser_thread.h"
 #include "crypto/hmac.h"
 #include "crypto/random.h"
 #include "crypto/symmetric_key.h"
@@ -38,19 +37,18 @@ const int kSignatureLength = 32;
 const int kMasterKeySize = 32;
 
 std::string CreateSalt() {
-    char result[kSaltSize];
-    crypto::RandBytes(&result, sizeof(result));
-    return base::ToLowerASCII(
-        base::HexEncode(reinterpret_cast<const void*>(result), sizeof(result)));
+  char result[kSaltSize];
+  crypto::RandBytes(&result, sizeof(result));
+  return base::ToLowerASCII(
+      base::HexEncode(reinterpret_cast<const void*>(result), sizeof(result)));
 }
 
 std::string BuildRawHMACKey() {
   std::unique_ptr<crypto::SymmetricKey> key(
       crypto::SymmetricKey::GenerateRandomKey(crypto::SymmetricKey::AES,
                                               kHMACKeySizeInBits));
-  std::string raw_result, result;
-  key->GetRawKey(&raw_result);
-  base::Base64Encode(raw_result, &result);
+  std::string result;
+  base::Base64Encode(key->key(), &result);
   return result;
 }
 
@@ -91,9 +89,7 @@ void OnPasswordDataLoaded(
 
 SupervisedUserAuthentication::SupervisedUserAuthentication(
     SupervisedUserManager* owner)
-      : owner_(owner),
-        stable_schema_(SCHEMA_SALT_HASHED) {
-}
+    : owner_(owner), stable_schema_(SCHEMA_SALT_HASHED) {}
 
 SupervisedUserAuthentication::~SupervisedUserAuthentication() {}
 
@@ -137,26 +133,23 @@ bool SupervisedUserAuthentication::FillDataForNewUser(
     return false;
 
   if (schema == SCHEMA_SALT_HASHED) {
-    password_data->SetIntegerWithoutPathExpansion(kSchemaVersion, schema);
+    password_data->SetKey(kSchemaVersion, base::Value(schema));
     std::string salt = CreateSalt();
-    password_data->SetStringWithoutPathExpansion(kSalt, salt);
+    password_data->SetKey(kSalt, base::Value(salt));
     int revision = kMinPasswordRevision;
-    password_data->SetIntegerWithoutPathExpansion(kPasswordRevision, revision);
+    password_data->SetKey(kPasswordRevision, base::Value(revision));
     Key key(password);
     key.Transform(Key::KEY_TYPE_SALTED_PBKDF2_AES256_1234, salt);
     const std::string salted_password = key.GetSecret();
     const std::string base64_signature_key = BuildRawHMACKey();
     const std::string base64_signature =
         BuildPasswordSignature(salted_password, revision, base64_signature_key);
-    password_data->SetStringWithoutPathExpansion(kEncryptedPassword,
-                                                 salted_password);
-    password_data->SetStringWithoutPathExpansion(kPasswordSignature,
-                                                 base64_signature);
+    password_data->SetKey(kEncryptedPassword, base::Value(salted_password));
+    password_data->SetKey(kPasswordSignature, base::Value(base64_signature));
 
-    extra_data->SetStringWithoutPathExpansion(kPasswordEncryptionKey,
-                                              BuildRawHMACKey());
-    extra_data->SetStringWithoutPathExpansion(kPasswordSignatureKey,
-                                              base64_signature_key);
+    extra_data->SetKey(kPasswordEncryptionKey, base::Value(BuildRawHMACKey()));
+    extra_data->SetKey(kPasswordSignatureKey,
+                       base::Value(base64_signature_key));
     return true;
   }
   NOTREACHED();
@@ -187,8 +180,7 @@ void SupervisedUserAuthentication::StorePasswordData(
 }
 
 SupervisedUserAuthentication::Schema
-SupervisedUserAuthentication::GetPasswordSchema(
-  const std::string& user_id) {
+SupervisedUserAuthentication::GetPasswordSchema(const std::string& user_id) {
   base::DictionaryValue holder;
 
   owner_->GetPasswordInformation(user_id, &holder);
@@ -228,8 +220,8 @@ void SupervisedUserAuthentication::ScheduleSupervisedPasswordChange(
     const base::DictionaryValue* password_data) {
   const user_manager::User* user = user_manager::UserManager::Get()->FindUser(
       AccountId::FromUserEmail(supervised_user_id));
-  base::FilePath profile_path = ProfileHelper::GetProfilePathByUserIdHash(
-      user->username_hash());
+  base::FilePath profile_path =
+      ProfileHelper::GetProfilePathByUserIdHash(user->username_hash());
   JSONFileValueSerializer serializer(profile_path.Append(kPasswordUpdateFile));
   if (!serializer.Serialize(*password_data)) {
     LOG(ERROR) << "Failed to schedule password update for supervised user "
@@ -288,13 +280,13 @@ void SupervisedUserAuthentication::LoadPasswordUpdateData(
       AccountId::FromUserEmail(user_id));
   base::FilePath profile_path =
       ProfileHelper::GetProfilePathByUserIdHash(user->username_hash());
-  PostTaskAndReplyWithResult(
-      content::BrowserThread::GetBlockingPool()
-          ->GetTaskRunnerWithShutdownBehavior(
-                base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN)
-          .get(),
-      FROM_HERE, base::Bind(&LoadPasswordData, profile_path),
-      base::Bind(&OnPasswordDataLoaded, success_callback, failure_callback));
+  PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&LoadPasswordData, profile_path),
+      base::BindOnce(&OnPasswordDataLoaded, success_callback,
+                     failure_callback));
 }
 
 std::string SupervisedUserAuthentication::BuildPasswordSignature(

@@ -30,20 +30,43 @@ import os.path
 import re
 
 
+# Acronyms are kept as all caps.
 ACRONYMS = [
-    'CSSOM',
+    '2D',
+    '2G',
+    '3D',
+    '3G',
+    'API',
+    'CORS',
+    'CSP',
     'CSS',
+    'CSSOM',
     'DNS',
+    'DOM',
     'FE',
     'FTP',
+    'GL',
     'HTML',
+    'IDB',
+    'IFrame',
     'JS',
+    'NFC',
+    'NG',
+    'OM',
+    'RFC',
+    'RTCRtp',
+    'SMIL',
     'SVG',
+    'UI',
     'URL',
+    'USB',
+    'VR',
+    'VTT',
     'WOFF',
     'XML',
     'XSLT',
     'XSS',
+    'YUV',
 ]
 
 
@@ -125,40 +148,72 @@ def enum_for_css_property_alias(property_name):
 
 def split_name(name):
     """Splits a name in some format to a list of words"""
-    return re.findall(r'(?:[A-Z][a-z]*)|[a-z]+|(?:\d+[a-z]*)', upper_first_letter(name))
+    return re.findall('|'.join(ACRONYMS) + r'|(?:[A-Z][a-z]*)|[a-z]+|(?:\d+[a-z]*)',
+                      upper_first_letter(name))
 
 
-def upper_camel_case(name):
-    return ''.join(upper_first_letter(word) for word in split_name(name))
-
-
-def lower_camel_case(name):
-    return lower_first_letter(upper_camel_case(name))
-
-# Use these high level naming functions which describe the semantics of the name,
-# rather than a particular style.
-
-
-def enum_type_name(name):
-    return upper_camel_case(name)
-
-
-def enum_value_name(name):
-    return 'k' + upper_camel_case(name)
-
-
-def class_member_name(name):
-    lower_case_words = [word.lower() for word in split_name(name)]
-    return "_".join(lower_case_words) + "_"
-
-
-def method_name(name):
-    return upper_camel_case(name)
-
-
-def join_name(*names):
+def join_names(*names):
     """Given a list of names, join them into a single space-separated name."""
     result = []
     for name in names:
         result.extend(split_name(name))
     return ' '.join(result)
+
+
+def naming_style(f):
+    """Decorator for name utility functions.
+
+    Wraps a name utility function in a function that takes one or more names,
+    splits them into a list of words, and passes the list to the utility function.
+    """
+    def inner(name_or_names):
+        names = name_or_names if isinstance(name_or_names, list) else [name_or_names]
+        words = []
+        for name in names:
+            words.extend(split_name(name))
+        return f(words)
+    return inner
+
+
+@naming_style
+def upper_camel_case(words):
+    return ''.join(upper_first_letter(word) for word in words)
+
+
+@naming_style
+def lower_camel_case(words):
+    return lower_first_letter(upper_camel_case(words))
+
+
+@naming_style
+def snake_case(words):
+    return '_'.join(word.lower() for word in words)
+
+
+# Use these high level naming functions which describe the semantics of the name,
+# rather than a particular style.
+
+
+@naming_style
+def enum_type_name(words):
+    return upper_camel_case(words)
+
+
+@naming_style
+def enum_value_name(words):
+    return 'k' + upper_camel_case(words)
+
+
+@naming_style
+def class_name(words):
+    return upper_camel_case(words)
+
+
+@naming_style
+def class_member_name(words):
+    return snake_case(words) + "_"
+
+
+@naming_style
+def method_name(words):
+    return upper_camel_case(words)

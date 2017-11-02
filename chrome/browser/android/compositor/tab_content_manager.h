@@ -7,11 +7,11 @@
 
 #include <jni.h>
 
-#include <unordered_map>
+#include <map>
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_weak_ref.h"
-#include "base/containers/hash_tables.h"
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "cc/layers/ui_resource_layer.h"
@@ -34,7 +34,8 @@ class ThumbnailLayer;
 // A native component of the Java TabContentManager class.
 class TabContentManager : public ThumbnailCacheObserver {
  public:
-  static TabContentManager* FromJavaObject(jobject jobj);
+  static TabContentManager* FromJavaObject(
+      const base::android::JavaRef<jobject>& jobj);
 
   TabContentManager(JNIEnv* env,
                     jobject obj,
@@ -92,12 +93,10 @@ class TabContentManager : public ThumbnailCacheObserver {
                         const base::android::JavaParamRef<jobject>& obj,
                         const base::android::JavaParamRef<jintArray>& priority,
                         jint primary_tab_id);
+  void NativeRemoveTabThumbnail(int tab_id);
   void RemoveTabThumbnail(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj,
                           jint tab_id);
-  void GetDecompressedThumbnail(JNIEnv* env,
-                                const base::android::JavaParamRef<jobject>& obj,
-                                jint tab_id);
   void OnUIResourcesWereEvicted();
 
   // ThumbnailCacheObserver implementation;
@@ -105,10 +104,12 @@ class TabContentManager : public ThumbnailCacheObserver {
 
  private:
   class TabReadbackRequest;
-  using LayerMap = base::hash_map<int, scoped_refptr<cc::Layer>>;
-  using ThumbnailLayerMap = base::hash_map<int, scoped_refptr<ThumbnailLayer>>;
+  // TODO(bug 714384) check sizes and consider using base::flat_map if these
+  // layer maps are small.
+  using LayerMap = std::map<int, scoped_refptr<cc::Layer>>;
+  using ThumbnailLayerMap = std::map<int, scoped_refptr<ThumbnailLayer>>;
   using TabReadbackRequestMap =
-      std::unordered_map<int, std::unique_ptr<TabReadbackRequest>>;
+      base::flat_map<int, std::unique_ptr<TabReadbackRequest>>;
 
   void PutThumbnailIntoCache(int tab_id,
                              float thumbnail_scale,
@@ -124,8 +125,6 @@ class TabContentManager : public ThumbnailCacheObserver {
 
   DISALLOW_COPY_AND_ASSIGN(TabContentManager);
 };
-
-bool RegisterTabContentManager(JNIEnv* env);
 
 }  // namespace android
 

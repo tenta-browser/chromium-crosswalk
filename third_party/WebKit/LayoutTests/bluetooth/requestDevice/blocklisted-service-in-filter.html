@@ -4,8 +4,9 @@
 <script src="../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
 'use strict';
-promise_test(() => {
-  return setBluetoothFakeAdapter('BlocklistTestAdapter')
+bluetooth_test(() => {
+  return setUpPreconnectedDevice({
+    knownServiceUUIDs: ['human_interface_device']})
     .then(() => assert_promise_rejects_with_message(
       requestDeviceWithKeyDown({
         filters: [{services: ['human_interface_device']}]}),

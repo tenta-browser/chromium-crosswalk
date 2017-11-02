@@ -10,7 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/uninstall_reason.h"
-#include "extensions/common/test_util.h"
+#include "extensions/common/extension_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -59,7 +59,7 @@ class TestObserver : public ExtensionRegistryObserver {
 
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override {
+                           UnloadedExtensionReason reason) override {
     unloaded_.push_back(extension);
   }
 
@@ -72,11 +72,11 @@ class TestObserver : public ExtensionRegistryObserver {
 
   void OnExtensionUninstalled(content::BrowserContext* browser_context,
                               const Extension* extension,
-                              extensions::UninstallReason reason) override {
+                              UninstallReason reason) override {
     uninstalled_.push_back(extension);
   }
 
-  void OnShutdown(extensions::ExtensionRegistry* registry) override { Reset(); }
+  void OnShutdown(ExtensionRegistry* registry) override { Reset(); }
 
   ExtensionList loaded_;
   ExtensionList unloaded_;
@@ -88,10 +88,10 @@ class TestObserver : public ExtensionRegistryObserver {
 
 TEST_F(ExtensionRegistryTest, FillAndClearRegistry) {
   ExtensionRegistry registry(NULL);
-  scoped_refptr<Extension> extension1 = test_util::CreateEmptyExtension("id1");
-  scoped_refptr<Extension> extension2 = test_util::CreateEmptyExtension("id2");
-  scoped_refptr<Extension> extension3 = test_util::CreateEmptyExtension("id3");
-  scoped_refptr<Extension> extension4 = test_util::CreateEmptyExtension("id4");
+  scoped_refptr<Extension> extension1 = ExtensionBuilder("one").Build();
+  scoped_refptr<Extension> extension2 = ExtensionBuilder("two").Build();
+  scoped_refptr<Extension> extension3 = ExtensionBuilder("three").Build();
+  scoped_refptr<Extension> extension4 = ExtensionBuilder("four").Build();
 
   // All the sets start empty.
   EXPECT_EQ(0u, registry.enabled_extensions().size());
@@ -124,7 +124,7 @@ TEST_F(ExtensionRegistryTest, AddAndRemoveExtensionFromRegistry) {
   ExtensionRegistry registry(NULL);
 
   // Adding an extension works.
-  scoped_refptr<Extension> extension = test_util::CreateEmptyExtension("id");
+  scoped_refptr<Extension> extension = ExtensionBuilder("Test").Build();
   EXPECT_TRUE(registry.AddEnabled(extension));
   EXPECT_EQ(1u, registry.enabled_extensions().size());
 
@@ -143,7 +143,7 @@ TEST_F(ExtensionRegistryTest, AddAndRemoveExtensionFromRegistry) {
 
 TEST_F(ExtensionRegistryTest, AddExtensionToRegistryTwice) {
   ExtensionRegistry registry(NULL);
-  scoped_refptr<Extension> extension = test_util::CreateEmptyExtension("id");
+  scoped_refptr<Extension> extension = ExtensionBuilder("Test").Build();
 
   // An extension can exist in two sets at once. It would be nice to eliminate
   // this functionality, but some users of ExtensionRegistry need it.
@@ -163,13 +163,11 @@ TEST_F(ExtensionRegistryTest, GetExtensionById) {
   EXPECT_FALSE(
       registry.GetExtensionById("id", ExtensionRegistry::EVERYTHING));
 
-  scoped_refptr<Extension> enabled = test_util::CreateEmptyExtension("enabled");
-  scoped_refptr<Extension> disabled =
-      test_util::CreateEmptyExtension("disabled");
-  scoped_refptr<Extension> terminated =
-      test_util::CreateEmptyExtension("terminated");
+  scoped_refptr<Extension> enabled = ExtensionBuilder("enabled").Build();
+  scoped_refptr<Extension> disabled = ExtensionBuilder("disabled").Build();
+  scoped_refptr<Extension> terminated = ExtensionBuilder("terminated").Build();
   scoped_refptr<Extension> blacklisted =
-      test_util::CreateEmptyExtension("blacklisted");
+      ExtensionBuilder("blacklisted").Build();
 
   // Add an extension to each set.
   registry.AddEnabled(enabled);
@@ -179,59 +177,61 @@ TEST_F(ExtensionRegistryTest, GetExtensionById) {
 
   // Enabled is part of everything and the enabled list.
   EXPECT_TRUE(
-      registry.GetExtensionById("enabled", ExtensionRegistry::EVERYTHING));
+      registry.GetExtensionById(enabled->id(), ExtensionRegistry::EVERYTHING));
   EXPECT_TRUE(
-      registry.GetExtensionById("enabled", ExtensionRegistry::ENABLED));
+      registry.GetExtensionById(enabled->id(), ExtensionRegistry::ENABLED));
   EXPECT_FALSE(
-      registry.GetExtensionById("enabled", ExtensionRegistry::DISABLED));
+      registry.GetExtensionById(enabled->id(), ExtensionRegistry::DISABLED));
   EXPECT_FALSE(
-      registry.GetExtensionById("enabled", ExtensionRegistry::TERMINATED));
+      registry.GetExtensionById(enabled->id(), ExtensionRegistry::TERMINATED));
   EXPECT_FALSE(
-      registry.GetExtensionById("enabled", ExtensionRegistry::BLACKLISTED));
+      registry.GetExtensionById(enabled->id(), ExtensionRegistry::BLACKLISTED));
 
   // Disabled is part of everything and the disabled list.
   EXPECT_TRUE(
-      registry.GetExtensionById("disabled", ExtensionRegistry::EVERYTHING));
+      registry.GetExtensionById(disabled->id(), ExtensionRegistry::EVERYTHING));
   EXPECT_FALSE(
-      registry.GetExtensionById("disabled", ExtensionRegistry::ENABLED));
+      registry.GetExtensionById(disabled->id(), ExtensionRegistry::ENABLED));
   EXPECT_TRUE(
-      registry.GetExtensionById("disabled", ExtensionRegistry::DISABLED));
+      registry.GetExtensionById(disabled->id(), ExtensionRegistry::DISABLED));
   EXPECT_FALSE(
-      registry.GetExtensionById("disabled", ExtensionRegistry::TERMINATED));
-  EXPECT_FALSE(
-      registry.GetExtensionById("disabled", ExtensionRegistry::BLACKLISTED));
+      registry.GetExtensionById(disabled->id(), ExtensionRegistry::TERMINATED));
+  EXPECT_FALSE(registry.GetExtensionById(disabled->id(),
+                                         ExtensionRegistry::BLACKLISTED));
 
   // Terminated is part of everything and the terminated list.
-  EXPECT_TRUE(
-      registry.GetExtensionById("terminated", ExtensionRegistry::EVERYTHING));
+  EXPECT_TRUE(registry.GetExtensionById(terminated->id(),
+                                        ExtensionRegistry::EVERYTHING));
   EXPECT_FALSE(
-      registry.GetExtensionById("terminated", ExtensionRegistry::ENABLED));
+      registry.GetExtensionById(terminated->id(), ExtensionRegistry::ENABLED));
   EXPECT_FALSE(
-      registry.GetExtensionById("terminated", ExtensionRegistry::DISABLED));
-  EXPECT_TRUE(
-      registry.GetExtensionById("terminated", ExtensionRegistry::TERMINATED));
-  EXPECT_FALSE(
-      registry.GetExtensionById("terminated", ExtensionRegistry::BLACKLISTED));
+      registry.GetExtensionById(terminated->id(), ExtensionRegistry::DISABLED));
+  EXPECT_TRUE(registry.GetExtensionById(terminated->id(),
+                                        ExtensionRegistry::TERMINATED));
+  EXPECT_FALSE(registry.GetExtensionById(terminated->id(),
+                                         ExtensionRegistry::BLACKLISTED));
 
   // Blacklisted is part of everything and the blacklisted list.
-  EXPECT_TRUE(
-      registry.GetExtensionById("blacklisted", ExtensionRegistry::EVERYTHING));
+  EXPECT_TRUE(registry.GetExtensionById(blacklisted->id(),
+                                        ExtensionRegistry::EVERYTHING));
   EXPECT_FALSE(
-      registry.GetExtensionById("blacklisted", ExtensionRegistry::ENABLED));
-  EXPECT_FALSE(
-      registry.GetExtensionById("blacklisted", ExtensionRegistry::DISABLED));
-  EXPECT_FALSE(
-      registry.GetExtensionById("blacklisted", ExtensionRegistry::TERMINATED));
-  EXPECT_TRUE(
-      registry.GetExtensionById("blacklisted", ExtensionRegistry::BLACKLISTED));
+      registry.GetExtensionById(blacklisted->id(), ExtensionRegistry::ENABLED));
+  EXPECT_FALSE(registry.GetExtensionById(blacklisted->id(),
+                                         ExtensionRegistry::DISABLED));
+  EXPECT_FALSE(registry.GetExtensionById(blacklisted->id(),
+                                         ExtensionRegistry::TERMINATED));
+  EXPECT_TRUE(registry.GetExtensionById(blacklisted->id(),
+                                        ExtensionRegistry::BLACKLISTED));
 
   // Enabled can be found with multiple flags set.
   EXPECT_TRUE(registry.GetExtensionById(
-      "enabled", ExtensionRegistry::ENABLED | ExtensionRegistry::TERMINATED));
+      enabled->id(),
+      ExtensionRegistry::ENABLED | ExtensionRegistry::TERMINATED));
 
   // Enabled isn't found if the wrong flags are set.
   EXPECT_FALSE(registry.GetExtensionById(
-      "enabled", ExtensionRegistry::DISABLED | ExtensionRegistry::BLACKLISTED));
+      enabled->id(),
+      ExtensionRegistry::DISABLED | ExtensionRegistry::BLACKLISTED));
 }
 
 TEST_F(ExtensionRegistryTest, Observer) {
@@ -243,8 +243,7 @@ TEST_F(ExtensionRegistryTest, Observer) {
   EXPECT_TRUE(observer.unloaded().empty());
   EXPECT_TRUE(observer.installed().empty());
 
-  scoped_refptr<const Extension> extension =
-      test_util::CreateEmptyExtension("id");
+  scoped_refptr<const Extension> extension = ExtensionBuilder("Test").Build();
 
   registry.TriggerOnWillBeInstalled(extension.get(), false, std::string());
   EXPECT_TRUE(HasSingleExtension(observer.installed(), extension.get()));
@@ -259,8 +258,7 @@ TEST_F(ExtensionRegistryTest, Observer) {
   registry.Shutdown();
 
   registry.RemoveEnabled(extension->id());
-  registry.TriggerOnUnloaded(extension.get(),
-                             UnloadedExtensionInfo::REASON_DISABLE);
+  registry.TriggerOnUnloaded(extension.get(), UnloadedExtensionReason::DISABLE);
 
   EXPECT_TRUE(observer.loaded().empty());
   EXPECT_TRUE(HasSingleExtension(observer.unloaded(), extension.get()));
@@ -271,6 +269,42 @@ TEST_F(ExtensionRegistryTest, Observer) {
   EXPECT_TRUE(HasSingleExtension(observer.uninstalled(), extension.get()));
 
   registry.RemoveObserver(&observer);
+}
+
+// Regression test for https://crbug.com/724563.
+TEST_F(ExtensionRegistryTest, TerminatedExtensionStoredVersion) {
+  const std::string kVersionString = "1.2.3.4";
+  ExtensionRegistry registry(nullptr);
+  scoped_refptr<Extension> extension =
+      ExtensionBuilder()
+          .SetManifest(DictionaryBuilder()
+                           .Set("name", "Test")
+                           .Set("version", kVersionString)
+                           .Build())
+          .Build();
+  const ExtensionId extension_id = extension->id();
+
+  EXPECT_TRUE(registry.AddEnabled(extension));
+  EXPECT_FALSE(
+      registry.GetExtensionById(extension_id, ExtensionRegistry::TERMINATED));
+  {
+    base::Version version = registry.GetStoredVersion(extension_id);
+    ASSERT_TRUE(version.IsValid());
+    EXPECT_EQ(kVersionString,
+              registry.GetStoredVersion(extension_id).GetString());
+  }
+
+  // Simulate terminating |extension|.
+  EXPECT_TRUE(registry.RemoveEnabled(extension_id));
+  EXPECT_TRUE(registry.AddTerminated(extension));
+  EXPECT_TRUE(
+      registry.GetExtensionById(extension_id, ExtensionRegistry::TERMINATED));
+  {
+    base::Version version = registry.GetStoredVersion(extension_id);
+    ASSERT_TRUE(version.IsValid());
+    EXPECT_EQ(kVersionString,
+              registry.GetStoredVersion(extension_id).GetString());
+  }
 }
 
 }  // namespace

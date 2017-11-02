@@ -16,17 +16,17 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/sequence_checker.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/win/scoped_comptr.h"
 #include "media/capture/capture_export.h"
 #include "media/capture/video/video_capture_device.h"
 
 interface IMFSourceReader;
 
-namespace tracked_objects {
+namespace base {
 class Location;
-}  // namespace tracked_objects
+}  // namespace base
 
 namespace media {
 
@@ -35,8 +35,7 @@ class MFReaderCallback;
 const DWORD kFirstVideoStream =
     static_cast<DWORD>(MF_SOURCE_READER_FIRST_VIDEO_STREAM);
 
-class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public base::NonThreadSafe,
-                                               public VideoCaptureDevice {
+class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public VideoCaptureDevice {
  public:
   static bool FormatFromGuid(const GUID& guid, VideoPixelFormat* format);
 
@@ -61,7 +60,7 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public base::NonThreadSafe,
                               base::TimeDelta timestamp);
 
  private:
-  void OnError(const tracked_objects::Location& from_here, HRESULT hr);
+  void OnError(const base::Location& from_here, HRESULT hr);
 
   VideoCaptureDeviceDescriptor descriptor_;
   base::win::ScopedComPtr<IMFActivate> device_;
@@ -72,6 +71,8 @@ class CAPTURE_EXPORT VideoCaptureDeviceMFWin : public base::NonThreadSafe,
   base::win::ScopedComPtr<IMFSourceReader> reader_;
   VideoCaptureFormat capture_format_;
   bool capture_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceMFWin);
 };

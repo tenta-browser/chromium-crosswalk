@@ -48,12 +48,12 @@ LegacyStyleInterpolation::LegacyStyleInterpolation(
       cached_fraction_(0),
       cached_iteration_(0),
       cached_value_(start_ ? start_->Clone() : nullptr) {
-  RELEASE_ASSERT(TypesMatch(start_.get(), end_.get()));
+  CHECK(TypesMatch(start_.get(), end_.get()));
 }
 
 void LegacyStyleInterpolation::Apply(StyleResolverState& state) const {
   AnimatedStyleBuilder::ApplyProperty(Id(), *state.Style(),
-                                      CurrentValue().Get());
+                                      CurrentValue().get());
 }
 
 void LegacyStyleInterpolation::Interpolate(int iteration, double fraction) {

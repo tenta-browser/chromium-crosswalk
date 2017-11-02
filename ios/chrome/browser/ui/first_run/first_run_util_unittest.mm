@@ -4,13 +4,19 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/mac/scoped_nsobject.h"
 #include "ios/chrome/browser/ui/first_run/first_run_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "testing/platform_test.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
-TEST(UICommonTest, TestFixOrphanWord) {
+using UICommonTest = PlatformTest;
+
+TEST_F(UICommonTest, TestFixOrphanWord) {
   NSString* englishString =
       @"Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec tempus"
        " dignissim congue. Morbi pulvinar vitae purus at mollis. Sed laoreet "
@@ -31,16 +37,15 @@ TEST(UICommonTest, TestFixOrphanWord) {
        "那只敏捷的棕色狐狸跃过那只懒狗。快速狐狸";
   // clang-format on
 
-  base::scoped_nsobject<UILabel> label(
-      [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 300, 500)]);
+  UILabel* label = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, 300, 500)];
   [label setText:englishString];
-  ios_internal::FixOrphanWord(label);
+  FixOrphanWord(label);
   NSRange range = [[label text] rangeOfString:@"\n"];
   // Check that the label's text does not contain a newline.
   EXPECT_EQ(NSNotFound, static_cast<NSInteger>(range.location));
 
   [label setText:englishStringWithOrphan];
-  ios_internal::FixOrphanWord(label);
+  FixOrphanWord(label);
   range = [[label text] rangeOfString:@"\n"];
   // Check that the label's text contains a newline.
   EXPECT_NE(NSNotFound, static_cast<NSInteger>(range.location));
@@ -51,13 +56,13 @@ TEST(UICommonTest, TestFixOrphanWord) {
   EXPECT_TRUE([@"laoreet nisi." isEqualToString:wordsAfterNewline]);
 
   [label setText:chineseString];
-  ios_internal::FixOrphanWord(label);
+  FixOrphanWord(label);
   range = [[label text] rangeOfString:@"\n"];
   // Check that the label's text does not contain a newline.
   EXPECT_EQ(NSNotFound, static_cast<NSInteger>(range.location));
 
   [label setText:chineseStringWithOrphan];
-  ios_internal::FixOrphanWord(label);
+  FixOrphanWord(label);
   range = [[label text] rangeOfString:@"\n"];
   // Check that the label's text contains a newline.
   ASSERT_NE(NSNotFound, static_cast<NSInteger>(range.location));

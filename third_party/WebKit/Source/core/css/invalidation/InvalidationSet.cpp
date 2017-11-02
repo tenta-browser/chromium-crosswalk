@@ -49,14 +49,18 @@ static const unsigned char* g_tracing_enabled = nullptr;
     TRACE_STYLE_INVALIDATOR_INVALIDATION_SELECTORPART(                \
         element, reason, invalidationSet, singleSelectorPart);
 
+// static
+void InvalidationSetDeleter::Destruct(const InvalidationSet* obj) {
+  obj->Destroy();
+}
+
 void InvalidationSet::CacheTracingFlag() {
   g_tracing_enabled = TRACE_EVENT_API_GET_CATEGORY_GROUP_ENABLED(
       TRACE_DISABLED_BY_DEFAULT("devtools.timeline.invalidationTracking"));
 }
 
 InvalidationSet::InvalidationSet(InvalidationType type)
-    : ref_count_(1),
-      type_(type),
+    : type_(type),
       all_descendants_might_be_invalid_(false),
       invalidates_self_(false),
       custom_pseudo_invalid_(false),
@@ -103,6 +107,17 @@ bool InvalidationSet::InvalidatesElement(Element& element) const {
         return true;
       }
     }
+  }
+
+  return false;
+}
+
+bool InvalidationSet::InvalidatesTagName(Element& element) const {
+  if (tag_names_ && tag_names_->Contains(element.TagQName().LocalName())) {
+    TRACE_STYLE_INVALIDATOR_INVALIDATION_SELECTORPART_IF_ENABLED(
+        element, kInvalidationSetMatchedTagName, *this,
+        element.TagQName().LocalName());
+    return true;
   }
 
   return false;
@@ -173,7 +188,7 @@ void InvalidationSet::Combine(const InvalidationSet& other) {
   }
 }
 
-void InvalidationSet::Destroy() {
+void InvalidationSet::Destroy() const {
   if (IsDescendantInvalidationSet())
     delete ToDescendantInvalidationSet(this);
   else
@@ -300,12 +315,12 @@ void InvalidationSet::Show() const {
   value->BeginArray("InvalidationSet");
   ToTracedValue(value.get());
   value->EndArray();
-  fprintf(stderr, "%s\n", value->ToString().Ascii().Data());
+  fprintf(stderr, "%s\n", value->ToString().Ascii().data());
 }
 #endif  // NDEBUG
 
 SiblingInvalidationSet::SiblingInvalidationSet(
-    PassRefPtr<DescendantInvalidationSet> descendants)
+    RefPtr<DescendantInvalidationSet> descendants)
     : InvalidationSet(kInvalidateSiblings),
       max_direct_adjacent_selectors_(1),
       descendant_invalidation_set_(std::move(descendants)) {}

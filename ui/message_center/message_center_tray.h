@@ -21,10 +21,6 @@ namespace message_center {
 
 class MessageCenter;
 
-// Implementation found with each supported platform's implementation of
-// MessageCenterTrayDelegate.
-MessageCenterTrayDelegate* CreateMessageCenterTray();
-
 // Class that observes a MessageCenter. Manages the popup and message center
 // bubbles. Tells the MessageCenterTrayHost when the tray is changed, as well
 // as when bubbles are shown and hidden.
@@ -34,10 +30,11 @@ class MESSAGE_CENTER_EXPORT MessageCenterTray : public MessageCenterObserver {
                     message_center::MessageCenter* message_center);
   ~MessageCenterTray() override;
 
-  // Shows or updates the message center bubble and hides the popup bubble.
+  // Shows or updates the message center bubble and hides the popup bubble. Set
+  // |show_by_click| to true if bubble is shown by mouse or gesture click.
   // Returns whether the message center is visible after the call, whether or
   // not it was visible before.
-  bool ShowMessageCenterBubble();
+  bool ShowMessageCenterBubble(bool show_by_click);
 
   // Hides the message center if visible and returns whether the message center
   // was visible before.
@@ -58,8 +55,7 @@ class MESSAGE_CENTER_EXPORT MessageCenterTray : public MessageCenterObserver {
 
   // Creates a model for the context menu for a notification card.
   std::unique_ptr<ui::MenuModel> CreateNotificationMenuModel(
-      const NotifierId& notifier_id,
-      const base::string16& display_source);
+      const Notification& notification);
 
   bool message_center_visible() { return message_center_visible_; }
   bool popups_visible() { return popups_visible_; }

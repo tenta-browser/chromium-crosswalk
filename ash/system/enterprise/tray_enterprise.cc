@@ -4,16 +4,38 @@
 
 #include "ash/system/enterprise/tray_enterprise.h"
 
+#include "ash/ash_view_ids.h"
 #include "ash/login_status.h"
 #include "ash/resources/vector_icons/vector_icons.h"
 #include "ash/shell.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ash/system/tray/label_tray_view.h"
-#include "ash/system/tray/system_tray_delegate.h"
+#include "ash/system/tray/system_tray_controller.h"
 #include "ash/system/tray/system_tray_notifier.h"
 #include "base/logging.h"
 #include "base/strings/string16.h"
+#include "base/strings/utf_string_conversions.h"
+#include "ui/base/l10n/l10n_util.h"
 
 namespace ash {
+namespace {
+
+base::string16 GetEnterpriseMessage() {
+  SystemTrayController* controller = Shell::Get()->system_tray_controller();
+
+  // Active Directory devices do not show a domain name.
+  if (controller->active_directory_managed())
+    return l10n_util::GetStringUTF16(IDS_ASH_ENTERPRISE_DEVICE_MANAGED);
+
+  if (!controller->enterprise_display_domain().empty()) {
+    return l10n_util::GetStringFUTF16(
+        IDS_ASH_ENTERPRISE_DEVICE_MANAGED_BY,
+        base::UTF8ToUTF16(controller->enterprise_display_domain()));
+  }
+  return base::string16();
+}
+
+}  // namespace
 
 TrayEnterprise::TrayEnterprise(SystemTray* system_tray)
     : SystemTrayItem(system_tray, UMA_ENTERPRISE), tray_view_(nullptr) {
@@ -25,10 +47,8 @@ TrayEnterprise::~TrayEnterprise() {
 }
 
 void TrayEnterprise::UpdateEnterpriseMessage() {
-  base::string16 message =
-      Shell::Get()->system_tray_delegate()->GetEnterpriseMessage();
   if (tray_view_)
-    tray_view_->SetMessage(message);
+    tray_view_->SetMessage(GetEnterpriseMessage());
 }
 
 views::View* TrayEnterprise::CreateDefaultView(LoginStatus status) {
@@ -38,11 +58,12 @@ views::View* TrayEnterprise::CreateDefaultView(LoginStatus status) {
   if (status == LoginStatus::PUBLIC)
     return nullptr;
   tray_view_ = new LabelTrayView(this, kSystemMenuBusinessIcon);
+  tray_view_->set_id(VIEW_ID_TRAY_ENTERPRISE);
   UpdateEnterpriseMessage();
   return tray_view_;
 }
 
-void TrayEnterprise::DestroyDefaultView() {
+void TrayEnterprise::OnDefaultViewDestroyed() {
   tray_view_ = nullptr;
 }
 
@@ -51,7 +72,7 @@ void TrayEnterprise::OnEnterpriseDomainChanged() {
 }
 
 void TrayEnterprise::OnViewClicked(views::View* sender) {
-  Shell::Get()->system_tray_delegate()->ShowEnterpriseInfo();
+  Shell::Get()->system_tray_controller()->ShowEnterpriseInfo();
 }
 
 }  // namespace ash

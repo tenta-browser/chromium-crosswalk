@@ -1,6 +1,5 @@
 This is a Header for this page
 Heading
-
 Division
 Paragraph
 
@@ -11,9 +10,7 @@ Milk
 - white cold drink
 x + a / b
 Most important heading here
-
 Google Chrome
-
 Google Chrome is a free, open-source web browser developed by Google, released in 2008.
 
 Footer in article
@@ -24,7 +21,6 @@ Text that appears under aside
 Text in a    pre
 element
 Most important heading here
-
 Section
 
 Footer in section
@@ -54,7 +50,7 @@ AXRole: AXWebArea
     AXRole: AXHeading "Heading"
         AXRole: AXStaticText "Heading"
             AXRole: AXInlineTextBox "Heading"
-    AXRole: AXDiv
+    AXRole: AXGenericContainer
         AXRole: AXStaticText "Division"
             AXRole: AXInlineTextBox "Division"
     AXRole: AXParagraph
@@ -92,7 +88,7 @@ AXRole: AXWebArea
             AXRole: AXInlineTextBox "b"
     AXRole: AXMain
         AXRole: AXArticle
-            AXRole: AXGroup
+            AXRole: AXGenericContainer
                 AXRole: AXHeading "Most important heading here"
                     AXRole: AXStaticText "Most important heading here"
                         AXRole: AXInlineTextBox "Most important heading here"
@@ -103,7 +99,7 @@ AXRole: AXWebArea
                 AXRole: AXStaticText "Google Chrome is a free, open-source web browser developed by Google, released in 2008."
                     AXRole: AXInlineTextBox "Google Chrome is a free, open-source web browser developed by Google, "
                     AXRole: AXInlineTextBox "released in 2008."
-            AXRole: AXGroup
+            AXRole: AXGenericContainer
                 AXRole: AXParagraph
                     AXRole: AXStaticText "Footer in article"
                         AXRole: AXInlineTextBox "Footer in article"
@@ -138,14 +134,14 @@ element
             AXRole: AXInlineTextBox "
 "
     AXRole: AXRegion
-        AXRole: AXGroup
+        AXRole: AXGenericContainer
             AXRole: AXHeading "Most important heading here"
                 AXRole: AXStaticText "Most important heading here"
                     AXRole: AXInlineTextBox "Most important heading here"
         AXRole: AXParagraph
             AXRole: AXStaticText "Section"
                 AXRole: AXInlineTextBox "Section"
-        AXRole: AXGroup
+        AXRole: AXGenericContainer
             AXRole: AXParagraph
                 AXRole: AXStaticText "Footer in section"
                     AXRole: AXInlineTextBox "Footer in section"

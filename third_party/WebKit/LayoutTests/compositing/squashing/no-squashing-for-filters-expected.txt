@@ -4,32 +4,40 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV",
-      "position": [8, 8],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#ADD8E6"
+      "backgroundColor": "#ADD8E6",
+      "transform": 1
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='trysquashed'",
       "bounds": [50, 50],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#D3D3D3"
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV class='trysquashed')",
       "position": [50, 50],
-      "bounds": [50, 50],
-      "drawsContent": true
+      "bounds": [50, 50]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ]
     }
   ]
 }

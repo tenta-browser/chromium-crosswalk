@@ -7,7 +7,6 @@
 #include "ash/shell.h"
 #include "ash/test/ash_interactive_ui_test_base.h"
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -83,7 +82,7 @@ views::Widget* CreateWidget(views::View* contents_view,
 }
 
 void QuitLoop() {
-  base::MessageLoop::current()->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 void DragDropAcrossMultiDisplay_Step4() {
@@ -111,7 +110,7 @@ void DragDropAcrossMultiDisplay_Step1() {
 
 }  // namespace
 
-using DragDropTest = test::AshInteractiveUITestBase;
+using DragDropTest = AshInteractiveUITestBase;
 
 // Test if the mouse gets moved properly to another display
 // during drag & drop operation.

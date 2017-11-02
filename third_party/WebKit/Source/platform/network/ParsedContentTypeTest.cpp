@@ -12,7 +12,7 @@ namespace {
 
 using Mode = ParsedContentType::Mode;
 
-bool IsValid(const String& input, Mode mode = Mode::kNormal) {
+bool IsValidContentType(const String& input, Mode mode = Mode::kNormal) {
   return ParsedContentType(input, mode).IsValid();
 }
 
@@ -65,79 +65,28 @@ TEST(ParsedContentTypeTest, CaseInsensitiveCharset) {
 }
 
 TEST(ParsedContentTypeTest, Validity) {
-  EXPECT_TRUE(IsValid("text/plain"));
-  EXPECT_TRUE(IsValid("text/plain; charset=utf-8"));
-  EXPECT_TRUE(IsValid("  text/plain  "));
-  EXPECT_TRUE(IsValid(" text/plain;charset=utf-8  "));
-  EXPECT_TRUE(IsValid("unknown/unknown"));
-  EXPECT_TRUE(IsValid("unknown/unknown; charset=unknown"));
-  EXPECT_TRUE(IsValid("x/y;z=\"ttx&r=z;;\\u\\\"kd==\""));
-  EXPECT_TRUE(IsValid("x/y; z=\"\xff\""));
+  EXPECT_TRUE(IsValidContentType("text/plain"));
+  EXPECT_TRUE(IsValidContentType("text/plain; charset=utf-8"));
+  EXPECT_TRUE(IsValidContentType(" text/plain ;charset=utf-8  "));
+  EXPECT_TRUE(IsValidContentType("  text/plain  "));
+  EXPECT_TRUE(IsValidContentType("unknown/unknown"));
+  EXPECT_TRUE(IsValidContentType("unknown/unknown; charset=unknown"));
 
-  EXPECT_FALSE(IsValid("A"));
-  EXPECT_FALSE(IsValid("text/plain\r"));
-  EXPECT_FALSE(IsValid("text/plain\n"));
-  EXPECT_FALSE(IsValid("text/plain charset=utf-8"));
-  EXPECT_FALSE(IsValid("text/plain;charset=utf-8;"));
-  EXPECT_FALSE(IsValid(""));
-  EXPECT_FALSE(IsValid("   "));
-  EXPECT_FALSE(IsValid("\"x\""));
-  EXPECT_FALSE(IsValid("\"x\"/\"y\""));
-  EXPECT_FALSE(IsValid("x/\"y\""));
-  EXPECT_FALSE(IsValid("text/plain;"));
-  EXPECT_FALSE(IsValid("text/plain;  "));
-  EXPECT_FALSE(IsValid("text/plain; charset"));
-  EXPECT_FALSE(IsValid("text/plain; charset;"));
-  EXPECT_FALSE(IsValid("x/y;\"xx"));
-  EXPECT_FALSE(IsValid("x/y;\"xx=y"));
-  EXPECT_FALSE(IsValid("\"q\""));
-  EXPECT_FALSE(IsValid("x/y; \"z\"=u"));
-  EXPECT_FALSE(IsValid("x/y; z=\xff"));
-
-  EXPECT_FALSE(IsValid("x/y;z=q/t:()<>@,:\\/[]?"));
-  EXPECT_TRUE(IsValid("x/y;z=q/t:()<>@,:\\/[]?=", Mode::kRelaxed));
-  EXPECT_FALSE(IsValid("x/y;z=q r", Mode::kRelaxed));
-  EXPECT_FALSE(IsValid("x/y;z=q;r", Mode::kRelaxed));
-  EXPECT_FALSE(IsValid("x/y;z=q\"r", Mode::kRelaxed));
-  EXPECT_FALSE(IsValid("x/y; z=\xff", Mode::kRelaxed));
-}
-
-TEST(ParsedContentTypeTest, ParameterName) {
-  String input = "x/t; y=z  ; y= u ;  t=r;k= \"t \\u\\\"x\" ;Q=U;T=S";
-
-  ParsedContentType t(input);
-
-  EXPECT_TRUE(t.IsValid());
-  EXPECT_EQ(4u, t.ParameterCount());
-  EXPECT_EQ(String(), t.ParameterValueForName("a"));
-  EXPECT_EQ(String(), t.ParameterValueForName("x"));
-  EXPECT_EQ("u", t.ParameterValueForName("y"));
-  EXPECT_EQ("S", t.ParameterValueForName("t"));
-  EXPECT_EQ("t u\"x", t.ParameterValueForName("k"));
-  EXPECT_EQ("U", t.ParameterValueForName("Q"));
-  EXPECT_EQ("S", t.ParameterValueForName("T"));
-
-  String kelvin = String::FromUTF8("\xe2\x84\xaa");
-  DCHECK_EQ(kelvin.DeprecatedLower(), "k");
-  EXPECT_EQ(String(), t.ParameterValueForName(kelvin));
-}
-
-TEST(ParsedContentTypeTest, RelaxedParameterName) {
-  String input = "x/t; z=q/t:()<>@,:\\/[]?=;y=u";
-
-  ParsedContentType t(input, Mode::kRelaxed);
-
-  EXPECT_TRUE(t.IsValid());
-  EXPECT_EQ(2u, t.ParameterCount());
-  EXPECT_EQ("q/t:()<>@,:\\/[]?=", t.ParameterValueForName("z"));
-  EXPECT_EQ("u", t.ParameterValueForName("y"));
-}
-
-TEST(ParsedContentTypeTest, StrictParameterName) {
-  EXPECT_TRUE(IsValid("text/plain", Mode::kStrict));
-  EXPECT_TRUE(IsValid("text/plain; p1=a", Mode::kStrict));
-  EXPECT_FALSE(IsValid("text/plain; p1=a; p1=b", Mode::kStrict));
-  EXPECT_TRUE(IsValid("text/plain; p1=a; p2=b", Mode::kStrict));
+  EXPECT_FALSE(IsValidContentType("A"));
+  EXPECT_FALSE(IsValidContentType("text/plain\r"));
+  EXPECT_FALSE(IsValidContentType("text/plain\n"));
+  EXPECT_FALSE(IsValidContentType("text/plain charset=utf-8"));
+  EXPECT_FALSE(IsValidContentType("text/plain;charset=utf-8;"));
+  EXPECT_FALSE(IsValidContentType(""));
+  EXPECT_FALSE(IsValidContentType("   "));
+  EXPECT_FALSE(IsValidContentType("\"x\""));
+  EXPECT_FALSE(IsValidContentType("\"x\"/\"y\""));
+  EXPECT_FALSE(IsValidContentType("\"x\"/y"));
+  EXPECT_FALSE(IsValidContentType("x/\"y\""));
+  EXPECT_FALSE(IsValidContentType("text/plain;"));
+  EXPECT_FALSE(IsValidContentType("text/plain;  "));
+  EXPECT_FALSE(IsValidContentType("text/plain; charset"));
+  EXPECT_FALSE(IsValidContentType("text/plain; charset;"));
 }
 
 }  // namespace

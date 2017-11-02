@@ -7,9 +7,7 @@ package org.chromium.chromecast.shell;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Debug;
 
-import org.chromium.base.BaseSwitches;
 import org.chromium.base.CommandLine;
 import org.chromium.base.Log;
 import org.chromium.base.library_loader.LibraryLoader;
@@ -58,8 +56,6 @@ public class CastBrowserHelper {
             }
         }
 
-        waitForDebuggerIfNeeded();
-
         DeviceUtils.addDeviceSpecificUserAgentSwitch(context);
 
         try {
@@ -68,7 +64,7 @@ public class CastBrowserHelper {
             Log.d(TAG, "Loading BrowserStartupController...");
             BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
                     .startBrowserProcessesSync(false);
-            NetworkChangeNotifier.init(context);
+            NetworkChangeNotifier.init();
             // Cast shell always expects to receive notifications to track network state.
             NetworkChangeNotifier.registerToReceiveNotificationsAlways();
             sIsBrowserInitialized = true;
@@ -81,14 +77,5 @@ public class CastBrowserHelper {
 
     private static String[] getCommandLineParamsFromIntent(Intent intent) {
         return intent != null ? intent.getStringArrayExtra(COMMAND_LINE_ARGS_KEY) : null;
-    }
-
-    private static void waitForDebuggerIfNeeded() {
-        if (!CommandLine.getInstance().hasSwitch(BaseSwitches.WAIT_FOR_JAVA_DEBUGGER)) {
-            return;
-        }
-        Log.e(TAG, "Waiting for Java debugger to connect...");
-        Debug.waitForDebugger();
-        Log.e(TAG, "Java debugger connected. Resuming execution.");
     }
 }

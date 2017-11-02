@@ -13,13 +13,11 @@
 #include "modules/EventTargetModules.h"
 #include "modules/screen_orientation/LockOrientationCallback.h"
 #include "modules/screen_orientation/ScreenOrientationControllerImpl.h"
+#include "platform/wtf/Assertions.h"
 #include "public/platform/modules/screen_orientation/WebScreenOrientationType.h"
 
 // This code assumes that WebScreenOrientationType values are included in
 // WebScreenOrientationLockType.
-#define STATIC_ASSERT_ENUM(a, b)                            \
-  static_assert(static_cast<int>(a) == static_cast<int>(b), \
-                "mismatching enum: " #a)
 STATIC_ASSERT_ENUM(blink::kWebScreenOrientationPortraitPrimary,
                    blink::kWebScreenOrientationLockPortraitPrimary);
 STATIC_ASSERT_ENUM(blink::kWebScreenOrientationPortraitSecondary,
@@ -73,7 +71,7 @@ const AtomicString& ScreenOrientation::OrientationTypeToString(
       return orientation_map[i].name;
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return g_null_atom;
 }
 
@@ -87,13 +85,13 @@ static WebScreenOrientationLockType StringToOrientationLock(
           orientation_map[i].orientation);
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return kWebScreenOrientationLockDefault;
 }
 
 // static
 ScreenOrientation* ScreenOrientation::Create(LocalFrame* frame) {
-  ASSERT(frame);
+  DCHECK(frame);
 
   // Check if the ScreenOrientationController is supported for the
   // frame. It will not be for all LocalFrames, or the frame may
@@ -102,7 +100,7 @@ ScreenOrientation* ScreenOrientation::Create(LocalFrame* frame) {
     return nullptr;
 
   ScreenOrientation* orientation = new ScreenOrientation(frame);
-  ASSERT(orientation->Controller());
+  DCHECK(orientation->Controller());
   // FIXME: ideally, we would like to provide the ScreenOrientationController
   // the case where it is not defined but for the moment, it is eagerly
   // created when the LocalFrame is created so we shouldn't be in that

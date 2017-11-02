@@ -33,11 +33,16 @@ void UpdateInstallShim::OnUpdateError(int error) {
   VLOG(1) << "OnUpdateError (" << extension_id_ << ") " << error;
 }
 
-Result UpdateInstallShim::Install(const base::DictionaryValue& manifest,
-                                  const base::FilePath& unpack_path) {
+void UpdateInstallShim::Install(std::unique_ptr<base::DictionaryValue> manifest,
+                                const base::FilePath& unpack_path,
+                                const Callback& callback) {
   base::ScopedTempDir temp_dir;
-  if (!temp_dir.CreateUniqueTempDir())
-    return Result(InstallError::GENERIC_ERROR);
+  if (!temp_dir.CreateUniqueTempDir()) {
+    content::BrowserThread::PostTask(
+        content::BrowserThread::UI, FROM_HERE,
+        base::Bind(callback, Result(InstallError::GENERIC_ERROR)));
+    return;
+  }
 
   // The UpdateClient code will delete unpack_path if it still exists after
   // this method is done, so we rename it on top of our temp dir.
@@ -46,13 +51,19 @@ Result UpdateInstallShim::Install(const base::DictionaryValue& manifest,
     LOG(ERROR) << "Trying to install update for " << extension_id_
                << "and failed to move " << unpack_path.value() << " to  "
                << temp_dir.GetPath().value();
-    return Result(InstallError::GENERIC_ERROR);
+    content::BrowserThread::PostTask(
+        content::BrowserThread::UI, FROM_HERE,
+        base::Bind(callback, Result(InstallError::GENERIC_ERROR)));
+    return;
   }
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
       base::Bind(&UpdateInstallShim::RunCallbackOnUIThread, this,
                  temp_dir.Take()));
-  return Result(InstallError::NONE);
+
+  content::BrowserThread::PostTask(
+      content::BrowserThread::UI, FROM_HERE,
+      base::Bind(callback, Result(InstallError::NONE)));
 }
 
 bool UpdateInstallShim::GetInstalledFile(const std::string& file,
@@ -80,8 +91,7 @@ UpdateInstallShim::~UpdateInstallShim() {}
 void UpdateInstallShim::RunCallbackOnUIThread(const base::FilePath& temp_dir) {
   if (callback_.is_null()) {
     base::PostTaskWithTraits(FROM_HERE,
-                             base::TaskTraits().MayBlock().WithPriority(
-                                 base::TaskPriority::BACKGROUND),
+                             {base::MayBlock(), base::TaskPriority::BACKGROUND},
                              base::Bind(base::IgnoreResult(&base::DeleteFile),
                                         temp_dir, true /*recursive */));
     return;

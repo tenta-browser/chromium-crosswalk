@@ -26,13 +26,17 @@
 
 #include "core/loader/resource/ScriptResource.h"
 
+#include "core/dom/Document.h"
+#include "core/loader/SubresourceIntegrityHelper.h"
 #include "platform/SharedBuffer.h"
 #include "platform/instrumentation/tracing/web_memory_allocator_dump.h"
 #include "platform/instrumentation/tracing/web_process_memory_dump.h"
+#include "platform/loader/SubresourceIntegrity.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/IntegrityMetadata.h"
 #include "platform/loader/fetch/ResourceClientWalker.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
 #include "platform/network/mime/MIMETypeRegistry.h"
 
 namespace blink {
@@ -49,14 +53,11 @@ ScriptResource* ScriptResource::Fetch(FetchParameters& params,
   return resource;
 }
 
-ScriptResource::ScriptResource(const ResourceRequest& resource_request,
-                               const ResourceLoaderOptions& options,
-                               const String& charset)
-    : TextResource(resource_request,
-                   kScript,
-                   options,
-                   "application/javascript",
-                   charset) {}
+ScriptResource::ScriptResource(
+    const ResourceRequest& resource_request,
+    const ResourceLoaderOptions& options,
+    const TextResourceDecoderOptions& decoder_options)
+    : TextResource(resource_request, kScript, options, decoder_options) {}
 
 ScriptResource::~ScriptResource() {}
 
@@ -97,33 +98,27 @@ const String& ScriptResource::SourceText() {
 
 void ScriptResource::DestroyDecodedDataForFailedRevalidation() {
   source_text_ = AtomicString();
+  SetDecodedSize(0);
 }
 
-// static
-bool ScriptResource::MimeTypeAllowedByNosniff(
-    const ResourceResponse& response) {
-  return ParseContentTypeOptionsHeader(
-             response.HttpHeaderField(HTTPNames::X_Content_Type_Options)) !=
-             kContentTypeOptionsNosniff ||
-         MIMETypeRegistry::IsSupportedJavaScriptMIMEType(
-             response.HttpContentType());
-}
+AccessControlStatus ScriptResource::CalculateAccessControlStatus() const {
+  if (GetCORSStatus() == CORSStatus::kServiceWorkerOpaque)
+    return kOpaqueResource;
 
-AccessControlStatus ScriptResource::CalculateAccessControlStatus(
-    const SecurityOrigin* security_origin) const {
-  if (GetResponse().WasFetchedViaServiceWorker()) {
-    if (GetResponse().ServiceWorkerResponseType() ==
-        kWebServiceWorkerResponseTypeOpaque) {
-      return kOpaqueResource;
-    }
-
-    return kSharableCrossOrigin;
-  }
-
-  if (PassesAccessControlCheck(security_origin))
+  if (IsSameOriginOrCORSSuccessful())
     return kSharableCrossOrigin;
 
   return kNotSharableCrossOrigin;
+}
+
+bool ScriptResource::CanUseCacheValidator() const {
+  // Do not revalidate until ClassicPendingScript is removed, i.e. the script
+  // content is retrieved in ScriptLoader::ExecuteScriptBlock().
+  // crbug.com/692856
+  if (HasClientsOrObservers())
+    return false;
+
+  return Resource::CanUseCacheValidator();
 }
 
 }  // namespace blink

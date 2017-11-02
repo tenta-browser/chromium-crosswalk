@@ -66,10 +66,9 @@ void DownloadsHandler::SendAutoOpenDownloadsToJavascript() {
   content::DownloadManager* manager =
       content::BrowserContext::GetDownloadManager(profile_);
   bool auto_open_downloads =
-      manager && DownloadPrefs::FromDownloadManager(manager)->IsAutoOpenUsed();
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("auto-open-downloads-changed"),
-                         base::Value(auto_open_downloads));
+      DownloadPrefs::FromDownloadManager(manager)->IsAutoOpenUsed();
+  FireWebUIListener("auto-open-downloads-changed",
+                    base::Value(auto_open_downloads));
 }
 
 void DownloadsHandler::HandleResetAutoOpenFileTypes(
@@ -77,15 +76,15 @@ void DownloadsHandler::HandleResetAutoOpenFileTypes(
   base::RecordAction(UserMetricsAction("Options_ResetAutoOpenFiles"));
   content::DownloadManager* manager =
       content::BrowserContext::GetDownloadManager(profile_);
-  if (manager)
-    DownloadPrefs::FromDownloadManager(manager)->ResetAutoOpen();
+  DownloadPrefs::FromDownloadManager(manager)->ResetAutoOpen();
 }
 
 void DownloadsHandler::HandleSelectDownloadLocation(
     const base::ListValue* args) {
   PrefService* pref_service = profile_->GetPrefs();
   select_folder_dialog_ = ui::SelectFileDialog::Create(
-      this, new ChromeSelectFilePolicy(web_ui()->GetWebContents()));
+      this,
+      std::make_unique<ChromeSelectFilePolicy>(web_ui()->GetWebContents()));
   ui::SelectFileDialog::FileTypeInfo info;
   info.allowed_paths = ui::SelectFileDialog::FileTypeInfo::NATIVE_OR_DRIVE_PATH;
   select_folder_dialog_->SelectFile(

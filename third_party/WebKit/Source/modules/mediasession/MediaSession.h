@@ -6,11 +6,11 @@
 #define MediaSession_h
 
 #include <memory>
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "modules/ModulesExport.h"
 #include "mojo/public/cpp/bindings/binding.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/modules/mediasession/media_session.mojom-blink.h"
@@ -19,7 +19,7 @@ namespace blink {
 
 class ExecutionContext;
 class MediaMetadata;
-class MediaSessionActionHandler;
+class V8MediaSessionActionHandler;
 
 class MODULES_EXPORT MediaSession final
     : public GarbageCollectedFinalized<MediaSession>,
@@ -41,7 +41,7 @@ class MODULES_EXPORT MediaSession final
   void setMetadata(MediaMetadata*);
   MediaMetadata* metadata() const;
 
-  void setActionHandler(const String& action, MediaSessionActionHandler*);
+  void setActionHandler(const String& action, V8MediaSessionActionHandler*);
 
   // Called by the MediaMetadata owned by |this| when it has updates. Also used
   // internally when a new MediaMetadata object is set.
@@ -71,7 +71,7 @@ class MODULES_EXPORT MediaSession final
 
   mojom::blink::MediaSessionPlaybackState playback_state_;
   Member<MediaMetadata> metadata_;
-  HeapHashMap<String, TraceWrapperMember<MediaSessionActionHandler>>
+  HeapHashMap<String, TraceWrapperMember<V8MediaSessionActionHandler>>
       action_handlers_;
   mojom::blink::MediaSessionServicePtr service_;
   mojo::Binding<blink::mojom::blink::MediaSessionClient> client_binding_;

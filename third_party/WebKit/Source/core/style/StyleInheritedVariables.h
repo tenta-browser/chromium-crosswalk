@@ -16,12 +16,12 @@ namespace blink {
 
 class StyleInheritedVariables : public RefCounted<StyleInheritedVariables> {
  public:
-  static PassRefPtr<StyleInheritedVariables> Create() {
-    return AdoptRef(new StyleInheritedVariables());
+  static RefPtr<StyleInheritedVariables> Create() {
+    return WTF::AdoptRef(new StyleInheritedVariables());
   }
 
-  PassRefPtr<StyleInheritedVariables> Copy() {
-    return AdoptRef(new StyleInheritedVariables(*this));
+  RefPtr<StyleInheritedVariables> Copy() {
+    return WTF::AdoptRef(new StyleInheritedVariables(*this));
   }
 
   bool operator==(const StyleInheritedVariables& other) const;
@@ -29,8 +29,7 @@ class StyleInheritedVariables : public RefCounted<StyleInheritedVariables> {
     return !(*this == other);
   }
 
-  void SetVariable(const AtomicString& name,
-                   PassRefPtr<CSSVariableData> value) {
+  void SetVariable(const AtomicString& name, RefPtr<CSSVariableData> value) {
     data_.Set(name, std::move(value));
   }
   CSSVariableData* GetVariable(const AtomicString& name) const;

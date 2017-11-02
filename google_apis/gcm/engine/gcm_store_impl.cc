@@ -13,7 +13,6 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -22,7 +21,6 @@
 #include "base/strings/string_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "base/tracked_objects.h"
 #include "google_apis/gcm/base/encryptor.h"
 #include "google_apis/gcm/base/mcs_message.h"
 #include "google_apis/gcm/base/mcs_util.h"
@@ -292,20 +290,18 @@ LoadStatus GCMStoreImpl::Backend::OpenStoreAndLoadData(StoreOpenMode open_mode,
     return RELOADING_OPEN_STORE;
   }
 
-  // Checks if the store exists or not. Calling DB::Open with create_if_missing
+  // Checks if the store exists or not. Opening a db with create_if_missing
   // not set will still create a new directory if the store does not exist.
   if (open_mode == DO_NOT_CREATE && !DatabaseExists(path_)) {
     DVLOG(2) << "Database " << path_.value() << " does not exist";
     return STORE_DOES_NOT_EXIST;
   }
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.create_if_missing = open_mode == CREATE_IF_MISSING;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   options.paranoid_checks = true;
-  leveldb::DB* db;
   leveldb::Status status =
-      leveldb::DB::Open(options, path_.AsUTF8Unsafe(), &db);
+      leveldb_env::OpenDB(options, path_.AsUTF8Unsafe(), &db_);
   UMA_HISTOGRAM_ENUMERATION("GCM.Database.Open",
                             leveldb_env::GetLevelDBStatusUMAValue(status),
                             leveldb_env::LEVELDB_STATUS_MAX);
@@ -315,7 +311,6 @@ LoadStatus GCMStoreImpl::Backend::OpenStoreAndLoadData(StoreOpenMode open_mode,
     return OPENING_STORE_FAILED;
   }
 
-  db_.reset(db);
   if (!LoadDeviceCredentials(&result->device_android_id,
                              &result->device_security_token)) {
     return LOADING_DEVICE_CREDENTIALS_FAILED;
@@ -416,7 +411,7 @@ void GCMStoreImpl::Backend::Destroy(const UpdateCallback& callback) {
   DVLOG(1) << "Destroying GCM store.";
   db_.reset();
   const leveldb::Status s =
-      leveldb::DestroyDB(path_.AsUTF8Unsafe(), leveldb::Options());
+      leveldb::DestroyDB(path_.AsUTF8Unsafe(), leveldb_env::Options());
   if (s.ok()) {
     foreground_task_runner_->PostTask(FROM_HERE, base::Bind(callback, true));
     return;
@@ -1432,10 +1427,6 @@ void GCMStoreImpl::SetValueForTesting(const std::string& key,
 
 void GCMStoreImpl::LoadContinuation(const LoadCallback& callback,
                                     std::unique_ptr<LoadResult> result) {
-  // TODO(pkasting): Remove ScopedTracker below once crbug.com/477117 is fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "477117 GCMStoreImpl::LoadContinuation"));
   if (!result->success) {
     callback.Run(std::move(result));
     return;

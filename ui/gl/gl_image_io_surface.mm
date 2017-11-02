@@ -14,6 +14,7 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
+#include "ui/gfx/color_space.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/scoped_binders.h"
@@ -32,6 +33,7 @@ namespace {
 bool ValidInternalFormat(unsigned internalformat) {
   switch (internalformat) {
     case GL_RED:
+    case GL_R16_EXT:
     case GL_RG:
     case GL_BGRA_EXT:
     case GL_RGB:
@@ -54,6 +56,7 @@ bool ValidFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::UYVY_422:
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       return true;
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::ATC:
     case gfx::BufferFormat::ATCIA:
@@ -75,6 +78,8 @@ GLenum TextureFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return GL_RED;
+    case gfx::BufferFormat::R_16:
+      return GL_R16_EXT;
     case gfx::BufferFormat::RG_88:
       return GL_RG;
     case gfx::BufferFormat::BGRA_8888:
@@ -107,6 +112,8 @@ GLenum DataFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return GL_RED;
+    case gfx::BufferFormat::R_16:
+      return GL_R16_EXT;
     case gfx::BufferFormat::RG_88:
       return GL_RG;
     case gfx::BufferFormat::BGRA_8888:
@@ -140,6 +147,8 @@ GLenum DataType(gfx::BufferFormat format) {
     case gfx::BufferFormat::R_8:
     case gfx::BufferFormat::RG_88:
       return GL_UNSIGNED_BYTE;
+    case gfx::BufferFormat::R_16:
+      return GL_UNSIGNED_SHORT;
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
@@ -168,8 +177,9 @@ GLenum DataType(gfx::BufferFormat format) {
 }
 
 // When an IOSurface is bound to a texture with internalformat "GL_RGB", many
-// OpenGL operations are broken. Therefore, never allow an IOSurface to be bound
-// with GL_RGB. https://crbug.com/595948.
+// OpenGL operations are broken. Therefore, don't allow an IOSurface to be bound
+// with GL_RGB unless overridden via BindTexImageWithInternalformat.
+// crbug.com/595948, crbug.com/699566.
 GLenum ConvertRequestedInternalFormat(GLenum internalformat) {
   if (internalformat == GL_RGB)
     return GL_RGBA;
@@ -237,6 +247,11 @@ unsigned GLImageIOSurface::GetInternalFormat() {
 }
 
 bool GLImageIOSurface::BindTexImage(unsigned target) {
+  return BindTexImageWithInternalformat(target, 0);
+}
+
+bool GLImageIOSurface::BindTexImageWithInternalformat(unsigned target,
+                                                      unsigned internalformat) {
   DCHECK(thread_checker_.CalledOnValidThread());
   TRACE_EVENT0("gpu", "GLImageIOSurface::BindTexImage");
   base::TimeTicks start_time = base::TimeTicks::Now();
@@ -258,10 +273,12 @@ bool GLImageIOSurface::BindTexImage(unsigned target) {
       static_cast<CGLContextObj>(GLContext::GetCurrent()->GetHandle());
 
   DCHECK(io_surface_);
-  CGLError cgl_error =
-      CGLTexImageIOSurface2D(cgl_context, target, TextureFormat(format_),
-                             size_.width(), size_.height(), DataFormat(format_),
-                             DataType(format_), io_surface_.get(), 0);
+
+  GLenum texture_format =
+      internalformat ? internalformat : TextureFormat(format_);
+  CGLError cgl_error = CGLTexImageIOSurface2D(
+      cgl_context, target, texture_format, size_.width(), size_.height(),
+      DataFormat(format_), DataType(format_), io_surface_.get(), 0);
   if (cgl_error != kCGLNoError) {
     LOG(ERROR) << "Error in CGLTexImageIOSurface2D: "
                << CGLErrorString(cgl_error);
@@ -282,7 +299,8 @@ bool GLImageIOSurface::CopyTexImage(unsigned target) {
   GLContext* gl_context = GLContext::GetCurrent();
   DCHECK(gl_context);
 
-  YUVToRGBConverter* yuv_to_rgb_converter = gl_context->GetYUVToRGBConverter();
+  YUVToRGBConverter* yuv_to_rgb_converter =
+      gl_context->GetYUVToRGBConverter(color_space_for_yuv_to_rgb_);
   DCHECK(yuv_to_rgb_converter);
 
   // Note that state restoration is done explicitly instead of scoped binders to
@@ -375,8 +393,8 @@ void GLImageIOSurface::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
         base::trace_event::MemoryDumpManager::kInvalidTracingProcessId;
   }
 
-  auto guid =
-      GetGenericSharedMemoryGUIDForTracing(process_tracing_id, io_surface_id_);
+  auto guid = GetGenericSharedGpuMemoryGUIDForTracing(process_tracing_id,
+                                                      io_surface_id_);
   pmd->CreateSharedGlobalAllocatorDump(guid);
   pmd->AddOwnershipEdge(dump->guid(), guid);
 }
@@ -387,6 +405,13 @@ bool GLImageIOSurface::EmulatingRGB() const {
 
 bool GLImageIOSurface::CanCheckIOSurfaceIsInUse() const {
   return !cv_pixel_buffer_;
+}
+
+void GLImageIOSurface::SetColorSpaceForYUVToRGBConversion(
+    const gfx::ColorSpace& color_space) {
+  DCHECK(color_space.IsValid());
+  DCHECK_NE(color_space, color_space.GetAsFullRangeRGB());
+  color_space_for_yuv_to_rgb_ = color_space;
 }
 
 base::ScopedCFTypeRef<IOSurfaceRef> GLImageIOSurface::io_surface() {

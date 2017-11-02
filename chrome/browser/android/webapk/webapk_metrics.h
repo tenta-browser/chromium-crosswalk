@@ -9,8 +9,6 @@ namespace base {
 class TimeDelta;
 }
 
-enum class GooglePlayInstallState;
-
 namespace webapk {
 
 // Keep these enums up to date with tools/metrics/histograms/histograms.xml.
@@ -37,38 +35,10 @@ enum InstallSource {
   INSTALL_SOURCE_MAX,
 };
 
-// The ways in which the WebAPK infobar can be shown.
-enum InfoBarShown {
-  WEBAPK_INFOBAR_SHOWN_FROM_BANNER,
-  WEBAPK_INFOBAR_SHOWN_FROM_MENU,
-  WEBAPK_INFOBAR_SHOWN_MAX,
-};
-
-// User actions after a WebAPK is installed.
-enum UserAction {
-  // Launch a previously installed WebAPK since the WebAPK has been installed on
-  // the device before.
-  USER_ACTION_OPEN,  // Obsolete
-  USER_ACTION_OPEN_DISMISS,  // Obsolete
-  // Open a newly installed WebAPK via a successful installation.
-  USER_ACTION_INSTALLED_OPEN,
-  USER_ACTION_INSTALLED_OPEN_DISMISS,
-  USER_ACTION_MAX,
-};
-
+void TrackRequestTokenDuration(base::TimeDelta delta);
 void TrackInstallDuration(base::TimeDelta delta);
 void TrackInstallEvent(InstallEvent event);
 void TrackInstallSource(InstallSource event);
-void TrackInstallInfoBarShown(InfoBarShown event);
-void TrackUserAction(UserAction event);
-
-// On web app and WebAPK installation records whether a WebAPK could be
-// installed via the Google Play flow. If not, records why the WebAPK could not
-// be installed via the Google Play flow (and a web app was added to the
-// homescreen instead).
-// Warning: This metric is recorded whenever a site is added to the homescreeen
-// as a web app, not just for sites with a WebAPK compatible Web Manifest.
-void TrackGooglePlayInstallState(GooglePlayInstallState state);
 
 };  // namespace webapk
 

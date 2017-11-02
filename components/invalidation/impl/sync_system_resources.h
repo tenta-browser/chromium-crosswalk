@@ -17,7 +17,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/values.h"
 #include "components/invalidation/impl/state_writer.h"
 #include "components/invalidation/public/invalidation_export.h"
@@ -86,7 +85,7 @@ class SyncInvalidationScheduler : public invalidation::Scheduler {
 // Implementation of particular network protocol should implement
 // SendMessage and call NotifyStateChange and DeliverIncomingMessage.
 class INVALIDATION_EXPORT SyncNetworkChannel
-    : public NON_EXPORTED_BASE(invalidation::NetworkChannel) {
+    : public invalidation::NetworkChannel {
  public:
   class Observer {
    public:
@@ -212,7 +211,7 @@ class SyncStorage : public invalidation::Storage {
 };
 
 class INVALIDATION_EXPORT SyncSystemResources
-    : public NON_EXPORTED_BASE(invalidation::SystemResources) {
+    : public invalidation::SystemResources {
  public:
   SyncSystemResources(SyncNetworkChannel* sync_network_channel,
                       StateWriter* state_writer);

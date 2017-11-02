@@ -612,19 +612,16 @@
 
   // Regression test for crbug.com/370035.
   TestSuite.prototype.testDeviceMetricsOverrides = function() {
-    const dumpPageMetrics = function() {
+    function dumpPageMetrics() {
       return JSON.stringify(
           {width: window.innerWidth, height: window.innerHeight, deviceScaleFactor: window.devicePixelRatio});
-    };
+    }
 
     var test = this;
 
-    function testOverrides(params, metrics, callback) {
-      SDK.targetManager.mainTarget().emulationAgent().invoke_setDeviceMetricsOverride(params, getMetrics);
-
-      function getMetrics() {
-        test.evaluateInConsole_('(' + dumpPageMetrics.toString() + ')()', checkMetrics);
-      }
+    async function testOverrides(params, metrics, callback) {
+      await SDK.targetManager.mainTarget().emulationAgent().invoke_setDeviceMetricsOverride(params);
+      test.evaluateInConsole_('(' + dumpPageMetrics.toString() + ')()', checkMetrics);
 
       function checkMetrics(consoleResult) {
         test.assertEquals(
@@ -665,11 +662,84 @@
     step1();
   };
 
+  TestSuite.prototype.testDispatchKeyEventShowsAutoFill = function() {
+    var test = this;
+    var receivedReady = false;
+
+    function signalToShowAutofill() {
+      SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
+          {type: 'rawKeyDown', key: 'Down', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40});
+      SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
+          {type: 'keyUp', key: 'Down', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40});
+    }
+
+    function selectTopAutoFill() {
+      SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
+          {type: 'rawKeyDown', key: 'Down', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40});
+      SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
+          {type: 'keyUp', key: 'Down', windowsVirtualKeyCode: 40, nativeVirtualKeyCode: 40});
+      SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
+          {type: 'rawKeyDown', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13});
+      SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
+          {type: 'keyUp', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13});
+
+      test.evaluateInConsole_('document.getElementById("name").value', onResultOfInput);
+    }
+
+    function onResultOfInput(value) {
+      // Console adds "" around the response.
+      test.assertEquals('"Abbf"', value);
+      test.releaseControl();
+    }
+
+    function onConsoleMessage(event) {
+      var message = event.data.messageText;
+      if (message === 'ready' && !receivedReady) {
+        receivedReady = true;
+        signalToShowAutofill();
+      }
+      // This log comes from the browser unittest code.
+      if (message === 'didShowSuggestions')
+        selectTopAutoFill();
+    }
+
+    this.takeControl();
+
+    // It is possible for the ready console messagage to be already received but not handled
+    // or received later. This ensures we can catch both cases.
+    ConsoleModel.consoleModel.addEventListener(ConsoleModel.ConsoleModel.Events.MessageAdded, onConsoleMessage, this);
+
+    var messages = ConsoleModel.consoleModel.messages();
+    if (messages.length) {
+      var text = messages[0].messageText;
+      this.assertEquals('ready', text);
+      signalToShowAutofill();
+    }
+  };
+
   TestSuite.prototype.testDispatchKeyEventDoesNotCrash = function() {
     SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
         {type: 'rawKeyDown', windowsVirtualKeyCode: 0x23, key: 'End'});
     SDK.targetManager.mainTarget().inputAgent().invoke_dispatchKeyEvent(
         {type: 'keyUp', windowsVirtualKeyCode: 0x23, key: 'End'});
+  };
+
+  // Simple sanity check to make sure network throttling is wired up
+  // See crbug.com/747724
+  TestSuite.prototype.testOfflineNetworkConditions = async function() {
+    var test = this;
+    SDK.multitargetNetworkManager.setNetworkConditions(SDK.NetworkManager.OfflineConditions);
+
+    function finishRequest(request) {
+      test.assertEquals(
+          'net::ERR_INTERNET_DISCONNECTED', request.localizedFailDescription, 'Request should have failed');
+      test.releaseControl();
+    }
+
+    this.addSniffer(SDK.NetworkDispatcher.prototype, '_finishNetworkRequest', finishRequest);
+
+    test.takeControl();
+    test.evaluateInConsole_('window.location.reload(true);', function(resultText) {});
   };
 
   TestSuite.prototype.testEmulateNetworkConditions = function() {
@@ -700,21 +770,21 @@
 
     function step1() {
       testPreset(
-          NetworkConditions.NetworkConditionsSelector.presets[0],
+          MobileThrottling.networkPresets[2],
           ['offline event: online = false', 'connection change event: type = none; downlinkMax = 0'], step2);
     }
 
     function step2() {
       testPreset(
-          NetworkConditions.NetworkConditionsSelector.presets[2],
-          ['online event: online = true', 'connection change event: type = cellular; downlinkMax = 0.244140625'],
-          step3);
+          MobileThrottling.networkPresets[1],
+          ['online event: online = true', 'connection change event: type = cellular; downlinkMax = 0.390625'], step3);
     }
 
     function step3() {
       testPreset(
-          NetworkConditions.NetworkConditionsSelector.presets[8],
-          ['connection change event: type = wifi; downlinkMax = 30'], test.releaseControl.bind(test));
+          MobileThrottling.networkPresets[0],
+          ['connection change event: type = cellular; downlinkMax = 1.4400000000000002'],
+          test.releaseControl.bind(test));
     }
   };
 
@@ -850,24 +920,65 @@
 
     function onExecutionContexts() {
       var consoleView = Console.ConsoleView.instance();
-      var options = consoleView._consoleContextSelector._selectElement.options;
+      var selector = consoleView._consoleContextSelector;
       var values = [];
-      for (var i = 0; i < options.length; ++i)
-        values.push(options[i].value.trim());
+      for (var item of selector._items)
+        values.push(selector.titleFor(item));
       test.assertEquals('top', values[0]);
       test.assertEquals('Simple content script', values[1]);
       test.releaseControl();
     }
   };
 
-  TestSuite.prototype.testDevToolsSharedWorker = function() {
-    this.takeControl();
-    Bindings.TempFile.ensureTempStorageCleared().then(() => this.releaseControl());
+  TestSuite.prototype.testRawHeadersWithHSTS = function(url) {
+    var test = this;
+    test.takeControl();
+    SDK.targetManager.addModelListener(
+        SDK.NetworkManager, SDK.NetworkManager.Events.ResponseReceived, onResponseReceived);
+
+    this.evaluateInConsole_(`
+      var img = document.createElement('img');
+      img.src = "${url}";
+      document.body.appendChild(img);
+    `, () => {});
+
+    var count = 0;
+    function onResponseReceived(event) {
+      var networkRequest = event.data;
+      if (!networkRequest.url().startsWith('http'))
+        return;
+      switch (++count) {
+        case 1:  // Original redirect
+          test.assertEquals(301, networkRequest.statusCode);
+          test.assertEquals('Moved Permanently', networkRequest.statusText);
+          test.assertTrue(url.endsWith(networkRequest.responseHeaderValue('Location')));
+          break;
+
+        case 2:  // HSTS internal redirect
+          test.assertTrue(networkRequest.url().startsWith('http://'));
+          test.assertEquals(undefined, networkRequest.requestHeadersText());
+          test.assertEquals(307, networkRequest.statusCode);
+          test.assertEquals('Internal Redirect', networkRequest.statusText);
+          test.assertEquals('HSTS', networkRequest.responseHeaderValue('Non-Authoritative-Reason'));
+          test.assertTrue(networkRequest.responseHeaderValue('Location').startsWith('https://'));
+          break;
+
+        case 3:  // Final response
+          test.assertTrue(networkRequest.url().startsWith('https://'));
+          test.assertTrue(networkRequest.requestHeaderValue('Referer').startsWith('http://127.0.0.1'));
+          test.assertEquals(200, networkRequest.statusCode);
+          test.assertEquals('OK', networkRequest.statusText);
+          test.assertEquals('132', networkRequest.responseHeaderValue('Content-Length'));
+          test.releaseControl();
+      }
+    }
   };
 
-  TestSuite.prototype.testTempFile = function() {
-    this.takeControl();
-    Bindings.TempFile.create('test-file', 'test').then(() => this.releaseControl(), error => this.fail(String(error)));
+  TestSuite.prototype.testDOMWarnings = function() {
+    var messages = ConsoleModel.consoleModel.messages();
+    this.assertEquals(1, messages.length);
+    var expectedPrefix = '[DOM] Found 2 elements with non-unique id #dup:';
+    this.assertTrue(messages[0].messageText.startsWith(expectedPrefix));
   };
 
   TestSuite.prototype.waitForTestResultsInConsole = function() {

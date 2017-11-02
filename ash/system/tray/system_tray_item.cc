@@ -5,7 +5,6 @@
 #include "ash/system/tray/system_tray_item.h"
 
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/tray_constants.h"
 #include "base/timer/timer.h"
 #include "ui/views/view.h"
@@ -29,28 +28,26 @@ views::View* SystemTrayItem::CreateDetailedView(LoginStatus status) {
   return nullptr;
 }
 
-void SystemTrayItem::DestroyTrayView() {}
+void SystemTrayItem::OnTrayViewDestroyed() {}
 
-void SystemTrayItem::DestroyDefaultView() {}
+void SystemTrayItem::OnDefaultViewDestroyed() {}
 
-void SystemTrayItem::DestroyDetailedView() {}
+void SystemTrayItem::OnDetailedViewDestroyed() {}
 
 void SystemTrayItem::TransitionDetailedView() {
   transition_delay_timer_.Start(
       FROM_HERE,
       base::TimeDelta::FromMilliseconds(kTrayDetailedViewTransitionDelayMs),
       base::Bind(&SystemTray::ShowDetailedView, base::Unretained(system_tray()),
-                 this, 0, true, BUBBLE_USE_EXISTING));
+                 this, 0, BUBBLE_USE_EXISTING));
 }
 
 void SystemTrayItem::UpdateAfterLoginStatusChange(LoginStatus status) {}
 
-void SystemTrayItem::UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) {
-}
+void SystemTrayItem::UpdateAfterShelfAlignmentChange() {}
 
-void SystemTrayItem::ShowDetailedView(int for_seconds, bool activate) {
-  system_tray()->ShowDetailedView(this, for_seconds, activate,
-                                  BUBBLE_CREATE_NEW);
+void SystemTrayItem::ShowDetailedView(int for_seconds) {
+  system_tray()->ShowDetailedView(this, for_seconds, BUBBLE_CREATE_NEW);
 }
 
 void SystemTrayItem::SetDetailedViewCloseDelay(int for_seconds) {

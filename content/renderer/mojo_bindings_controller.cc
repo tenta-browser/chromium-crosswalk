@@ -4,11 +4,13 @@
 
 #include "content/renderer/mojo_bindings_controller.h"
 
+#include "base/memory/ptr_util.h"
 #include "content/common/view_messages.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "content/renderer/mojo_context_state.h"
 #include "gin/per_context_data.h"
+#include "third_party/WebKit/public/web/WebContextFeatures.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebView.h"
@@ -40,9 +42,9 @@ void MojoBindingsController::CreateContextState() {
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   v8::Local<v8::Context> context = frame->MainWorldScriptContext();
   gin::PerContextData* context_data = gin::PerContextData::From(context);
-  MojoContextStateData* data = new MojoContextStateData;
+  auto data = base::MakeUnique<MojoContextStateData>();
   data->state.reset(new MojoContextState(frame, context, bindings_type_));
-  context_data->SetUserData(kMojoContextStateKey, data);
+  context_data->SetUserData(kMojoContextStateKey, std::move(data));
 }
 
 void MojoBindingsController::DestroyContextState(
@@ -63,6 +65,28 @@ MojoContextState* MojoBindingsController::GetContextState() {
   MojoContextStateData* context_state = static_cast<MojoContextStateData*>(
       context_data->GetUserData(kMojoContextStateKey));
   return context_state ? context_state->state.get() : NULL;
+}
+
+void MojoBindingsController::DidCreateScriptContext(
+    v8::Local<v8::Context> context,
+    int world_id) {
+  // NOTE: Layout tests already get this turned on by the RuntimeEnabled feature
+  // setting. We avoid manually installing them here for layout tests, because
+  // some layout tests (namely at
+  // least virtual/stable/webexposed/global-interface-listing.html) may be run
+  // with such features explicitly disabled. We do not want to unconditionally
+  // install Mojo bindings in such environments.
+  //
+  // We also only allow these bindings to be installed when creating the main
+  // world context.
+  if (bindings_type_ != MojoBindingsType::FOR_LAYOUT_TESTS && world_id == 0) {
+    blink::WebContextFeatures::EnableMojoJS(context, true);
+    // These bindings are only needed by WebUI tests however the browsertest
+    // framework does not currently inform the renderer if it is being started
+    // by a test. The gin bindings also expose the test interface to WebUI
+    // contexts.
+    blink::WebContextFeatures::EnableMojoJSTest(context, true);
+  }
 }
 
 void MojoBindingsController::WillReleaseScriptContext(

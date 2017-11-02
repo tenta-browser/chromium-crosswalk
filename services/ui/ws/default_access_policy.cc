@@ -59,6 +59,15 @@ bool DefaultAccessPolicy::CanSetModal(const ServerWindow* window) const {
          WasCreatedByThisClient(window);
 }
 
+bool DefaultAccessPolicy::CanSetChildModalParent(
+    const ServerWindow* window,
+    const ServerWindow* modal_parent) const {
+  return (delegate_->HasRootForAccessPolicy(window) ||
+          WasCreatedByThisClient(window)) &&
+         (!modal_parent || delegate_->HasRootForAccessPolicy(modal_parent) ||
+          WasCreatedByThisClient(modal_parent));
+}
+
 bool DefaultAccessPolicy::CanReorderWindow(
     const ServerWindow* window,
     const ServerWindow* relative_window,
@@ -111,6 +120,11 @@ bool DefaultAccessPolicy::CanSetWindowCompositorFrameSink(
 }
 
 bool DefaultAccessPolicy::CanSetWindowBounds(const ServerWindow* window) const {
+  return WasCreatedByThisClient(window);
+}
+
+bool DefaultAccessPolicy::CanSetWindowTransform(
+    const ServerWindow* window) const {
   return WasCreatedByThisClient(window);
 }
 
@@ -226,9 +240,9 @@ bool DefaultAccessPolicy::WasCreatedByThisClient(
 bool DefaultAccessPolicy::IsValidIdForNewWindow(
     const ClientWindowId& id) const {
   // Clients using DefaultAccessPolicy only see windows they have created (for
-  // the embed point they choose the id), so it's ok for clients to use whatever
-  // id they want.
-  return true;
+  // the embed point they choose the id), which should have the same client_id
+  // as the client_id_ since we should have already filled in the real one.
+  return base::checked_cast<ClientSpecificId>(id.client_id()) == client_id_;
 }
 
 }  // namespace ws

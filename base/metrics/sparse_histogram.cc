@@ -85,7 +85,7 @@ std::unique_ptr<HistogramBase> SparseHistogram::PersistentCreate(
 SparseHistogram::~SparseHistogram() {}
 
 uint64_t SparseHistogram::name_hash() const {
-  return samples_->id();
+  return unlogged_samples_->id();
 }
 
 HistogramType SparseHistogram::GetHistogramType() const {
@@ -111,7 +111,7 @@ void SparseHistogram::AddCount(Sample value, int count) {
   }
   {
     base::AutoLock auto_lock(lock_);
-    samples_->Accumulate(value, count);
+    unlogged_samples_->Accumulate(value, count);
   }
 
   FindAndRunCallback(value);
@@ -121,7 +121,8 @@ std::unique_ptr<HistogramSamples> SparseHistogram::SnapshotSamples() const {
   std::unique_ptr<SampleMap> snapshot(new SampleMap(name_hash()));
 
   base::AutoLock auto_lock(lock_);
-  snapshot->Add(*samples_);
+  snapshot->Add(*unlogged_samples_);
+  snapshot->Add(*logged_samples_);
   return std::move(snapshot);
 }
 
@@ -130,10 +131,9 @@ std::unique_ptr<HistogramSamples> SparseHistogram::SnapshotDelta() {
 
   std::unique_ptr<SampleMap> snapshot(new SampleMap(name_hash()));
   base::AutoLock auto_lock(lock_);
-  snapshot->Add(*samples_);
+  snapshot->Add(*unlogged_samples_);
 
-  // Subtract what was previously logged and update that information.
-  snapshot->Subtract(*logged_samples_);
+  unlogged_samples_->Subtract(*snapshot);
   logged_samples_->Add(*snapshot);
   return std::move(snapshot);
 }
@@ -144,21 +144,19 @@ std::unique_ptr<HistogramSamples> SparseHistogram::SnapshotFinalDelta() const {
 
   std::unique_ptr<SampleMap> snapshot(new SampleMap(name_hash()));
   base::AutoLock auto_lock(lock_);
-  snapshot->Add(*samples_);
+  snapshot->Add(*unlogged_samples_);
 
-  // Subtract what was previously logged and then return.
-  snapshot->Subtract(*logged_samples_);
   return std::move(snapshot);
 }
 
 void SparseHistogram::AddSamples(const HistogramSamples& samples) {
   base::AutoLock auto_lock(lock_);
-  samples_->Add(samples);
+  unlogged_samples_->Add(samples);
 }
 
 bool SparseHistogram::AddSamplesFromPickle(PickleIterator* iter) {
   base::AutoLock auto_lock(lock_);
-  return samples_->AddFromPickle(iter);
+  return unlogged_samples_->AddFromPickle(iter);
 }
 
 void SparseHistogram::WriteHTMLGraph(std::string* output) const {
@@ -171,14 +169,15 @@ void SparseHistogram::WriteAscii(std::string* output) const {
   WriteAsciiImpl(true, "\n", output);
 }
 
-bool SparseHistogram::SerializeInfoImpl(Pickle* pickle) const {
-  return pickle->WriteString(histogram_name()) && pickle->WriteInt(flags());
+void SparseHistogram::SerializeInfoImpl(Pickle* pickle) const {
+  pickle->WriteString(histogram_name());
+  pickle->WriteInt(flags());
 }
 
 SparseHistogram::SparseHistogram(const std::string& name)
     : HistogramBase(name),
-      samples_(new SampleMap(HashMetricName(name))),
-      logged_samples_(new SampleMap(samples_->id())) {}
+      unlogged_samples_(new SampleMap(HashMetricName(name))),
+      logged_samples_(new SampleMap(unlogged_samples_->id())) {}
 
 SparseHistogram::SparseHistogram(PersistentHistogramAllocator* allocator,
                                  const std::string& name,
@@ -195,10 +194,11 @@ SparseHistogram::SparseHistogram(PersistentHistogramAllocator* allocator,
       // "active" samples use, for convenience purposes, an ID matching
       // that of the histogram while the "logged" samples use that number
       // plus 1.
-      samples_(new PersistentSampleMap(HashMetricName(name), allocator, meta)),
-      logged_samples_(
-          new PersistentSampleMap(samples_->id() + 1, allocator, logged_meta)) {
-}
+      unlogged_samples_(
+          new PersistentSampleMap(HashMetricName(name), allocator, meta)),
+      logged_samples_(new PersistentSampleMap(unlogged_samples_->id() + 1,
+                                              allocator,
+                                              logged_meta)) {}
 
 HistogramBase* SparseHistogram::DeserializeInfoImpl(PickleIterator* iter) {
   std::string histogram_name;
@@ -243,7 +243,7 @@ void SparseHistogram::WriteAsciiImpl(bool graph_it,
   std::unique_ptr<SampleCountIterator> it = snapshot->Iterator();
   while (!it->Done()) {
     Sample min;
-    Sample max;
+    int64_t max;
     Count count;
     it->Get(&min, &max, &count);
     if (min > largest_sample)
@@ -258,7 +258,7 @@ void SparseHistogram::WriteAsciiImpl(bool graph_it,
   it = snapshot->Iterator();
   while (!it->Done()) {
     Sample min;
-    Sample max;
+    int64_t max;
     Count count;
     it->Get(&min, &max, &count);
 

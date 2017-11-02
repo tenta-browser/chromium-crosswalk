@@ -13,70 +13,15 @@
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar_unittest.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "extensions/common/feature_switch.h"
 #include "extensions/common/user_script.h"
 #include "ui/base/l10n/l10n_util.h"
-
-class ToolbarActionsBarLegacyUnitTest : public ToolbarActionsBarUnitTest {
- public:
-  ToolbarActionsBarLegacyUnitTest()
-      : extension_action_redesign_override_(
-            extensions::FeatureSwitch::extension_action_redesign(), true) {}
-  ~ToolbarActionsBarLegacyUnitTest() override {}
-
- private:
-  extensions::FeatureSwitch::ScopedOverride extension_action_redesign_override_;
-
-  DISALLOW_COPY_AND_ASSIGN(ToolbarActionsBarLegacyUnitTest);
-};
-
-// Tests the icon appearance of extension actions without the toolbar redesign.
-// In this case, the action should never be grayscaled or decorated to indicate
-// whether or not it wants to run.
-TEST_P(ToolbarActionsBarLegacyUnitTest, ExtensionActionNormalAppearance) {
-  CreateAndAddExtension("extension",
-                        extensions::extension_action_test_util::BROWSER_ACTION);
-  EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
-
-  AddTab(browser(), GURL("chrome://newtab"));
-
-  gfx::Size size(ToolbarActionsBar::IconWidth(false),
-                 ToolbarActionsBar::IconHeight());
-  content::WebContents* web_contents =
-      browser()->tab_strip_model()->GetActiveWebContents();
-  ExtensionActionViewController* action =
-      static_cast<ExtensionActionViewController*>(
-          toolbar_actions_bar()->GetActions()[0]);
-  std::unique_ptr<IconWithBadgeImageSource> image_source =
-      action->GetIconImageSourceForTesting(web_contents, size);
-  EXPECT_FALSE(image_source->grayscale());
-  EXPECT_FALSE(image_source->paint_page_action_decoration());
-
-  SetActionWantsToRunOnTab(action->extension_action(), web_contents, false);
-  image_source = action->GetIconImageSourceForTesting(web_contents, size);
-  EXPECT_FALSE(image_source->grayscale());
-  EXPECT_FALSE(image_source->paint_page_action_decoration());
-  EXPECT_FALSE(image_source->paint_blocked_actions_decoration());
-
-  toolbar_model()->SetVisibleIconCount(0u);
-  image_source = action->GetIconImageSourceForTesting(web_contents, size);
-  EXPECT_FALSE(image_source->grayscale());
-  EXPECT_FALSE(image_source->paint_page_action_decoration());
-  EXPECT_FALSE(image_source->paint_blocked_actions_decoration());
-
-  SetActionWantsToRunOnTab(action->extension_action(), web_contents, true);
-  image_source = action->GetIconImageSourceForTesting(web_contents, size);
-  EXPECT_FALSE(image_source->grayscale());
-  EXPECT_FALSE(image_source->paint_page_action_decoration());
-  EXPECT_FALSE(image_source->paint_blocked_actions_decoration());
-}
 
 // Tests the icon appearance of extension actions with the toolbar redesign.
 // Extensions that don't want to run should have their icons grayscaled.
 // Overflowed extensions that want to run should have an additional decoration.
 TEST_P(ToolbarActionsBarUnitTest, ExtensionActionWantsToRunAppearance) {
   CreateAndAddExtension("extension",
-                        extensions::extension_action_test_util::PAGE_ACTION);
+                        extensions::ExtensionBuilder::ActionType::PAGE_ACTION);
   EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
   EXPECT_EQ(0u, overflow_bar()->GetIconCount());
 
@@ -123,7 +68,7 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
   scoped_refptr<const extensions::Extension> browser_action_ext =
       CreateAndAddExtension(
           "browser action",
-          extensions::extension_action_test_util::BROWSER_ACTION);
+          extensions::ExtensionBuilder::ActionType::BROWSER_ACTION);
   ASSERT_EQ(1u, toolbar_actions_bar()->GetIconCount());
   AddTab(browser(), GURL("https://www.google.com/"));
 
@@ -164,7 +109,7 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
 
   scoped_refptr<const extensions::Extension> page_action_ext =
       CreateAndAddExtension(
-          "page action", extensions::extension_action_test_util::PAGE_ACTION);
+          "page action", extensions::ExtensionBuilder::ActionType::PAGE_ACTION);
   ASSERT_EQ(2u, toolbar_actions_bar()->GetIconCount());
   ExtensionActionViewController* page_action =
       static_cast<ExtensionActionViewController*>(
@@ -213,8 +158,8 @@ TEST_P(ToolbarActionsBarUnitTest, ExtensionActionBlockedActions) {
 }
 
 TEST_P(ToolbarActionsBarUnitTest, ExtensionActionContextMenu) {
-  CreateAndAddExtension("extension",
-                        extensions::extension_action_test_util::BROWSER_ACTION);
+  CreateAndAddExtension(
+      "extension", extensions::ExtensionBuilder::ActionType::BROWSER_ACTION);
   EXPECT_EQ(1u, toolbar_actions_bar()->GetIconCount());
 
   // Check that the context menu has the proper string for the action's position

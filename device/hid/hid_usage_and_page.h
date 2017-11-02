@@ -119,12 +119,13 @@ struct HidUsageAndPage {
     kGenericDesktopSystemDisplaySwap = 0xb6,
   };
 
-  HidUsageAndPage(uint16_t usage, Page usage_page)
+  HidUsageAndPage() {}
+  HidUsageAndPage(uint16_t usage, uint16_t usage_page)
       : usage(usage), usage_page(usage_page) {}
   ~HidUsageAndPage() {}
 
   uint16_t usage;
-  Page usage_page;
+  uint16_t usage_page;
 
   // Indicates whether this usage is protected by Chrome.
   bool IsProtected() const;

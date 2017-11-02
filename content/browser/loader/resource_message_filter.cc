@@ -52,6 +52,10 @@ void ResourceMessageFilter::OnFilterAdded(IPC::Channel*) {
 void ResourceMessageFilter::OnChannelClosing() {
   DCHECK(io_thread_task_runner_->BelongsToCurrentThread());
 
+  // Close all additional Mojo connections opened to this object so that
+  // messages are not dispatched while it is being shut down.
+  bindings_.CloseAllBindings();
+
   // Unhook us from all pending network requests so they don't get sent to a
   // deleted object.
   ResourceDispatcherHostImpl::Get()->CancelRequestsForProcess(
@@ -85,22 +89,21 @@ base::WeakPtr<ResourceMessageFilter> ResourceMessageFilter::GetWeakPtr() {
 }
 
 void ResourceMessageFilter::CreateLoaderAndStart(
-    mojom::URLLoaderAssociatedRequest request,
+    mojom::URLLoaderRequest request,
     int32_t routing_id,
     int32_t request_id,
+    uint32_t options,
     const ResourceRequest& url_request,
-    mojom::URLLoaderClientPtr client) {
+    mojom::URLLoaderClientPtr client,
+    const net::MutableNetworkTrafficAnnotationTag& traffic_annotation) {
   URLLoaderFactoryImpl::CreateLoaderAndStart(
       requester_info_.get(), std::move(request), routing_id, request_id,
-      url_request, std::move(client));
+      options, url_request, std::move(client),
+      net::NetworkTrafficAnnotationTag(traffic_annotation));
 }
 
-void ResourceMessageFilter::SyncLoad(int32_t routing_id,
-                                     int32_t request_id,
-                                     const ResourceRequest& url_request,
-                                     const SyncLoadCallback& callback) {
-  URLLoaderFactoryImpl::SyncLoad(requester_info_.get(), routing_id, request_id,
-                                 url_request, callback);
+void ResourceMessageFilter::Clone(mojom::URLLoaderFactoryRequest request) {
+  bindings_.AddBinding(this, std::move(request));
 }
 
 int ResourceMessageFilter::child_id() const {

@@ -18,7 +18,10 @@ _LOWERCASE_NAME_FN = lambda n: n.attributes['name'].value.lower()
 
 _METRIC_TYPE =  models.ObjectNodeType(
     'metric',
-    attributes=[('name', unicode)],
+    attributes=[
+      ('name', unicode),
+      ('semantic_type', unicode),
+    ],
     children=[
         models.ChildType('obsolete', _OBSOLETE_TYPE, False),
         models.ChildType('owners', _OWNER_TYPE, True),
@@ -28,7 +31,7 @@ _METRIC_TYPE =  models.ObjectNodeType(
 _EVENT_TYPE =  models.ObjectNodeType(
     'event',
     alphabetization=('metric', _LOWERCASE_NAME_FN),
-    attributes=[('name', unicode)],
+    attributes=[('name', unicode), ('singular', bool)],
     extra_newlines=(1, 1, 1),
     children=[
         models.ChildType('obsolete', _OBSOLETE_TYPE, False),

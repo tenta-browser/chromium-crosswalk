@@ -27,7 +27,7 @@ P2PSocketDispatcher::P2PSocketDispatcher(
 
 P2PSocketDispatcher::~P2PSocketDispatcher() {
   network_list_observers_->AssertEmpty();
-  for (IDMap<P2PSocketClientImpl*>::iterator i(&clients_); !i.IsAtEnd();
+  for (base::IDMap<P2PSocketClientImpl*>::iterator i(&clients_); !i.IsAtEnd();
        i.Advance()) {
     i.GetCurrentValue()->Detach();
   }
@@ -106,7 +106,7 @@ void P2PSocketDispatcher::UnregisterClient(int id) {
 void P2PSocketDispatcher::SendP2PMessage(IPC::Message* msg) {
   if (!ipc_task_runner_->BelongsToCurrentThread()) {
     ipc_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&P2PSocketDispatcher::Send, this, msg));
+        FROM_HERE, base::BindOnce(&P2PSocketDispatcher::Send, this, msg));
     return;
   }
   Send(msg);

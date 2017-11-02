@@ -9,6 +9,9 @@
 
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "services/service_manager/public/cpp/bind_source_info.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
+#include "ui/events/system_input_injector.h"
 #include "ui/ozone/ozone_export.h"
 
 namespace display {
@@ -24,7 +27,6 @@ class MessageFilter;
 }
 
 namespace service_manager {
-class BinderRegistry;
 class Connector;
 }
 
@@ -79,11 +81,6 @@ class OZONE_EXPORT OzonePlatform {
   static OzonePlatform* EnsureInstance();
 
   // Initializes the subsystems/resources necessary for the UI process (e.g.
-  // events, etc.)
-  // TODO(rjkroege): Remove deprecated entry point (http://crbug.com/620934)
-  static void InitializeForUI();
-
-  // Initializes the subsystems/resources necessary for the UI process (e.g.
   // events) with additional properties to customize the ozone platform
   // implementation. Ozone will not retain InitParams after returning from
   // InitalizeForUI.
@@ -127,7 +124,8 @@ class OZONE_EXPORT OzonePlatform {
   //
   // A default do-nothing implementation is provided to permit platform
   // implementations to opt out of implementing any Mojo interfaces.
-  virtual void AddInterfaces(service_manager::BinderRegistry* registry);
+  virtual void AddInterfaces(service_manager::BinderRegistryWithArgs<
+                             const service_manager::BindSourceInfo&>* registry);
 
  private:
   virtual void InitializeUI(const InitParams& params) = 0;

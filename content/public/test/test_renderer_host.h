@@ -58,6 +58,11 @@ class RenderFrameHostTester {
   // RenderViewHostTestEnabler instance (see below) to do this.
   static RenderFrameHostTester* For(RenderFrameHost* host);
 
+  // Calls the RenderFrameHost's private OnMessageReceived function with the
+  // given message.
+  static bool TestOnMessageReceived(RenderFrameHost* rfh,
+                                    const IPC::Message& msg);
+
   static void CommitPendingLoad(NavigationController* controller);
 
   virtual ~RenderFrameHostTester() {}
@@ -74,36 +79,10 @@ class RenderFrameHostTester {
   // Gives tests access to RenderFrameHostImpl::OnDetach. Destroys |this|.
   virtual void Detach() = 0;
 
-  // Simulates a renderer-initiated navigation to |url| starting in the
-  // RenderFrameHost.
-  // DEPRECATED: use NavigationSimulator instead.
-  virtual void SimulateNavigationStart(const GURL& url) = 0;
-
-  // Simulates a redirect to |new_url| for the navigation in the
-  // RenderFrameHost.
-  // Note: this is deprecated for simulating renderer-initiated navigations. Use
-  // NavigationSimulator instead.
-  virtual void SimulateRedirect(const GURL& new_url) = 0;
-
-  // Simulates a navigation to |url| committing in the RenderFrameHost.
-  // Note: this is deprecated for simulating renderer-initiated navigations. Use
-  // NavigationSimulator instead.
-  virtual void SimulateNavigationCommit(const GURL& url) = 0;
-
-  // Simulates a navigation to |url| failing with the error code |error_code|.
-  // Note: this is deprecated for simulating renderer-initiated navigations. Use
-  // NavigationSimulator instead.
-  virtual void SimulateNavigationError(const GURL& url, int error_code) = 0;
-
-  // Simulates the commit of an error page following a navigation failure.
-  // Note: this is deprecated for simulating renderer-initiated navigations. Use
-  // NavigationSimulator instead.
-  virtual void SimulateNavigationErrorPageCommit() = 0;
-
   // Simulates a navigation stopping in the RenderFrameHost.
   virtual void SimulateNavigationStop() = 0;
 
-  // Calls OnDidCommitProvisionalLoad on the RenderFrameHost with the given
+  // Calls DidCommitProvisionalLoad on the RenderFrameHost with the given
   // information with various sets of parameters. These are helper functions for
   // simulating the most common types of loads.
   //
@@ -114,9 +93,6 @@ class RenderFrameHostTester {
   // - did_create_new_entry should be true if simulating a navigation that
   //   created a new navigation entry; false for history navigations, reloads,
   //   and other navigations that don't affect the history list.
-  virtual void SendNavigate(int nav_entry_id,
-                            bool did_create_new_entry,
-                            const GURL& url) = 0;
   virtual void SendFailedNavigate(int nav_entry_id,
                                   bool did_create_new_entry,
                                   const GURL& url) = 0;
@@ -137,8 +113,17 @@ class RenderFrameHostTester {
   virtual void SimulateSwapOutACK() = 0;
 
   // Simulate a renderer-initiated navigation up until commit.
+  // DEPRECATED: Use NavigationSimulator::NavigateAndCommitFromDocument().
   virtual void NavigateAndCommitRendererInitiated(bool did_create_new_entry,
                                                   const GURL& url) = 0;
+
+  // Set the feature policy header for the RenderFrameHost for test. Currently
+  // this is limited to setting a whitelist for a single feature. This function
+  // can be generalized as needed. Setting a header policy should only be done
+  // once per navigation of the RFH.
+  virtual void SimulateFeaturePolicyHeader(
+      blink::WebFeaturePolicyFeature feature,
+      const std::vector<url::Origin>& whitelist) = 0;
 };
 
 // An interface and utility for driving tests of RenderViewHost.
@@ -190,6 +175,7 @@ class RenderViewHostTestEnabler {
 #if defined(OS_ANDROID)
   std::unique_ptr<display::Screen> screen_;
 #endif
+  std::unique_ptr<base::MessageLoop> message_loop_;
   std::unique_ptr<MockRenderProcessHostFactory> rph_factory_;
   std::unique_ptr<TestRenderViewHostFactory> rvh_factory_;
   std::unique_ptr<TestRenderFrameHostFactory> rfh_factory_;
@@ -198,7 +184,9 @@ class RenderViewHostTestEnabler {
 // RenderViewHostTestHarness ---------------------------------------------------
 class RenderViewHostTestHarness : public testing::Test {
  public:
-  RenderViewHostTestHarness();
+  // Constructs a RenderViewHostTestHarness which uses |thread_bundle_options|
+  // to initialize its TestBrowserThreadBundle.
+  explicit RenderViewHostTestHarness(int thread_bundle_options = 0);
   ~RenderViewHostTestHarness() override;
 
   NavigationController& controller();
@@ -260,15 +248,6 @@ class RenderViewHostTestHarness : public testing::Test {
   // BrowserContext.
   virtual BrowserContext* CreateBrowserContext();
 
-  // Configures which TestBrowserThreads inside |thread_bundle| are backed by
-  // real threads. Must be called before SetUp().
-  void SetThreadBundleOptions(int options) {
-    DCHECK(!thread_bundle_);
-    thread_bundle_options_ = options;
-  }
-
-  TestBrowserThreadBundle* thread_bundle() { return thread_bundle_.get(); }
-
 #if defined(USE_AURA)
   aura::Window* root_window() { return aura_test_helper_->root_window(); }
 #endif
@@ -277,12 +256,15 @@ class RenderViewHostTestHarness : public testing::Test {
   void SetRenderProcessHostFactory(RenderProcessHostFactory* factory);
 
  private:
-  int thread_bundle_options_;
   std::unique_ptr<TestBrowserThreadBundle> thread_bundle_;
 
   std::unique_ptr<ContentBrowserSanityChecker> sanity_checker_;
 
   std::unique_ptr<BrowserContext> browser_context_;
+
+  // This must be placed before |contents_| such that it will be destructed
+  // after it. See https://crbug.com/770451
+  std::unique_ptr<RenderViewHostTestEnabler> rvh_test_enabler_;
 
   std::unique_ptr<WebContents> contents_;
 #if defined(OS_WIN)
@@ -291,7 +273,6 @@ class RenderViewHostTestHarness : public testing::Test {
 #if defined(USE_AURA)
   std::unique_ptr<aura::test::AuraTestHelper> aura_test_helper_;
 #endif
-  std::unique_ptr<RenderViewHostTestEnabler> rvh_test_enabler_;
   RenderProcessHostFactory* factory_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(RenderViewHostTestHarness);

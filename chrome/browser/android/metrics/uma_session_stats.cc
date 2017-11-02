@@ -53,7 +53,8 @@ void UmaSessionStats::UmaResumeSession(JNIEnv* env,
     metrics::MetricsService* metrics = g_browser_process->metrics_service();
     if (metrics)
       metrics->OnAppEnterForeground();
-    ukm::UkmService* ukm_service = g_browser_process->ukm_service();
+    ukm::UkmService* ukm_service =
+        g_browser_process->GetMetricsServicesManager()->GetUkmService();
     if (ukm_service)
       ukm_service->OnAppEnterForeground();
   }
@@ -77,7 +78,8 @@ void UmaSessionStats::UmaEndSession(JNIEnv* env,
     metrics::MetricsService* metrics = g_browser_process->metrics_service();
     if (metrics)
       metrics->OnAppEnterBackground();
-    ukm::UkmService* ukm_service = g_browser_process->ukm_service();
+    ukm::UkmService* ukm_service =
+        g_browser_process->GetMetricsServicesManager()->GetUkmService();
     if (ukm_service)
       ukm_service->OnAppEnterBackground();
   }
@@ -113,7 +115,7 @@ static void ChangeMetricsReportingConsent(JNIEnv*,
   // created, or deleted, depending on consent. Starting up metrics services
   // will ensure that the consent file contains the ClientID. The ID is passed
   // to the renderer for crash reporting when things go wrong.
-  content::BrowserThread::GetBlockingPool()->PostTask(
+  GoogleUpdateSettings::CollectStatsConsentTaskRunner()->PostTask(
       FROM_HERE, base::Bind(base::IgnoreResult(
                                 GoogleUpdateSettings::SetCollectStatsConsent),
                             consent));
@@ -139,16 +141,6 @@ static void UpdateMetricsServiceState(JNIEnv*,
   // prefs.
   g_browser_process->GetMetricsServicesManager()->UpdateUploadPermissions(
       may_upload);
-}
-
-// Renderer process crashed in the foreground.
-static void LogRendererCrash(JNIEnv*, const JavaParamRef<jclass>&) {
-  DCHECK(g_browser_process);
-  // Increment the renderer crash count in stability metrics.
-  PrefService* pref = g_browser_process->local_state();
-  DCHECK(pref);
-  int value = pref->GetInteger(metrics::prefs::kStabilityRendererCrashCount);
-  pref->SetInteger(metrics::prefs::kStabilityRendererCrashCount, value + 1);
 }
 
 static void RegisterExternalExperiment(
@@ -238,9 +230,4 @@ static jlong Init(JNIEnv* env, const JavaParamRef<jclass>& obj) {
   DCHECK(!g_uma_session_stats);
   g_uma_session_stats = new UmaSessionStats();
   return reinterpret_cast<intptr_t>(g_uma_session_stats);
-}
-
-// Register native methods
-bool RegisterUmaSessionStats(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }

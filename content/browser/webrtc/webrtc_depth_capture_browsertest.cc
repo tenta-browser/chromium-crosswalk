@@ -93,7 +93,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
                        GetDepthStreamAndCameraCalibration) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaGetSettings,MediaCaptureDepth");
+                                  "MediaCaptureDepth");
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -105,11 +105,20 @@ IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
       "%s({video: true});", kGetDepthStreamAndCameraCalibration));
 }
 
+#if defined(OS_ANDROID)
+// Flaky on android: https://crbug.com/734558
+#define MAYBE_GetBothStreamsAndCheckForFeaturesPresence \
+  DISABLED_GetBothStreamsAndCheckForFeaturesPresence
+#else
+#define MAYBE_GetBothStreamsAndCheckForFeaturesPresence \
+  GetBothStreamsAndCheckForFeaturesPresence
+#endif
+
 IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
-                       GetBothStreamsAndCheckForFeaturesPresence) {
+                       MAYBE_GetBothStreamsAndCheckForFeaturesPresence) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaGetSettings,MediaCaptureDepth");
+                                  "MediaCaptureDepth");
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -125,7 +134,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcTwoDeviceDepthCaptureBrowserTest,
                        GetStreamsByVideoKind) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaGetSettings,MediaCaptureDepth");
+                                  "MediaCaptureDepthVideoKind");
 
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -141,7 +150,7 @@ IN_PROC_BROWSER_TEST_F(WebRtcOneDeviceDepthCaptureBrowserTest,
                        GetStreamsByVideoKindNoDepth) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   command_line->AppendSwitchASCII("--enable-blink-features",
-                                  "MediaGetSettings,MediaCaptureDepth");
+                                  "MediaCaptureDepthVideoKind");
 
   ASSERT_TRUE(embedded_test_server()->Start());
 

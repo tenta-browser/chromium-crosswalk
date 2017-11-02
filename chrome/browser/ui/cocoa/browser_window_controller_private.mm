@@ -26,7 +26,6 @@
 #import "chrome/browser/ui/cocoa/browser_window_fullscreen_transition.h"
 #import "chrome/browser/ui/cocoa/browser_window_layout.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_sheet_controller.h"
-#import "chrome/browser/ui/cocoa/custom_frame_view.h"
 #import "chrome/browser/ui/cocoa/dev_tools_controller.h"
 #import "chrome/browser/ui/cocoa/fast_resize_view.h"
 #import "chrome/browser/ui/cocoa/find_bar/find_bar_cocoa_controller.h"
@@ -61,6 +60,16 @@
 using content::RenderWidgetHostView;
 using content::WebContents;
 
+@interface NSView (PrivateAPI)
+// Returns the fullscreen button's origin in window coordinates. This method is
+// only available on NSThemeFrame (the contentView's superview), and it should
+// not be relied on to exist on macOS >10.9 (which doesn't have a separate
+// fullscreen button). TabbedBrowserWindow's NSThemeFrame subclass centers it
+// vertically in the tabstrip (if there is a tabstrip), and shifts it to the
+// left of the old-style avatar icon if necessary.
+- (NSPoint)_fullScreenButtonOrigin;
+@end
+
 namespace {
 
 // The screen on which the window was fullscreened, and whether the device had
@@ -71,37 +80,6 @@ enum WindowLocation {
   SECONDARY_MULTIPLE_SCREEN = 2,
   WINDOW_LOCATION_COUNT = 3
 };
-
-// There are 2 mechanisms for invoking fullscreen: AppKit and Immersive.
-// PRESENTATION_MODE = 1 had been removed, but the enums aren't renumbered
-// since they are associated with a histogram.
-enum FullscreenStyle {
-  IMMERSIVE_FULLSCREEN = 0,
-  CANONICAL_FULLSCREEN = 2,
-  FULLSCREEN_STYLE_COUNT = 3
-};
-
-// Emits a histogram entry indicating the Fullscreen window location.
-void RecordFullscreenWindowLocation(NSWindow* window) {
-  NSArray* screens = [NSScreen screens];
-  bool primary_screen = ([[window screen] isEqual:[screens objectAtIndex:0]]);
-  bool multiple_screens = [screens count] > 1;
-
-  WindowLocation location = PRIMARY_SINGLE_SCREEN;
-  if (multiple_screens) {
-    location =
-        primary_screen ? PRIMARY_MULTIPLE_SCREEN : SECONDARY_MULTIPLE_SCREEN;
-  }
-
-  UMA_HISTOGRAM_ENUMERATION(
-      "OSX.Fullscreen.Enter.WindowLocation", location, WINDOW_LOCATION_COUNT);
-}
-
-// Emits a histogram entry indicating the Fullscreen style.
-void RecordFullscreenStyle(FullscreenStyle style) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "OSX.Fullscreen.Enter.Style", style, FULLSCREEN_STYLE_COUNT);
-}
 
 }  // namespace
 
@@ -451,8 +429,7 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)enterImmersiveFullscreen {
-  RecordFullscreenWindowLocation([self window]);
-  RecordFullscreenStyle(IMMERSIVE_FULLSCREEN);
+  [self recordEnterFullscreenMetrics:IMMERSIVE_FULLSCREEN];
 
   // Set to NO by |-windowDidEnterFullScreen:|.
   enteringImmersiveFullscreen_ = YES;
@@ -592,8 +569,7 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (void)windowWillEnterFullScreen:(NSNotification*)notification {
-  RecordFullscreenWindowLocation([self window]);
-  RecordFullscreenStyle(CANONICAL_FULLSCREEN);
+  [self recordEnterFullscreenMetrics:CANONICAL_FULLSCREEN];
 
   if (notification)  // For System Fullscreen when non-nil.
     [self registerForContentViewResizeNotifications];
@@ -669,6 +645,8 @@ willPositionSheet:(NSWindow*)sheet
   [[tabStripController_ activeTabContentsController]
       updateFullscreenWidgetFrame];
 
+  [self invalidateTouchBar];
+
   [self showFullscreenExitBubbleIfNecessary];
   browser_->WindowFullscreenStateChanged();
 
@@ -726,6 +704,8 @@ willPositionSheet:(NSWindow*)sheet
   [self.chromeContentView setAutoresizesSubviews:YES];
 
   [self resetCustomAppKitFullscreenVariables];
+
+  [self invalidateTouchBar];
 
   // Ensures that the permission bubble shows up properly at the front.
   PermissionRequestManager* manager = [self permissionRequestManager];
@@ -799,6 +779,39 @@ willPositionSheet:(NSWindow*)sheet
   [self layoutSubviews];
 }
 
+- (void)recordEnterFullscreenMetrics:(FullscreenStyle)style {
+  // Record fullscreen source.
+  FullscreenController* controller =
+      browser_->exclusive_access_manager()->fullscreen_controller();
+  FullscreenSource source = FullscreenSource::BROWSER;
+  if (controller->IsWindowFullscreenForTabOrPending())
+    source = FullscreenSource::TAB;
+  else if (controller->IsExtensionFullscreenOrPending())
+    source = FullscreenSource::EXTENSION;
+
+  UMA_HISTOGRAM_ENUMERATION("OSX.Fullscreen.Enter.Source", source,
+                            FullscreenSource::FULLSCREEN_SOURCE_COUNT);
+
+  // Record fullscreen style.
+  UMA_HISTOGRAM_ENUMERATION("OSX.Fullscreen.Enter.Style", style,
+                            FULLSCREEN_STYLE_COUNT);
+
+  // Record screen location.
+  NSArray* screens = [NSScreen screens];
+  bool primary_screen =
+      [[[self window] screen] isEqual:[screens objectAtIndex:0]];
+  bool multiple_screens = [screens count] > 1;
+
+  WindowLocation location = PRIMARY_SINGLE_SCREEN;
+  if (multiple_screens) {
+    location =
+        primary_screen ? PRIMARY_MULTIPLE_SCREEN : SECONDARY_MULTIPLE_SCREEN;
+  }
+
+  UMA_HISTOGRAM_ENUMERATION("OSX.Fullscreen.Enter.WindowLocation", location,
+                            WINDOW_LOCATION_COUNT);
+}
+
 - (CGFloat)toolbarDividerOpacity {
   return [bookmarkBarController_ toolbarDividerOpacity];
 }
@@ -809,11 +822,11 @@ willPositionSheet:(NSWindow*)sheet
       setShouldSuppressTopInfoBarTip:![self hasToolbar]];
 }
 
-- (NSInteger)pageInfoBubblePointY {
+- (NSInteger)infoBarAnchorPointY {
   LocationBarViewMac* locationBarView = [self locationBarBridge];
 
   // The point, in window coordinates.
-  NSPoint iconBottom = locationBarView->GetPageInfoBubblePoint();
+  NSPoint iconBottom = locationBarView->GetInfoBarAnchorPoint();
 
   // The toolbar, in window coordinates.
   NSView* toolbar = [toolbarController_ view];
@@ -895,7 +908,7 @@ willPositionSheet:(NSWindow*)sheet
       NSHeight([[bookmarkBarController_ view] bounds])];
 
   [layout setInfoBarHeight:[infoBarContainerController_ heightOfInfoBars]];
-  [layout setPageInfoBubblePointY:[self pageInfoBubblePointY]];
+  [layout setInfoBarAnchorPointY:[self infoBarAnchorPointY]];
 
   [layout setHasDownloadShelf:(downloadShelfController_.get() != nil)];
   [layout setDownloadShelfHeight:
@@ -919,7 +932,7 @@ willPositionSheet:(NSWindow*)sheet
   [infoBarContainerController_
       setMaxTopArrowHeight:output.infoBarMaxTopArrowHeight];
   [infoBarContainerController_
-      setInfobarArrowX:[self locationBarBridge]->GetPageInfoBubblePoint().x];
+      setInfobarArrowX:[self locationBarBridge]->GetInfoBarAnchorPoint().x];
 
   [[downloadShelfController_ view] setFrame:output.downloadShelfFrame];
 
@@ -1011,6 +1024,21 @@ willPositionSheet:(NSWindow*)sheet
     return;
   }
 
+  // Removing the location bar from the window causes it to resign first
+  // responder. Remember the location bar's focus state in order to restore
+  // it before returning.
+  BOOL locationBarHadFocus = [toolbarController_ locationBarHasFocus];
+  FullscreenToolbarVisibilityLockController* visibilityLockController = nil;
+  if (locationBarHadFocus) {
+    // The location bar, by being focused, has a visibility lock on the toolbar,
+    // and the location bar's removal from the view hierarchy will allow the
+    // toolbar to hide. Create a temporary visibility lock on the toolbar for
+    // the duration of the view hierarchy change.
+    visibilityLockController = [self fullscreenToolbarVisibilityLockController];
+    [visibilityLockController lockToolbarVisibilityForOwner:self
+                                              withAnimation:NO];
+  }
+
   // Remove all subviews that aren't the tabContentArea.
   for (NSView* view in [[[self.chromeContentView subviews] copy] autorelease]) {
     if (view != tabContentArea)
@@ -1033,6 +1061,14 @@ willPositionSheet:(NSWindow*)sheet
                             positioned:NSWindowAbove
                             relativeTo:nil];
   }
+
+  // Restore the location bar's focus state and remove the temporary visibility
+  // lock.
+  if (locationBarHadFocus) {
+    [self focusLocationBar:YES];
+    [visibilityLockController releaseToolbarVisibilityForOwner:self
+                                                 withAnimation:NO];
+  }
 }
 
 + (BOOL)systemSettingsRequireMavericksAppKitFullscreenHack {
@@ -1054,6 +1090,10 @@ willPositionSheet:(NSWindow*)sheet
 }
 
 - (BOOL)shouldUseCustomAppKitFullscreenTransition:(BOOL)enterFullScreen {
+  // Use the native transition on 10.13+: https://crbug.com/741478.
+  if (base::mac::IsAtLeastOS10_13())
+    return NO;
+
   // Disable the custom exit animation in OSX 10.9: http://crbug.com/526327#c3.
   if (base::mac::IsOS10_9() && !enterFullScreen)
     return NO;
@@ -1098,7 +1138,10 @@ willPositionSheet:(NSWindow*)sheet
   static const bool fullscreen_low_power_disabled_at_command_line =
       base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableFullscreenLowPowerMode);
-  if (!fullscreen_low_power_disabled_at_command_line) {
+  // Temporarily disabled on 10.13 because the window turns black when exiting
+  // FSLP. See https://crbug.com/742691 for progress.
+  if (!base::mac::IsAtLeastOS10_13() &&
+      !fullscreen_low_power_disabled_at_command_line) {
     WebContents* webContents = [self webContents];
     if (webContents && webContents->GetRenderWidgetHostView()) {
       fullscreenLowPowerCoordinator_.reset(

@@ -32,31 +32,41 @@ namespace logging {
 void InitChromeLogging(const base::CommandLine& command_line,
                        OldFileDeletionState delete_old_log_file);
 
+LoggingDestination DetermineLoggingDestination(
+    const base::CommandLine& command_line);
+
 #if defined(OS_CHROMEOS)
+// Point the logging symlink to the system log or the user session log.
+base::FilePath SetUpSymlinkIfNeeded(const base::FilePath& symlink_path,
+                                    bool new_log);
+
+// Remove the logging symlink.
+void RemoveSymlinkAndLog(const base::FilePath& link_path,
+                         const base::FilePath& target_path);
+
 // Get the log file directory path.
 base::FilePath GetSessionLogDir(const base::CommandLine& command_line);
 
 // Get the log file location.
 base::FilePath GetSessionLogFile(const base::CommandLine& command_line);
-
-// Redirects chrome logging to the appropriate session log dir.
-void RedirectChromeLogging(const base::CommandLine& command_line);
 #endif
 
 // Call when done using logging for Chrome.
 void CleanupChromeLogging();
 
 // Returns the fully-qualified name of the log file.
-base::FilePath GetLogFileName();
+base::FilePath GetLogFileName(const base::CommandLine& command_line);
 
 // Returns true when error/assertion dialogs are not to be shown, false
 // otherwise.
 bool DialogsAreSuppressed();
 
-// Inserts timestamp before file extension in the format
+#if defined(OS_CHROMEOS)
+// Inserts timestamp before file extension (if any) in the form
 // "_yymmdd-hhmmss".
 base::FilePath GenerateTimestampedName(const base::FilePath& base_path,
                                        base::Time timestamp);
+#endif
 }  // namespace logging
 
 #endif  // CHROME_COMMON_LOGGING_CHROME_H_

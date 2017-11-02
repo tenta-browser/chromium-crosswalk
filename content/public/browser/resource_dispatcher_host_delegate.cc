@@ -88,7 +88,8 @@ void ResourceDispatcherHostDelegate::RequestComplete(
 
 PreviewsState ResourceDispatcherHostDelegate::GetPreviewsState(
     const net::URLRequest& url_request,
-    content::ResourceContext* resource_context) {
+    content::ResourceContext* resource_context,
+    PreviewsState previews_to_allow) {
   return PREVIEWS_UNSPECIFIED;
 }
 
@@ -103,9 +104,8 @@ ResourceDispatcherHostDelegate::CreateClientCertStore(
   return std::unique_ptr<net::ClientCertStore>();
 }
 
-void ResourceDispatcherHostDelegate::OnAbortedFrameLoad(
-    const GURL& url,
-    base::TimeDelta request_loading_time) {
+bool ResourceDispatcherHostDelegate::ShouldUseResourceScheduler() const {
+  return true;
 }
 
 ResourceDispatcherHostDelegate::~ResourceDispatcherHostDelegate() {

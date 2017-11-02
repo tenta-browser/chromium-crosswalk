@@ -24,9 +24,6 @@ BrowserAccessibilityEvent* BrowserAccessibilityEvent::Create(
     case ui::AX_EVENT_ALERT:
       win_event_type = EVENT_SYSTEM_ALERT;
       break;
-    case ui::AX_EVENT_AUTOCORRECTION_OCCURED:
-      win_event_type = IA2_EVENT_OBJECT_ATTRIBUTE_CHANGED;
-      break;
     case ui::AX_EVENT_CHILDREN_CHANGED:
       win_event_type = EVENT_OBJECT_REORDER;
       break;
@@ -95,8 +92,10 @@ BrowserAccessibilityEvent::Result BrowserAccessibilityEventWin::Fire() {
 std::string BrowserAccessibilityEventWin::GetEventNameStr() {
   std::string result = base::UTF16ToUTF8(AccessibilityEventToString(
       win_event_type_));
-  if (event_type() != ui::AX_EVENT_NONE)
-    result += "/" + ui::ToString(event_type());
+  if (event_type() != ui::AX_EVENT_NONE) {
+    result.push_back('/');
+    result.append(ui::ToString(event_type()));
+  }
   return result;
 }
 

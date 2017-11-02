@@ -14,7 +14,8 @@
 
 #include "base/macros.h"
 #include "base/optional.h"
-#include "cc/ipc/frame_sink_manager.mojom.h"
+#include "components/viz/common/surfaces/frame_sink_id.h"
+#include "components/viz/host/host_frame_sink_manager.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/ui/public/interfaces/window_manager_window_tree_factory.mojom.h"
 #include "services/ui/public/interfaces/window_tree.mojom.h"
@@ -23,6 +24,7 @@
 #include "services/ui/ws/operation.h"
 #include "services/ui/ws/server_window_delegate.h"
 #include "services/ui/ws/server_window_observer.h"
+#include "services/ui/ws/server_window_tracker.h"
 #include "services/ui/ws/user_display_manager_delegate.h"
 #include "services/ui/ws/user_id_tracker.h"
 #include "services/ui/ws/user_id_tracker_observer.h"
@@ -36,11 +38,14 @@ class Display;
 class DisplayManager;
 class GpuHost;
 class ServerWindow;
+class ThreadedImageCursorsFactory;
 class UserActivityMonitor;
 class WindowManagerState;
 class WindowServerDelegate;
 class WindowTree;
 class WindowTreeBinding;
+
+enum class DisplayCreationConfig;
 
 // WindowServer manages the set of clients of the window server (all the
 // WindowTrees) as well as providing the root of the hierarchy.
@@ -48,8 +53,7 @@ class WindowServer : public ServerWindowDelegate,
                      public ServerWindowObserver,
                      public GpuHostDelegate,
                      public UserDisplayManagerDelegate,
-                     public UserIdTrackerObserver,
-                     public cc::mojom::FrameSinkManagerClient {
+                     public UserIdTrackerObserver {
  public:
   explicit WindowServer(WindowServerDelegate* delegate);
   ~WindowServer() override;
@@ -66,10 +70,20 @@ class WindowServer : public ServerWindowDelegate,
 
   GpuHost* gpu_host() { return gpu_host_.get(); }
 
+  void SetDisplayCreationConfig(DisplayCreationConfig config);
+  DisplayCreationConfig display_creation_config() const {
+    return display_creation_config_;
+  }
+
+  void SetGpuHost(std::unique_ptr<GpuHost> gpu_host);
+
+  ThreadedImageCursorsFactory* GetThreadedImageCursorsFactory();
+
   // Creates a new ServerWindow. The return value is owned by the caller, but
   // must be destroyed before WindowServer.
   ServerWindow* CreateServerWindow(
       const WindowId& id,
+      const viz::FrameSinkId& frame_sink_id,
       const std::map<std::string, std::vector<uint8_t>>& properties);
 
   // Returns the id for the next WindowTree.
@@ -171,7 +185,10 @@ class WindowServer : public ServerWindowDelegate,
       const ServerWindow* window,
       const gfx::Rect& old_bounds,
       const gfx::Rect& new_bounds,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id);
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id);
+  void ProcessWindowTransformChanged(const ServerWindow* window,
+                                     const gfx::Transform& old_transform,
+                                     const gfx::Transform& new_transform);
   void ProcessClientAreaChanged(
       const ServerWindow* window,
       const gfx::Insets& new_client_area,
@@ -188,8 +205,8 @@ class WindowServer : public ServerWindowDelegate,
                             const ServerWindow* relative_window,
                             const mojom::OrderDirection direction);
   void ProcessWindowDeleted(ServerWindow* window);
-  void ProcessWillChangeWindowPredefinedCursor(ServerWindow* window,
-                                               mojom::CursorType cursor_id);
+  void ProcessWillChangeWindowCursor(ServerWindow* window,
+                                     const ui::CursorData& cursor);
 
   // Sends an |event| to all WindowTrees belonging to |user_id| that might be
   // observing events. Skips |ignore_tree| if it is non-null. |target_window| is
@@ -230,12 +247,15 @@ class WindowServer : public ServerWindowDelegate,
   WindowManagerState* GetWindowManagerStateForUser(const UserId& user_id);
 
   // ServerWindowDelegate:
-  cc::mojom::FrameSinkManager* GetFrameSinkManager() override;
+  viz::HostFrameSinkManager* GetHostFrameSinkManager() override;
+  void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info,
+                                ServerWindow* window) override;
 
   // UserDisplayManagerDelegate:
   bool GetFrameDecorationsForUser(
       const UserId& user_id,
       mojom::FrameDecorationValuesPtr* values) override;
+  int64_t GetInternalDisplayId() override;
 
  private:
   struct CurrentMoveLoopState;
@@ -289,11 +309,13 @@ class WindowServer : public ServerWindowDelegate,
   // of the temporary reference. If no parent client is found then tell GPU to
   // immediately drop the temporary reference. |window| is the ServerWindow
   // that corresponds to |surface_id|.
-  void HandleTemporaryReferenceForNewSurface(const cc::SurfaceId& surface_id,
+  void HandleTemporaryReferenceForNewSurface(const viz::SurfaceId& surface_id,
                                              ServerWindow* window);
 
+  void CreateFrameSinkManager();
+
   // Overridden from ServerWindowDelegate:
-  ServerWindow* GetRootWindow(const ServerWindow* window) override;
+  ServerWindow* GetRootWindowForDrawn(const ServerWindow* window) override;
 
   // Overridden from ServerWindowObserver:
   void OnWindowDestroyed(ServerWindow* window) override;
@@ -306,6 +328,9 @@ class WindowServer : public ServerWindowDelegate,
   void OnWindowBoundsChanged(ServerWindow* window,
                              const gfx::Rect& old_bounds,
                              const gfx::Rect& new_bounds) override;
+  void OnWindowTransformChanged(ServerWindow* window,
+                                const gfx::Transform& old_transform,
+                                const gfx::Transform& new_transform) override;
   void OnWindowClientAreaChanged(
       ServerWindow* window,
       const gfx::Insets& new_client_area,
@@ -322,22 +347,21 @@ class WindowServer : public ServerWindowDelegate,
       ServerWindow* window,
       const std::string& name,
       const std::vector<uint8_t>* new_data) override;
-  void OnWindowPredefinedCursorChanged(ServerWindow* window,
-                                       mojom::CursorType cursor_id) override;
+  void OnWindowCursorChanged(ServerWindow* window,
+                             const ui::CursorData& cursor) override;
   void OnWindowNonClientCursorChanged(ServerWindow* window,
-                                      mojom::CursorType cursor_id) override;
+                                      const ui::CursorData& cursor) override;
   void OnWindowTextInputStateChanged(ServerWindow* window,
                                      const ui::TextInputState& state) override;
   void OnTransientWindowAdded(ServerWindow* window,
                               ServerWindow* transient_child) override;
   void OnTransientWindowRemoved(ServerWindow* window,
                                 ServerWindow* transient_child) override;
+  void OnWindowModalTypeChanged(ServerWindow* window,
+                                ModalType old_modal_type) override;
 
   // GpuHostDelegate:
   void OnGpuServiceInitialized() override;
-
-  // cc::mojom::FrameSinkManagerClient:
-  void OnSurfaceCreated(const cc::SurfaceInfo& surface_info) override;
 
   // UserIdTrackerObserver:
   void OnActiveUserIdChanged(const UserId& previously_active_id,
@@ -381,12 +405,16 @@ class WindowServer : public ServerWindowDelegate,
 
   WindowManagerWindowTreeFactorySet window_manager_window_tree_factory_set_;
 
-  cc::SurfaceId root_surface_id_;
+  viz::SurfaceId root_surface_id_;
 
   // Provides interfaces to create and manage FrameSinks.
-  mojo::Binding<cc::mojom::FrameSinkManagerClient>
-      frame_sink_manager_client_binding_;
-  cc::mojom::FrameSinkManagerPtr frame_sink_manager_;
+  std::unique_ptr<viz::HostFrameSinkManager> host_frame_sink_manager_;
+
+  // System modal windows not attached to a display are added here. Once
+  // attached to a display they are removed.
+  ServerWindowTracker pending_system_modal_windows_;
+
+  DisplayCreationConfig display_creation_config_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowServer);
 };

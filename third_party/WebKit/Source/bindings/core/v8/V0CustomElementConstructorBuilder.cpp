@@ -30,25 +30,25 @@
 
 #include "bindings/core/v8/V0CustomElementConstructorBuilder.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/StringOrDictionary.h"
-#include "bindings/core/v8/V0CustomElementBinding.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Document.h"
 #include "bindings/core/v8/V8HTMLElement.h"
-#include "bindings/core/v8/V8PerContextData.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "bindings/core/v8/V8SVGElement.h"
-#include "core/HTMLNames.h"
-#include "core/SVGNames.h"
+#include "bindings/core/v8/string_or_dictionary.h"
 #include "core/dom/Document.h"
 #include "core/dom/ElementRegistrationOptions.h"
-#include "core/dom/custom/V0CustomElementDefinition.h"
-#include "core/dom/custom/V0CustomElementDescriptor.h"
-#include "core/dom/custom/V0CustomElementException.h"
-#include "core/dom/custom/V0CustomElementProcessingStack.h"
 #include "core/frame/UseCounter.h"
+#include "core/html/custom/V0CustomElementDefinition.h"
+#include "core/html/custom/V0CustomElementDescriptor.h"
+#include "core/html/custom/V0CustomElementException.h"
+#include "core/html/custom/V0CustomElementProcessingStack.h"
+#include "core/html_names.h"
+#include "core/svg_names.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/V0CustomElementBinding.h"
+#include "platform/bindings/V8PerContextData.h"
+#include "platform/bindings/V8PrivateProperty.h"
 #include "platform/wtf/Assertions.h"
 
 namespace blink {
@@ -59,7 +59,7 @@ V0CustomElementConstructorBuilder::V0CustomElementConstructorBuilder(
     ScriptState* script_state,
     const ElementRegistrationOptions& options)
     : script_state_(script_state), options_(options) {
-  ASSERT(script_state_->GetContext() ==
+  DCHECK(script_state_->GetContext() ==
          script_state_->GetIsolate()->GetCurrentContext());
 }
 
@@ -71,7 +71,7 @@ bool V0CustomElementConstructorBuilder::ValidateOptions(
     const AtomicString& type,
     QualifiedName& tag_name,
     ExceptionState& exception_state) {
-  ASSERT(prototype_.IsEmpty());
+  DCHECK(prototype_.IsEmpty());
 
   v8::TryCatch try_catch(script_state_->GetIsolate());
 
@@ -85,7 +85,7 @@ bool V0CustomElementConstructorBuilder::ValidateOptions(
   }
 
   if (options_.hasPrototype()) {
-    ASSERT(options_.prototype().IsObject());
+    DCHECK(options_.prototype().IsObject());
     prototype_ = options_.prototype().V8Value().As<v8::Object>();
   } else {
     prototype_ = v8::Object::New(script_state_->GetIsolate());
@@ -103,7 +103,7 @@ bool V0CustomElementConstructorBuilder::ValidateOptions(
   if (HasValidPrototypeChainFor(&V8SVGElement::wrapperTypeInfo))
     namespace_uri = SVGNames::svgNamespaceURI;
 
-  ASSERT(!try_catch.HasCaught());
+  DCHECK(!try_catch.HasCaught());
 
   AtomicString local_name;
 
@@ -135,14 +135,14 @@ bool V0CustomElementConstructorBuilder::ValidateOptions(
     local_name = type;
   }
 
-  ASSERT(!try_catch.HasCaught());
+  DCHECK(!try_catch.HasCaught());
   tag_name = QualifiedName(g_null_atom, local_name, namespace_uri);
   return true;
 }
 
 V0CustomElementLifecycleCallbacks*
 V0CustomElementConstructorBuilder::CreateCallbacks() {
-  ASSERT(!prototype_.IsEmpty());
+  DCHECK(!prototype_.IsEmpty());
 
   v8::TryCatch exception_catcher(script_state_->GetIsolate());
   exception_catcher.SetVerbose(true);
@@ -154,7 +154,7 @@ V0CustomElementConstructorBuilder::CreateCallbacks() {
       RetrieveCallback("attributeChangedCallback");
 
   callbacks_ = V8V0CustomElementLifecycleCallbacks::Create(
-      script_state_.Get(), prototype_, created, attached, detached,
+      script_state_.get(), prototype_, created, attached, detached,
       attribute_changed);
   return callbacks_.Get();
 }
@@ -164,7 +164,7 @@ V0CustomElementConstructorBuilder::RetrieveCallback(const char* name) {
   v8::Local<v8::Value> value;
   if (!prototype_
            ->Get(script_state_->GetContext(),
-                 V8String(script_state_->GetIsolate(), name))
+                 V8AtomicString(script_state_->GetIsolate(), name))
            .ToLocal(&value) ||
       !value->IsFunction())
     return v8::MaybeLocal<v8::Function>();
@@ -175,9 +175,9 @@ bool V0CustomElementConstructorBuilder::CreateConstructor(
     Document* document,
     V0CustomElementDefinition* definition,
     ExceptionState& exception_state) {
-  ASSERT(!prototype_.IsEmpty());
-  ASSERT(constructor_.IsEmpty());
-  ASSERT(document);
+  DCHECK(!prototype_.IsEmpty());
+  DCHECK(constructor_.IsEmpty());
+  DCHECK(document);
 
   v8::Isolate* isolate = script_state_->GetIsolate();
   v8::Local<v8::Context> context = script_state_->GetContext();
@@ -215,7 +215,7 @@ bool V0CustomElementConstructorBuilder::CreateConstructor(
   constructor_->SetName(v8_type->IsNull() ? v8_tag_name
                                           : v8_type.As<v8::String>());
 
-  v8::Local<v8::String> prototype_key = V8String(isolate, "prototype");
+  v8::Local<v8::String> prototype_key = V8AtomicString(isolate, "prototype");
   if (!V8CallBoolean(constructor_->HasOwnProperty(context, prototype_key)))
     return false;
   // This sets the property *value*; calling Set is safe because
@@ -231,7 +231,8 @@ bool V0CustomElementConstructorBuilder::CreateConstructor(
           v8::PropertyAttribute(v8::ReadOnly | v8::DontEnum | v8::DontDelete))))
     return false;
 
-  v8::Local<v8::String> constructor_key = V8String(isolate, "constructor");
+  v8::Local<v8::String> constructor_key =
+      V8AtomicString(isolate, "constructor");
   v8::Local<v8::Value> constructor_prototype;
   if (!prototype_->Get(context, constructor_key)
            .ToLocal(&constructor_prototype))
@@ -244,7 +245,7 @@ bool V0CustomElementConstructorBuilder::CreateConstructor(
   V8PrivateProperty::GetCustomElementIsInterfacePrototypeObject(isolate).Set(
       prototype_, v8::True(isolate));
   if (!V8CallBoolean(prototype_->DefineOwnProperty(
-          context, V8String(isolate, "constructor"), constructor_,
+          context, V8AtomicString(isolate, "constructor"), constructor_,
           v8::DontEnum)))
     return false;
 
@@ -266,9 +267,10 @@ bool V0CustomElementConstructorBuilder::PrototypeIsValid(
   }
 
   v8::PropertyAttribute property_attribute;
-  if (!V8Call(prototype_->GetPropertyAttributes(
-                  context, V8String(isolate, "constructor")),
-              property_attribute) ||
+  if (!prototype_
+           ->GetPropertyAttributes(context,
+                                   V8AtomicString(isolate, "constructor"))
+           .To(&property_attribute) ||
       (property_attribute & v8::DontDelete)) {
     V0CustomElementException::ThrowException(
         V0CustomElementException::kConstructorPropertyNotConfigurable, type,
@@ -280,14 +282,14 @@ bool V0CustomElementConstructorBuilder::PrototypeIsValid(
 }
 
 bool V0CustomElementConstructorBuilder::DidRegisterDefinition() const {
-  ASSERT(!constructor_.IsEmpty());
+  DCHECK(!constructor_.IsEmpty());
 
   return callbacks_->SetBinding(
       V0CustomElementBinding::Create(script_state_->GetIsolate(), prototype_));
 }
 
 ScriptValue V0CustomElementConstructorBuilder::BindingsReturnValue() const {
-  return ScriptValue(script_state_.Get(), constructor_);
+  return ScriptValue(script_state_.get(), constructor_);
 }
 
 bool V0CustomElementConstructorBuilder::HasValidPrototypeChainFor(
@@ -325,7 +327,7 @@ static void ConstructCustomElement(
 
   v8::Local<v8::Object> data = v8::Local<v8::Object>::Cast(info.Data());
   Document* document =
-      V8Document::toImpl(V8PrivateProperty::GetCustomElementDocument(isolate)
+      V8Document::ToImpl(V8PrivateProperty::GetCustomElementDocument(isolate)
                              .GetOrEmpty(data)
                              .As<v8::Object>());
   TOSTRING_VOID(
@@ -344,10 +346,10 @@ static void ConstructCustomElement(
   V0CustomElementProcessingStack::CallbackDeliveryScope delivery_scope;
   Element* element = document->createElementNS(
       namespace_uri, tag_name,
-      StringOrDictionary::fromString(maybe_type->IsNull() ? g_null_atom : type),
+      StringOrDictionary::FromString(maybe_type->IsNull() ? g_null_atom : type),
       exception_state);
   if (element) {
-    UseCounter::Count(document, UseCounter::kV0CustomElementsConstruct);
+    UseCounter::Count(document, WebFeature::kV0CustomElementsConstruct);
   }
   V8SetReturnValueFast(info, element, document);
 }

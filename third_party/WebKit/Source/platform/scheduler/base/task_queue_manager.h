@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/pending_task.h"
+#include "base/run_loop.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "platform/scheduler/base/enqueue_order.h"
@@ -29,15 +30,19 @@ class ConvertableToTraceFormat;
 
 namespace blink {
 namespace scheduler {
+namespace task_queue_manager_unittest {
+class TaskQueueManagerTest;
+}
 namespace internal {
 class TaskQueueImpl;
 }  // namespace internal
 
 class LazyNow;
 class RealTimeDomain;
-class TimeDomain;
+class TaskQueue;
 class TaskQueueManagerDelegate;
 class TaskTimeObserver;
+class TimeDomain;
 
 // The task queue manager provides N task queues and a selector interface for
 // choosing which task queue to service next. Each task queue consists of two
@@ -51,29 +56,26 @@ class TaskTimeObserver;
 //    the incoming task queue (if any) are moved here. The work queues are
 //    registered with the selector as input to the scheduling decision.
 //
-class BLINK_PLATFORM_EXPORT TaskQueueManager
+class PLATFORM_EXPORT TaskQueueManager
     : public internal::TaskQueueSelector::Observer,
-      public base::MessageLoop::NestingObserver {
+      public base::RunLoop::NestingObserver {
  public:
   // Create a task queue manager where |delegate| identifies the thread
   // on which where the tasks are  eventually run. Category strings must have
   // application lifetime (statics or literals). They may not include " chars.
-  TaskQueueManager(scoped_refptr<TaskQueueManagerDelegate> delegate,
-                   const char* tracing_category,
-                   const char* disabled_by_default_tracing_category,
-                   const char* disabled_by_default_verbose_tracing_category);
+  explicit TaskQueueManager(scoped_refptr<TaskQueueManagerDelegate> delegate);
   ~TaskQueueManager() override;
 
   // Requests that a task to process work is posted on the main task runner.
   // These tasks are de-duplicated in two buckets: main-thread and all other
   // threads.  This distinction is done to reduce the overehead from locks, we
   // assume the main-thread path will be hot.
-  void MaybeScheduleImmediateWork(const tracked_objects::Location& from_here);
+  void MaybeScheduleImmediateWork(const base::Location& from_here);
 
   // Requests that a delayed task to process work is posted on the main task
   // runner. These delayed tasks are de-duplicated. Must be called on the thread
   // this class was created on.
-  void MaybeScheduleDelayedWork(const tracked_objects::Location& from_here,
+  void MaybeScheduleDelayedWork(const base::Location& from_here,
                                 TimeDomain* requesting_time_domain,
                                 base::TimeTicks now,
                                 base::TimeTicks run_time);
@@ -100,23 +102,25 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
   // last call to GetAndClearSystemIsQuiescentBit.
   bool GetAndClearSystemIsQuiescentBit();
 
-  // Creates a task queue with the given |spec|.  Must be called on the thread
-  // this class was created on.
-  scoped_refptr<internal::TaskQueueImpl> NewTaskQueue(
-      const TaskQueue::Spec& spec);
+  // Creates a task queue with the given type, |spec| and args. Must be called
+  // on the thread this class was created on.
+  template <typename TaskQueueType, typename... Args>
+  scoped_refptr<TaskQueueType> CreateTaskQueue(const TaskQueue::Spec& spec,
+                                               Args&&... args) {
+    scoped_refptr<TaskQueueType> task_queue(new TaskQueueType(
+        CreateTaskQueueImpl(spec), std::forward<Args>(args)...));
+    return task_queue;
+  }
 
-  class BLINK_PLATFORM_EXPORT Observer {
+  class PLATFORM_EXPORT Observer {
    public:
     virtual ~Observer() {}
 
-    // Called when |queue| is unregistered.
-    virtual void OnUnregisterTaskQueue(
-        const scoped_refptr<TaskQueue>& queue) = 0;
+    virtual void OnTriedToExecuteBlockedTask() = 0;
 
-    // Called when the manager tried to execute a task from a disabled
-    // queue. See TaskQueue::Spec::SetShouldReportWhenExecutionBlocked.
-    virtual void OnTriedToExecuteBlockedTask(const TaskQueue& queue,
-                                             const base::PendingTask& task) = 0;
+    virtual void OnBeginNestedRunLoop() = 0;
+
+    virtual void OnExitNestedRunLoop() = 0;
   };
 
   // Called once to set the Observer. This function is called on the main
@@ -137,7 +141,7 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
 
   // Returns the currently executing TaskQueue if any. Must be called on the
   // thread this class was created on.
-  TaskQueue* currently_executing_task_queue() const {
+  internal::TaskQueueImpl* currently_executing_task_queue() const {
     DCHECK(main_thread_checker_.CalledOnValidThread());
     return currently_executing_task_queue_;
   }
@@ -151,14 +155,17 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
   // Removes all canceled delayed tasks.
   void SweepCanceledDelayedTasks();
 
-  // There is a small overhead to recording task delay histograms. If you don't
-  // need them, you can turn them off.
-  void SetRecordTaskDelayHistograms(bool record_task_delay_histograms);
+  // Unregisters a TaskQueue previously created by |NewTaskQueue()|.
+  // No tasks will run on this queue after this call.
+  void UnregisterTaskQueueImpl(
+      std::unique_ptr<internal::TaskQueueImpl> task_queue);
+
+  base::WeakPtr<TaskQueueManager> GetWeakPtr();
 
  protected:
   friend class LazyNow;
   friend class internal::TaskQueueImpl;
-  friend class TaskQueueManagerTest;
+  friend class task_queue_manager_unittest::TaskQueueManagerTest;
 
   // Intermediate data structure, used to compute NextDelayedDoWork.
   class NextTaskDelay {
@@ -228,16 +235,13 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
     ~DeletionSentinel() {}
   };
 
-  // Unregisters a TaskQueue previously created by |NewTaskQueue()|.
-  void UnregisterTaskQueue(scoped_refptr<internal::TaskQueueImpl> task_queue);
-
   // TaskQueueSelector::Observer implementation:
   void OnTaskQueueEnabled(internal::TaskQueueImpl* queue) override;
   void OnTriedToSelectBlockedWorkQueue(
       internal::WorkQueue* work_queue) override;
 
-  // base::MessageLoop::NestingObserver implementation:
-  void OnBeginNestedMessageLoop() override;
+  // base::RunLoop::NestingObserver implementation:
+  void OnBeginNestedRunLoop() override;
 
   // Called by the task queue to register a new pending task.
   void DidQueueTask(const internal::TaskQueueImpl::Task& pending_task);
@@ -248,7 +252,7 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
   // Post a DoWork continuation if |next_delay| is not empty.
   void PostDoWorkContinuationLocked(base::Optional<NextTaskDelay> next_delay,
                                     LazyNow* lazy_now,
-                                    MoveableAutoLock&& lock);
+                                    MoveableAutoLock lock);
 
   // Delayed Tasks with run_times <= Now() are enqueued onto the work queue and
   // reloads any empty work queues.
@@ -275,8 +279,8 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
                                              LazyNow time_before_task,
                                              base::TimeTicks* time_after_task);
 
-  bool RunsTasksOnCurrentThread() const;
-  bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
+  bool RunsTasksInCurrentSequence() const;
+  bool PostNonNestableDelayedTask(const base::Location& from_here,
                                   const base::Closure& task,
                                   base::TimeDelta delay);
 
@@ -287,17 +291,12 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
   base::Optional<NextTaskDelay> ComputeDelayTillNextTaskLocked(
       LazyNow* lazy_now);
 
-  void MaybeRecordTaskDelayHistograms(
-      const internal::TaskQueueImpl::Task& pending_task,
-      const internal::TaskQueueImpl* queue);
-
   std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
   AsValueWithSelectorResult(bool should_run,
                             internal::WorkQueue* selected_work_queue) const;
 
-  void MaybeScheduleImmediateWorkLocked(
-      const tracked_objects::Location& from_here,
-      MoveableAutoLock&& lock);
+  void MaybeScheduleImmediateWorkLocked(const base::Location& from_here,
+                                        MoveableAutoLock lock);
 
   // Adds |queue| to |any_thread().has_incoming_immediate_work_| and if
   // |queue_is_blocked| is false it makes sure a DoWork is posted.
@@ -314,14 +313,24 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
   void ReloadEmptyWorkQueues(
       const IncomingImmediateWorkMap& queues_to_reload) const;
 
+  std::unique_ptr<internal::TaskQueueImpl> CreateTaskQueueImpl(
+      const TaskQueue::Spec& spec);
+
+  // Deletes queues marked for deletion and empty queues marked for shutdown.
+  void CleanUpQueues();
+
   std::set<TimeDomain*> time_domains_;
   std::unique_ptr<RealTimeDomain> real_time_domain_;
 
-  std::set<scoped_refptr<internal::TaskQueueImpl>> queues_;
+  // List of task queues managed by this TaskQueueManager.
+  // - active_queues contains queues owned by relevant TaskQueues.
+  // - queues_to_delete contains soon-to-be-deleted queues, because some
+  // internal
+  //   scheduling code does not expect queues to be pulled from underneath.
 
-  // We have to be careful when deleting a queue because some of the code uses
-  // raw pointers and doesn't expect the rug to be pulled out from underneath.
-  std::set<scoped_refptr<internal::TaskQueueImpl>> queues_to_delete_;
+  std::set<internal::TaskQueueImpl*> active_queues_;
+  std::map<internal::TaskQueueImpl*, std::unique_ptr<internal::TaskQueueImpl>>
+      queues_to_delete_;
 
   internal::EnqueueOrderGenerator enqueue_order_generator_;
   base::debug::TaskAnnotator task_annotator_;
@@ -330,8 +339,8 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
   scoped_refptr<TaskQueueManagerDelegate> delegate_;
   internal::TaskQueueSelector selector_;
 
-  base::Closure immediate_do_work_closure_;
-  base::Closure delayed_do_work_closure_;
+  base::RepeatingClosure immediate_do_work_closure_;
+  base::RepeatingClosure delayed_do_work_closure_;
   base::CancelableClosure cancelable_delayed_do_work_closure_;
 
   bool task_was_run_on_quiescence_monitored_queue_;
@@ -363,18 +372,12 @@ class BLINK_PLATFORM_EXPORT TaskQueueManager
 
   NextDelayedDoWork next_delayed_do_work_;
 
-  bool record_task_delay_histograms_;
-
   int work_batch_size_;
   size_t task_count_;
 
   base::ObserverList<base::MessageLoop::TaskObserver> task_observers_;
 
   base::ObserverList<TaskTimeObserver> task_time_observers_;
-
-  const char* tracing_category_;
-  const char* disabled_by_default_tracing_category_;
-  const char* disabled_by_default_verbose_tracing_category_;
 
   internal::TaskQueueImpl* currently_executing_task_queue_;  // NOT OWNED
 

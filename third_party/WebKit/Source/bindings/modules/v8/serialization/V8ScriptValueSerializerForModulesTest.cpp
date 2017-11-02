@@ -13,11 +13,10 @@
 #include "bindings/modules/v8/V8DOMFileSystem.h"
 #include "bindings/modules/v8/V8RTCCertificate.h"
 #include "bindings/modules/v8/serialization/V8ScriptValueDeserializerForModules.h"
-#include "core/dom/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "modules/crypto/CryptoResultImpl.h"
 #include "modules/filesystem/DOMFileSystem.h"
 #include "modules/peerconnection/RTCCertificate.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/testing/UnitTestHelpers.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCryptoAlgorithmParams.h"
@@ -32,16 +31,8 @@ using ::testing::UnorderedElementsAre;
 namespace blink {
 namespace {
 
-RefPtr<SerializedScriptValue> SerializedValue(const Vector<uint8_t>& bytes) {
-  // TODO(jbroman): Fix this once SerializedScriptValue can take bytes without
-  // endianness swapping.
-  DCHECK_EQ(bytes.size() % 2, 0u);
-  return SerializedScriptValue::Create(
-      String(reinterpret_cast<const UChar*>(&bytes[0]), bytes.size() / 2));
-}
-
-v8::Local<v8::Value> RoundTrip(v8::Local<v8::Value> value,
-                               V8TestingScope& scope) {
+v8::Local<v8::Value> RoundTripForModules(v8::Local<v8::Value> value,
+                                         V8TestingScope& scope) {
   RefPtr<ScriptState> script_state = scope.GetScriptState();
   ExceptionState& exception_state = scope.GetExceptionState();
   RefPtr<SerializedScriptValue> serialized_script_value =
@@ -58,12 +49,13 @@ v8::Local<v8::Value> RoundTrip(v8::Local<v8::Value> value,
 }
 
 // Checks for a DOM exception, including a rethrown one.
-::testing::AssertionResult HadDOMException(const StringView& name,
-                                           ScriptState* script_state,
-                                           ExceptionState& exception_state) {
+::testing::AssertionResult HadDOMExceptionInModulesTest(
+    const StringView& name,
+    ScriptState* script_state,
+    ExceptionState& exception_state) {
   if (!exception_state.HadException())
     return ::testing::AssertionFailure() << "no exception thrown";
-  DOMException* dom_exception = V8DOMException::toImplWithTypeCheck(
+  DOMException* dom_exception = V8DOMException::ToImplWithTypeCheck(
       script_state->GetIsolate(), exception_state.GetException());
   if (!dom_exception) {
     return ::testing::AssertionFailure()
@@ -167,10 +159,10 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripRTCCertificate) {
   // Round trip test.
   v8::Local<v8::Value> wrapper =
       ToV8(certificate, scope.GetContext()->Global(), scope.GetIsolate());
-  v8::Local<v8::Value> result = RoundTrip(wrapper, scope);
+  v8::Local<v8::Value> result = RoundTripForModules(wrapper, scope);
   ASSERT_TRUE(V8RTCCertificate::hasInstance(result, scope.GetIsolate()));
   RTCCertificate* new_certificate =
-      V8RTCCertificate::toImpl(result.As<v8::Object>());
+      V8RTCCertificate::ToImpl(result.As<v8::Object>());
   WebRTCCertificatePEM pem = new_certificate->Certificate().ToPEM();
   EXPECT_EQ(kEcdsaPrivateKey, pem.PrivateKey());
   EXPECT_EQ(kEcdsaCertificate, pem.Certificate());
@@ -191,7 +183,7 @@ TEST(V8ScriptValueSerializerForModulesTest, DecodeRTCCertificate) {
       V8ScriptValueDeserializerForModules(script_state, input).Deserialize();
   ASSERT_TRUE(V8RTCCertificate::hasInstance(result, scope.GetIsolate()));
   RTCCertificate* new_certificate =
-      V8RTCCertificate::toImpl(result.As<v8::Object>());
+      V8RTCCertificate::ToImpl(result.As<v8::Object>());
   WebRTCCertificatePEM pem = new_certificate->Certificate().ToPEM();
   EXPECT_EQ(kEcdsaPrivateKey, pem.PrivateKey());
   EXPECT_EQ(kEcdsaCertificate, pem.Certificate());
@@ -223,7 +215,7 @@ template <typename T>
 T ConvertCryptoResult(const ScriptValue&);
 template <>
 CryptoKey* ConvertCryptoResult<CryptoKey*>(const ScriptValue& value) {
-  return V8CryptoKey::toImplWithTypeCheck(value.GetIsolate(), value.V8Value());
+  return V8CryptoKey::ToImplWithTypeCheck(value.GetIsolate(), value.V8Value());
 }
 template <>
 CryptoKeyPair ConvertCryptoResult<CryptoKeyPair>(const ScriptValue& value) {
@@ -233,19 +225,19 @@ CryptoKeyPair ConvertCryptoResult<CryptoKeyPair>(const ScriptValue& value) {
   EXPECT_TRUE(dictionary.Get("publicKey", public_key));
   EXPECT_TRUE(dictionary.Get("privateKey", private_key));
   return std::make_pair(
-      V8CryptoKey::toImplWithTypeCheck(value.GetIsolate(), public_key),
-      V8CryptoKey::toImplWithTypeCheck(value.GetIsolate(), private_key));
+      V8CryptoKey::ToImplWithTypeCheck(value.GetIsolate(), public_key),
+      V8CryptoKey::ToImplWithTypeCheck(value.GetIsolate(), private_key));
 }
 template <>
 DOMException* ConvertCryptoResult<DOMException*>(const ScriptValue& value) {
-  return V8DOMException::toImplWithTypeCheck(value.GetIsolate(),
+  return V8DOMException::ToImplWithTypeCheck(value.GetIsolate(),
                                              value.V8Value());
 }
 template <>
 WebVector<unsigned char> ConvertCryptoResult<WebVector<unsigned char>>(
     const ScriptValue& value) {
   WebVector<unsigned char> vector;
-  if (DOMArrayBuffer* buffer = V8ArrayBuffer::toImplWithTypeCheck(
+  if (DOMArrayBuffer* buffer = V8ArrayBuffer::ToImplWithTypeCheck(
           value.GetIsolate(), value.V8Value())) {
     vector.Assign(reinterpret_cast<const unsigned char*>(buffer->Data()),
                   buffer->ByteLength());
@@ -261,25 +253,23 @@ template <typename T>
 class WebCryptoResultAdapter : public ScriptFunction {
  private:
   WebCryptoResultAdapter(ScriptState* script_state,
-                         std::unique_ptr<WTF::Function<void(T)>> function)
+                         WTF::Function<void(T)> function)
       : ScriptFunction(script_state), function_(std::move(function)) {}
 
   ScriptValue Call(ScriptValue value) final {
-    (*function_)(ConvertCryptoResult<T>(value));
+    function_(ConvertCryptoResult<T>(value));
     return ScriptValue::From(GetScriptState(), ToV8UndefinedGenerator());
   }
 
-  std::unique_ptr<WTF::Function<void(T)>> function_;
+  WTF::Function<void(T)> function_;
   template <typename U>
-  friend WebCryptoResult ToWebCryptoResult(
-      ScriptState*,
-      std::unique_ptr<WTF::Function<void(U)>>);
+  friend WebCryptoResult ToWebCryptoResult(ScriptState*,
+                                           WTF::Function<void(U)>);
 };
 
 template <typename T>
-WebCryptoResult ToWebCryptoResult(
-    ScriptState* script_state,
-    std::unique_ptr<WTF::Function<void(T)>> function) {
+WebCryptoResult ToWebCryptoResult(ScriptState* script_state,
+                                  WTF::Function<void(T)> function) {
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   result->Promise().Then(
       (new WebCryptoResultAdapter<T>(script_state, std::move(function)))
@@ -397,12 +387,13 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripCryptoKeyAES) {
 
   // Round trip it and check the visible attributes.
   v8::Local<v8::Value> wrapper = ToV8(key, scope.GetScriptState());
-  v8::Local<v8::Value> result = RoundTrip(wrapper, scope);
+  v8::Local<v8::Value> result = RoundTripForModules(wrapper, scope);
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("secret", new_key->type());
   EXPECT_TRUE(new_key->extractable());
-  EXPECT_THAT(new_key->usages(), UnorderedElementsAre("encrypt", "decrypt"));
+  EXPECT_EQ(kWebCryptoKeyUsageEncrypt | kWebCryptoKeyUsageDecrypt,
+            new_key->Key().Usages());
 
   // Check that the keys have the same raw representation.
   WebVector<uint8_t> key_raw =
@@ -435,10 +426,10 @@ TEST(V8ScriptValueSerializerForModulesTest, DecodeCryptoKeyAES) {
   v8::Local<v8::Value> result =
       V8ScriptValueDeserializerForModules(script_state, input).Deserialize();
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("secret", new_key->type());
   EXPECT_FALSE(new_key->extractable());
-  EXPECT_THAT(new_key->usages(), UnorderedElementsAre("decrypt"));
+  EXPECT_EQ(kWebCryptoKeyUsageDecrypt, new_key->Key().Usages());
 
   // Check that it can successfully decrypt data.
   Vector<uint8_t> iv(16, 0);
@@ -468,12 +459,13 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripCryptoKeyHMAC) {
 
   // Round trip it and check the visible attributes.
   v8::Local<v8::Value> wrapper = ToV8(key, scope.GetScriptState());
-  v8::Local<v8::Value> result = RoundTrip(wrapper, scope);
+  v8::Local<v8::Value> result = RoundTripForModules(wrapper, scope);
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("secret", new_key->type());
   EXPECT_TRUE(new_key->extractable());
-  EXPECT_THAT(new_key->usages(), UnorderedElementsAre("sign", "verify"));
+  EXPECT_EQ(kWebCryptoKeyUsageSign | kWebCryptoKeyUsageVerify,
+            new_key->Key().Usages());
 
   // Check that the keys have the same raw representation.
   WebVector<uint8_t> key_raw =
@@ -507,10 +499,10 @@ TEST(V8ScriptValueSerializerForModulesTest, DecodeCryptoKeyHMAC) {
   v8::Local<v8::Value> result =
       V8ScriptValueDeserializerForModules(script_state, input).Deserialize();
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("secret", new_key->type());
   EXPECT_FALSE(new_key->extractable());
-  EXPECT_THAT(new_key->usages(), UnorderedElementsAre("verify"));
+  EXPECT_EQ(kWebCryptoKeyUsageVerify, new_key->Key().Usages());
 
   // Check that it can successfully verify a signature.
   Vector<uint8_t> message{1, 2, 3};
@@ -542,12 +534,12 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripCryptoKeyRSAHashed) {
 
   // Round trip the private key and check the visible attributes.
   v8::Local<v8::Value> wrapper = ToV8(private_key, scope.GetScriptState());
-  v8::Local<v8::Value> result = RoundTrip(wrapper, scope);
+  v8::Local<v8::Value> result = RoundTripForModules(wrapper, scope);
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_private_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_private_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("private", new_private_key->type());
   EXPECT_TRUE(new_private_key->extractable());
-  EXPECT_THAT(new_private_key->usages(), UnorderedElementsAre("sign"));
+  EXPECT_EQ(kWebCryptoKeyUsageSign, new_private_key->Key().Usages());
 
   // Check that the keys have the same PKCS8 representation.
   WebVector<uint8_t> key_raw =
@@ -590,10 +582,10 @@ TEST(V8ScriptValueSerializerForModulesTest, DecodeCryptoKeyRSAHashed) {
   v8::Local<v8::Value> result =
       V8ScriptValueDeserializerForModules(script_state, input).Deserialize();
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_public_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_public_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("public", new_public_key->type());
   EXPECT_TRUE(new_public_key->extractable());
-  EXPECT_THAT(new_public_key->usages(), UnorderedElementsAre("verify"));
+  EXPECT_EQ(kWebCryptoKeyUsageVerify, new_public_key->Key().Usages());
 
   // Check that it can successfully verify a signature.
   Vector<uint8_t> message{1, 2, 3};
@@ -633,12 +625,12 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripCryptoKeyEC) {
 
   // Round trip the private key and check the visible attributes.
   v8::Local<v8::Value> wrapper = ToV8(private_key, scope.GetScriptState());
-  v8::Local<v8::Value> result = RoundTrip(wrapper, scope);
+  v8::Local<v8::Value> result = RoundTripForModules(wrapper, scope);
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_private_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_private_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("private", new_private_key->type());
   EXPECT_TRUE(new_private_key->extractable());
-  EXPECT_THAT(new_private_key->usages(), UnorderedElementsAre("sign"));
+  EXPECT_EQ(kWebCryptoKeyUsageSign, new_private_key->Key().Usages());
 
   // Check that the keys have the same PKCS8 representation.
   WebVector<uint8_t> key_raw =
@@ -676,10 +668,10 @@ TEST(V8ScriptValueSerializerForModulesTest, DecodeCryptoKeyEC) {
   v8::Local<v8::Value> result =
       V8ScriptValueDeserializerForModules(script_state, input).Deserialize();
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_public_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_public_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("public", new_public_key->type());
   EXPECT_TRUE(new_public_key->extractable());
-  EXPECT_THAT(new_public_key->usages(), UnorderedElementsAre("verify"));
+  EXPECT_EQ(kWebCryptoKeyUsageVerify, new_public_key->Key().Usages());
 
   // Check that it can successfully verify a signature.
   Vector<uint8_t> message{1, 2, 3};
@@ -709,12 +701,12 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripCryptoKeyNoParams) {
 
   // Round trip the key and check the visible attributes.
   v8::Local<v8::Value> wrapper = ToV8(key, scope.GetScriptState());
-  v8::Local<v8::Value> result = RoundTrip(wrapper, scope);
+  v8::Local<v8::Value> result = RoundTripForModules(wrapper, scope);
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("secret", new_key->type());
   EXPECT_FALSE(new_key->extractable());
-  EXPECT_THAT(new_key->usages(), UnorderedElementsAre("deriveBits"));
+  EXPECT_EQ(kWebCryptoKeyUsageDeriveBits, new_key->Key().Usages());
 
   // Check that the keys derive the same bits.
   WebCryptoAlgorithm hash(kWebCryptoAlgorithmIdSha256, nullptr);
@@ -741,11 +733,11 @@ TEST(V8ScriptValueSerializerForModulesTest, DecodeCryptoKeyNoParams) {
   v8::Local<v8::Value> result =
       V8ScriptValueDeserializerForModules(script_state, input).Deserialize();
   ASSERT_TRUE(V8CryptoKey::hasInstance(result, scope.GetIsolate()));
-  CryptoKey* new_key = V8CryptoKey::toImpl(result.As<v8::Object>());
+  CryptoKey* new_key = V8CryptoKey::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("secret", new_key->type());
   EXPECT_FALSE(new_key->extractable());
-  EXPECT_THAT(new_key->usages(),
-              UnorderedElementsAre("deriveKey", "deriveBits"));
+  EXPECT_EQ(kWebCryptoKeyUsageDeriveKey | kWebCryptoKeyUsageDeriveBits,
+            new_key->Key().Usages());
 
   // Check that it derives the right bits.
   WebCryptoAlgorithm hash(kWebCryptoAlgorithmIdSha256, nullptr);
@@ -871,10 +863,10 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripDOMFileSystem) {
   // At time of writing, this can only happen for filesystems from PPAPI.
   fs->MakeClonable();
   v8::Local<v8::Value> wrapper = ToV8(fs, scope.GetScriptState());
-  v8::Local<v8::Value> result = RoundTrip(wrapper, scope);
+  v8::Local<v8::Value> result = RoundTripForModules(wrapper, scope);
   ASSERT_FALSE(result.IsEmpty());
   ASSERT_TRUE(V8DOMFileSystem::hasInstance(result, scope.GetIsolate()));
-  DOMFileSystem* new_fs = V8DOMFileSystem::toImpl(result.As<v8::Object>());
+  DOMFileSystem* new_fs = V8DOMFileSystem::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("http_example.com_0:Persistent", new_fs->name());
   EXPECT_EQ(kFileSystemTypePersistent, new_fs->GetType());
   EXPECT_EQ("filesystem:http://example.com/persistent/",
@@ -895,8 +887,8 @@ TEST(V8ScriptValueSerializerForModulesTest, RoundTripDOMFileSystemNotClonable) {
   v8::Local<v8::Value> wrapper = ToV8(fs, scope.GetScriptState());
   EXPECT_FALSE(V8ScriptValueSerializer(scope.GetScriptState())
                    .Serialize(wrapper, exception_state));
-  EXPECT_TRUE(HadDOMException("DataCloneError", scope.GetScriptState(),
-                              exception_state));
+  EXPECT_TRUE(HadDOMExceptionInModulesTest(
+      "DataCloneError", scope.GetScriptState(), exception_state));
 }
 
 TEST(V8ScriptValueSerializerForModulesTest, DecodeDOMFileSystem) {
@@ -917,7 +909,7 @@ TEST(V8ScriptValueSerializerForModulesTest, DecodeDOMFileSystem) {
   v8::Local<v8::Value> result =
       V8ScriptValueDeserializerForModules(script_state, input).Deserialize();
   ASSERT_TRUE(V8DOMFileSystem::hasInstance(result, scope.GetIsolate()));
-  DOMFileSystem* new_fs = V8DOMFileSystem::toImpl(result.As<v8::Object>());
+  DOMFileSystem* new_fs = V8DOMFileSystem::ToImpl(result.As<v8::Object>());
   EXPECT_EQ("http_example.com_0:Persistent", new_fs->name());
   EXPECT_EQ(kFileSystemTypePersistent, new_fs->GetType());
   EXPECT_EQ("filesystem:http://example.com/persistent/",

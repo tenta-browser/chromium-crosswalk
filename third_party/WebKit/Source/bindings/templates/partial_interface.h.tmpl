@@ -10,7 +10,7 @@
 
 namespace blink {
 
-{% if origin_trial_attributes %}
+{% if optional_features %}
 class ScriptState;
 {% endif %}
 
@@ -32,8 +32,11 @@ class {{v8_class_or_partial}} {
   {% if prepare_prototype_and_interface_object_func %}
   static void preparePrototypeAndInterfaceObject(v8::Local<v8::Context>, const DOMWrapperWorld&, v8::Local<v8::Object>, v8::Local<v8::Function>, v8::Local<v8::FunctionTemplate>);
   {% endif %}
+  {% if has_install_conditional_features_on_global_func %}
+  static void InstallConditionalFeaturesOnGlobal(v8::Local<v8::Context>, const DOMWrapperWorld&);
+  {% endif %}{# has_install_conditional_features_on_global_func #}
 
-  {% for feature in origin_trial_features %}
+  {% for feature in optional_features %}
   static void install{{feature.name}}(ScriptState*, v8::Local<v8::Object> instance);
   static void install{{feature.name}}(v8::Isolate*, const DOMWrapperWorld&, v8::Local<v8::Object> instance, v8::Local<v8::Object> prototype, v8::Local<v8::Function> interface);
   {% if not feature.needs_instance %}
@@ -42,13 +45,17 @@ class {{v8_class_or_partial}} {
   {% endfor %}
 
   {% if needs_runtime_enabled_installer %}
-  static void installRuntimeEnabledFeatures(
-      v8::Isolate* isolate,
-      const DOMWrapperWorld& world,
+  static void InstallRuntimeEnabledFeatures(
+      v8::Isolate*,
+      const DOMWrapperWorld&,
       v8::Local<v8::Object> instance,
       v8::Local<v8::Object> prototype,
       v8::Local<v8::Function> interface);
   {% endif %}
+  static void InstallRuntimeEnabledFeaturesOnTemplate(
+      v8::Isolate*,
+      const DOMWrapperWorld&,
+      v8::Local<v8::FunctionTemplate> interface_template);
 
   // Callback functions
   {% for attribute in attributes %}
@@ -63,7 +70,7 @@ class {{v8_class_or_partial}} {
     {%- else %}
     const v8::FunctionCallbackInfo<v8::Value>& info
     {%- endif %});
-  {% elif attribute.needs_constructor_getter_callback %}
+  {% else %}
   {{exported}}static void {{attribute.name}}ConstructorGetterCallback{{world_suffix}}(v8::Local<v8::Name> property, const v8::PropertyCallbackInfo<v8::Value>& info);
   {% endif %}
   {% if attribute.has_setter %}

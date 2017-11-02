@@ -4,8 +4,12 @@
 
 #include "content/browser/devtools/protocol/security_handler.h"
 
+#include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include "base/base64.h"
 #include "content/browser/devtools/devtools_session.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/public/browser/navigation_controller.h"
@@ -14,6 +18,8 @@
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
+#include "net/cert/x509_certificate.h"
+#include "third_party/WebKit/public/platform/WebMixedContentContextType.h"
 
 namespace content {
 namespace protocol {
@@ -31,8 +37,6 @@ std::string SecurityStyleToProtocolSecurityState(
       return Security::SecurityStateEnum::Neutral;
     case blink::kWebSecurityStyleInsecure:
       return Security::SecurityStateEnum::Insecure;
-    case blink::kWebSecurityStyleWarning:
-      return Security::SecurityStateEnum::Warning;
     case blink::kWebSecurityStyleSecure:
       return Security::SecurityStateEnum::Secure;
     default:
@@ -41,29 +45,69 @@ std::string SecurityStyleToProtocolSecurityState(
   }
 }
 
+std::string MixedContentTypeToProtocolMixedContentType(
+    blink::WebMixedContentContextType mixed_content_type) {
+  switch (mixed_content_type) {
+    case blink::WebMixedContentContextType::kNotMixedContent:
+      return Security::MixedContentTypeEnum::None;
+    case blink::WebMixedContentContextType::kBlockable:
+      return Security::MixedContentTypeEnum::Blockable;
+    case blink::WebMixedContentContextType::kOptionallyBlockable:
+      return Security::MixedContentTypeEnum::OptionallyBlockable;
+    case blink::WebMixedContentContextType::kShouldBeBlockable:
+      // kShouldBeBlockable is not used for explanations.
+      NOTREACHED();
+      return Security::MixedContentTypeEnum::OptionallyBlockable;
+    default:
+      NOTREACHED();
+      return Security::MixedContentTypeEnum::None;
+  }
+}
+
 void AddExplanations(
     const std::string& security_style,
     const std::vector<SecurityStyleExplanation>& explanations_to_add,
     Explanations* explanations) {
   for (const auto& it : explanations_to_add) {
-    explanations->addItem(Security::SecurityStateExplanation::Create()
-        .SetSecurityState(security_style)
-        .SetSummary(it.summary)
-        .SetDescription(it.description)
-        .SetHasCertificate(it.has_certificate)
-        .Build());
+    std::unique_ptr<protocol::Array<String>> certificate =
+        protocol::Array<String>::create();
+    if (it.certificate) {
+      std::string der;
+      std::string encoded;
+      bool rv = net::X509Certificate::GetDEREncoded(
+          it.certificate->os_cert_handle(), &der);
+      DCHECK(rv);
+      base::Base64Encode(der, &encoded);
+
+      certificate->addItem(encoded);
+
+      for (auto* cert : it.certificate->GetIntermediateCertificates()) {
+        rv = net::X509Certificate::GetDEREncoded(cert, &der);
+        DCHECK(rv);
+        base::Base64Encode(der, &encoded);
+        certificate->addItem(encoded);
+      }
+    }
+
+    explanations->addItem(
+        Security::SecurityStateExplanation::Create()
+            .SetSecurityState(security_style)
+            .SetSummary(it.summary)
+            .SetDescription(it.description)
+            .SetCertificate(std::move(certificate))
+            .SetMixedContentType(MixedContentTypeToProtocolMixedContentType(
+                it.mixed_content_type))
+            .Build());
   }
 }
 
 }  // namespace
 
 // static
-SecurityHandler* SecurityHandler::FromAgentHost(DevToolsAgentHostImpl* host) {
-  DevToolsSession* session = DevToolsDomainHandler::GetFirstSession(host);
-  if (!session)
-    return nullptr;
-  return static_cast<SecurityHandler*>(
-      session->GetHandlerByName(Security::Metainfo::domainName));
+std::vector<SecurityHandler*> SecurityHandler::ForAgentHost(
+    DevToolsAgentHostImpl* host) {
+  return DevToolsSession::HandlersForAgentHost<SecurityHandler>(
+      host, Security::Metainfo::domainName);
 }
 
 SecurityHandler::SecurityHandler()
@@ -90,8 +134,9 @@ void SecurityHandler::AttachToRenderFrameHost() {
   DidChangeVisibleSecurityState();
 }
 
-void SecurityHandler::SetRenderFrameHost(RenderFrameHostImpl* host) {
-  host_ = host;
+void SecurityHandler::SetRenderer(RenderProcessHost* process_host,
+                                  RenderFrameHostImpl* frame_host) {
+  host_ = frame_host;
   if (enabled_ && host_)
     AttachToRenderFrameHost();
 }
@@ -186,19 +231,6 @@ Response SecurityHandler::Disable() {
   certificate_errors_overriden_ = false;
   WebContentsObserver::Observe(nullptr);
   FlushPendingCertificateErrorNotifications();
-  return Response::OK();
-}
-
-Response SecurityHandler::ShowCertificateViewer() {
-  if (!host_)
-    return Response::InternalError();
-  WebContents* web_contents = WebContents::FromRenderFrameHost(host_);
-  scoped_refptr<net::X509Certificate> certificate =
-      web_contents->GetController().GetVisibleEntry()->GetSSL().certificate;
-  if (!certificate)
-    return Response::Error("Could not find certificate");
-  web_contents->GetDelegate()->ShowCertificateViewerInDevTools(
-      web_contents, certificate);
   return Response::OK();
 }
 

@@ -4,23 +4,33 @@
 
 #include "chrome/renderer/content_settings_observer.h"
 
+#include "base/metrics/histogram_macros.h"
+#include "base/strings/string_number_conversions.h"
+#include "chrome/common/client_hints.mojom.h"
+#include "chrome/common/client_hints/client_hints.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/common/ssl_insecure_content.h"
+#include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/content_settings.mojom.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
+#include "components/content_settings/core/common/content_settings_utils.h"
+#include "content/public/common/associated_interface_provider.h"
+#include "content/public/common/origin_util.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "extensions/features/features.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 #include "third_party/WebKit/public/platform/URLConversion.h"
+#include "third_party/WebKit/public/platform/WebClientHintsType.h"
 #include "third_party/WebKit/public/platform/WebContentSettingCallbacks.h"
 #include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebFrameClient.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebView.h"
+#include "url/gurl.h"
 #include "url/origin.h"
 #include "url/url_constants.h"
 
@@ -34,7 +44,6 @@
 #endif
 
 using blink::WebContentSettingCallbacks;
-using blink::WebDataSource;
 using blink::WebDocument;
 using blink::WebFrame;
 using blink::WebSecurityOrigin;
@@ -54,7 +63,7 @@ GURL GetOriginOrURL(const WebFrame* frame) {
   // WebRemoteFrame which does not have a document(), and the WebRemoteFrame's
   // URL is not replicated.  See https://crbug.com/628759.
   if (top_origin.unique() && frame->Top()->IsWebLocalFrame())
-    return frame->Top()->GetDocument().Url();
+    return frame->Top()->ToWebLocalFrame()->GetDocument().Url();
   return top_origin.GetURL();
 }
 
@@ -71,14 +80,14 @@ ContentSetting GetContentSettingFromRules(
   if (rules.size() == 1) {
     DCHECK(rules[0].primary_pattern == ContentSettingsPattern::Wildcard());
     DCHECK(rules[0].secondary_pattern == ContentSettingsPattern::Wildcard());
-    return rules[0].setting;
+    return rules[0].GetContentSetting();
   }
   const GURL& primary_url = GetOriginOrURL(frame);
   const GURL& secondary_gurl = secondary_url;
   for (it = rules.begin(); it != rules.end(); ++it) {
     if (it->primary_pattern.Matches(primary_url) &&
         it->secondary_pattern.Matches(secondary_gurl)) {
-      return it->setting;
+      return it->GetContentSetting();
     }
   }
   NOTREACHED();
@@ -90,7 +99,8 @@ ContentSetting GetContentSettingFromRules(
 ContentSettingsObserver::ContentSettingsObserver(
     content::RenderFrame* render_frame,
     extensions::Dispatcher* extension_dispatcher,
-    bool should_whitelist)
+    bool should_whitelist,
+    service_manager::BinderRegistry* registry)
     : content::RenderFrameObserver(render_frame),
       content::RenderFrameObserverTracker<ContentSettingsObserver>(
           render_frame),
@@ -105,7 +115,7 @@ ContentSettingsObserver::ContentSettingsObserver(
   ClearBlockedContentSettings();
   render_frame->GetWebFrame()->SetContentSettingsClient(this);
 
-  render_frame->GetInterfaceRegistry()->AddInterface(
+  registry->AddInterface(
       base::Bind(&ContentSettingsObserver::OnInsecureContentRendererRequest,
                  base::Unretained(this)));
 
@@ -130,6 +140,8 @@ ContentSettingsObserver::~ContentSettingsObserver() {
 void ContentSettingsObserver::SetContentSettingRules(
     const RendererContentSettingRules* content_setting_rules) {
   content_setting_rules_ = content_setting_rules;
+  UMA_HISTOGRAM_COUNTS("ClientHints.CountRulesReceived",
+                       content_setting_rules_->client_hints_rules.size());
 }
 
 bool ContentSettingsObserver::IsPluginTemporarilyAllowed(
@@ -182,7 +194,7 @@ bool ContentSettingsObserver::OnMessageReceived(const IPC::Message& message) {
 void ContentSettingsObserver::DidCommitProvisionalLoad(
     bool is_new_navigation,
     bool is_same_document_navigation) {
-  WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (frame->Parent())
     return;  // Not a top-level navigation.
 
@@ -296,17 +308,13 @@ bool ContentSettingsObserver::AllowIndexedDB(const WebString& name,
   return result;
 }
 
-bool ContentSettingsObserver::AllowPlugins(bool enabled_per_settings) {
-  return enabled_per_settings;
-}
-
 bool ContentSettingsObserver::AllowScript(bool enabled_per_settings) {
   if (!enabled_per_settings)
     return false;
   if (is_interstitial_page_)
     return true;
 
-  WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   const auto it = cached_script_permissions_.find(frame);
   if (it != cached_script_permissions_.end())
     return it->second;
@@ -346,7 +354,7 @@ bool ContentSettingsObserver::AllowScriptFromSource(
 }
 
 bool ContentSettingsObserver::AllowStorage(bool local) {
-  WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (frame->GetSecurityOrigin().IsUnique() ||
       frame->Top()->GetSecurityOrigin().IsUnique())
     return false;
@@ -422,7 +430,7 @@ bool ContentSettingsObserver::AllowAutoplay(bool default_value) {
   if (!content_setting_rules_)
     return default_value;
 
-  WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   return GetContentSettingFromRules(
              content_setting_rules_->autoplay_rules, frame,
              url::Origin(frame->GetDocument().GetSecurityOrigin()).GetURL()) ==
@@ -435,6 +443,59 @@ void ContentSettingsObserver::PassiveInsecureContentFound(
   // Browser::PassiveInsecureContentFound.
   ReportInsecureContent(SslInsecureContentType::DISPLAY);
   FilteredReportInsecureContentDisplayed(GURL(resource_url));
+}
+
+void ContentSettingsObserver::PersistClientHints(
+    const blink::WebEnabledClientHints& enabled_client_hints,
+    base::TimeDelta duration,
+    const blink::WebURL& url) {
+  if (duration <= base::TimeDelta())
+    return;
+
+  const GURL primary_url(url);
+  const url::Origin primary_origin(primary_url);
+  if (!content::IsOriginSecure(primary_url))
+    return;
+
+  // TODO(tbansal): crbug.com/735518. Determine if the value should be
+  // merged or overridden. Also, determine if the merger should happen on the
+  // browser side or the renderer. If the value needs to be overridden,
+  // this method should not return early if |update_count| is 0.
+  std::vector<::blink::mojom::WebClientHintsType> client_hints;
+
+  size_t update_count = 0;
+  for (size_t i = 0;
+       i < static_cast<int>(blink::mojom::WebClientHintsType::kLast) + 1; ++i) {
+    if (enabled_client_hints.IsEnabled(
+            static_cast<blink::mojom::WebClientHintsType>(i))) {
+      client_hints.push_back(static_cast<blink::mojom::WebClientHintsType>(i));
+      update_count++;
+    }
+  }
+  if (update_count == 0)
+    return;
+
+  UMA_HISTOGRAM_CUSTOM_TIMES("ClientHints.PersistDuration", duration,
+                             base::TimeDelta::FromSeconds(1),
+                             base::TimeDelta::FromDays(365), 100);
+
+  UMA_HISTOGRAM_COUNTS_100("ClientHints.UpdateSize", update_count);
+
+  // Notify the embedder.
+  client_hints::mojom::ClientHintsAssociatedPtr host_observer;
+  render_frame()->GetRemoteAssociatedInterfaces()->GetInterface(&host_observer);
+  host_observer->PersistClientHints(primary_origin, std::move(client_hints),
+                                    duration);
+}
+
+void ContentSettingsObserver::GetAllowedClientHintsFromSource(
+    const blink::WebURL& url,
+    blink::WebEnabledClientHints* client_hints) const {
+  if (!content_setting_rules_)
+    return;
+
+  client_hints::GetAllowedClientHintsFromSource(
+      url, content_setting_rules_->client_hints_rules, client_hints);
 }
 
 void ContentSettingsObserver::DidNotAllowPlugins() {
@@ -479,7 +540,7 @@ void ContentSettingsObserver::ClearBlockedContentSettings() {
 
 bool ContentSettingsObserver::IsPlatformApp() {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  WebFrame* frame = render_frame()->GetWebFrame();
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   WebSecurityOrigin origin = frame->GetDocument().GetSecurityOrigin();
   const extensions::Extension* extension = GetExtension(origin);
   return extension && extension->is_platform_app();

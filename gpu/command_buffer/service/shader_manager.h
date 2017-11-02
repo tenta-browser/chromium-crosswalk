@@ -85,9 +85,8 @@ class GPU_EXPORT Shader : public base::RefCounted<Shader> {
   }
 
   std::string last_compiled_signature() const {
-    if (translator_.get()) {
-      return last_compiled_source_ +
-             translator_->GetStringForOptionsThatWouldAffectCompilation();
+    if (options_affecting_compilation_) {
+      return last_compiled_source_ + options_affecting_compilation_->data;
     }
     return last_compiled_source_;
   }
@@ -121,11 +120,9 @@ class GPU_EXPORT Shader : public base::RefCounted<Shader> {
       const std::string& original_name) const;
 
   // If the hashed_name is not found, return NULL.
+  // Use this only when one of the more specific Get*Info methods can't be used.
   const std::string* GetOriginalNameFromHashedName(
       const std::string& hashed_name) const;
-
-  const std::string* GetMappedName(
-      const std::string& original_name) const;
 
   const std::string& log_info() const {
     return log_info_;
@@ -237,6 +234,8 @@ class GPU_EXPORT Shader : public base::RefCounted<Shader> {
 
   // Translator to use, set when shader was last requested to be compiled.
   scoped_refptr<ShaderTranslatorInterface> translator_;
+  scoped_refptr<OptionsAffectingCompilationString>
+      options_affecting_compilation_;
 
   // True if compilation succeeded.
   bool valid_;
@@ -259,9 +258,7 @@ class GPU_EXPORT Shader : public base::RefCounted<Shader> {
   VaryingMap varying_map_;
   InterfaceBlockMap interface_block_map_;
   OutputVariableList output_variable_list_;
-
-  // The name hashing info when the shader was last compiled.
-  NameMap name_map_;
+  // If a new info type is added, add it to GetOriginalNameFromHashedName.
 };
 
 // Tracks the Shaders.

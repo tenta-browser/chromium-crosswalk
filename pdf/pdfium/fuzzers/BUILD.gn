@@ -28,7 +28,7 @@ fuzzer_test("pdfium_fuzzer") {
     "//v8:external_startup_data",
   ]
   dict = "dicts/pdf.dict"
-  seed_corpus = "src/third_party/pdfium/test"
+  seed_corpus = "//third_party/pdfium/testing/resources"
 }
 
 fuzzer_test("pdf_cmap_fuzzer") {
@@ -72,6 +72,7 @@ fuzzer_test("pdf_codec_jbig2_fuzzer") {
   deps = [
     "//third_party/pdfium/testing/libfuzzer:pdf_codec_jbig2_fuzzer",
   ]
+  additional_configs = [ "//testing/libfuzzer:no_clusterfuzz" ]
 }
 
 fuzzer_test("pdf_hint_table_fuzzer") {
@@ -87,6 +88,13 @@ fuzzer_test("pdf_jpx_fuzzer") {
     "//third_party/pdfium/testing/libfuzzer:pdf_jpx_fuzzer",
   ]
   seed_corpus = "corpora/pdf_jpx"
+}
+
+fuzzer_test("pdf_font_fuzzer") {
+  sources = []
+  deps = [
+    "//third_party/pdfium/testing/libfuzzer:pdf_font_fuzzer",
+  ]
 }
 
 fuzzer_test("pdf_psengine_fuzzer") {
@@ -110,6 +118,7 @@ if (pdf_enable_xfa) {
       "//third_party/pdfium/testing/libfuzzer:pdf_codec_bmp_fuzzer",
     ]
     seed_corpus = "corpora/pdf_codec_bmp"
+    additional_configs = [ "//testing/libfuzzer:no_clusterfuzz" ]
   }
 
   fuzzer_test("pdf_codec_gif_fuzzer") {
@@ -119,6 +128,7 @@ if (pdf_enable_xfa) {
     ]
     dict = "dicts/pdf_codec_gif.dict"
     seed_corpus = "corpora/pdf_codec_gif"
+    additional_configs = [ "//testing/libfuzzer:no_clusterfuzz" ]
   }
 
   fuzzer_test("pdf_codec_jpeg_fuzzer") {
@@ -138,7 +148,7 @@ if (pdf_enable_xfa) {
     dict = "dicts/pdf_codec_png.dict"
     seed_corpuses = [
       "corpora/pdf_codec_png",
-      "//cc/test/data",
+      "//components/viz/test/data",
       "//third_party/WebKit/LayoutTests/images/png-suite/samples",
       "//third_party/WebKit/LayoutTests/images/resources/pngfuzz",
     ]
@@ -177,6 +187,13 @@ if (pdf_enable_xfa) {
     dict = "dicts/pdf_xml.dict"
   }
 
+  fuzzer_test("pdf_cfx_barcode_fuzzer") {
+    sources = []
+    deps = [
+      "//third_party/pdfium/testing/libfuzzer:pdf_cfx_barcode_fuzzer",
+    ]
+  }
+
   fuzzer_test("pdf_cfx_saxreader_fuzzer") {
     sources = []
     deps = [
@@ -202,6 +219,6 @@ if (pdf_enable_xfa) {
       "//v8:external_startup_data",
     ]
     dict = "dicts/pdf.dict"
-    seed_corpus = "src/third_party/pdfium/test"
+    seed_corpus = "//third_party/pdfium/testing/resources"
   }
 }

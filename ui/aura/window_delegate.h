@@ -12,10 +12,6 @@
 #include "ui/events/event_handler.h"
 #include "ui/gfx/native_widget_types.h"
 
-namespace cc {
-class SurfaceInfo;
-}
-
 namespace gfx {
 class Path;
 class Point;
@@ -25,6 +21,10 @@ class Size;
 
 namespace ui {
 class PaintContext;
+}
+
+namespace viz {
+class SurfaceInfo;
 }
 
 namespace aura {
@@ -66,7 +66,8 @@ class AURA_EXPORT WindowDelegate : public ui::EventHandler {
   virtual void OnPaint(const ui::PaintContext& context) = 0;
 
   // Called when the window's device scale factor has changed.
-  virtual void OnDeviceScaleFactorChanged(float device_scale_factor) = 0;
+  virtual void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                          float new_device_scale_factor) = 0;
 
   // Called from Window's destructor before OnWindowDestroyed and before the
   // children have been destroyed and the window has been removed from its
@@ -98,7 +99,9 @@ class AURA_EXPORT WindowDelegate : public ui::EventHandler {
   // above returns true.
   virtual void GetHitTestMask(gfx::Path* mask) const = 0;
 
-  virtual void OnWindowSurfaceChanged(const cc::SurfaceInfo& surface_info) {}
+  // Called when a child submits a CompositorFrame to a surface with the given
+  // |surface_info| for the first time.
+  virtual void OnFirstSurfaceActivation(const viz::SurfaceInfo& surface_info) {}
 
  protected:
   ~WindowDelegate() override {}

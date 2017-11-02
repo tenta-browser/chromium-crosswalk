@@ -55,6 +55,7 @@ class FontSelector;
 class ShapeCache;
 class TextRun;
 struct TextRunPaintInfo;
+struct NGTextFragmentPaintInfo;
 
 class PLATFORM_EXPORT Font {
   DISALLOW_NEW();
@@ -85,6 +86,11 @@ class PLATFORM_EXPORT Font {
                 const FloatPoint&,
                 float device_scale_factor,
                 const PaintFlags&) const;
+  bool DrawText(PaintCanvas*,
+                const NGTextFragmentPaintInfo&,
+                const FloatPoint&,
+                float device_scale_factor,
+                const PaintFlags&) const;
   bool DrawBidiText(PaintCanvas*,
                     const TextRunPaintInfo&,
                     const FloatPoint&,
@@ -93,6 +99,12 @@ class PLATFORM_EXPORT Font {
                     const PaintFlags&) const;
   void DrawEmphasisMarks(PaintCanvas*,
                          const TextRunPaintInfo&,
+                         const AtomicString& mark,
+                         const FloatPoint&,
+                         float device_scale_factor,
+                         const PaintFlags&) const;
+  void DrawEmphasisMarks(PaintCanvas*,
+                         const NGTextFragmentPaintInfo&,
                          const AtomicString& mark,
                          const FloatPoint&,
                          float device_scale_factor,
@@ -114,6 +126,11 @@ class PLATFORM_EXPORT Font {
                          const PaintFlags&,
                          const std::tuple<float, float>& bounds,
                          Vector<TextIntercept>&) const;
+  void GetTextIntercepts(const NGTextFragmentPaintInfo&,
+                         float device_scale_factor,
+                         const PaintFlags&,
+                         const std::tuple<float, float>& bounds,
+                         Vector<TextIntercept>&) const;
 
   // Glyph bounds will be the minimum rect containing all glyph strokes, in
   // coordinates using (<text run x position>, <baseline position>) as the
@@ -129,8 +146,7 @@ class PLATFORM_EXPORT Font {
                                  const FloatPoint&,
                                  int h,
                                  int from = 0,
-                                 int to = -1,
-                                 bool account_for_glyph_bounds = false) const;
+                                 int to = -1) const;
   CharacterRange GetCharacterRange(const TextRun&,
                                    unsigned from,
                                    unsigned to) const;
@@ -146,6 +162,7 @@ class PLATFORM_EXPORT Font {
   float TabWidth(const TabSize& tab_size, float position) const {
     return TabWidth(PrimaryFont(), tab_size, position);
   }
+  LayoutUnit TabWidth(const TabSize&, LayoutUnit position) const;
 
   int EmphasisMarkAscent(const AtomicString&) const;
   int EmphasisMarkDescent(const AtomicString&) const;
@@ -171,6 +188,8 @@ class PLATFORM_EXPORT Font {
     shape_word_by_word_computed_ = true;
   }
 
+  void ReportNotDefGlyph() const;
+
  private:
   enum ForTextEmphasisOrNot { kNotForTextEmphasis, kForTextEmphasis };
 
@@ -180,7 +199,7 @@ class PLATFORM_EXPORT Font {
 
  public:
   FontSelector* GetFontSelector() const;
-  PassRefPtr<FontFallbackIterator> CreateFontFallbackIterator(
+  RefPtr<FontFallbackIterator> CreateFontFallbackIterator(
       FontFallbackPriority) const;
 
   void WillUseFontData(const String& text) const;

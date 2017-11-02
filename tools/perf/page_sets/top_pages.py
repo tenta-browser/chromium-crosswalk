@@ -4,16 +4,19 @@
 from telemetry.page import page as page_module
 from telemetry.page import shared_page_state
 
+from page_sets.login_helpers import google_login
+
 
 class TopPages(page_module.Page):
 
   def __init__(self, url, page_set, shared_page_state_class,
                name='', credentials=None):
+    if name == '':
+      name = url
     super(TopPages, self).__init__(
         url=url, page_set=page_set, name=name,
         credentials_path='data/credentials.json',
         shared_page_state_class=shared_page_state_class)
-    self.archive_data_file = 'data/top_25.json'
     self.credentials = credentials
 
 
@@ -41,8 +44,13 @@ class GoogleImageSearchPage(TopPages):
                shared_page_state_class=shared_page_state.SharedPageState):
     super(GoogleImageSearchPage, self).__init__(
         'https://www.google.com/search?q=cats&tbm=isch',
-        page_set=page_set, credentials='google',
+        page_set=page_set,
         shared_page_state_class=shared_page_state_class)
+
+  def RunNavigateSteps(self, action_runner):
+    google_login.LoginGoogleAccount(action_runner, 'googletest',
+                                    self.credentials_path)
+    super(GoogleImageSearchPage, self).RunNavigateSteps(action_runner)
 
 
 class GmailPage(TopPages):
@@ -54,10 +62,11 @@ class GmailPage(TopPages):
     super(GmailPage, self).__init__(
         url='https://mail.google.com/mail/',
         page_set=page_set,
-        credentials='google',
         shared_page_state_class=shared_page_state_class)
 
   def RunNavigateSteps(self, action_runner):
+    google_login.LoginGoogleAccount(action_runner, 'googletest',
+                                    self.credentials_path)
     super(GmailPage, self).RunNavigateSteps(action_runner)
     action_runner.WaitForJavaScriptCondition(
         'window.gmonkey !== undefined &&'
@@ -73,10 +82,11 @@ class GoogleCalendarPage(TopPages):
     super(GoogleCalendarPage, self).__init__(
         url='https://www.google.com/calendar/',
         page_set=page_set,
-        credentials='google',
         shared_page_state_class=shared_page_state_class)
 
   def RunNavigateSteps(self, action_runner):
+    google_login.LoginGoogleAccount(action_runner, 'googletest',
+                                    self.credentials_path)
     super(GoogleCalendarPage, self).RunNavigateSteps(action_runner)
     action_runner.Wait(2)
     action_runner.WaitForElement('div[class~="navForward"]')
@@ -101,10 +111,11 @@ class GoogleDocPage(TopPages):
         url='https://docs.google.com/document/d/1X-IKNjtEnx-WW5JIKRLsyhz5sbsat3mfTpAPUSX3_s4/view',
         page_set=page_set,
         name='Docs  (1 open document tab)',
-        credentials='google',
         shared_page_state_class=shared_page_state_class)
 
   def RunNavigateSteps(self, action_runner):
+    google_login.LoginGoogleAccount(action_runner, 'googletest',
+                                    self.credentials_path)
     super(GoogleDocPage, self).RunNavigateSteps(action_runner)
     action_runner.Wait(2)
     action_runner.WaitForJavaScriptCondition(
@@ -120,10 +131,11 @@ class GooglePlusPage(TopPages):
     super(GooglePlusPage, self).__init__(
         url='https://plus.google.com/110031535020051778989/posts',
         page_set=page_set,
-        credentials='google',
         shared_page_state_class=shared_page_state_class)
 
   def RunNavigateSteps(self, action_runner):
+    google_login.LoginGoogleAccount(action_runner, 'googletest',
+                                    self.credentials_path)
     super(GooglePlusPage, self).RunNavigateSteps(action_runner)
     action_runner.WaitForElement(text='Home')
 
@@ -136,10 +148,12 @@ class YoutubePage(TopPages):
                shared_page_state_class=shared_page_state.SharedPageState):
     super(YoutubePage, self).__init__(
         url='http://www.youtube.com',
-        page_set=page_set, credentials='google',
+        page_set=page_set,
         shared_page_state_class=shared_page_state_class)
 
   def RunNavigateSteps(self, action_runner):
+    google_login.LoginGoogleAccount(action_runner, 'googletest',
+                                    self.credentials_path)
     super(YoutubePage, self).RunNavigateSteps(action_runner)
     action_runner.Wait(2)
 
@@ -191,12 +205,12 @@ class FacebookPage(TopPages):
     super(FacebookPage, self).__init__(
         url='https://www.facebook.com/barackobama',
         page_set=page_set,
-        name='Facebook', credentials='facebook2',
+        name='Facebook',
         shared_page_state_class=shared_page_state_class)
 
   def RunNavigateSteps(self, action_runner):
     super(FacebookPage, self).RunNavigateSteps(action_runner)
-    action_runner.WaitForElement(text='Chat')
+    action_runner.WaitForElement(text='Videos')
 
 
 class LinkedinPage(TopPages):

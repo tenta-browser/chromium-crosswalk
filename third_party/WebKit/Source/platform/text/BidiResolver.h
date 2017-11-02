@@ -29,7 +29,6 @@
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
@@ -73,7 +72,7 @@ class MidpointState final {
     // previous end point doesn't preserve whitespace.
     if (l_break.GetLineLayoutItem() && num_midpoints_ &&
         !(num_midpoints_ % 2)) {
-      Iterator* midpoints_iterator = midpoints_.Data();
+      Iterator* midpoints_iterator = midpoints_.data();
       Iterator& endpoint = midpoints_iterator[num_midpoints_ - 2];
       const Iterator& startpoint = midpoints_iterator[num_midpoints_ - 1];
       Iterator currpoint = endpoint;
@@ -114,7 +113,7 @@ class MidpointState final {
     if (midpoints_.size() <= num_midpoints_)
       midpoints_.Grow(num_midpoints_ + 10);
 
-    Iterator* midpoints_iterator = midpoints_.Data();
+    Iterator* midpoints_iterator = midpoints_.data();
     midpoints_iterator[num_midpoints_++] = midpoint;
   }
 };
@@ -143,7 +142,7 @@ struct BidiStatus final {
   BidiStatus(WTF::Unicode::CharDirection eor_dir,
              WTF::Unicode::CharDirection last_strong_dir,
              WTF::Unicode::CharDirection last_dir,
-             PassRefPtr<BidiContext> bidi_context)
+             RefPtr<BidiContext> bidi_context)
       : eor(eor_dir),
         last_strong(last_strong_dir),
         last(last_dir),
@@ -167,7 +166,7 @@ struct BidiStatus final {
 
     // This copies BidiStatus and may churn the ref on BidiContext.
     // I doubt it matters.
-    return BidiStatus(direction, direction, direction, context.Release());
+    return BidiStatus(direction, direction, direction, std::move(context));
   }
 
   WTF::Unicode::CharDirection eor;
@@ -240,8 +239,8 @@ class BidiResolver final {
     nested_isolate_count_ = nested_isolated_count;
   }
 
-  BidiContext* Context() const { return status_.context.Get(); }
-  void SetContext(PassRefPtr<BidiContext> c) { status_.context = std::move(c); }
+  BidiContext* Context() const { return status_.context.get(); }
+  void SetContext(RefPtr<BidiContext> c) { status_.context = std::move(c); }
 
   void SetLastDir(WTF::Unicode::CharDirection last_dir) {
     status_.last = last_dir;
@@ -622,9 +621,10 @@ bool BidiResolver<Iterator, Run, IsolatedRun>::CommitExplicitEmbedding(
         level = NextGreaterOddLevel(level);
       else
         level = NextGreaterEvenLevel(level);
-      if (level < BidiContext::kMaxLevel)
+      if (level < BidiContext::kMaxLevel) {
         to_context = BidiContext::Create(level, direction, override,
-                                         embedding.Source(), to_context.Get());
+                                         embedding.Source(), to_context.get());
+      }
     }
   }
 
@@ -640,7 +640,7 @@ bool BidiResolver<Iterator, Run, IsolatedRun>::CommitExplicitEmbedding(
 
   SetContext(to_context);
 
-  current_explicit_embedding_sequence_.Clear();
+  current_explicit_embedding_sequence_.clear();
 
   return from_level != to_level;
 }

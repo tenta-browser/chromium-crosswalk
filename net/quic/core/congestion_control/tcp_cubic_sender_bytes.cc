@@ -10,8 +10,8 @@
 #include "net/quic/core/congestion_control/prr_sender.h"
 #include "net/quic/core/congestion_control/rtt_stats.h"
 #include "net/quic/core/crypto/crypto_protocol.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 
 namespace net {
@@ -48,23 +48,19 @@ TcpCubicSenderBytes::~TcpCubicSenderBytes() {}
 void TcpCubicSenderBytes::SetFromConfig(const QuicConfig& config,
                                         Perspective perspective) {
   TcpCubicSenderBase::SetFromConfig(config, perspective);
-  if (FLAGS_quic_reloadable_flag_quic_fix_cubic_convex_mode &&
-      config.HasReceivedConnectionOptions() &&
+  if (config.HasReceivedConnectionOptions() &&
       ContainsQuicTag(config.ReceivedConnectionOptions(), kCCVX)) {
     cubic_.SetFixConvexMode(true);
   }
-  if (FLAGS_quic_reloadable_flag_quic_fix_cubic_bytes_quantization &&
-      config.HasReceivedConnectionOptions() &&
+  if (config.HasReceivedConnectionOptions() &&
       ContainsQuicTag(config.ReceivedConnectionOptions(), kCBQT)) {
     cubic_.SetFixCubicQuantization(true);
   }
-  if (FLAGS_quic_reloadable_flag_quic_fix_beta_last_max &&
-      config.HasReceivedConnectionOptions() &&
+  if (config.HasReceivedConnectionOptions() &&
       ContainsQuicTag(config.ReceivedConnectionOptions(), kBLMX)) {
     cubic_.SetFixBetaLastMax(true);
   }
-  if (FLAGS_quic_reloadable_flag_quic_enable_cubic_per_ack_updates &&
-      config.HasReceivedConnectionOptions() &&
+  if (config.HasReceivedConnectionOptions() &&
       ContainsQuicTag(config.ReceivedConnectionOptions(), kCPAU)) {
     cubic_.SetAllowPerAckUpdates(true);
   }

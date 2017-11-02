@@ -1,3 +1,4 @@
+Tests how stepping works with some source ranges blackboxed.
 foo: 14:4
 blackboxedBoo: 3:12
 notBlackboxedFoo: 3:12
@@ -46,7 +47,7 @@ testFunction: 9:4
 
 action: stepOver
 action: stepInto
-foo: 16:0
+foo: 15:15
 blackboxedBoo: 3:12
 notBlackboxedFoo: 3:12
 blackboxedFoo: 10:12

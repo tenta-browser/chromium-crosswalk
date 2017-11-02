@@ -50,7 +50,7 @@ cr.define('device_collection', function() {
 
     /**
      * Adds or updates a Device with new DeviceInfo.
-     * @param {!interfaces.BluetoothDevice.DeviceInfo} deviceInfo
+     * @param {!bluetooth.mojom.DeviceInfo} deviceInfo
      */
     addOrUpdate: function(deviceInfo) {
       deviceInfo.removed = false;
@@ -65,7 +65,7 @@ cr.define('device_collection', function() {
         // on |deviceInfo|. The rssi property may be null, so it must be
         // re-assigned.
         Object.assign(oldDeviceInfo, deviceInfo);
-        oldDeviceInfo.rssi = { value: rssi };
+        oldDeviceInfo.rssi = {value: rssi};
         this.updateIndex(this.indexOf(oldDeviceInfo));
       } else {
         deviceInfo.connectionStatus = ConnectionStatus.DISCONNECTED;
@@ -75,7 +75,7 @@ cr.define('device_collection', function() {
 
     /**
      * Marks the Device as removed.
-     * @param {!interfaces.bluetoothDevice.DeviceInfo} deviceInfo
+     * @param {!bluetooth.mojom.DeviceInfo} deviceInfo
      */
     remove: function(deviceInfo) {
       var device = this.getByAddress(deviceInfo.address);

@@ -47,14 +47,14 @@ import os
 import posixpath
 import sys
 
-from idl_compiler import idl_filename_to_interface_name
 from idl_definitions import Visitor
 from idl_reader import IdlReader
 from utilities import idl_filename_to_component
-from utilities import idl_filename_to_interface_name
+from utilities import idl_filename_to_basename
 from utilities import merge_dict_recursively
 from utilities import read_idl_files_list_from_file
 from utilities import shorten_union_name
+from utilities import to_snake_case
 from utilities import write_pickle_file
 
 
@@ -75,6 +75,8 @@ def parse_options():
     parser.add_option('--idl-files-list', help='file listing IDL files')
     parser.add_option('--interfaces-info-file', help='interface info pickle file')
     parser.add_option('--component-info-file', help='component wide info pickle file')
+    # TODO(tkent): Remove the option after the great mv. crbug.com/760462
+    parser.add_option('--snake-case-generated-files', action='store_true', default=False)
 
     options, args = parser.parse_args()
     if options.interfaces_info_file is None:
@@ -95,7 +97,7 @@ def relative_dir_posix(idl_filename, base_path):
     return relative_dir_local.replace(os.path.sep, posixpath.sep)
 
 
-def include_path(idl_filename, implemented_as=None):
+def include_path(idl_filename, snake_case_generated_files, implemented_as=None):
     """Returns relative path to header file in POSIX format; used in includes.
 
     POSIX format is used for consistency of output, so reference tests are
@@ -107,9 +109,10 @@ def include_path(idl_filename, implemented_as=None):
         relative_dir = relative_dir_posix(idl_filename, source_path)
 
     # IDL file basename is used even if only a partial interface file
-    cpp_class_name = implemented_as or idl_filename_to_interface_name(idl_filename)
-
-    return posixpath.join(relative_dir, cpp_class_name + '.h')
+    output_file_basename = implemented_as or idl_filename_to_basename(idl_filename)
+    if snake_case_generated_files:
+        output_file_basename = to_snake_case(output_file_basename)
+    return posixpath.join(relative_dir, output_file_basename + '.h')
 
 
 def get_implements_from_definitions(definitions, definition_name):
@@ -172,7 +175,7 @@ class InterfaceInfoCollector(object):
             'full_paths': [],
             'include_paths': [],
         })
-        self.enumerations = set()
+        self.enumerations = {}
         self.union_types = set()
         self.typedefs = {}
         self.callback_functions = {}
@@ -183,17 +186,24 @@ class InterfaceInfoCollector(object):
         paths_dict['full_paths'].append(full_path)
         paths_dict['include_paths'].extend(include_paths)
 
-    def collect_info(self, idl_filename):
+    def check_enum_consistency(self, enum):
+        existing_enum = self.enumerations.get(enum.name)
+        if not existing_enum:
+            return True
+        # TODO(bashi): Ideally we should not allow multiple enum declarations
+        # but we allow them to work around core/module separation.
+        if len(existing_enum.values) != len(enum.values):
+            return False
+        return all(value in existing_enum.values for value in enum.values)
+
+    def collect_info(self, idl_filename, snake_case_generated_files=False):
         """Reads an idl file and collects information which is required by the
         binding code generation."""
         def collect_unforgeable_attributes(definition, idl_filename):
             """Collects [Unforgeable] attributes so that we can define them on
             sub-interfaces later.  The resulting structure is as follows.
                 interfaces_info[interface_name] = {
-                    'unforgeable_attributes': {
-                        'core': [IdlAttribute, ...],
-                        'modules': [IdlAttribute, ...],
-                    },
+                    'unforgeable_attributes': [IdlAttribute, ...],
                     ...
                 }
             """
@@ -209,9 +219,7 @@ class InterfaceInfoCollector(object):
                 # Come up with a better way to keep them consistent.
                 for attr in unforgeable_attributes:
                     attr.extended_attributes['PartialInterfaceImplementedAs'] = definition.extended_attributes.get('ImplementedAs', interface_basename)
-            component = idl_filename_to_component(idl_filename)
-            interface_info['unforgeable_attributes'] = {}
-            interface_info['unforgeable_attributes'][component] = unforgeable_attributes
+            interface_info['unforgeable_attributes'] = unforgeable_attributes
             return interface_info
 
         definitions = self.reader.read_idl_file(idl_filename)
@@ -227,11 +235,11 @@ class InterfaceInfoCollector(object):
                 'full_path': os.path.realpath(idl_filename),
             }
         # Check enum duplication.
-        for enum_name in definitions.enumerations.keys():
-            for defined_enum in self.enumerations:
-                if defined_enum.name == enum_name:
-                    raise Exception('Enumeration %s has multiple definitions' % enum_name)
-        self.enumerations.update(definitions.enumerations.values())
+        for enum in definitions.enumerations.values():
+            if not self.check_enum_consistency(enum):
+                raise Exception('Enumeration "%s" is defined more than once '
+                                'with different valid values' % enum.name)
+        self.enumerations.update(definitions.enumerations)
 
         if definitions.interfaces:
             definition = next(definitions.interfaces.itervalues())
@@ -269,7 +277,7 @@ class InterfaceInfoCollector(object):
         extended_attributes = definition.extended_attributes
         implemented_as = extended_attributes.get('ImplementedAs')
         full_path = os.path.realpath(idl_filename)
-        this_include_path = include_path(idl_filename, implemented_as)
+        this_include_path = include_path(idl_filename, snake_case_generated_files, implemented_as)
         if definition.is_partial:
             # We don't create interface_info for partial interfaces, but
             # adds paths to another dict.
@@ -329,7 +337,7 @@ class InterfaceInfoCollector(object):
         return {
             'callback_functions': self.callback_functions,
             'enumerations': dict((enum.name, enum.values)
-                                 for enum in self.enumerations),
+                                 for enum in self.enumerations.values()),
             'typedefs': self.typedefs,
             'union_types': self.union_types,
         }
@@ -348,7 +356,7 @@ def main():
     # partial_interface_files.
     info_collector = InterfaceInfoCollector(options.cache_directory)
     for idl_filename in idl_files:
-        info_collector.collect_info(idl_filename)
+        info_collector.collect_info(idl_filename, options.snake_case_generated_files)
 
     write_pickle_file(options.interfaces_info_file,
                       info_collector.get_info_as_dict())

@@ -30,12 +30,17 @@ class SyncableService : public SyncChangeProcessor,
                         public base::SupportsWeakPtr<SyncableService> {
  public:
   // A StartSyncFlare is useful when your SyncableService has a need for sync
-  // to start ASAP, typically because a local change event has occurred but
-  // MergeDataAndStartSyncing hasn't been called yet, meaning you don't have a
-  // SyncChangeProcessor. The sync subsystem will respond soon after invoking
-  // Run() on your flare by calling MergeDataAndStartSyncing. The ModelType
-  // parameter is included so that the recieving end can track usage and timing
-  // statistics, make optimizations or tradeoffs by type, etc.
+  // to start ASAP. This is typically for one of three reasons:
+  // 1) Because a local change event has occurred but MergeDataAndStartSyncing
+  // hasn't been called yet, meaning you don't have a SyncChangeProcessor. The
+  // sync subsystem will respond soon after invoking Run() on your flare by
+  // calling MergeDataAndStartSyncing.
+  // 2) You want remote data to be visible immediately; for example if the
+  // history page is open, you want remote sessions data to be available there.
+  // 3) You want to signal to sync that it's safe to start now that the
+  // browser's IO-intensive startup process is over. The ModelType parameter is
+  // included so that the recieving end can track usage and timing statistics,
+  // make pptimizations or tradeoffs by type, etc.
   using StartSyncFlare = base::Callback<void(ModelType)>;
 
   // Informs the service to begin syncing the specified synced datatype |type|.
@@ -61,7 +66,7 @@ class SyncableService : public SyncChangeProcessor,
   // Returns: A default SyncError (IsSet() == false) if no errors were
   //          encountered, and a filled SyncError (IsSet() == true)
   //          otherwise.
-  SyncError ProcessSyncChanges(const tracked_objects::Location& from_here,
+  SyncError ProcessSyncChanges(const base::Location& from_here,
                                const SyncChangeList& change_list) override = 0;
 
   // Returns AttachmentStore for use by sync when uploading or downloading

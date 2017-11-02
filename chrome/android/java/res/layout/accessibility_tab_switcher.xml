@@ -8,6 +8,7 @@
 
 <org.chromium.chrome.browser.widget.accessibility.AccessibilityTabModelWrapper
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:chrome="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -16,6 +17,26 @@
     android:background="@color/tab_switcher_background"
     android:divider="@drawable/accessibility_tab_switcher_divider"
     android:showDividers="middle">
+
+    <LinearLayout
+        android:id="@+id/tab_wrapper"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <android.support.design.widget.TabLayout
+            android:id="@+id/tab_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:tabMaxWidth="0dp"
+            app:tabGravity="fill"
+            app:tabMode="fixed" />
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/accessibility_tab_switcher_top_padding" />
+    </LinearLayout>
 
     <org.chromium.chrome.browser.widget.accessibility.AccessibilityTabModelListView
         android:id="@+id/list_view"
@@ -38,7 +59,7 @@
             android:layout_weight="1"
             android:background="@drawable/btn_bg_holo_active"
             android:src="@drawable/btn_normal_tabs"
-            chrome:tint="@color/light_mode_tint"
+            chrome:chrometint="@color/light_mode_tint"
             android:contentDescription="@string/accessibility_tab_switcher_standard_stack"
             style="?android:attr/borderlessButtonStyle" />
 
@@ -54,7 +75,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:src="@drawable/btn_incognito_tabs"
-            chrome:tint="@color/light_mode_tint"
+            chrome:chrometint="@color/light_mode_tint"
             android:background="@drawable/btn_bg_holo"
             android:contentDescription="@string/accessibility_tab_switcher_incognito_stack"
             style="?android:attr/borderlessButtonStyle" />

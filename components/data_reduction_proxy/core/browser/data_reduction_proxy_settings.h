@@ -34,11 +34,6 @@ class DataReductionProxyIOData;
 class DataReductionProxyService;
 class DataReductionProxyCompressionStats;
 
-// The header used to request a data reduction proxy pass through. When a
-// request is sent to the data reduction proxy with this header, it will respond
-// with the original uncompressed response.
-extern const char kDataReductionPassThroughHeader[];
-
 // Values of the UMA DataReductionProxy.StartupState histogram.
 // This enum must remain synchronized with DataReductionProxyStartupState
 // in metrics/histograms/histograms.xml.
@@ -116,10 +111,9 @@ class DataReductionProxySettings : public DataReductionProxyServiceObserver {
   // Enables or disables the data reduction proxy.
   void SetDataReductionProxyEnabled(bool enabled);
 
-  // Sets |lo_fi_mode_active_| to true if Lo-Fi is currently active, meaning
-  // requests are being sent with "q=low" headers. Set from the IO thread only
-  // on main frame requests.
-  void SetLoFiModeActiveOnMainFrame(bool lo_fi_mode_active);
+  // Indicates that Lo-Fi has been used, meaning requests are being sent with
+  // "q=low" headers. Set from the IO thread only on main frame requests.
+  void SetLoFiUsedThisSession();
 
   // Increments the number of times the Lo-Fi UI has been shown.
   void IncrementLoFiUIShown();
@@ -169,12 +163,6 @@ class DataReductionProxySettings : public DataReductionProxyServiceObserver {
   // InitDataReductionProxySettings has not been called.
   DataReductionProxyEventStore* GetEventStore() const;
 
-  // Returns true if the data reduction proxy promo may be shown.
-  // This is independent of whether the data reduction proxy is allowed.
-  bool PromoAllowed() const {
-    return promo_allowed_;
-  }
-
   DataReductionProxyService* data_reduction_proxy_service() {
     return data_reduction_proxy_service_.get();
   }
@@ -193,8 +181,6 @@ class DataReductionProxySettings : public DataReductionProxyServiceObserver {
 
  protected:
   void InitPrefMembers();
-
-  void UpdateConfigValues();
 
   // Virtualized for unit test support.
   virtual PrefService* GetOriginalProfilePrefs();
@@ -280,11 +266,6 @@ class DataReductionProxySettings : public DataReductionProxyServiceObserver {
   // OnServiceInitialized is called, if |deferred_initialization_| is true,
   // IO object calls will be performed at that time.
   bool deferred_initialization_;
-
-  // The following values are cached in order to access the values on the
-  // correct thread.
-  bool allowed_;
-  bool promo_allowed_;
 
   // The number of requests to reload the page with images from the Lo-Fi
   // UI until Lo-Fi is disabled for the remainder of the session.

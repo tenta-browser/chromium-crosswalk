@@ -6,14 +6,15 @@
 
 #include <stddef.h>
 
-#include <deque>
-
+#include "base/containers/circular_deque.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_value_converter.h"
 #include "base/json/json_writer.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_piece.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
@@ -245,11 +246,11 @@ class FileManagerTestListener : public content::NotificationObserver {
           true;
     }
     messages_.push_back(entry);
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
-  std::deque<Message> messages_;
+  base::circular_deque<Message> messages_;
   content::NotificationRegistrar registrar_;
 };
 
@@ -393,7 +394,7 @@ class DriveTestVolume : public TestVolume {
         drive::util::GetDriveMyDriveRootPath().Append(path).DirName(),
         google_apis::test_util::CreateCopyResultCallback(&error,
                                                          &parent_entry));
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
     ASSERT_EQ(drive::FILE_ERROR_OK, error);
     ASSERT_TRUE(parent_entry);
 
@@ -624,6 +625,7 @@ void FileManagerBrowserTestBase::RunTestMessageLoop() {
 void FileManagerBrowserTestBase::OnMessage(const std::string& name,
                                            const base::DictionaryValue& value,
                                            std::string* output) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   if (name == "getTestName") {
     // Pass the test case name.
     *output = GetTestCaseNameParam();

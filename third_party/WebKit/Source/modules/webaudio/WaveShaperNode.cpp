@@ -106,7 +106,7 @@ void WaveShaperNode::setCurve(const Vector<float>& curve,
                               ExceptionState& exception_state) {
   DCHECK(IsMainThread());
 
-  SetCurveImpl(curve.Data(), curve.size(), exception_state);
+  SetCurveImpl(curve.data(), curve.size(), exception_state);
 }
 
 NotShared<DOMFloat32Array> WaveShaperNode::curve() {
@@ -117,10 +117,10 @@ NotShared<DOMFloat32Array> WaveShaperNode::curve() {
   unsigned size = curve->size();
   RefPtr<WTF::Float32Array> new_curve = WTF::Float32Array::Create(size);
 
-  memcpy(new_curve->Data(), curve->Data(), sizeof(float) * size);
+  memcpy(new_curve->Data(), curve->data(), sizeof(float) * size);
 
   return NotShared<DOMFloat32Array>(
-      DOMFloat32Array::Create(new_curve.Release()));
+      DOMFloat32Array::Create(std::move(new_curve)));
 }
 
 void WaveShaperNode::setOversample(const String& type) {
@@ -129,7 +129,7 @@ void WaveShaperNode::setOversample(const String& type) {
   // This is to synchronize with the changes made in
   // AudioBasicProcessorNode::checkNumberOfChannelsForInput() where we can
   // initialize() and uninitialize().
-  BaseAudioContext::AutoLocker context_locker(context());
+  BaseAudioContext::GraphAutoLocker context_locker(context());
 
   if (type == "none") {
     GetWaveShaperProcessor()->SetOversample(

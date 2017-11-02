@@ -7,23 +7,16 @@
 
 #import "ios/clean/chrome/browser/ui/tab_collection/tab_collection_view_controller.h"
 
-#import "ios/clean/chrome/browser/ui/animators/zoom_transition_delegate.h"
-#import "ios/clean/chrome/browser/ui/presenters/menu_presentation_delegate.h"
 #import "ios/clean/chrome/browser/ui/tab_grid/tab_grid_consumer.h"
+#import "ios/clean/chrome/browser/ui/transitions/animators/zoom_transition_delegate.h"
 
-@protocol SettingsCommands;
 @protocol TabGridCommands;
-@protocol ToolsMenuCommands;
 
 // View controller with a grid of tabs.
 @interface TabGridViewController
-    : TabCollectionViewController<MenuPresentationDelegate,
-                                  TabGridConsumer,
-                                  ZoomTransitionDelegate>
+    : TabCollectionViewController<TabGridConsumer, ZoomTransitionDelegate>
 // Dispatcher to handle commands.
-@property(nonatomic, weak)
-    id<SettingsCommands, TabGridCommands, ToolsMenuCommands>
-        dispatcher;
+@property(nonatomic, weak) id<TabGridCommands> dispatcher;
 @end
 
 #endif  // IOS_CLEAN_CHROME_BROWSER_UI_TAB_GRID_TAB_GRID_VIEW_CONTROLLER_H_

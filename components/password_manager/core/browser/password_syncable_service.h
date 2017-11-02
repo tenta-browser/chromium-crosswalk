@@ -10,7 +10,8 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
+#include "base/time/clock.h"
 #include "components/password_manager/core/browser/password_store_change.h"
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_data.h"
@@ -32,8 +33,7 @@ namespace password_manager {
 class PasswordStoreSync;
 
 // The implementation of the SyncableService API for passwords.
-class PasswordSyncableService : public syncer::SyncableService,
-                                public base::NonThreadSafe {
+class PasswordSyncableService : public syncer::SyncableService {
  public:
   // Since the constructed |PasswordSyncableService| is typically owned by the
   // |password_store|, the constructor doesn't take ownership of the
@@ -50,7 +50,7 @@ class PasswordSyncableService : public syncer::SyncableService,
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
-      const tracked_objects::Location& from_here,
+      const base::Location& from_here,
       const syncer::SyncChangeList& change_list) override;
 
   // Notifies the Sync engine of changes to the password database.
@@ -60,6 +60,12 @@ class PasswordSyncableService : public syncer::SyncableService,
   // chrome/browser/sync/glue/sync_start_util.h for more.
   void InjectStartSyncFlare(
       const syncer::SyncableService::StartSyncFlare& flare);
+
+#if defined(UNIT_TEST)
+  void set_clock(std::unique_ptr<base::Clock> clock) {
+    clock_ = std::move(clock);
+  }
+#endif
 
  private:
   // Map from password sync tag to password form.
@@ -81,14 +87,23 @@ class PasswordSyncableService : public syncer::SyncableService,
   // Uses the |PasswordStore| APIs to change entries.
   void WriteToPasswordStore(const SyncEntries& entries);
 
-  // Examines |data|, an entry in sync db, and updates |sync_entries| or
-  // |updated_db_entries| accordingly. An element is removed from
-  // |unmatched_data_from_password_db| if its tag is identical to |data|'s.
-  static void CreateOrUpdateEntry(
-      const syncer::SyncData& data,
+  // Goes through |sync_data| and for each entry merges the data with
+  // |unmatched_data_from_password_db|. The result of merge is recorded in
+  // |sync_entries| or |updated_db_entries|. Successfully merged elements are
+  // removed from |unmatched_data_from_password_db|.
+  void MergeSyncDataWithLocalData(
+      const syncer::SyncDataList& sync_data,
       PasswordEntryMap* unmatched_data_from_password_db,
       SyncEntries* sync_entries,
       syncer::SyncChangeList* updated_db_entries);
+
+  // Examines |data|, an entry in sync db, and updates |sync_entries| or
+  // |updated_db_entries| accordingly. An element is removed from
+  // |unmatched_data_from_password_db| if its tag is identical to |data|'s.
+  void CreateOrUpdateEntry(const sync_pb::PasswordSpecificsData& data,
+                           PasswordEntryMap* unmatched_data_from_password_db,
+                           SyncEntries* sync_entries,
+                           syncer::SyncChangeList* updated_db_entries);
 
   // Calls |operation| for each element in |entries| and appends the changes to
   // |all_changes|.
@@ -110,8 +125,13 @@ class PasswordSyncableService : public syncer::SyncableService,
   // A signal activated by this class to start sync as soon as possible.
   syncer::SyncableService::StartSyncFlare flare_;
 
+  // Clock for date_synced updates.
+  std::unique_ptr<base::Clock> clock_;
+
   // True if processing sync changes is in progress.
   bool is_processing_sync_changes_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(PasswordSyncableService);
 };

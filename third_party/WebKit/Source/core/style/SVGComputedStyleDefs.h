@@ -122,11 +122,11 @@ enum EPaintOrder {
 // Inherited/Non-Inherited Style Datastructures
 class StyleFillData : public RefCounted<StyleFillData> {
  public:
-  static PassRefPtr<StyleFillData> Create() {
-    return AdoptRef(new StyleFillData);
+  static RefPtr<StyleFillData> Create() {
+    return WTF::AdoptRef(new StyleFillData);
   }
-  PassRefPtr<StyleFillData> Copy() const {
-    return AdoptRef(new StyleFillData(*this));
+  RefPtr<StyleFillData> Copy() const {
+    return WTF::AdoptRef(new StyleFillData(*this));
   }
 
   bool operator==(const StyleFillData&) const;
@@ -170,12 +170,12 @@ class UnzoomedLength {
 
 class CORE_EXPORT StyleStrokeData : public RefCounted<StyleStrokeData> {
  public:
-  static PassRefPtr<StyleStrokeData> Create() {
-    return AdoptRef(new StyleStrokeData);
+  static RefPtr<StyleStrokeData> Create() {
+    return WTF::AdoptRef(new StyleStrokeData);
   }
 
-  PassRefPtr<StyleStrokeData> Copy() const {
-    return AdoptRef(new StyleStrokeData(*this));
+  RefPtr<StyleStrokeData> Copy() const {
+    return WTF::AdoptRef(new StyleStrokeData(*this));
   }
 
   bool operator==(const StyleStrokeData&) const;
@@ -204,11 +204,11 @@ class CORE_EXPORT StyleStrokeData : public RefCounted<StyleStrokeData> {
 
 class StyleStopData : public RefCounted<StyleStopData> {
  public:
-  static PassRefPtr<StyleStopData> Create() {
-    return AdoptRef(new StyleStopData);
+  static RefPtr<StyleStopData> Create() {
+    return WTF::AdoptRef(new StyleStopData);
   }
-  PassRefPtr<StyleStopData> Copy() const {
-    return AdoptRef(new StyleStopData(*this));
+  RefPtr<StyleStopData> Copy() const {
+    return WTF::AdoptRef(new StyleStopData(*this));
   }
 
   bool operator==(const StyleStopData&) const;
@@ -227,11 +227,11 @@ class StyleStopData : public RefCounted<StyleStopData> {
 // Note: the rule for this class is, *no inheritance* of these props
 class CORE_EXPORT StyleMiscData : public RefCounted<StyleMiscData> {
  public:
-  static PassRefPtr<StyleMiscData> Create() {
-    return AdoptRef(new StyleMiscData);
+  static RefPtr<StyleMiscData> Create() {
+    return WTF::AdoptRef(new StyleMiscData);
   }
-  PassRefPtr<StyleMiscData> Copy() const {
-    return AdoptRef(new StyleMiscData(*this));
+  RefPtr<StyleMiscData> Copy() const {
+    return WTF::AdoptRef(new StyleMiscData(*this));
   }
 
   bool operator==(const StyleMiscData&) const;
@@ -253,11 +253,11 @@ class CORE_EXPORT StyleMiscData : public RefCounted<StyleMiscData> {
 // Non-inherited resources
 class StyleResourceData : public RefCounted<StyleResourceData> {
  public:
-  static PassRefPtr<StyleResourceData> Create() {
-    return AdoptRef(new StyleResourceData);
+  static RefPtr<StyleResourceData> Create() {
+    return WTF::AdoptRef(new StyleResourceData);
   }
-  PassRefPtr<StyleResourceData> Copy() const {
-    return AdoptRef(new StyleResourceData(*this));
+  RefPtr<StyleResourceData> Copy() const {
+    return WTF::AdoptRef(new StyleResourceData(*this));
   }
 
   bool operator==(const StyleResourceData&) const;
@@ -276,11 +276,11 @@ class StyleResourceData : public RefCounted<StyleResourceData> {
 class StyleInheritedResourceData
     : public RefCounted<StyleInheritedResourceData> {
  public:
-  static PassRefPtr<StyleInheritedResourceData> Create() {
-    return AdoptRef(new StyleInheritedResourceData);
+  static RefPtr<StyleInheritedResourceData> Create() {
+    return WTF::AdoptRef(new StyleInheritedResourceData);
   }
-  PassRefPtr<StyleInheritedResourceData> Copy() const {
-    return AdoptRef(new StyleInheritedResourceData(*this));
+  RefPtr<StyleInheritedResourceData> Copy() const {
+    return WTF::AdoptRef(new StyleInheritedResourceData(*this));
   }
 
   bool operator==(const StyleInheritedResourceData&) const;
@@ -300,10 +300,10 @@ class StyleInheritedResourceData
 // Geometry properties
 class StyleGeometryData : public RefCounted<StyleGeometryData> {
  public:
-  static PassRefPtr<StyleGeometryData> Create() {
-    return AdoptRef(new StyleGeometryData);
+  static RefPtr<StyleGeometryData> Create() {
+    return WTF::AdoptRef(new StyleGeometryData);
   }
-  PassRefPtr<StyleGeometryData> Copy() const;
+  RefPtr<StyleGeometryData> Copy() const;
   bool operator==(const StyleGeometryData&) const;
   bool operator!=(const StyleGeometryData& other) const {
     return !(*this == other);

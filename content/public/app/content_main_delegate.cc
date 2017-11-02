@@ -53,6 +53,24 @@ bool ContentMainDelegate::ShouldEnableProfilerRecording() {
   return false;
 }
 
+service_manager::ProcessType ContentMainDelegate::OverrideProcessType() {
+  return service_manager::ProcessType::kDefault;
+}
+
+void ContentMainDelegate::AdjustServiceProcessCommandLine(
+    const service_manager::Identity& identity,
+    base::CommandLine* command_line) {}
+
+bool ContentMainDelegate::ShouldTerminateServiceManagerOnInstanceQuit(
+    const service_manager::Identity& identity,
+    int* exit_code) {
+  return false;
+}
+
+void ContentMainDelegate::OnServiceManagerInitialized(
+    const base::Closure& quit_closure,
+    service_manager::BackgroundServiceManager* service_manager) {}
+
 ContentBrowserClient* ContentMainDelegate::CreateContentBrowserClient() {
 #if defined(CHROME_MULTIPLE_DLL_CHILD)
   return NULL;

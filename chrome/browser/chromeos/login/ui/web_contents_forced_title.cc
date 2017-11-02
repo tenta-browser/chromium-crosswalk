@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/login/ui/web_contents_forced_title.h"
 
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 
@@ -19,8 +20,9 @@ void WebContentsForcedTitle::CreateForWebContentsWithTitle(
     return;
 
   web_contents->UpdateTitleForEntry(nullptr, title);
-  web_contents->SetUserData(UserDataKey(),
-                            new WebContentsForcedTitle(web_contents, title));
+  web_contents->SetUserData(
+      UserDataKey(),
+      base::WrapUnique(new WebContentsForcedTitle(web_contents, title)));
 }
 
 WebContentsForcedTitle::WebContentsForcedTitle(
@@ -30,8 +32,7 @@ WebContentsForcedTitle::WebContentsForcedTitle(
 
 WebContentsForcedTitle::~WebContentsForcedTitle() {}
 
-void WebContentsForcedTitle::TitleWasSet(content::NavigationEntry* entry,
-                                         bool explicit_set) {
+void WebContentsForcedTitle::TitleWasSet(content::NavigationEntry* entry) {
   if (!entry || entry->GetTitle() != title_)
     web_contents()->UpdateTitleForEntry(entry, title_);
 }

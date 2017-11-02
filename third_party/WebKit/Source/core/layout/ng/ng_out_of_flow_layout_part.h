@@ -9,8 +9,6 @@
 
 #include "core/layout/ng/ng_absolute_utils.h"
 #include "core/layout/ng/ng_constraint_space.h"
-#include "core/layout/ng/ng_layout_algorithm.h"
-#include "platform/heap/Handle.h"
 #include "platform/wtf/Optional.h"
 
 namespace blink {
@@ -29,27 +27,33 @@ class CORE_EXPORT NGOutOfFlowLayoutPart {
   STACK_ALLOCATED();
 
  public:
-  NGOutOfFlowLayoutPart(const NGConstraintSpace& contianer_space,
+  NGOutOfFlowLayoutPart(const NGBlockNode container,
+                        const NGConstraintSpace& container_space,
                         const ComputedStyle& container_style,
                         NGFragmentBuilder* container_builder);
   void Run();
 
  private:
-  RefPtr<NGLayoutResult> LayoutDescendant(NGBlockNode& descendant,
+  RefPtr<NGLayoutResult> LayoutDescendant(NGBlockNode descendant,
                                           NGStaticPosition static_position,
                                           NGLogicalOffset* offset);
 
+  bool IsContainingBlockForDescendant(const ComputedStyle& descendant_style);
+
   RefPtr<NGLayoutResult> GenerateFragment(
-      NGBlockNode& node,
+      NGBlockNode node,
       const Optional<LayoutUnit>& block_estimate,
       const NGAbsolutePhysicalPosition node_position);
 
   const ComputedStyle& container_style_;
   NGFragmentBuilder* container_builder_;
 
-  NGLogicalOffset container_border_offset_;
-  NGPhysicalOffset container_border_physical_offset_;
-  RefPtr<NGConstraintSpace> container_space_;
+  bool contains_absolute_;
+  bool contains_fixed_;
+  NGLogicalOffset content_offset_;
+  NGPhysicalOffset content_physical_offset_;
+  NGLogicalSize container_size_;
+  NGPhysicalSize icb_size_;
 };
 
 }  // namespace blink

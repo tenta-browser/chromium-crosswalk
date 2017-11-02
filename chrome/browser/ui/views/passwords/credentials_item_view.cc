@@ -7,11 +7,10 @@
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
-#include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/autofill/core/common/password_form.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/path.h"
@@ -19,11 +18,8 @@
 #include "ui/views/bubble/tooltip_icon.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/layout/layout_constants.h"
 
 namespace {
-// The default spacing between the icon and text.
-const int kSpacing = 12;
 
 gfx::Size GetTextLabelsSize(const views::Label* upper_label,
                             const views::Label* lower_label) {
@@ -67,7 +63,7 @@ CredentialsItemView::CredentialsItemView(
     SkColor hover_color,
     const autofill::PasswordForm* form,
     net::URLRequestContextGetter* request_context)
-    : CustomButton(button_listener),
+    : Button(button_listener),
       form_(form),
       upper_label_(nullptr),
       lower_label_(nullptr),
@@ -79,7 +75,7 @@ CredentialsItemView::CredentialsItemView(
   // the parent can receive the events instead.
   image_view_ = new CircularImageView;
   image_view_->set_can_process_events_within_subtree(false);
-  gfx::Image image = ResourceBundle::GetSharedInstance().GetImageNamed(
+  gfx::Image image = ui::ResourceBundle::GetSharedInstance().GetImageNamed(
       IDR_PROFILE_AVATAR_PLACEHOLDER_LARGE);
   DCHECK(image.Width() >= kAvatarImageSize &&
          image.Height() >= kAvatarImageSize);
@@ -94,10 +90,9 @@ CredentialsItemView::CredentialsItemView(
 
   // TODO(tapted): Check these (and the STYLE_ values below) against the spec on
   // http://crbug.com/651681.
-  const int kLabelContext =
-      ui::MaterialDesignController::IsSecondaryUiMaterial()
-          ? CONTEXT_BODY_TEXT_SMALL
-          : CONTEXT_DEPRECATED_SMALL;
+  const int kLabelContext = ChromeLayoutProvider::Get()->IsHarmonyMode()
+                                ? CONTEXT_BODY_TEXT_SMALL
+                                : CONTEXT_DEPRECATED_SMALL;
 
   if (!upper_text.empty()) {
     upper_label_ = new views::Label(upper_text, kLabelContext,
@@ -146,13 +141,15 @@ int CredentialsItemView::GetPreferredHeight() const {
   return GetPreferredSize().height();
 }
 
-gfx::Size CredentialsItemView::GetPreferredSize() const {
+gfx::Size CredentialsItemView::CalculatePreferredSize() const {
   gfx::Size labels_size = GetTextLabelsSize(upper_label_, lower_label_);
   gfx::Size size = gfx::Size(kAvatarImageSize + labels_size.width(),
                              std::max(kAvatarImageSize, labels_size.height()));
   const gfx::Insets insets(GetInsets());
   size.Enlarge(insets.width(), insets.height());
-  size.Enlarge(kSpacing, 0);
+  size.Enlarge(ChromeLayoutProvider::Get()->GetDistanceMetric(
+                   views::DISTANCE_RELATED_LABEL_HORIZONTAL),
+               0);
 
   // Make the size at least as large as the minimum size needed by the border.
   size.SetToMax(border() ? border()->GetMinimumSize() : gfx::Size());
@@ -179,7 +176,9 @@ void CredentialsItemView::Layout() {
       lower_label_ ? lower_label_->GetPreferredSize() : gfx::Size();
   int y_offset = (child_area.height() -
       (upper_size.height() + lower_size.height())) / 2;
-  gfx::Point label_origin(image_origin.x() + image_size.width() + kSpacing,
+  gfx::Point label_origin(image_origin.x() + image_size.width() +
+                              ChromeLayoutProvider::Get()->GetDistanceMetric(
+                                  views::DISTANCE_RELATED_LABEL_HORIZONTAL),
                           child_area.origin().y() + y_offset);
   if (upper_label_)
     upper_label_->SetBoundsRect(gfx::Rect(label_origin, upper_size));
@@ -195,9 +194,7 @@ void CredentialsItemView::Layout() {
   }
 }
 
-void CredentialsItemView::OnPaint(gfx::Canvas* canvas) {
+void CredentialsItemView::OnPaintBackground(gfx::Canvas* canvas) {
   if (state() == STATE_PRESSED || state() == STATE_HOVERED)
     canvas->DrawColor(hover_color_);
-
-  CustomButton::OnPaint(canvas);
 }

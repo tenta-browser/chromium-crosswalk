@@ -37,10 +37,9 @@ class MessageCenterTrayBridge :
   void OnMessageCenterTrayChanged() override;
   bool ShowPopups() override;
   void HidePopups() override;
-  bool ShowMessageCenter() override;
+  bool ShowMessageCenter(bool show_by_click) override;
   void HideMessageCenter() override;
   bool ShowNotifierSettings() override;
-  bool IsContextMenuEnabled() const override;
   message_center::MessageCenterTray* GetMessageCenterTray() override;
 
   message_center::MessageCenter* message_center() { return message_center_; }

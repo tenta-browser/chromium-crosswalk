@@ -7,15 +7,13 @@
 #include "core/css/CSSIdentifierValue.h"
 #include "core/css/CSSValueList.h"
 #include "core/css/parser/CSSPropertyParserHelpers.h"
-#include "platform/RuntimeEnabledFeatures.h"
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIGridAutoFlow::parseSingleValue(
+const CSSValue* CSSPropertyAPIGridAutoFlow::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
-  DCHECK(RuntimeEnabledFeatures::cssGridLayoutEnabled());
+    const CSSParserLocalContext&) const {
   CSSIdentifierValue* row_or_column_value =
       CSSPropertyParserHelpers::ConsumeIdent<CSSValueRow, CSSValueColumn>(
           range);

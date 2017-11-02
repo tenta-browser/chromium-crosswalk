@@ -37,12 +37,12 @@ namespace content {
 // i.e. the Main Render thread. Note that a CanvasCaptureHandlerDelegate is
 // used to send back frames to |io_task_runner_|, i.e. IO thread.
 class CONTENT_EXPORT CanvasCaptureHandler final
-    : public NON_EXPORTED_BASE(blink::WebCanvasCaptureHandler) {
+    : public blink::WebCanvasCaptureHandler {
  public:
   ~CanvasCaptureHandler() override;
 
   // Creates a CanvasCaptureHandler instance and updates UMA histogram.
-  static CanvasCaptureHandler* CreateCanvasCaptureHandler(
+  static std::unique_ptr<CanvasCaptureHandler> CreateCanvasCaptureHandler(
       const blink::WebSize& size,
       double frame_rate,
       const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,

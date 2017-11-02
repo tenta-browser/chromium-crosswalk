@@ -46,8 +46,10 @@ void ArcAppResult::ExecuteLaunchCommand(int event_flags) {
 void ArcAppResult::Open(int event_flags) {
   RecordHistogram(APP_SEARCH_RESULT);
 
-  if (!arc::LaunchApp(profile(), app_id(), event_flags))
+  if (!arc::LaunchApp(profile(), app_id(), event_flags,
+                      controller()->GetAppListDisplayId())) {
     return;
+  }
 
   // Manually close app_list view because focus is not changed on ARC app start,
   // and current view remains active.
@@ -66,8 +68,10 @@ std::unique_ptr<SearchResult> ArcAppResult::Duplicate() const {
 }
 
 ui::MenuModel* ArcAppResult::GetContextMenuModel() {
-  context_menu_.reset(new ArcAppContextMenu(
-      this, profile(), app_id(), controller()));
+  if (!context_menu_) {
+    context_menu_.reset(
+        new ArcAppContextMenu(this, profile(), app_id(), controller()));
+  }
   return context_menu_->GetMenuModel();
 }
 

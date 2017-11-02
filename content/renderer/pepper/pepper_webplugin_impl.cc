@@ -19,8 +19,11 @@
 #include "content/renderer/pepper/plugin_module.h"
 #include "content/renderer/pepper/v8object_var.h"
 #include "content/renderer/render_frame_impl.h"
+#include "content/renderer/renderer_blink_platform_impl.h"
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "ppapi/shared_impl/var_tracker.h"
+#include "third_party/WebKit/public/platform/WebClipboard.h"
+#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
 #include "third_party/WebKit/public/platform/WebPoint.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
@@ -193,7 +196,6 @@ void PepperWebPluginImpl::UpdateGeometry(
     const WebRect& window_rect,
     const WebRect& clip_rect,
     const WebRect& unobscured_rect,
-    const WebVector<WebRect>& cut_outs_rects,
     bool is_visible) {
   plugin_rect_ = window_rect;
   if (instance_ && !instance_->FlashIsFullscreenOrPending())
@@ -211,13 +213,13 @@ void PepperWebPluginImpl::UpdateFocus(bool focused,
 void PepperWebPluginImpl::UpdateVisibility(bool visible) {}
 
 blink::WebInputEventResult PepperWebPluginImpl::HandleInputEvent(
-    const blink::WebInputEvent& event,
+    const blink::WebCoalescedInputEvent& coalesced_event,
     blink::WebCursorInfo& cursor_info) {
   // Re-entrancy may cause JS to try to execute script on the plugin before it
   // is fully initialized. See: crbug.com/715747.
   if (!instance_ || instance_->FlashIsFullscreenOrPending())
     return blink::WebInputEventResult::kNotHandled;
-  return instance_->HandleInputEvent(event, &cursor_info)
+  return instance_->HandleCoalescedInputEvent(coalesced_event, &cursor_info)
              ? blink::WebInputEventResult::kHandledApplication
              : blink::WebInputEventResult::kNotHandled;
 }
@@ -283,6 +285,47 @@ WebString PepperWebPluginImpl::SelectionAsMarkup() const {
   if (!instance_)
     return WebString();
   return WebString::FromUTF16(instance_->GetSelectedText(true));
+}
+
+bool PepperWebPluginImpl::CanEditText() const {
+  return instance_ && instance_->CanEditText();
+}
+
+bool PepperWebPluginImpl::ExecuteEditCommand(const blink::WebString& name) {
+  return ExecuteEditCommand(name, WebString());
+}
+
+bool PepperWebPluginImpl::ExecuteEditCommand(const blink::WebString& name,
+                                             const blink::WebString& value) {
+  if (!instance_)
+    return false;
+
+  if (name == "Cut") {
+    if (!HasSelection() || !CanEditText())
+      return false;
+
+    blink::Platform::Current()->Clipboard()->WriteHTML(
+        SelectionAsMarkup(), WebURL(), SelectionAsText(), false);
+
+    instance_->ReplaceSelection("");
+    return true;
+  }
+  // If the clipboard contains something other than text (e.g. an image),
+  // WebClipboard::ReadPlainText() returns an empty string. The empty string is
+  // then pasted, replacing any selected text. This behavior is consistent with
+  // that of HTML text form fields.
+  if (name == "Paste" || name == "PasteAndMatchStyle") {
+    if (!CanEditText())
+      return false;
+
+    blink::WebString text =
+        blink::Platform::Current()->Clipboard()->ReadPlainText(
+            blink::WebClipboard::kBufferStandard);
+
+    instance_->ReplaceSelection(text.Utf8());
+    return true;
+  }
+  return false;
 }
 
 WebURL PepperWebPluginImpl::LinkAtPosition(const WebPoint& position) const {

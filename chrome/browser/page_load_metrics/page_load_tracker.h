@@ -12,8 +12,10 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
+#include "chrome/browser/page_load_metrics/page_load_metrics_update_dispatcher.h"
 #include "chrome/browser/page_load_metrics/user_input_tracker.h"
 #include "chrome/common/page_load_metrics/page_load_timing.h"
+#include "components/ukm/ukm_source.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/base/page_transition_types.h"
@@ -31,7 +33,6 @@ class NavigationHandle;
 namespace page_load_metrics {
 
 class PageLoadMetricsEmbedderInterface;
-class PageLoadMetricsObserver;
 
 namespace internal {
 
@@ -42,6 +43,7 @@ extern const char kAbortChainSizeNewNavigation[];
 extern const char kAbortChainSizeNoCommit[];
 extern const char kAbortChainSizeSameURL[];
 extern const char kPageLoadCompletedAfterAppBackground[];
+extern const char kPageLoadStartedInForeground[];
 
 }  // namespace internal
 
@@ -109,8 +111,8 @@ enum InternalErrorLoadEvent {
   // No page load end time was recorded for this page load.
   ERR_NO_PAGE_LOAD_END_TIME,
 
-  // Received a timing update from a subframe.
-  ERR_TIMING_IPC_FROM_SUBFRAME,
+  // Received a timing update from a subframe (deprecated).
+  DEPRECATED_ERR_TIMING_IPC_FROM_SUBFRAME,
 
   // A timing IPC was sent from the renderer that contained timing data which
   // was inconsistent with our timing data for the currently committed load.
@@ -124,6 +126,15 @@ enum InternalErrorLoadEvent {
   // A timing IPC was sent from the renderer that contained invalid timing data
   // (e.g. out of order timings, or other issues).
   ERR_BAD_TIMING_IPC_INVALID_TIMING,
+
+  // We received a navigation start for a child frame that is before the
+  // navigation start of the main frame.
+  ERR_SUBFRAME_NAVIGATION_START_BEFORE_MAIN_FRAME,
+
+  // We received an IPC from a subframe when we weren't tracking a committed
+  // load. We expect this error to happen, and track it so we can understand how
+  // frequently this case is encountered.
+  ERR_SUBFRAME_IPC_WITH_NO_RELEVANT_LOAD,
 
   // Add values before this final count.
   ERR_LAST_ENTRY,
@@ -141,7 +152,7 @@ bool IsNavigationUserInitiated(content::NavigationHandle* handle);
 // provisional load, until a new navigation commits or the navigation fails.
 // MetricsWebContentsObserver manages a set of provisional PageLoadTrackers, as
 // well as a committed PageLoadTracker.
-class PageLoadTracker {
+class PageLoadTracker : public PageLoadMetricsUpdateDispatcher::Client {
  public:
   // Caller must guarantee that the embedder_interface pointer outlives this
   // class. The PageLoadTracker must not hold on to
@@ -154,11 +165,24 @@ class PageLoadTracker {
                   UserInitiatedInfo user_initiated_info,
                   int aborted_chain_size,
                   int aborted_chain_size_same_url);
-  ~PageLoadTracker();
+  ~PageLoadTracker() override;
+
+  // PageLoadMetricsUpdateDispatcher::Client implementation:
+  void OnTimingChanged() override;
+  void OnSubFrameTimingChanged(const mojom::PageLoadTiming& timing) override;
+  void OnMainFrameMetadataChanged() override;
+  void OnSubframeMetadataChanged() override;
+  void UpdateFeaturesUsage(
+      const mojom::PageLoadFeatures& new_features) override;
+
   void Redirect(content::NavigationHandle* navigation_handle);
   void WillProcessNavigationResponse(
       content::NavigationHandle* navigation_handle);
   void Commit(content::NavigationHandle* navigation_handle);
+  void DidCommitSameDocumentNavigation(
+      content::NavigationHandle* navigation_handle);
+  void DidFinishSubFrameNavigation(
+      content::NavigationHandle* navigation_handle);
   void FailedProvisionalLoad(content::NavigationHandle* navigation_handle,
                              base::TimeTicks failed_load_time);
   void WebContentsHidden();
@@ -174,15 +198,8 @@ class PageLoadTracker {
 
   void NotifyClientRedirectTo(const PageLoadTracker& destination);
 
-  void UpdateTiming(const PageLoadTiming& timing,
-                    const PageLoadMetadata& metadata);
-
-  // Update metadata for child frames. Updates for child frames arrive
-  // separately from updates for the main frame, so aren't included in
-  // UpdateTiming.
-  void UpdateChildFrameMetadata(const PageLoadMetadata& child_metadata);
-
-  void OnLoadedResource(const ExtraRequestInfo& extra_request_info);
+  void OnLoadedResource(
+      const ExtraRequestCompleteInfo& extra_request_complete_info);
 
   // Signals that we should stop tracking metrics for the associated page load.
   // We may stop tracking a page load if it doesn't meet the criteria for
@@ -229,13 +246,17 @@ class PageLoadTracker {
 
   base::TimeTicks navigation_start() const { return navigation_start_; }
 
-  PageLoadExtraInfo ComputePageLoadExtraInfo();
+  PageLoadExtraInfo ComputePageLoadExtraInfo() const;
 
   ui::PageTransition page_transition() const { return page_transition_; }
 
   UserInitiatedInfo user_initiated_info() const { return user_initiated_info_; }
 
   UserInputTracker* input_tracker() { return &input_tracker_; }
+
+  PageLoadMetricsUpdateDispatcher* metrics_update_dispatcher() {
+    return &metrics_update_dispatcher_;
+  }
 
   // Whether this PageLoadTracker has a navigation GlobalRequestID that matches
   // the given request_id. This method will return false before
@@ -256,6 +277,10 @@ class PageLoadTracker {
   void OnNavigationDelayComplete(base::TimeDelta scheduled_delay,
                                  base::TimeDelta actual_delay);
 
+  // Informs the observers that the event corresponding to |event_key| has
+  // occurred.
+  void BroadcastEventToObservers(const void* const event_key);
+
  private:
   // This function converts a TimeTicks value taken in the browser process
   // to navigation_start_ if:
@@ -274,8 +299,6 @@ class PageLoadTracker {
   // and represents a sequence of provisional aborts that never ends with a
   // committed load.
   void LogAbortChainHistograms(content::NavigationHandle* final_navigation);
-
-  void MaybeUpdateURL(content::NavigationHandle* navigation_handle);
 
   UserInputTracker input_tracker_;
 
@@ -326,9 +349,7 @@ class PageLoadTracker {
   base::TimeTicks foreground_time_;
   bool started_in_foreground_;
 
-  PageLoadTiming timing_;
-  PageLoadMetadata main_frame_metadata_;
-  PageLoadMetadata child_frame_metadata_;
+  mojom::PageLoadTimingPtr last_dispatched_merged_page_timing_;
 
   ui::PageTransition page_transition_;
 
@@ -353,6 +374,10 @@ class PageLoadTracker {
   PageLoadMetricsEmbedderInterface* const embedder_interface_;
 
   std::vector<std::unique_ptr<PageLoadMetricsObserver>> observers_;
+
+  PageLoadMetricsUpdateDispatcher metrics_update_dispatcher_;
+
+  const ukm::SourceId source_id_;
 
   DISALLOW_COPY_AND_ASSIGN(PageLoadTracker);
 };

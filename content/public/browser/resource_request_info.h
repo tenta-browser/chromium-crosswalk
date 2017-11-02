@@ -47,7 +47,6 @@ class ResourceRequestInfo {
                                                 int render_view_id,
                                                 int render_frame_id,
                                                 bool is_main_frame,
-                                                bool parent_is_main_frame,
                                                 bool allow_download,
                                                 bool is_async,
                                                 PreviewsState previews_state);
@@ -73,6 +72,11 @@ class ResourceRequestInfo {
   // non-null.
   using WebContentsGetter = base::Callback<WebContents*(void)>;
 
+  // A callback that returns a frame tree node id . The callback can always
+  // be used, but it may return -1 if no id is found. The callback should only
+  // run on the UI thread.
+  using FrameTreeNodeIdGetter = base::Callback<int(void)>;
+
   // Returns a callback that returns a pointer to the WebContents this request
   // is associated with, or nullptr if it no longer exists or the request is
   // not associated with a WebContents. The callback should only run on the UI
@@ -80,6 +84,13 @@ class ResourceRequestInfo {
   // Note: Not all resource requests will be owned by a WebContents. For
   // example, requests made by a ServiceWorker.
   virtual WebContentsGetter GetWebContentsGetterForRequest() const = 0;
+
+  // Returns a callback that returns an int with the frame tree node id
+  //   associated with this request, or -1 if it no longer exists. This
+  //   callback should only be run on the UI thread.
+  // Note: Not all resource requests will be associated with a frame. For
+  // example, requests made by a ServiceWorker.
+  virtual FrameTreeNodeIdGetter GetFrameTreeNodeIdGetterForRequest() const = 0;
 
   // Returns the associated ResourceContext.
   virtual ResourceContext* GetContext() const = 0;
@@ -103,6 +114,7 @@ class ResourceRequestInfo {
 
   // Returns the FrameTreeNode ID for this frame. This ID is browser-global and
   // uniquely identifies a frame that hosts content.
+  // Note: Returns -1 for all requests except PlzNavigate requests.
   virtual int GetFrameTreeNodeId() const = 0;
 
   // The IPC route identifier of the RenderFrame.
@@ -114,9 +126,6 @@ class ResourceRequestInfo {
 
   // True if GetRenderFrameID() represents a main frame in the RenderView.
   virtual bool IsMainFrame() const = 0;
-
-  // True if the frame's parent represents a main frame in the RenderView.
-  virtual bool ParentIsMainFrame() const = 0;
 
   // Returns the associated resource type.
   virtual ResourceType GetResourceType() const = 0;
@@ -145,10 +154,6 @@ class ResourceRequestInfo {
   // DO NOT BASE SECURITY DECISIONS ON THIS FLAG!
   virtual bool HasUserGesture() const = 0;
 
-  // True if ResourceController::CancelAndIgnore() was called.  For example,
-  // the requested URL may be being loaded by an external program.
-  virtual bool WasIgnoredByHandler() const = 0;
-
   // Returns false if there is NOT an associated render frame.
   virtual bool GetAssociatedRenderFrame(int* render_process_id,
                                         int* render_frame_id) const = 0;
@@ -166,6 +171,9 @@ class ResourceRequestInfo {
   // Only used for navigations. Returns opaque data set by the embedder on the
   // UI thread at the beginning of navigation.
   virtual NavigationUIData* GetNavigationUIData() const = 0;
+
+  // Whether this request was canceled by DevTools.
+  virtual bool CanceledByDevTools() const = 0;
 
  protected:
   virtual ~ResourceRequestInfo() {}

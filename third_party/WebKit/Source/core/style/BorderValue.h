@@ -50,12 +50,19 @@ class BorderValue {
   BorderValue()
       : color_(0),
         color_is_current_color_(true),
-        style_(kBorderStyleNone),
-        is_auto_(kOutlineIsAutoOff) {
+        style_(static_cast<unsigned>(EBorderStyle::kNone)) {
     SetWidth(3);
   }
 
-  bool NonZero() const { return Width() && (style_ != kBorderStyleNone); }
+  BorderValue(EBorderStyle style, const StyleColor& color, float width) {
+    SetColor(color);
+    SetStyle(style);
+    SetWidth(width);
+  }
+
+  bool NonZero() const {
+    return Width() && (style_ != static_cast<unsigned>(EBorderStyle::kNone));
+  }
 
   bool IsTransparent() const {
     return !color_is_current_color_ && !color_.Alpha();
@@ -69,9 +76,11 @@ class BorderValue {
   // The default width is 3px, but if the style is none we compute a value of 0
   // (in ComputedStyle itself)
   bool VisuallyEqual(const BorderValue& o) const {
-    if (style_ == kBorderStyleNone && o.style_ == kBorderStyleNone)
+    if (style_ == static_cast<unsigned>(EBorderStyle::kNone) &&
+        o.style_ == static_cast<unsigned>(EBorderStyle::kNone))
       return true;
-    if (style_ == kBorderStyleHidden && o.style_ == kBorderStyleHidden)
+    if (style_ == static_cast<unsigned>(EBorderStyle::kHidden) &&
+        o.style_ == static_cast<unsigned>(EBorderStyle::kHidden))
       return true;
     return *this == o;
   }
@@ -100,13 +109,21 @@ class BorderValue {
   }
 
   EBorderStyle Style() const { return static_cast<EBorderStyle>(style_); }
-  void SetStyle(EBorderStyle style) { style_ = style; }
+  void SetStyle(EBorderStyle style) { style_ = static_cast<unsigned>(style); }
+
+  bool ColorIsCurrentColor() const { return color_is_current_color_; }
+  void SetColorIsCurrentColor(bool color_is_current_color) {
+    color_is_current_color_ = static_cast<unsigned>(color_is_current_color);
+  }
 
  protected:
   static unsigned WidthToFixedPoint(float width) {
     DCHECK_GE(width, 0);
-    return static_cast<unsigned>(std::min<float>(width, kMaxForBorderWidth) *
-                                 kBorderWidthDenominator);
+    // Avoid min()/max() from std here in the header, because that would require
+    // inclusion of <algorithm>, which is slow to compile.
+    if (width > float(kMaxForBorderWidth))
+      width = float(kMaxForBorderWidth);
+    return static_cast<unsigned>(width * kBorderWidthDenominator);
   }
 
   Color color_;
@@ -114,9 +131,6 @@ class BorderValue {
 
   unsigned width_ : 26;  // Fixed point width
   unsigned style_ : 4;   // EBorderStyle
-
-  // This is only used by OutlineValue but moved here to keep the bits packed.
-  unsigned is_auto_ : 1;  // OutlineIsAuto
 };
 
 }  // namespace blink

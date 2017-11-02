@@ -11,8 +11,7 @@
 #include "bindings/core/v8/Dictionary.h"
 #include "bindings/core/v8/ScriptFunction.h"
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8DOMException.h"
 #include "bindings/core/v8/V8GCController.h"
 #include "core/dom/DOMException.h"
@@ -22,6 +21,7 @@
 #include "core/testing/DummyPageHolder.h"
 #include "modules/serviceworkers/NavigatorServiceWorker.h"
 #include "modules/serviceworkers/ServiceWorkerContainerClient.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/PtrUtil.h"
@@ -109,7 +109,7 @@ class ExpectDOMException : public ScriptValueTest {
   ~ExpectDOMException() override {}
 
   void operator()(ScriptValue value) const override {
-    DOMException* exception = V8DOMException::toImplWithTypeCheck(
+    DOMException* exception = V8DOMException::ToImplWithTypeCheck(
         value.GetIsolate(), value.V8Value());
     EXPECT_TRUE(exception) << "the value should be a DOMException";
     if (!exception)
@@ -172,7 +172,7 @@ class ServiceWorkerContainerTest : public ::testing::Test {
 
   void SetPageURL(const String& url) {
     // For URL completion.
-    page_->GetDocument().SetURL(KURL(KURL(), url));
+    page_->GetDocument().SetURL(KURL(NullURL(), url));
 
     // The basis for security checks.
     page_->GetDocument().SetSecurityOrigin(
@@ -353,9 +353,9 @@ TEST_F(ServiceWorkerContainerTest,
                                      options);
 
     EXPECT_EQ(1ul, stub_provider.RegisterCallCount());
-    EXPECT_EQ(WebURL(KURL(KURL(), "http://localhost/x/y/")),
+    EXPECT_EQ(WebURL(KURL(NullURL(), "http://localhost/x/y/")),
               stub_provider.RegisterScope());
-    EXPECT_EQ(WebURL(KURL(KURL(), "http://localhost/x/y/worker.js")),
+    EXPECT_EQ(WebURL(KURL(NullURL(), "http://localhost/x/y/worker.js")),
               stub_provider.RegisterScriptURL());
   }
 }
@@ -374,7 +374,7 @@ TEST_F(ServiceWorkerContainerTest,
     ScriptState::Scope script_scope(GetScriptState());
     container->getRegistration(GetScriptState(), "");
     EXPECT_EQ(1ul, stub_provider.GetRegistrationCallCount());
-    EXPECT_EQ(WebURL(KURL(KURL(), "http://localhost/x/index.html")),
+    EXPECT_EQ(WebURL(KURL(NullURL(), "http://localhost/x/index.html")),
               stub_provider.GetRegistrationURL());
   }
 }

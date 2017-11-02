@@ -69,8 +69,8 @@ BASE_EXPORT void InitializeWindowClass(
 //   CreateWindowW(class_name, window_name, ...
 //
 template <WNDPROC proc>
-LRESULT CALLBACK WrappedWindowProc(HWND hwnd, UINT message,
-                                   WPARAM wparam, LPARAM lparam) {
+LRESULT CALLBACK
+WrappedWindowProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
   LRESULT rv = 0;
   __try {
     rv = proc(hwnd, message, wparam, lparam);

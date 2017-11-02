@@ -1,6 +1,6 @@
 rootWebArea
-++div
-++++textField errormessageId=paragraph
+++genericContainer
+++++textField errormessageId=paragraph invalidState=true
 ++paragraph
 ++++staticText name='Error'
 ++++++inlineTextBox name='Error'

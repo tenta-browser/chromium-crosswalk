@@ -21,6 +21,7 @@ namespace ui {
 class Event;
 
 namespace mojom {
+class WindowManagerClient;
 class WindowTree;
 }
 }
@@ -28,8 +29,13 @@ class WindowTree;
 namespace aura {
 
 class Window;
+class WindowMus;
 class WindowTreeClient;
 class WindowTreeHostMus;
+
+enum class ChangeType;
+
+struct WindowTreeHostMusInitParams;
 
 // Use to access implementation details of WindowTreeClient.
 class WindowTreeClientPrivate {
@@ -55,13 +61,25 @@ class WindowTreeClientPrivate {
 
   void CallOnCaptureChanged(Window* new_capture, Window* old_capture);
 
-  // Sets the WindowTree and client id.
-  void SetTreeAndClientId(ui::mojom::WindowTree* window_tree,
-                          ClientSpecificId client_id);
+  void CallOnConnect();
+
+  WindowTreeHostMusInitParams CallCreateInitParamsForNewDisplay();
+
+  // Sets the WindowTree.
+  void SetTree(ui::mojom::WindowTree* window_tree);
+
+  void SetWindowManagerClient(ui::mojom::WindowManagerClient* client);
 
   bool HasPointerWatcher();
 
   Window* GetWindowByServerId(Id id);
+
+  WindowMus* NewWindowFromWindowData(WindowMus* parent,
+                                     const ui::mojom::WindowData& window_data);
+
+  bool HasInFlightChanges();
+
+  bool HasChangeInFlightOfType(ChangeType type);
 
  private:
   WindowTreeClient* tree_client_impl_;

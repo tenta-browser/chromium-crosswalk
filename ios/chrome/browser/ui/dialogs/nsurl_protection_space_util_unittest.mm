@@ -17,7 +17,7 @@
 #error "This file requires ARC support."
 #endif
 
-using namespace ios_internal::nsurlprotectionspace_util;
+using namespace nsurlprotectionspace_util;
 
 namespace {
 
@@ -55,8 +55,10 @@ NSURLProtectionSpace* GetProtectionSpaceForProxyHost(NSString* host,
 
 }  // namespace
 
+using NSURLProtectionSpaceUtilTest = PlatformTest;
+
 // Tests that dialog can not be shown without valid host.
-TEST(NSURLProtectionSpaceUtilTest, CantShowWithoutValidHost) {
+TEST_F(NSURLProtectionSpaceUtilTest, CantShowWithoutValidHost) {
   NSURLProtectionSpace* protectionSpace =
       GetProtectionSpaceForHost(@"", NSURLProtectionSpaceHTTPS);
 
@@ -64,7 +66,7 @@ TEST(NSURLProtectionSpaceUtilTest, CantShowWithoutValidHost) {
 }
 
 // Tests that dialog can not be shown with invalid port.
-TEST(NSURLProtectionSpaceUtilTest, CantShowWithoutValidPort) {
+TEST_F(NSURLProtectionSpaceUtilTest, CantShowWithoutValidPort) {
   NSURLProtectionSpace* protectionSpace =
       GetProtectionSpaceForHost(kTestHost, NSURLProtectionSpaceHTTPS, INT_MAX);
 
@@ -72,7 +74,7 @@ TEST(NSURLProtectionSpaceUtilTest, CantShowWithoutValidPort) {
 }
 
 // Tests showing the dialog for SOCKS proxy server.
-TEST(NSURLProtectionSpaceUtilTest, ShowForSocksProxy) {
+TEST_F(NSURLProtectionSpaceUtilTest, ShowForSocksProxy) {
   NSURLProtectionSpace* protectionSpace =
       GetProtectionSpaceForProxyHost(kTestHost, NSURLProtectionSpaceSOCKSProxy);
 
@@ -87,13 +89,13 @@ TEST(NSURLProtectionSpaceUtilTest, ShowForSocksProxy) {
                                      IDS_LOGIN_DIALOG_PROXY_AUTHORITY,
                                      base::SysNSStringToUTF16(kTestHost)),
                                  l10n_util::GetNSString(
-                                     IDS_PAGE_INFO_NON_SECURE_TRANSPORT)];
+                                     IDS_PAGE_INFO_NOT_SECURE_SUMMARY)];
 
   EXPECT_NSEQ(expectedText, MessageForHTTPAuth(protectionSpace));
 }
 
 // Tests showing the dialog for http proxy server.
-TEST(NSURLProtectionSpaceUtilTest, ShowForHttpProxy) {
+TEST_F(NSURLProtectionSpaceUtilTest, ShowForHttpProxy) {
   NSURLProtectionSpace* protectionSpace =
       GetProtectionSpaceForProxyHost(kTestHost, NSURLProtectionSpaceHTTPProxy);
 
@@ -108,12 +110,12 @@ TEST(NSURLProtectionSpaceUtilTest, ShowForHttpProxy) {
                                      IDS_LOGIN_DIALOG_PROXY_AUTHORITY,
                                      base::SysNSStringToUTF16(kTestHttpOrigin)),
                                  l10n_util::GetNSString(
-                                     IDS_PAGE_INFO_NON_SECURE_TRANSPORT)];
+                                     IDS_PAGE_INFO_NOT_SECURE_SUMMARY)];
   EXPECT_NSEQ(expectedText, MessageForHTTPAuth(protectionSpace));
 }
 
 // Tests showing the dialog for https proxy server.
-TEST(NSURLProtectionSpaceUtilTest, ShowForHttpsProxy) {
+TEST_F(NSURLProtectionSpaceUtilTest, ShowForHttpsProxy) {
   NSURLProtectionSpace* protectionSpace =
       GetProtectionSpaceForProxyHost(kTestHost, NSURLProtectionSpaceHTTPSProxy);
 
@@ -132,7 +134,7 @@ TEST(NSURLProtectionSpaceUtilTest, ShowForHttpsProxy) {
                              IDS_LOGIN_DIALOG_PROXY_AUTHORITY,
                              base::SysNSStringToUTF16(kTestHttpsOrigin)),
                          l10n_util::GetNSString(
-                             IDS_PAGE_INFO_NON_SECURE_TRANSPORT)];
+                             IDS_PAGE_INFO_NOT_SECURE_SUMMARY)];
   } else {
     // Expecting the following text:
     // The proxy https://chromium.org:80 requires a username and password.
@@ -144,7 +146,7 @@ TEST(NSURLProtectionSpaceUtilTest, ShowForHttpsProxy) {
 }
 
 // Tests showing the dialog for http server.
-TEST(NSURLProtectionSpaceUtilTest, ShowForHttpServer) {
+TEST_F(NSURLProtectionSpaceUtilTest, ShowForHttpServer) {
   NSURLProtectionSpace* protectionSpace =
       GetProtectionSpaceForHost(kTestHost, NSURLProtectionSpaceHTTP);
 
@@ -158,12 +160,12 @@ TEST(NSURLProtectionSpaceUtilTest, ShowForHttpServer) {
                                      IDS_LOGIN_DIALOG_AUTHORITY,
                                      base::SysNSStringToUTF16(kTestHttpOrigin)),
                                  l10n_util::GetNSString(
-                                     IDS_PAGE_INFO_NON_SECURE_TRANSPORT)];
+                                     IDS_PAGE_INFO_NOT_SECURE_SUMMARY)];
   EXPECT_NSEQ(expectedText, MessageForHTTPAuth(protectionSpace));
 }
 
 // Tests showing the dialog for https server.
-TEST(NSURLProtectionSpaceUtilTest, ShowForHttpsServer) {
+TEST_F(NSURLProtectionSpaceUtilTest, ShowForHttpsServer) {
   NSURLProtectionSpace* protectionSpace =
       GetProtectionSpaceForHost(kTestHost, NSURLProtectionSpaceHTTPS);
 

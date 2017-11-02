@@ -378,6 +378,12 @@ ChromePermissionMessageRule::GetAllRules() {
        {APIPermission::kHostReadOnly},
        {}},
 
+      // New tab page permission is fairly highly used so rank it quite highly.
+      // Nothing should subsume it.
+      {IDS_EXTENSION_PROMPT_WARNING_NEW_TAB_PAGE_OVERRIDE,
+       {APIPermission::kNewTabPageOverride},
+       {}},
+
       // History-related permission messages.
       // History already allows reading favicons, tab access and accessing the
       // list of most frequently visited sites.
@@ -578,6 +584,10 @@ ChromePermissionMessageRule::GetAllRules() {
        {}},
       {IDS_EXTENSION_PROMPT_WARNING_GEOLOCATION,
        {APIPermission::kGeolocation},
+       {}},
+
+      {IDS_EXTENSION_PROMPT_WARNING_SYSTEM_STORAGE,
+       {APIPermission::kSystemStorage},
        {}},
 
       {IDS_EXTENSION_PROMPT_WARNING_CONTENT_SETTINGS,

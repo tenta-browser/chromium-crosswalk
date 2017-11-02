@@ -22,21 +22,23 @@
 #ifndef WTF_HashTraits_h
 #define WTF_HashTraits_h
 
+#include <string.h>  // For memset.
+#include <limits>
+#include <memory>
+#include <type_traits>
+#include <utility>
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/HashFunctions.h"
 #include "platform/wtf/HashTableDeletedValueType.h"
 #include "platform/wtf/StdLibExtras.h"
 #include "platform/wtf/TypeTraits.h"
-#include <limits>
-#include <memory>
-#include <string.h>  // For memset.
-#include <type_traits>
-#include <utility>
 
 namespace WTF {
 
 template <bool isInteger, typename T>
 struct GenericHashTraitsBase;
+template <bool is_enum, typename T>
+struct EnumOrGenericHashTraits;
 template <typename T>
 struct HashTraits;
 
@@ -138,7 +140,22 @@ struct GenericHashTraits
 };
 
 template <typename T>
-struct HashTraits : GenericHashTraits<T> {};
+struct EnumOrGenericHashTraits<false, T> : GenericHashTraits<T> {};
+
+// Default traits for an enum type.  0 is very popular, and -1 is also popular.
+// So we use -128 and -127.
+template <typename T>
+struct EnumOrGenericHashTraits<true, T> : GenericHashTraits<T> {
+  static const bool kEmptyValueIsZero = false;
+  static T EmptyValue() { return static_cast<T>(-128); }
+  static void ConstructDeletedValue(T& slot, bool) {
+    slot = static_cast<T>(-127);
+  }
+  static bool IsDeletedValue(T value) { return value == static_cast<T>(-127); }
+};
+
+template <typename T>
+struct HashTraits : EnumOrGenericHashTraits<std::is_enum<T>::value, T> {};
 
 template <typename T>
 struct FloatHashTraits : GenericHashTraits<T> {
@@ -198,11 +215,24 @@ struct SimpleClassHashTraits : GenericHashTraits<T> {
 
 template <typename P>
 struct HashTraits<RefPtr<P>> : SimpleClassHashTraits<RefPtr<P>> {
+  static_assert(sizeof(void*) == sizeof(RefPtr<P>),
+                "Unexpected RefPtr size."
+                " RefPtr needs to be single pointer to support deleted value.");
+
   typedef std::nullptr_t EmptyValueType;
   static EmptyValueType EmptyValue() { return nullptr; }
 
   static const bool kHasIsEmptyValueFunction = true;
   static bool IsEmptyValue(const RefPtr<P>& value) { return !value; }
+
+  static bool IsDeletedValue(const RefPtr<P>& value) {
+    return *reinterpret_cast<void* const*>(&value) ==
+           reinterpret_cast<const void*>(-1);
+  }
+
+  static void ConstructDeletedValue(RefPtr<P>& slot, bool zero_value) {
+    *reinterpret_cast<void**>(&slot) = reinterpret_cast<void*>(-1);
+  }
 
   typedef RefPtrValuePeeker<P> PeekInType;
   typedef RefPtr<P>* IteratorGetType;
@@ -217,13 +247,12 @@ struct HashTraits<RefPtr<P>> : SimpleClassHashTraits<RefPtr<P>> {
     return *x;
   }
 
-  static void Store(PassRefPtr<P> value, RefPtr<P>& storage) {
+  static void Store(RefPtr<P> value, RefPtr<P>& storage) {
     storage = std::move(value);
   }
 
   typedef P* PeekOutType;
-  static PeekOutType Peek(const RefPtr<P>& value) { return value.Get(); }
-  static PeekOutType Peek(std::nullptr_t) { return 0; }
+  static PeekOutType Peek(const RefPtr<P>& value) { return value.get(); }
 };
 
 template <typename T>
@@ -245,7 +274,6 @@ struct HashTraits<std::unique_ptr<T>>
   static PeekOutType Peek(const std::unique_ptr<T>& value) {
     return value.get();
   }
-  static PeekOutType Peek(std::nullptr_t) { return nullptr; }
 
   static void ConstructDeletedValue(std::unique_ptr<T>& slot, bool) {
     // Dirty trick: implant an invalid pointer to unique_ptr. Destructor isn't
@@ -261,6 +289,8 @@ template <>
 struct HashTraits<String> : SimpleClassHashTraits<String> {
   static const bool kHasIsEmptyValueFunction = true;
   static bool IsEmptyValue(const String&);
+  static bool IsDeletedValue(const String& value);
+  static void ConstructDeletedValue(String& slot, bool zero_value);
 };
 
 // This struct template is an implementation detail of the

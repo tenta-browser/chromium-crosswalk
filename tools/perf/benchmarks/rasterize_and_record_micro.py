@@ -4,11 +4,10 @@
 
 from core import perf_benchmark
 
-import ct_benchmarks_util
 from measurements import rasterize_and_record_micro
 import page_sets
-from page_sets import repaint_helpers
 from telemetry import benchmark
+from telemetry import story
 
 
 class _RasterizeAndRecordMicro(perf_benchmark.PerfBenchmark):
@@ -45,65 +44,41 @@ class _RasterizeAndRecordMicro(perf_benchmark.PerfBenchmark):
         options.record_repeat, options.timeout, options.report_detailed_results)
 
 
-# RasterizeAndRecord disabled on mac because of crbug.com/350684.
-# RasterizeAndRecord disabled on windows because of crbug.com/338057.
-@benchmark.Disabled('mac', 'win',
-                    'android')  # http://crbug.com/610018
+@benchmark.Owner(
+    emails=['vmpstr@chromium.org', 'wkorman@chromium.org'],
+    component='Internals>Compositing>Rasterization')
 class RasterizeAndRecordMicroTop25(_RasterizeAndRecordMicro):
   """Measures rasterize and record performance on the top 25 web pages.
 
   http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
-  page_set = page_sets.Top25PageSet
+  page_set = page_sets.StaticTop25PageSet
 
   @classmethod
   def Name(cls):
     return 'rasterize_and_record_micro.top_25'
 
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        # Should a story need to be disabled, note that story names
+        # for the static top 25 page set used by this benchmark are of
+        # the format "file://static_top_25/page.html" where
+        # "page.html" is substituted with the actual story's static
+        # html filename as found under
+        # tools/perf/page_sets/static_top_25.
+        self.DisableStory(
+            'file://static_top_25/wikipedia.html', [story.expectations.ALL],
+            'crbug.com/764543')
+        self.DisableStory(
+            'file://static_top_25/espn.html', [story.expectations.ANDROID_ONE],
+            'crbug.com/768010')
 
-@benchmark.Disabled('mac', 'win', 'android')  # http://crbug.com/531597
-class RasterizeAndRecordMicroKeyMobileSites(_RasterizeAndRecordMicro):
-  """Measures rasterize and record performance on the key mobile sites.
-
-  http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
-  page_set = page_sets.KeyMobileSitesPageSet
-
-  @classmethod
-  def Name(cls):
-    return 'rasterize_and_record_micro.key_mobile_sites'
-
-
-@benchmark.Disabled('all') # http://crbug.com/610424
-@benchmark.Owner(emails=['vmpstr@chromium.org'])
-class RasterizeAndRecordMicroKeySilkCases(_RasterizeAndRecordMicro):
-  """Measures rasterize and record performance on the silk sites.
-
-  http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
-
-  @classmethod
-  def Name(cls):
-    return 'rasterize_and_record_micro.key_silk_cases'
-
-  def CreateStorySet(self, options):
-    return page_sets.KeySilkCasesPageSet(run_no_page_interactions=True)
+    return StoryExpectations()
 
 
-@benchmark.Enabled('android')
-class RasterizeAndRecordMicroPolymer(_RasterizeAndRecordMicro):
-  """Measures rasterize and record performance on the Polymer cases.
-
-  http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
-
-  @classmethod
-  def Name(cls):
-    return 'rasterize_and_record_micro.polymer'
-
-  def CreateStorySet(self, options):
-    return page_sets.PolymerPageSet(run_no_page_interactions=True)
-
-
-# New benchmark only enabled on Linux until we've observed behavior for a
-# reasonable period of time.
-@benchmark.Disabled('mac', 'win', 'android')
+@benchmark.Owner(
+    emails=['vmpstr@chromium.org', 'wkorman@chromium.org'],
+    component='Internals>Compositing>Rasterization')
 class RasterizeAndRecordMicroPartialInvalidation(_RasterizeAndRecordMicro):
   """Measures rasterize and record performance for partial inval. on big pages.
 
@@ -114,27 +89,8 @@ class RasterizeAndRecordMicroPartialInvalidation(_RasterizeAndRecordMicro):
   def Name(cls):
     return 'rasterize_and_record_micro.partial_invalidation'
 
-
-# Disabled because we do not plan on running CT benchmarks on the perf
-# waterfall any time soon.
-@benchmark.Disabled('all')
-class RasterizeAndRecordMicroCT(_RasterizeAndRecordMicro):
-  """Measures rasterize and record performance for Cluster Telemetry."""
-
-  @classmethod
-  def Name(cls):
-    return 'rasterize_and_record_micro_ct'
-
-  @classmethod
-  def AddBenchmarkCommandLineArgs(cls, parser):
-    _RasterizeAndRecordMicro.AddBenchmarkCommandLineArgs(parser)
-    ct_benchmarks_util.AddBenchmarkCommandLineArgs(parser)
-
-  @classmethod
-  def ProcessCommandLineArgs(cls, parser, args):
-    ct_benchmarks_util.ValidateCommandLineArgs(parser, args)
-
-  def CreateStorySet(self, options):
-    return page_sets.CTPageSet(
-        options.urls_list, options.user_agent, options.archive_data_file,
-        run_page_interaction_callback=repaint_helpers.WaitThenRepaint)
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass # Nothing disabled.
+    return StoryExpectations()

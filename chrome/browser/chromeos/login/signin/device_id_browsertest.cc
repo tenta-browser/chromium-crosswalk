@@ -96,7 +96,8 @@ class DeviceIDTest : public OobeBaseTest,
   void WaitForSessionStart() {
     content::WindowedNotificationObserver(
         chrome::NOTIFICATION_SESSION_STARTED,
-        content::NotificationService::AllSources()).Wait();
+        content::NotificationService::AllSources())
+        .Wait();
   }
 
   void SignInOnline(const std::string& user_id,
@@ -164,7 +165,7 @@ class DeviceIDTest : public OobeBaseTest,
   void SaveRefreshTokenToDeviceIdMap() {
     base::DictionaryValue dictionary;
     for (const auto& kv : fake_gaia_->refresh_token_to_device_id_map())
-      dictionary.SetStringWithoutPathExpansion(kv.first, kv.second);
+      dictionary.SetKey(kv.first, base::Value(kv.second));
     std::string json;
     EXPECT_TRUE(base::JSONWriter::Write(dictionary, &json));
     EXPECT_EQ(static_cast<int>(json.length()),

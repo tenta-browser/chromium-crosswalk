@@ -15,6 +15,7 @@
 
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -58,6 +59,7 @@ class GL_EXPORT GLSurfaceEGL : public GLSurface {
   GLSurfaceFormat GetFormat() override;
 
   static bool InitializeOneOff(EGLNativeDisplayType native_display);
+  static bool InitializeExtensionSettingsOneOff();
   static void ShutdownOneOff();
   static EGLDisplay GetHardwareDisplay();
   static EGLDisplay InitializeDisplay(EGLNativeDisplayType native_display);
@@ -72,7 +74,11 @@ class GL_EXPORT GLSurfaceEGL : public GLSurface {
   static bool IsCreateContextBindGeneratesResourceSupported();
   static bool IsCreateContextWebGLCompatabilitySupported();
   static bool IsEGLSurfacelessContextSupported();
+  static bool IsEGLContextPrioritySupported();
   static bool IsDirectCompositionSupported();
+  static bool IsRobustResourceInitSupported();
+  static bool IsDisplayTextureShareGroupSupported();
+  static bool IsCreateContextClientArraysSupported();
 
  protected:
   ~GLSurfaceEGL() override;
@@ -97,6 +103,7 @@ class GL_EXPORT NativeViewGLSurfaceEGL : public GLSurfaceEGL {
   void Destroy() override;
   bool Resize(const gfx::Size& size,
               float scale_factor,
+              ColorSpace color_space,
               bool has_alpha) override;
   bool Recreate() override;
   bool IsOffscreen() override;
@@ -129,9 +136,17 @@ class GL_EXPORT NativeViewGLSurfaceEGL : public GLSurfaceEGL {
   gfx::SwapResult SwapBuffersWithDamage(const std::vector<int>& rects);
 
  private:
+  struct SwapInfo {
+    bool frame_id_is_valid;
+    EGLuint64KHR frame_id;
+  };
+
   // Commit the |pending_overlays_| and clear the vector. Returns false if any
   // fail to be committed.
   bool CommitAndClearPendingOverlays();
+
+  void UpdateSwapEvents(EGLuint64KHR newFrameId, bool newFrameIdIsValid);
+  void TraceSwapEvents(EGLuint64KHR oldFrameId);
 
   EGLSurface surface_;
   bool supports_post_sub_buffer_;
@@ -142,6 +157,13 @@ class GL_EXPORT NativeViewGLSurfaceEGL : public GLSurfaceEGL {
   std::unique_ptr<gfx::VSyncProvider> vsync_provider_internal_;
 
   std::vector<GLSurfaceOverlay> pending_overlays_;
+
+  // Stored in separate vectors so we can pass the egl timestamps
+  // directly to the EGL functions.
+  std::vector<EGLint> supported_egl_timestamps_;
+  std::vector<const char*> supported_event_names_;
+
+  base::queue<SwapInfo> swap_info_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeViewGLSurfaceEGL);
 };
@@ -159,6 +181,7 @@ class GL_EXPORT PbufferGLSurfaceEGL : public GLSurfaceEGL {
   gfx::Size GetSize() override;
   bool Resize(const gfx::Size& size,
               float scale_factor,
+              ColorSpace color_space,
               bool has_alpha) override;
   EGLSurface GetHandle() override;
   void* GetShareHandle() override;
@@ -189,6 +212,7 @@ class GL_EXPORT SurfacelessEGL : public GLSurfaceEGL {
   gfx::Size GetSize() override;
   bool Resize(const gfx::Size& size,
               float scale_factor,
+              ColorSpace color_space,
               bool has_alpha) override;
   EGLSurface GetHandle() override;
   void* GetShareHandle() override;

@@ -13,7 +13,6 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 
 class GURL;
-class Profile;
 
 // Default implementation of PermissionRequest, it is assumed that the
 // caller owns it and that it can be deleted once the |delete_callback|
@@ -25,23 +24,20 @@ class PermissionRequestImpl : public PermissionRequest {
   PermissionRequestImpl(
       const GURL& request_origin,
       ContentSettingsType content_settings_type,
-      Profile* profile,
       bool has_gesture,
       const PermissionDecidedCallback& permission_decided_callback,
       const base::Closure delete_callback);
 
   ~PermissionRequestImpl() override;
 
- protected:
-  void RegisterActionTaken() { action_taken_ = true; }
-
  private:
   // PermissionRequest:
   IconId GetIconId() const override;
+#if defined(OS_ANDROID)
+  base::string16 GetMessageText() const override;
+#endif
   base::string16 GetMessageTextFragment() const override;
   GURL GetOrigin() const override;
-  // Remember to call RegisterActionTaken for these methods if you are
-  // overriding them.
   void PermissionGranted() override;
   void PermissionDenied() override;
   void Cancelled() override;
@@ -49,10 +45,10 @@ class PermissionRequestImpl : public PermissionRequest {
   bool ShouldShowPersistenceToggle() const override;
   PermissionRequestType GetPermissionRequestType() const override;
   PermissionRequestGestureType GetGestureType() const override;
+  ContentSettingsType GetContentSettingsType() const override;
 
   GURL request_origin_;
   ContentSettingsType content_settings_type_;
-  Profile* profile_;
   bool has_gesture_;
 
   // Called once a decision is made about the permission.
@@ -62,7 +58,6 @@ class PermissionRequestImpl : public PermissionRequest {
   // caller.
   const base::Closure delete_callback_;
   bool is_finished_;
-  bool action_taken_;
 
   DISALLOW_COPY_AND_ASSIGN(PermissionRequestImpl);
 };

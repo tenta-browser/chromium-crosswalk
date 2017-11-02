@@ -8,7 +8,6 @@
 
 #include <memory>
 
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
@@ -17,7 +16,12 @@
 #import "ios/web/public/web_client.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 
@@ -47,7 +51,7 @@ class AppSpecificURLTestWebClient : public WebClient {
   }
 };
 
-class WebHTTPProtocolHandlerDelegateTest : public testing::Test {
+class WebHTTPProtocolHandlerDelegateTest : public PlatformTest {
  public:
   WebHTTPProtocolHandlerDelegateTest()
       : context_getter_(new net::TestURLRequestContextGetter(
@@ -65,57 +69,57 @@ class WebHTTPProtocolHandlerDelegateTest : public testing::Test {
 }  // namespace
 
 TEST_F(WebHTTPProtocolHandlerDelegateTest, IsRequestSupported) {
-  base::scoped_nsobject<NSMutableURLRequest> request;
+  NSMutableURLRequest* request;
 
   for (unsigned int i = 0; i < arraysize(kSupportedURLs); ++i) {
-    base::scoped_nsobject<NSString> url_string(
-        [[NSString alloc] initWithUTF8String:kSupportedURLs[i]]);
-    request.reset([[NSMutableURLRequest alloc]
-        initWithURL:[NSURL URLWithString:url_string]]);
+    NSString* url_string =
+        [[NSString alloc] initWithUTF8String:kSupportedURLs[i]];
+    request = [[NSMutableURLRequest alloc]
+        initWithURL:[NSURL URLWithString:url_string]];
     EXPECT_TRUE(delegate_->IsRequestSupported(request))
         << kSupportedURLs[i] << " should be supported.";
   }
 
   for (unsigned int i = 0; i < arraysize(kUnsupportedURLs); ++i) {
-    base::scoped_nsobject<NSString> url_string(
-        [[NSString alloc] initWithUTF8String:kUnsupportedURLs[i]]);
-    request.reset([[NSMutableURLRequest alloc]
-        initWithURL:[NSURL URLWithString:url_string]]);
+    NSString* url_string =
+        [[NSString alloc] initWithUTF8String:kUnsupportedURLs[i]];
+    request = [[NSMutableURLRequest alloc]
+        initWithURL:[NSURL URLWithString:url_string]];
     EXPECT_FALSE(delegate_->IsRequestSupported(request))
         << kUnsupportedURLs[i] << " should NOT be supported.";
   }
 
   // Application specific scheme with main document URL.
-  request.reset([[NSMutableURLRequest alloc]
-      initWithURL:[NSURL URLWithString:@"appspecific:blank"]]);
+  request = [[NSMutableURLRequest alloc]
+      initWithURL:[NSURL URLWithString:@"appspecific:blank"]];
   [request setMainDocumentURL:[NSURL URLWithString:@"http://foo"]];
   EXPECT_FALSE(delegate_->IsRequestSupported(request));
   [request setMainDocumentURL:[NSURL URLWithString:@"appspecific:main"]];
   EXPECT_TRUE(delegate_->IsRequestSupported(request));
-  request.reset([[NSMutableURLRequest alloc]
-      initWithURL:[NSURL URLWithString:@"foo:blank"]]);
+  request = [[NSMutableURLRequest alloc]
+      initWithURL:[NSURL URLWithString:@"foo:blank"]];
   [request setMainDocumentURL:[NSURL URLWithString:@"appspecific:main"]];
   EXPECT_FALSE(delegate_->IsRequestSupported(request));
 }
 
 TEST_F(WebHTTPProtocolHandlerDelegateTest, IsRequestSupportedMalformed) {
-  base::scoped_nsobject<NSURLRequest> request;
+  NSURLRequest* request;
 
   // Null URL.
-  request.reset([[NSMutableURLRequest alloc] init]);
+  request = [[NSMutableURLRequest alloc] init];
   ASSERT_FALSE([request URL]);
   EXPECT_FALSE(delegate_->IsRequestSupported(request));
 
   // URL with no scheme.
-  request.reset(
-      [[NSMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@"foo"]]);
+  request =
+      [[NSMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@"foo"]];
   ASSERT_TRUE([request URL]);
   ASSERT_FALSE([[request URL] scheme]);
   EXPECT_FALSE(delegate_->IsRequestSupported(request));
 
   // Empty scheme.
-  request.reset(
-      [[NSMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@":foo"]]);
+  request =
+      [[NSMutableURLRequest alloc] initWithURL:[NSURL URLWithString:@":foo"]];
   ASSERT_TRUE([request URL]);
   ASSERT_TRUE([[request URL] scheme]);
   ASSERT_FALSE([[[request URL] scheme] length]);

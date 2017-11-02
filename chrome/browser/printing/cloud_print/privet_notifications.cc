@@ -202,7 +202,7 @@ PrivetNotificationService::PrivetNotificationService(
     content::BrowserContext* profile)
     : profile_(profile) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&PrivetNotificationService::Start, AsWeakPtr()),
+      FROM_HERE, base::BindOnce(&PrivetNotificationService::Start, AsWeakPtr()),
       base::TimeDelta::FromSeconds(kStartDelaySeconds +
                                    base::RandInt(0, kStartDelaySeconds / 4)));
 }
@@ -258,7 +258,8 @@ void PrivetNotificationService::PrivetNotify(int devices_active,
 
   Profile* profile = Profile::FromBrowserContext(profile_);
   Notification notification(
-      message_center::NOTIFICATION_TYPE_SIMPLE, title, body,
+      message_center::NOTIFICATION_TYPE_SIMPLE, kPrivetNotificationID, title,
+      body,
       ui::ResourceBundle::GetSharedInstance().GetImageNamed(
           IDR_LOCAL_DISCOVERY_CLOUDPRINT_ICON),
       message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
@@ -339,7 +340,7 @@ void PrivetNotificationService::StartLister() {
   device_lister_.reset(
       new PrivetDeviceListerImpl(service_discovery_client_.get(), this));
   device_lister_->Start();
-  device_lister_->DiscoverNewDevices(false);
+  device_lister_->DiscoverNewDevices();
 
   std::unique_ptr<PrivetHTTPAsynchronousFactory> http_factory(
       PrivetHTTPAsynchronousFactory::CreateInstance(
@@ -359,10 +360,6 @@ PrivetNotificationDelegate::PrivetNotificationDelegate(Profile* profile)
     : profile_(profile) {}
 
 PrivetNotificationDelegate::~PrivetNotificationDelegate() {
-}
-
-std::string PrivetNotificationDelegate::id() const {
-  return kPrivetNotificationID;
 }
 
 void PrivetNotificationDelegate::ButtonClick(int button_index) {
@@ -391,7 +388,7 @@ void PrivetNotificationDelegate::DisableNotifications() {
 
 void PrivetNotificationDelegate::CloseNotification() {
   g_browser_process->notification_ui_manager()->CancelById(
-      id(), NotificationUIManager::GetProfileID(profile_));
+      kPrivetNotificationID, NotificationUIManager::GetProfileID(profile_));
 }
 
 }  // namespace cloud_print

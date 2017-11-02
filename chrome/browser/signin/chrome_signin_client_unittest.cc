@@ -140,9 +140,10 @@ class MockSigninManager : public SigninManager {
   explicit MockSigninManager(SigninClient* client)
       : SigninManager(client, nullptr, &fake_service_, nullptr) {}
 
-  MOCK_METHOD2(DoSignOut,
+  MOCK_METHOD3(DoSignOut,
                void(signin_metrics::ProfileSignout,
-                    signin_metrics::SignoutDelete));
+                    signin_metrics::SignoutDelete,
+                    bool revoke_all_tokens));
 
   AccountTrackerService fake_service_;
 };
@@ -175,7 +176,7 @@ class ChromeSigninClientSignoutTest : public BrowserWithTestWindowTest {
 
 TEST_F(ChromeSigninClientSignoutTest, SignOut) {
   signin_metrics::ProfileSignout source_metric =
-      signin_metrics::ProfileSignout::SIGNOUT_TEST;
+      signin_metrics::ProfileSignout::ABORT_SIGNIN;
   signin_metrics::SignoutDelete delete_metric =
       signin_metrics::SignoutDelete::IGNORE_METRIC;
 
@@ -183,14 +184,15 @@ TEST_F(ChromeSigninClientSignoutTest, SignOut) {
       .Times(1);
   EXPECT_CALL(*client_, LockForceSigninProfile(browser()->profile()->GetPath()))
       .Times(1);
-  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric)).Times(1);
+  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric, true))
+      .Times(1);
 
   manager_->SignOut(source_metric, delete_metric);
 }
 
 TEST_F(ChromeSigninClientSignoutTest, SignOutWithoutManager) {
   signin_metrics::ProfileSignout source_metric =
-      signin_metrics::ProfileSignout::SIGNOUT_TEST;
+      signin_metrics::ProfileSignout::ABORT_SIGNIN;
   signin_metrics::SignoutDelete delete_metric =
       signin_metrics::SignoutDelete::IGNORE_METRIC;
 
@@ -201,7 +203,8 @@ TEST_F(ChromeSigninClientSignoutTest, SignOutWithoutManager) {
       .Times(0);
   EXPECT_CALL(*client_, LockForceSigninProfile(browser()->profile()->GetPath()))
       .Times(1);
-  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric)).Times(1);
+  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric, true))
+      .Times(1);
   manager_->SignOut(source_metric, delete_metric);
 
   ::testing::Mock::VerifyAndClearExpectations(manager_.get());
@@ -210,7 +213,8 @@ TEST_F(ChromeSigninClientSignoutTest, SignOutWithoutManager) {
       .Times(1);
   EXPECT_CALL(*client_, LockForceSigninProfile(browser()->profile()->GetPath()))
       .Times(1);
-  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric)).Times(1);
+  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric, true))
+      .Times(1);
   manager_->SignOut(source_metric, delete_metric);
 }
 
@@ -220,7 +224,7 @@ TEST_F(ChromeSigninClientSignoutTest, SignOutWithoutForceSignin) {
   manager_.reset(new MockSigninManager(client_.get()));
 
   signin_metrics::ProfileSignout source_metric =
-      signin_metrics::ProfileSignout::SIGNOUT_TEST;
+      signin_metrics::ProfileSignout::ABORT_SIGNIN;
   signin_metrics::SignoutDelete delete_metric =
       signin_metrics::SignoutDelete::IGNORE_METRIC;
 
@@ -228,7 +232,8 @@ TEST_F(ChromeSigninClientSignoutTest, SignOutWithoutForceSignin) {
       .Times(0);
   EXPECT_CALL(*client_, LockForceSigninProfile(browser()->profile()->GetPath()))
       .Times(0);
-  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric)).Times(1);
+  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric, true))
+      .Times(1);
   manager_->SignOut(source_metric, delete_metric);
 }
 
@@ -241,7 +246,7 @@ TEST_F(ChromeSigninClientSignoutTest, SignOutGuestSession) {
   manager_.reset(new MockSigninManager(client_.get()));
 
   signin_metrics::ProfileSignout source_metric =
-      signin_metrics::ProfileSignout::SIGNOUT_TEST;
+      signin_metrics::ProfileSignout::ABORT_SIGNIN;
   signin_metrics::SignoutDelete delete_metric =
       signin_metrics::SignoutDelete::IGNORE_METRIC;
 
@@ -249,7 +254,8 @@ TEST_F(ChromeSigninClientSignoutTest, SignOutGuestSession) {
       .Times(0);
   EXPECT_CALL(*client_, LockForceSigninProfile(browser()->profile()->GetPath()))
       .Times(0);
-  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric)).Times(1);
+  EXPECT_CALL(*manager_, DoSignOut(source_metric, delete_metric, true))
+      .Times(1);
   manager_->SignOut(source_metric, delete_metric);
 }
 

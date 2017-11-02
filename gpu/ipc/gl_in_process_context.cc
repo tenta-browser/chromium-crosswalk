@@ -33,6 +33,7 @@
 #include "gpu/command_buffer/client/transfer_buffer.h"
 #include "gpu/command_buffer/common/command_buffer.h"
 #include "gpu/command_buffer/common/constants.h"
+#include "gpu/config/gpu_feature_info.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gl/gl_image.h"
 
@@ -63,7 +64,8 @@ class GLInProcessContextImpl
                   scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   // GLInProcessContext implementation:
-  gpu::Capabilities GetCapabilities() override;
+  const gpu::Capabilities& GetCapabilities() const override;
+  const gpu::GpuFeatureInfo& GetGpuFeatureInfo() const override;
   gles2::GLES2Implementation* GetImplementation() override;
   void SetSwapBuffersCompletionCallback(
       const gpu::InProcessCommandBuffer::SwapBuffersCompletionCallback&
@@ -91,8 +93,12 @@ GLInProcessContextImpl::~GLInProcessContextImpl() {
   Destroy();
 }
 
-Capabilities GLInProcessContextImpl::GetCapabilities() {
+const Capabilities& GLInProcessContextImpl::GetCapabilities() const {
   return command_buffer_->GetCapabilities();
+}
+
+const GpuFeatureInfo& GLInProcessContextImpl::GetGpuFeatureInfo() const {
+  return command_buffer_->GetGpuFeatureInfo();
 }
 
 gles2::GLES2Implementation* GLInProcessContextImpl::GetImplementation() {
@@ -171,11 +177,7 @@ bool GLInProcessContextImpl::Initialize(
       bind_generates_resource, attribs.lose_context_when_out_of_memory,
       support_client_side_arrays, command_buffer_.get()));
 
-  if (!gles2_implementation_->Initialize(
-          mem_limits.start_transfer_buffer_size,
-          mem_limits.min_transfer_buffer_size,
-          mem_limits.max_transfer_buffer_size,
-          mem_limits.mapped_memory_reclaim_limit)) {
+  if (!gles2_implementation_->Initialize(mem_limits)) {
     return false;
   }
 

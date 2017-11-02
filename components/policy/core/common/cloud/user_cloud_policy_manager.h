@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/debug/stack_trace.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -35,8 +36,6 @@ class UserCloudPolicyStore;
 class POLICY_EXPORT UserCloudPolicyManager : public CloudPolicyManager {
  public:
   // |task_runner| is the runner for policy refresh tasks.
-  // |file_task_runner| is used for file operations. Currently this must be
-  // the FILE BrowserThread.
   // |io_task_runner| is used for network IO. Currently this must be the IO
   // BrowserThread.
   UserCloudPolicyManager(
@@ -44,7 +43,6 @@ class POLICY_EXPORT UserCloudPolicyManager : public CloudPolicyManager {
       const base::FilePath& component_policy_cache_path,
       std::unique_ptr<CloudExternalDataManager> external_data_manager,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-      const scoped_refptr<base::SequencedTaskRunner>& file_task_runner,
       const scoped_refptr<base::SequencedTaskRunner>& io_task_runner);
   ~UserCloudPolicyManager() override;
 
@@ -92,6 +90,11 @@ class POLICY_EXPORT UserCloudPolicyManager : public CloudPolicyManager {
 
   // Manages external data referenced by policies.
   std::unique_ptr<CloudExternalDataManager> external_data_manager_;
+
+  // Stack trace of the previous Connect() method call.
+  // TODO(emaxx): Remove after the crashes tracked at https://crbug.com/685996
+  // are fixed.
+  base::debug::StackTrace connect_callstack_;
 
   DISALLOW_COPY_AND_ASSIGN(UserCloudPolicyManager);
 };

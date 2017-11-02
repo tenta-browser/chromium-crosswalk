@@ -40,16 +40,16 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_checker.h"
-#include "breakpad/src/client/linux/crash_generation/crash_generation_client.h"
-#include "breakpad/src/client/linux/handler/exception_handler.h"
-#include "breakpad/src/client/linux/minidump_writer/directory_reader.h"
-#include "breakpad/src/common/linux/linux_libc_support.h"
-#include "breakpad/src/common/memory.h"
 #include "build/build_config.h"
 #include "components/crash/content/app/breakpad_linux_impl.h"
 #include "components/crash/content/app/crash_reporter_client.h"
 #include "components/crash/core/common/crash_keys.h"
 #include "content/public/common/content_descriptors.h"
+#include "third_party/breakpad/breakpad/src/client/linux/crash_generation/crash_generation_client.h"
+#include "third_party/breakpad/breakpad/src/client/linux/handler/exception_handler.h"
+#include "third_party/breakpad/breakpad/src/client/linux/minidump_writer/directory_reader.h"
+#include "third_party/breakpad/breakpad/src/common/linux/linux_libc_support.h"
+#include "third_party/breakpad/breakpad/src/common/memory.h"
 
 #if defined(OS_ANDROID)
 #include <android/log.h>
@@ -192,8 +192,8 @@ void SetProcessStartTime() {
 }
 
 // uint64_t version of my_int_len() from
-// breakpad/src/common/linux/linux_libc_support.h. Return the length of the
-// given, non-negative integer when expressed in base 10.
+// third_party/breakpad/breakpad/src/common/linux/linux_libc_support.h. Return
+// the length of the given, non-negative integer when expressed in base 10.
 unsigned my_uint64_len(uint64_t i) {
   if (!i)
     return 1;
@@ -208,8 +208,8 @@ unsigned my_uint64_len(uint64_t i) {
 }
 
 // uint64_t version of my_uitos() from
-// breakpad/src/common/linux/linux_libc_support.h. Convert a non-negative
-// integer to a string (not null-terminated).
+// third_party/breakpad/breakpad/src/common/linux/linux_libc_support.h. Convert
+// a non-negative integer to a string (not null-terminated).
 void my_uint64tos(char* output, uint64_t i, unsigned i_len) {
   for (unsigned index = i_len; index; --index, i /= 10)
     output[index - 1] = '0' + (i % 10);
@@ -1711,10 +1711,14 @@ void HandleCrashDump(const BreakpadInfo& info) {
     }
 #if defined(OS_ANDROID)
     // Addtional MIME blocks are added for logging on Android devices.
+    // When make changes to the name, please sync it with
+    // PureJavaExceptionReporter.java if needed.
     static const char android_build_id[] = "android_build_id";
     static const char android_build_fp[] = "android_build_fp";
     static const char device[] = "device";
     static const char gms_core_version[] = "gms_core_version";
+    static const char installer_package_name[] = "installer_package_name";
+    static const char abi_name[] = "abi_name";
     static const char model[] = "model";
     static const char brand[] = "brand";
     static const char exception_info[] = "exception_info";
@@ -1735,6 +1739,11 @@ void HandleCrashDump(const BreakpadInfo& info) {
     writer.AddBoundary();
     writer.AddPairString(gms_core_version,
         android_build_info->gms_version_code());
+    writer.AddBoundary();
+    writer.AddPairString(installer_package_name,
+                         android_build_info->installer_package_name());
+    writer.AddBoundary();
+    writer.AddPairString(abi_name, android_build_info->abi_name());
     writer.AddBoundary();
     WriteAndroidPackage(writer, android_build_info);
     writer.AddBoundary();
@@ -2090,6 +2099,10 @@ void SuppressDumpGeneration() {
 
 bool IsCrashReporterEnabled() {
   return g_is_crash_reporter_enabled;
+}
+
+void SetFirstChanceExceptionHandler(bool (*handler)(int, void*, void*)) {
+  google_breakpad::SetFirstChanceExceptionHandler(handler);
 }
 
 }  // namespace breakpad

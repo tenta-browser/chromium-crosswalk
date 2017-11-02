@@ -31,10 +31,10 @@
 #ifndef WebSettings_h
 #define WebSettings_h
 
-#include "../platform/PointerProperties.h"
-#include "../platform/WebCommon.h"
-#include "../platform/WebSize.h"
-#include "../platform/WebViewportStyle.h"
+#include "public/platform/PointerProperties.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebSize.h"
+#include "public/platform/WebViewportStyle.h"
 #include <unicode/uscript.h>
 
 namespace blink {
@@ -81,6 +81,12 @@ class WebSettings {
     kResourcesBeforeDCLAndSameOriginIFrames
   };
 
+  enum class SavePreviousDocumentResources {
+    kNever,
+    kUntilOnDOMContentLoaded,
+    kUntilOnLoad
+  };
+
   // Selection strategy defines how the selection granularity changes when the
   // selection extent is moved.
   enum class SelectionStrategyType {
@@ -111,6 +117,15 @@ class WebSettings {
     kFalse,        // Default of false.
     kTrue,         // Default of true.
     kForceAllTrue  // Force all values to be true even when specified.
+  };
+
+  // Defines the autoplay policy to be used. Should match the enum class in
+  // web_preferences.h
+  enum class AutoplayPolicy {
+    kNoUserGestureRequired = 0,
+    kUserGestureRequired,
+    kUserGestureRequiredForCrossOrigin,
+    kDocumentUserActivationRequired,
   };
 
   // Sets value of a setting by its string identifier from Settings.in and
@@ -145,11 +160,11 @@ class WebSettings {
   virtual void SetAlwaysShowContextMenuOnTouch(bool) = 0;
   virtual void SetAntialiased2dCanvasEnabled(bool) = 0;
   virtual void SetAntialiasedClips2dCanvasEnabled(bool) = 0;
+  virtual void SetAutoplayPolicy(AutoplayPolicy) = 0;
   virtual void SetAutoZoomFocusedNodeToLegibleScale(bool) = 0;
   virtual void SetBrowserSideNavigationEnabled(bool) = 0;
   virtual void SetClobberUserAgentInitialScaleQuirk(bool) = 0;
   virtual void SetCookieEnabled(bool) = 0;
-  virtual void SetCrossOriginMediaPlaybackRequiresUserGesture(bool) = 0;
   virtual void SetNavigateOnDragDrop(bool) = 0;
   virtual void SetCursiveFontFamily(const WebString&,
                                     UScriptCode = USCRIPT_COMMON) = 0;
@@ -170,7 +185,8 @@ class WebSettings {
   virtual void SetEnableTouchAdjustment(bool) = 0;
   virtual bool MultiTargetTapNotificationEnabled() = 0;
   virtual void SetMultiTargetTapNotificationEnabled(bool) = 0;
-  virtual void SetExperimentalWebGLEnabled(bool) = 0;
+  virtual void SetWebGL1Enabled(bool) = 0;
+  virtual void SetWebGL2Enabled(bool) = 0;
   virtual void SetFantasyFontFamily(const WebString&,
                                     UScriptCode = USCRIPT_COMMON) = 0;
   virtual void SetFixedFontFamily(const WebString&,
@@ -185,22 +201,22 @@ class WebSettings {
   virtual void SetImageAnimationPolicy(ImageAnimationPolicy) = 0;
   virtual void SetImagesEnabled(bool) = 0;
   virtual void SetInlineTextBoxAccessibilityEnabled(bool) = 0;
-  virtual void SetInertVisualViewport(bool) = 0;
   virtual void SetJavaScriptCanAccessClipboard(bool) = 0;
-  virtual void SetJavaScriptCanOpenWindowsAutomatically(bool) = 0;
   virtual void SetJavaScriptEnabled(bool) = 0;
   virtual void SetLoadsImagesAutomatically(bool) = 0;
   virtual void SetLoadWithOverviewMode(bool) = 0;
   virtual void SetShouldReuseGlobalForUnownedMainFrame(bool) = 0;
   virtual void SetProgressBarCompletion(ProgressBarCompletion) = 0;
+  virtual void SetSavePreviousDocumentResources(
+      SavePreviousDocumentResources) = 0;
   virtual void SetLocalStorageEnabled(bool) = 0;
   virtual void SetMainFrameClipsContent(bool) = 0;
   virtual void SetMainFrameResizesAreOrientationChanges(bool) = 0;
   virtual void SetMaxTouchPoints(int) = 0;
-  virtual void SetMediaPlaybackRequiresUserGesture(bool) = 0;
   virtual void SetMediaPlaybackGestureWhitelistScope(const WebString&) = 0;
   virtual void SetPresentationRequiresUserGesture(bool) = 0;
   virtual void SetEmbeddedMediaExperienceEnabled(bool) = 0;
+  virtual void SetPagePopupsSuppressed(bool) = 0;
   virtual void SetMinimumAccelerated2dCanvasSize(int) = 0;
   virtual void SetMinimumFontSize(int) = 0;
   virtual void SetMinimumLogicalFontSize(int) = 0;
@@ -271,6 +287,7 @@ class WebSettings {
   virtual void SetTextTrackTextSize(const WebString&) = 0;
   virtual void SetThreadedScrollingEnabled(bool) = 0;
   virtual void SetTouchDragDropEnabled(bool) = 0;
+  virtual void SetBarrelButtonForDragEnabled(bool) = 0;
   virtual void SetUseLegacyBackgroundSizeShorthandBehavior(bool) = 0;
   virtual void SetViewportStyle(WebViewportStyle) = 0;
   virtual void SetUseSolidColorScrollbars(bool) = 0;
@@ -289,13 +306,9 @@ class WebSettings {
   virtual void SetWebSecurityEnabled(bool) = 0;
   virtual void SetWideViewportQuirkEnabled(bool) = 0;
   virtual void SetXSSAuditorEnabled(bool) = 0;
-  // Background timer throttling aggressiveness settings.
-  virtual void SetExpensiveBackgroundThrottlingCPUBudget(float) = 0;
-  virtual void SetExpensiveBackgroundThrottlingInitialBudget(float) = 0;
-  virtual void SetExpensiveBackgroundThrottlingMaxBudget(float) = 0;
-  virtual void SetExpensiveBackgroundThrottlingMaxDelay(float) = 0;
   virtual void SetMediaControlsEnabled(bool) = 0;
   virtual void SetDoNotUpdateSelectionOnMutatingSelectionRange(bool) = 0;
+  virtual void SetMediaDownloadInProductHelpEnabled(bool) = 0;
 
  protected:
   ~WebSettings() {}

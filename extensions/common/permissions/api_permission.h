@@ -137,7 +137,7 @@ class APIPermission {
     kDeleted_InterceptAllKeys,
     kLauncherSearchProvider,
     kLocation,
-    kLogPrivate,
+    kDeleted_LogPrivate,
     kManagement,
     kMediaGalleries,
     kMediaPlayerPrivate,
@@ -244,6 +244,10 @@ class APIPermission {
     kNetworkingOnc,
     kVirtualKeyboard,
     kNetworkingCastPrivate,
+    kMediaPerceptionPrivate,
+    kLockScreen,
+    kNewTabPageOverride,
+    kDeclarativeNetRequest,
     // Last entry: Add new entries above and ensure to update the
     // "ExtensionPermission3" enum in tools/metrics/histograms/histograms.xml
     // (by running update_extension_permission.py).
@@ -323,9 +327,6 @@ class APIPermission {
   virtual APIPermission* Intersect(const APIPermission* rhs) const = 0;
 
   // IPC functions
-  // Gets the size of the data to be written.
-  virtual void GetSize(base::PickleSizer* s) const = 0;
-
   // Writes this into the given IPC message |m|.
   virtual void Write(base::Pickle* m) const = 0;
 

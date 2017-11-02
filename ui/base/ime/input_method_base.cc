@@ -63,6 +63,12 @@ TextInputClient* InputMethodBase::GetTextInputClient() const {
   return text_input_client_;
 }
 
+void InputMethodBase::SetOnScreenKeyboardBounds(const gfx::Rect& new_bounds) {
+  keyboard_bounds_ = new_bounds;
+  if (text_input_client_)
+    text_input_client_->EnsureCaretNotInRect(keyboard_bounds_);
+}
+
 void InputMethodBase::OnTextInputTypeChanged(const TextInputClient* client) {
   if (!IsTextInputClientFocused(client))
     return;
@@ -131,6 +137,22 @@ ui::EventDispatchDetails InputMethodBase::DispatchKeyEventPostIME(
   return details;
 }
 
+ui::EventDispatchDetails InputMethodBase::DispatchKeyEventPostIME(
+    ui::KeyEvent* event,
+    std::unique_ptr<base::OnceCallback<void(bool)>> ack_callback) const {
+  if (delegate_) {
+    ui::EventDispatchDetails details =
+        delegate_->DispatchKeyEventPostIME(event);
+    if (ack_callback && !ack_callback->is_null())
+      std::move(*ack_callback).Run(event->stopped_propagation());
+    return details;
+  }
+
+  if (ack_callback && !ack_callback->is_null())
+    std::move(*ack_callback).Run(false);
+  return EventDispatchDetails();
+}
+
 void InputMethodBase::NotifyTextInputStateChanged(
     const TextInputClient* client) {
   for (InputMethodObserver& observer : observer_list_)
@@ -152,6 +174,10 @@ void InputMethodBase::SetFocusedTextInputClientInternal(
   text_input_client_ = client;  // nullptr allowed.
   OnDidChangeFocusedClient(old, client);
   NotifyTextInputStateChanged(text_input_client_);
+
+  // Move new focused window if necessary.
+  if (text_input_client_)
+    text_input_client_->EnsureCaretNotInRect(keyboard_bounds_);
 }
 
 std::vector<gfx::Rect> InputMethodBase::GetCompositionBounds(
@@ -214,7 +240,8 @@ void InputMethodBase::SendKeyEvent(KeyEvent* event) {
     key_events_for_testing_.push_back(
         std::unique_ptr<ui::KeyEvent>(new KeyEvent(*event)));
   }
-  DispatchKeyEvent(event);
+  ui::EventDispatchDetails details = DispatchKeyEvent(event);
+  DCHECK(!details.dispatcher_destroyed);
   sending_key_event_ = false;
 }
 

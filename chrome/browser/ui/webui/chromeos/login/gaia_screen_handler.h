@@ -14,19 +14,15 @@
 #include "chrome/browser/chromeos/login/screens/gaia_view.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/network_state_informer.h"
+#include "chromeos/login/auth/authpolicy_login_helper.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
 #include "net/base/net_errors.h"
-#include "third_party/cros_system_api/dbus/service_constants.h"
 
 class AccountId;
 
-namespace authpolicy {
-class ActiveDirectoryAccountData;
-}
-
 namespace chromeos {
 
-class AuthPolicyLoginHelper;
+class ActiveDirectoryPasswordChangeScreenHandler;
 class Key;
 class SigninScreenHandler;
 class SigninScreenHandlerDelegate;
@@ -45,7 +41,9 @@ class GaiaScreenHandler : public BaseScreenHandler,
 
   GaiaScreenHandler(
       CoreOobeView* core_oobe_view,
-      const scoped_refptr<NetworkStateInformer>& network_state_informer);
+      const scoped_refptr<NetworkStateInformer>& network_state_informer,
+      ActiveDirectoryPasswordChangeScreenHandler*
+          active_directory_password_change_screen_handler);
   ~GaiaScreenHandler() override;
 
   // GaiaView:
@@ -97,7 +95,6 @@ class GaiaScreenHandler : public BaseScreenHandler,
                                     const std::string& auth_code,
                                     bool using_saml,
                                     const std::string& gaps_cookie);
-  void HandleCompleteAuthenticationAuthCodeOnly(const std::string& auth_code);
   void HandleCompleteLogin(const std::string& gaia_id,
                            const std::string& typed_email,
                            const std::string& password,
@@ -106,10 +103,6 @@ class GaiaScreenHandler : public BaseScreenHandler,
   void HandleCompleteAdAuthentication(const std::string& username,
                                       const std::string& password);
 
-  void HandleCompleteAdPasswordChange(const std::string& username,
-                                      const std::string& old_password,
-                                      const std::string& new_password);
-
   void HandleCancelActiveDirectoryAuth();
 
   void HandleUsingSAMLAPI();
@@ -117,8 +110,6 @@ class GaiaScreenHandler : public BaseScreenHandler,
   void HandleScrapedPasswordVerificationFailed();
 
   void HandleGaiaUIReady();
-
-  void HandleToggleEasyBootstrap();
 
   void HandleIdentifierEntered(const std::string& account_identifier);
 
@@ -147,12 +138,7 @@ class GaiaScreenHandler : public BaseScreenHandler,
   void DoAdAuth(const std::string& username,
                 const Key& key,
                 authpolicy::ErrorType error,
-                const authpolicy::ActiveDirectoryAccountData& account_data);
-
-  // Callback for writing password into pipe.
-  void OnPasswordPipeReady(const std::string& username,
-                           const Key& key,
-                           base::ScopedFD password_fd);
+                const authpolicy::ActiveDirectoryAccountInfo& account_info);
 
   // Show sign-in screen for the given credentials.
   void ShowSigninScreenForTest(const std::string& username,
@@ -225,6 +211,9 @@ class GaiaScreenHandler : public BaseScreenHandler,
 
   CoreOobeView* core_oobe_view_ = nullptr;
 
+  ActiveDirectoryPasswordChangeScreenHandler*
+      active_directory_password_change_screen_handler_ = nullptr;
+
   // Email to pre-populate with.
   std::string populated_email_;
 
@@ -255,9 +244,6 @@ class GaiaScreenHandler : public BaseScreenHandler,
   std::string test_user_;
   std::string test_pass_;
   bool test_expects_complete_login_ = false;
-
-  // True if Easy bootstrap is enabled.
-  bool use_easy_bootstrap_ = false;
 
   // True if proxy doesn't allow access to google.com/generate_204.
   NetworkPortalDetector::CaptivePortalStatus captive_portal_status_ =

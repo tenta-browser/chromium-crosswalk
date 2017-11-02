@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "chrome/browser/chromeos/arc/arc_auth_notification.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/arc/arc_util.h"
@@ -33,18 +34,15 @@ class ArcAppUninstallDialogViewBrowserTest : public InProcessBrowserTest {
   ~ArcAppUninstallDialogViewBrowserTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
     arc::SetArcAvailableCommandLineForTesting(command_line);
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
     ArcSessionManager::DisableUIForTesting();
     ArcAuthNotification::DisableForTesting();
   }
 
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
     profile_ = browser()->profile();
     arc_app_list_pref_ = ArcAppListPrefs::Get(profile_);
     if (!arc_app_list_pref_) {
@@ -90,7 +88,6 @@ class ArcAppUninstallDialogViewBrowserTest : public InProcessBrowserTest {
 
   void TearDownOnMainThread() override {
     ArcSessionManager::Get()->Shutdown();
-    InProcessBrowserTest::TearDownOnMainThread();
   }
 
   // Ensures the ArcAppDialogView is destoryed.

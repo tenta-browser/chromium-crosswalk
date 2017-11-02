@@ -12,6 +12,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.os.Bundle;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -30,7 +31,9 @@ import org.chromium.base.CollectionUtil;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
+import org.chromium.components.signin.SystemAccountManagerDelegate;
 import org.chromium.components.sync.AndroidSyncSettings;
 import org.chromium.components.sync.ModelType;
 import org.chromium.components.sync.ModelTypeHelper;
@@ -111,6 +114,9 @@ public class InvalidationControllerTest {
 
         ContextUtils.initApplicationContextForTests(mContext.getApplicationContext());
 
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(
+                new SystemAccountManagerDelegate());
+
         ModelTypeHelper.setTestDelegate(new ModelTypeHelper.TestDelegate() {
             @Override
             public String toNotificationType(int modelType) {
@@ -132,11 +138,16 @@ public class InvalidationControllerTest {
         MockSyncContentResolverDelegate delegate = new MockSyncContentResolverDelegate();
         // Android master sync can safely always be on.
         delegate.setMasterSyncAutomatically(true);
-        AndroidSyncSettings.overrideForTests(mContext, delegate);
+        AndroidSyncSettings.overrideForTests(mContext, delegate, null);
 
         ChromeSigninController.get().setSignedInAccountName("test@example.com");
         AndroidSyncSettings.updateAccount(mContext, ChromeSigninController.get().getSignedInUser());
         AndroidSyncSettings.enableChromeSync(mContext);
+    }
+
+    @After
+    public void tearDown() {
+        AccountManagerFacade.resetAccountManagerFacadeForTests();
     }
 
     /**

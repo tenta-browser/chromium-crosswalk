@@ -9,15 +9,10 @@
 #include "base/macros.h"
 
 namespace ash {
-class ShelfModel;
 
 // ShelfItemDelegate for TYPE_APP_LIST.
 class AppListShelfItemDelegate : public ShelfItemDelegate {
  public:
-  // Initializes the app list item in the shelf data model and creates an
-  // AppListShelfItemDelegate which will be owned by |model|.
-  static void CreateAppListItemAndDelegate(ShelfModel* model);
-
   AppListShelfItemDelegate();
   ~AppListShelfItemDelegate() override;
 
@@ -25,8 +20,11 @@ class AppListShelfItemDelegate : public ShelfItemDelegate {
   void ItemSelected(std::unique_ptr<ui::Event> event,
                     int64_t display_id,
                     ShelfLaunchSource source,
-                    const ItemSelectedCallback& callback) override;
-  void ExecuteCommand(uint32_t command_id, int32_t event_flags) override;
+                    ItemSelectedCallback callback) override;
+  void ExecuteCommand(bool from_context_menu,
+                      int64_t command_id,
+                      int32_t event_flags,
+                      int64_t display_id) override;
   void Close() override;
 
  private:

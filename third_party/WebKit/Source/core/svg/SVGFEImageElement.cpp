@@ -21,15 +21,16 @@
 
 #include "core/svg/SVGFEImageElement.h"
 
-#include "core/SVGNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/IdTargetObserver.h"
 #include "core/loader/resource/ImageResourceContent.h"
 #include "core/svg/SVGPreserveAspectRatio.h"
 #include "core/svg/graphics/filters/SVGFEImage.h"
+#include "core/svg_names.h"
 #include "platform/graphics/Image.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 
 namespace blink {
 
@@ -70,8 +71,10 @@ void SVGFEImageElement::ClearResourceReferences() {
 }
 
 void SVGFEImageElement::FetchImageResource() {
+  ResourceLoaderOptions options;
+  options.initiator_info.name = localName();
   FetchParameters params(
-      ResourceRequest(GetDocument().CompleteURL(HrefString())), localName());
+      ResourceRequest(GetDocument().CompleteURL(HrefString())), options);
   cached_image_ = ImageResourceContent::Fetch(params, GetDocument().Fetcher());
 
   if (cached_image_)
@@ -138,7 +141,7 @@ void SVGFEImageElement::ImageNotifyFinished(ImageResourceContent*) {
     return;
 
   Element* parent = parentElement();
-  if (!parent || !isSVGFilterElement(parent) || !parent->GetLayoutObject())
+  if (!parent || !IsSVGFilterElement(parent) || !parent->GetLayoutObject())
     return;
 
   if (LayoutObject* layout_object = this->GetLayoutObject())

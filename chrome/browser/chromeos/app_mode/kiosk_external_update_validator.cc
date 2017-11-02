@@ -32,8 +32,9 @@ void KioskExternalUpdateValidator::Start() {
           extensions::Manifest::EXTERNAL_PREF, extensions::Extension::NO_FLAGS,
           crx_unpack_dir_, backend_task_runner_.get(), this));
   if (!backend_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&extensions::SandboxedUnpacker::StartWithCrx,
-                                unpacker.get(), crx_file_))) {
+          FROM_HERE,
+          base::BindOnce(&extensions::SandboxedUnpacker::StartWithCrx,
+                         unpacker.get(), crx_file_))) {
     NOTREACHED();
   }
 }
@@ -44,7 +45,7 @@ void KioskExternalUpdateValidator::OnUnpackFailure(
              << crx_file_.extension_id << " " << error.message();
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(
+      base::BindOnce(
           &KioskExternalUpdateValidatorDelegate::OnExternalUpdateUnpackFailure,
           delegate_, crx_file_.extension_id));
 }
@@ -54,7 +55,8 @@ void KioskExternalUpdateValidator::OnUnpackSuccess(
     const base::FilePath& extension_dir,
     std::unique_ptr<base::DictionaryValue> original_manifest,
     const extensions::Extension* extension,
-    const SkBitmap& install_icon) {
+    const SkBitmap& install_icon,
+    const base::Optional<int>& dnr_ruleset_checksum) {
   DCHECK(crx_file_.extension_id == extension->id());
 
   std::string minimum_browser_version;
@@ -68,8 +70,8 @@ void KioskExternalUpdateValidator::OnUnpackSuccess(
 
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(
-          &KioskExternalUpdateValidatorDelegate::OnExtenalUpdateUnpackSuccess,
+      base::BindOnce(
+          &KioskExternalUpdateValidatorDelegate::OnExternalUpdateUnpackSuccess,
           delegate_, crx_file_.extension_id, extension->VersionString(),
           minimum_browser_version, temp_dir));
 }

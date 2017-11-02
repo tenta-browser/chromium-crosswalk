@@ -6,6 +6,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -42,7 +43,10 @@ class BitmapFetcherTestDelegate : public BitmapFetcherDelegate {
     url_ = url;
     if (bitmap) {
       success_ = true;
-      bitmap->deepCopyTo(&bitmap_);
+      if (bitmap_.tryAllocPixels(bitmap->info())) {
+        bitmap->readPixels(bitmap_.info(), bitmap_.getPixels(),
+                           bitmap_.rowBytes(), 0, 0);
+      }
     }
     // For async calls, we need to quit the run loop so the test can continue.
     if (async_)

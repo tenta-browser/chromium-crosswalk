@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "ash/public/interfaces/login_user_info.mojom.h"
 #include "base/macros.h"
 
 class PrefChangeRegistrar;
@@ -70,6 +71,10 @@ class MultiProfileUserController {
   // NOT_ALLOWED_PRIMARY_USER_POLICY_FORBIDS)
   static UserAllowedInSessionReason GetPrimaryUserPolicy();
 
+  // Returns the user behavior in MultiProfileUserBehavior enum.
+  static ash::mojom::MultiProfileUserBehavior UserBehaviorStringToEnum(
+      const std::string& behavior);
+
   // Returns true if user allowed to be in the current session. If |reason| not
   // null stores UserAllowedInSessionReason enum that describes actual reason.
   bool IsUserAllowedInSession(const std::string& user_email,
@@ -101,7 +106,7 @@ class MultiProfileUserController {
   void OnUserPrefChanged(Profile* profile);
 
   MultiProfileUserControllerDelegate* delegate_;  // Not owned.
-  PrefService* local_state_;  // Not owned.
+  PrefService* local_state_;                      // Not owned.
   std::vector<std::unique_ptr<PrefChangeRegistrar>> pref_watchers_;
 
   DISALLOW_COPY_AND_ASSIGN(MultiProfileUserController);

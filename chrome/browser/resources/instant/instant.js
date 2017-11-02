@@ -5,7 +5,10 @@
 // Redefine '$' here rather than including 'cr.js', since this is
 // the only function needed.  This allows this file to be loaded
 // in a browser directly for layout and some testing purposes.
-var $ = function(id) { return document.getElementById(id); };
+var $ = function(id) {
+  // eslint-disable-next-line no-restricted-properties
+  return document.getElementById(id);
+};
 
 /**
  * WebUI for configuring instant.* preference values used by
@@ -56,15 +59,19 @@ var instantConfig = (function() {
       var input = createElementWithClass('input', 'row-input');
       input.type = field.type;
       input.id = field.key;
-      input.title = "Default Value: " + field.default;
-      if (field.size) input.size = field.size;
+      input.title = 'Default Value: ' + field.default;
+      if (field.size)
+        input.size = field.size;
       input.min = field.min || 0;
-      if (field.max) input.max = field.max;
-      if (field.step) input.step = field.step;
+      if (field.max)
+        input.max = field.max;
+      if (field.step)
+        input.step = field.step;
       row.appendChild(input);
 
       var units = createElementWithClass('div', 'row-units');
-      if (field.units) units.innerHTML = field.units;
+      if (field.units)
+        units.innerHTML = field.units;
       row.appendChild(units);
 
       $('instant-form').appendChild(row);
@@ -78,8 +85,8 @@ var instantConfig = (function() {
     for (var i = 0; i < FIELDS.length; i++) {
       var field = FIELDS[i];
       $(field.key).onchange = (function(key) {
-        setPreferenceValue(key);
-      }).bind(null, field.key);
+                                setPreferenceValue(key);
+                              }).bind(null, field.key);
     }
   }
 
@@ -131,37 +138,6 @@ var instantConfig = (function() {
     return false;
   }
 
-  /**
-   * Request debug info.
-   * The method is asynchronous, results being provided via getDebugInfoResult.
-   */
-  function getDebugInfo() {
-    chrome.send('getDebugInfo');
-  }
-
-  /**
-   * Handles callback from getDebugInfo.
-   * @param {Object} info The debug info.
-   */
-  function getDebugInfoResult(info) {
-    for (var i = 0; i < info.entries.length; ++i) {
-      var entry = info.entries[i];
-      var row = createElementWithClass('p', 'debug');
-      row.appendChild(createElementWithClass('span', 'timestamp')).textContent =
-          entry.time;
-      row.appendChild(document.createElement('span')).textContent = entry.text;
-      $('instant-debug-info').appendChild(row);
-    }
-  }
-
-  /**
-   * Resets list of debug events.
-   */
-  function clearDebugInfo() {
-    $('instant-debug-info').innerHTML = '';
-    chrome.send('clearDebugInfo');
-  }
-
   function loadForm() {
     for (var i = 0; i < FIELDS.length; i++)
       getPreferenceValue(FIELDS[i].key);
@@ -174,15 +150,12 @@ var instantConfig = (function() {
     buildForm();
     loadForm();
     initForm();
-    getDebugInfo();
 
     $('save-button').onclick = onSave.bind(this);
-    $('clear-button').onclick = clearDebugInfo.bind(this);
   }
 
   return {
     initialize: initialize,
-    getDebugInfoResult: getDebugInfoResult,
     getPreferenceValueResult: getPreferenceValueResult
   };
 })();

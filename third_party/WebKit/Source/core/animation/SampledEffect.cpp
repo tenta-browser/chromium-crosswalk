@@ -13,7 +13,7 @@ SampledEffect::SampledEffect(KeyframeEffectReadOnly* effect)
 
 void SampledEffect::Clear() {
   effect_ = nullptr;
-  interpolations_.Clear();
+  interpolations_.clear();
 }
 
 bool SampledEffect::WillNeverChange() const {
@@ -25,7 +25,7 @@ void SampledEffect::RemoveReplacedInterpolations(
   size_t new_size = 0;
   for (auto& interpolation : interpolations_) {
     if (!replaced_properties.Contains(interpolation->GetProperty()))
-      interpolations_[new_size++].Swap(interpolation);
+      interpolations_[new_size++].swap(interpolation);
   }
   interpolations_.Shrink(new_size);
 }

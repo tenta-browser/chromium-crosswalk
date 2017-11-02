@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <utility>
 #include <vector>
 
@@ -14,6 +13,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -22,6 +22,7 @@
 #include "extensions/browser/api/declarative_webrequest/request_stage.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_condition.h"
 #include "extensions/browser/api/declarative_webrequest/webrequest_constants.h"
+#include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
 #include "extensions/browser/api/web_request/web_request_resource_type.h"
 #include "extensions/common/error_utils.h"
@@ -182,7 +183,7 @@ bool WebRequestConditionAttributeResourceType::IsFulfilled(
   if (!(request_data.stage & GetStages()))
     return false;
   const auto resource_type = GetWebRequestResourceType(request_data.request);
-  return std::find(types_.begin(), types_.end(), resource_type) != types_.end();
+  return base::ContainsValue(types_, resource_type);
 }
 
 WebRequestConditionAttribute::Type
@@ -266,11 +267,9 @@ bool WebRequestConditionAttributeContentType::IsFulfilled(
       content_type, &mime_type, &charset, &had_charset, NULL);
 
   if (inclusive_) {
-    return std::find(content_types_.begin(), content_types_.end(),
-                     mime_type) != content_types_.end();
+    return base::ContainsValue(content_types_, mime_type);
   } else {
-    return std::find(content_types_.begin(), content_types_.end(),
-                     mime_type) == content_types_.end();
+    return !base::ContainsValue(content_types_, mime_type);
   }
 }
 
@@ -504,7 +503,7 @@ HeaderMatcher::HeaderMatchTest::Create(const base::DictionaryValue* tests) {
 
     std::vector<std::unique_ptr<const StringMatchTest>>* tests =
         is_name ? &name_match : &value_match;
-    switch (content->GetType()) {
+    switch (content->type()) {
       case base::Value::Type::LIST: {
         const base::ListValue* list = NULL;
         CHECK(content->GetAsList(&list));
@@ -693,6 +692,9 @@ bool WebRequestConditionAttributeResponseHeaders::IsFulfilled(
   std::string value;
   size_t iter = 0;
   while (!passed && headers->EnumerateHeaderLines(&iter, &name, &value)) {
+    if (ExtensionsAPIClient::Get()->ShouldHideResponseHeader(
+            request_data.request->url(), name))
+      continue;
     passed |= header_matcher_->TestNameValue(name, value);
   }
 
@@ -760,8 +762,7 @@ bool WebRequestConditionAttributeThirdParty::IsFulfilled(
   const net::StaticCookiePolicy block_third_party_policy(
       net::StaticCookiePolicy::BLOCK_ALL_THIRD_PARTY_COOKIES);
   const int can_get_cookies = block_third_party_policy.CanAccessCookies(
-      request_data.request->url(),
-      request_data.request->first_party_for_cookies());
+      request_data.request->url(), request_data.request->site_for_cookies());
   const bool is_first_party = (can_get_cookies == net::OK);
 
   return match_third_party_ ? !is_first_party : is_first_party;

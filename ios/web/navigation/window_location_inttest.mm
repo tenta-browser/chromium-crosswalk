@@ -9,14 +9,18 @@
 #include "base/test/ios/wait_util.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 #import "ios/web/public/web_state/web_state.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/test/web_int_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -107,7 +111,13 @@ class WindowLocationTest : public web::WebIntTest {
 };
 
 // Tests that calling window.location.assign() creates a new NavigationItem.
-TEST_F(WindowLocationTest, Assign) {
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_Assign Assign
+#else
+#define MAYBE_Assign DISABLED_Assign
+#endif
+// TODO(crbug.com/721162): Enable this test on device.
+TEST_F(WindowLocationTest, MAYBE_Assign) {
   // Navigate to about:blank so there is a forward entry to prune.
   GURL about_blank("about:blank");
   LoadUrl(about_blank);
@@ -196,7 +206,13 @@ TEST_F(WindowLocationTest, WindowLocationReplaceUnresolvable) {
 }
 
 // Tests that calling window.location.reload() causes an onload event to occur.
-TEST_F(WindowLocationTest, WindowLocationReload) {
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_WindowLocationReload WindowLocationReload
+#else
+#define MAYBE_WindowLocationReload DISABLED_WindowLocationReload
+#endif
+// TODO(crbug.com/721465): Enable this test on device.
+TEST_F(WindowLocationTest, MAYBE_WindowLocationReload) {
   // Tap the window.location.reload() button.
   ExecuteBlockAndWaitForLoad(window_location_url(), ^{
     ASSERT_TRUE(web::test::TapWebViewElementWithId(web_state(),
@@ -210,7 +226,14 @@ TEST_F(WindowLocationTest, WindowLocationReload) {
 }
 
 // Tests that calling window.location.assign() creates a new NavigationItem.
-TEST_F(WindowLocationTest, WindowLocationSetToDOMString) {
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_WindowLocationSetToDOMString WindowLocationSetToDOMString
+#else
+#define MAYBE_WindowLocationSetToDOMString DISABLED_WindowLocationSetToDOMString
+#endif
+// TODO(crbug.com/731740): This test is disabled because it occasionally times
+// out on device.
+TEST_F(WindowLocationTest, MAYBE_WindowLocationSetToDOMString) {
   // Navigate to about:blank so there is a forward entry to prune.
   GURL about_blank("about:blank");
   LoadUrl(about_blank);

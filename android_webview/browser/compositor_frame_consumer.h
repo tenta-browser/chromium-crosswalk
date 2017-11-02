@@ -10,7 +10,7 @@
 #include "android_webview/browser/child_frame.h"
 #include "android_webview/browser/compositor_id.h"
 #include "android_webview/browser/parent_compositor_draw_constraints.h"
-#include "cc/resources/returned_resource.h"
+#include "components/viz/common/resources/returned_resource.h"
 #include "content/public/browser/android/synchronous_compositor.h"
 #include "ui/gfx/geometry/vector2d.h"
 
@@ -25,8 +25,8 @@ class CompositorFrameConsumer {
     ReturnedResources();
     ~ReturnedResources();
 
-    uint32_t compositor_frame_sink_id;
-    cc::ReturnedResourceArray resources;
+    uint32_t layer_tree_frame_sink_id;
+    std::vector<viz::ReturnedResource> resources;
   };
   using ReturnedResourcesMap =
       std::map<CompositorID, ReturnedResources, CompositorIDComparator>;
@@ -60,4 +60,4 @@ class CompositorFrameConsumer {
 
 }  // namespace android_webview
 
-#endif  // ANDROID_WEBVIEW_BROWSER_COMPOSITOR_FRAME_PRODUCER_H_
+#endif  // ANDROID_WEBVIEW_BROWSER_COMPOSITOR_FRAME_CONSUMER_H_

@@ -11,10 +11,10 @@
 
 #include "base/logging.h"
 #include "media/base/decrypt_config.h"
-#include "media/filters/h265_parser.h"
 #include "media/formats/mp4/avc.h"
 #include "media/formats/mp4/box_definitions.h"
 #include "media/formats/mp4/box_reader.h"
+#include "media/video/h265_parser.h"
 
 namespace media {
 namespace mp4 {
@@ -48,7 +48,9 @@ bool HEVCDecoderConfigurationRecord::Parse(BoxReader* reader) {
 
 bool HEVCDecoderConfigurationRecord::Parse(const uint8_t* data, int data_size) {
   BufferReader reader(data, data_size);
-  return ParseInternal(&reader, new MediaLog());
+  // TODO(wolenetz): Questionable MediaLog usage, http://crbug.com/712310
+  MediaLog media_log;
+  return ParseInternal(&reader, &media_log);
 }
 
 HEVCDecoderConfigurationRecord::HVCCNALArray::HVCCNALArray()
@@ -59,9 +61,8 @@ HEVCDecoderConfigurationRecord::HVCCNALArray::HVCCNALArray(
 
 HEVCDecoderConfigurationRecord::HVCCNALArray::~HVCCNALArray() {}
 
-bool HEVCDecoderConfigurationRecord::ParseInternal(
-    BufferReader* reader,
-    const scoped_refptr<MediaLog>& media_log) {
+bool HEVCDecoderConfigurationRecord::ParseInternal(BufferReader* reader,
+                                                   MediaLog* media_log) {
   uint8_t profile_indication = 0;
   uint32_t general_constraint_indicator_flags_hi = 0;
   uint16_t general_constraint_indicator_flags_lo = 0;
@@ -244,8 +245,13 @@ bool HEVCBitstreamConverter::ConvertFrame(
     RCHECK(HEVC::InsertParamSetsAnnexB(*hevc_config_, frame_buf, subsamples));
   }
 
-  DCHECK(HEVC::IsValidAnnexB(*frame_buf, *subsamples));
   return true;
+}
+
+bool HEVCBitstreamConverter::IsValid(
+    std::vector<uint8_t>* frame_buf,
+    std::vector<SubsampleEntry>* subsamples) const {
+  return HEVC::IsValidAnnexB(*frame_buf, *subsamples);
 }
 
 }  // namespace mp4

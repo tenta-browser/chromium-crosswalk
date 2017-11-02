@@ -8,10 +8,7 @@
 
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8ThrowException.h"
 #include "core/dom/DOMException.h"
-#include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/frame/Deprecation.h"
@@ -23,13 +20,17 @@
 #include "modules/encryptedmedia/MediaKeysController.h"
 #include "platform/EncryptedMediaRequest.h"
 #include "platform/Histogram.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8ThrowException.h"
 #include "platform/network/ParsedContentType.h"
 #include "platform/network/mime/ContentType.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebEncryptedMediaClient.h"
 #include "public/platform/WebEncryptedMediaRequest.h"
+#include "public/platform/WebFeaturePolicyFeature.h"
 #include "public/platform/WebMediaKeySystemConfiguration.h"
 #include "public/platform/WebMediaKeySystemMediaCapability.h"
 #include "public/platform/WebVector.h"
@@ -244,17 +245,19 @@ void MediaKeySystemAccessInitializer::CheckVideoCapabilityRobustness() const {
   if (has_video_capabilities) {
     DEFINE_THREAD_SAFE_STATIC_LOCAL(
         EnumerationHistogram, empty_robustness_histogram,
-        new EnumerationHistogram(
-            "Media.EME.Widevine.VideoCapability.HasEmptyRobustness", 2));
+        ("Media.EME.Widevine.VideoCapability.HasEmptyRobustness", 2));
     empty_robustness_histogram.Count(has_empty_robustness);
   }
 
   if (has_empty_robustness) {
+    // TODO(xhwang): Write a best practice doc explaining details about risks of
+    // using an empty robustness here, and provide the link to the doc in this
+    // message. See http://crbug.com/720013
     resolver_->GetExecutionContext()->AddConsoleMessage(ConsoleMessage::Create(
         kJSMessageSource, kWarningMessageLevel,
         "It is recommended that a robustness level be specified. Not "
-        "specifying the robustness level could result in unexpected behavior, "
-        "potentially including failure to play."));
+        "specifying the robustness level could result in unexpected "
+        "behavior."));
   }
 }
 
@@ -269,6 +272,21 @@ ScriptPromise NavigatorRequestMediaKeySystemAccess::requestMediaKeySystemAccess(
 
   ExecutionContext* execution_context = ExecutionContext::From(script_state);
   Document* document = ToDocument(execution_context);
+
+  Deprecation::CountDeprecationFeaturePolicy(
+      *document, WebFeaturePolicyFeature::kEncryptedMedia);
+
+  if (RuntimeEnabledFeatures::FeaturePolicyForEncryptedMediaEnabled()) {
+    if (!document->GetFrame() ||
+        !document->GetFrame()->IsFeatureEnabled(
+            WebFeaturePolicyFeature::kEncryptedMedia)) {
+      return ScriptPromise::RejectWithDOMException(
+          script_state,
+          DOMException::Create(
+              kNotSupportedError,
+              "requestMediaKeySystemAccess is disabled by feature policy."));
+    }
+  }
 
   // From https://w3c.github.io/encrypted-media/#common-key-systems
   // All user agents MUST support the common key systems described in this
@@ -327,6 +345,10 @@ ScriptPromise NavigatorRequestMediaKeySystemAccess::requestMediaKeySystemAccess(
             kInvalidStateError,
             "The context provided is not associated with a page."));
   }
+
+  UseCounter::Count(*document, WebFeature::kEncryptedMediaSecureOrigin);
+  UseCounter::CountCrossOriginIframe(
+      *document, WebFeature::kEncryptedMediaCrossOriginIframe);
 
   // 4. Let origin be the origin of document.
   //    (Passed with the execution context.)

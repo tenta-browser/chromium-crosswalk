@@ -10,12 +10,13 @@
 #include <string>
 #include <vector>
 
-#include "base/files/scoped_temp_dir.h"
 #include "base/time/time.h"
 #include "chrome/test/chromedriver/basic_types.h"
 #include "chrome/test/chromedriver/chrome/device_metrics.h"
 #include "chrome/test/chromedriver/chrome/geoposition.h"
 #include "chrome/test/chromedriver/chrome/network_conditions.h"
+#include "chrome/test/chromedriver/chrome/scoped_temp_dir_with_retry.h"
+#include "chrome/test/chromedriver/chrome/ui_events.h"
 #include "chrome/test/chromedriver/command_listener.h"
 
 static const char kAccept[] = "accept";
@@ -43,6 +44,7 @@ struct FrameInfo {
 
 struct Session {
   static const base::TimeDelta kDefaultPageLoadTimeout;
+  static const base::TimeDelta kDefaultScriptTimeout;
 
   explicit Session(const std::string& id);
   Session(const std::string& id, std::unique_ptr<Chrome> chrome);
@@ -71,6 +73,7 @@ struct Session {
   // this list will be empty.
   std::list<FrameInfo> frames;
   WebPoint mouse_position;
+  MouseButton pressed_mouse_button;
   base::TimeDelta implicit_wait;
   base::TimeDelta page_load_timeout;
   base::TimeDelta script_timeout;
@@ -82,7 +85,7 @@ struct Session {
   // Logs that populate from DevTools events.
   std::vector<std::unique_ptr<WebDriverLog>> devtools_logs;
   std::unique_ptr<WebDriverLog> driver_log;
-  base::ScopedTempDir temp_dir;
+  ScopedTempDirWithRetry temp_dir;
   std::unique_ptr<base::DictionaryValue> capabilities;
   bool auto_reporting_enabled;
   // |command_listeners| should be declared after |chrome|. When the |Session|

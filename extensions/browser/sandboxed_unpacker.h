@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_BROWSER_SANDBOXED_UNPACKER_H_
 #define EXTENSIONS_BROWSER_SANDBOXED_UNPACKER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
@@ -12,6 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted_delete_on_sequence.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "content/public/browser/utility_process_mojo_client.h"
 #include "extensions/browser/crx_file_info.h"
@@ -22,6 +24,7 @@ class SkBitmap;
 
 namespace base {
 class DictionaryValue;
+class ListValue;
 class SequencedTaskRunner;
 }
 
@@ -51,12 +54,17 @@ class SandboxedUnpackerClient
   // for deleting this memory.
   //
   // install_icon - The icon we will display in the installation UI, if any.
+  //
+  // dnr_ruleset_checksum - Checksum for the indexed ruleset corresponding to
+  // the Declarative Net Request API. Optional since it's only valid for
+  // extensions which provide a declarative ruleset.
   virtual void OnUnpackSuccess(
       const base::FilePath& temp_dir,
       const base::FilePath& extension_root,
       std::unique_ptr<base::DictionaryValue> original_manifest,
       const Extension* extension,
-      const SkBitmap& install_icon) = 0;
+      const SkBitmap& install_icon,
+      const base::Optional<int>& dnr_ruleset_checksum) = 0;
   virtual void OnUnpackFailure(const CrxInstallError& error) = 0;
 
  protected:
@@ -93,6 +101,14 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
   // passing the |location| and |creation_flags| to Extension::Create. The
   // |extensions_dir| parameter should specify the directory under which we'll
   // create a subdirectory to write the unpacked extension contents.
+  // Note: Because this requires disk I/O, the task runner passed should use
+  // TaskShutdownBehavior::SKIP_ON_SHUTDOWN to ensure that either the task is
+  // fully run (if initiated before shutdown) or not run at all (if shutdown is
+  // initiated first). See crbug.com/235525.
+  // TODO(devlin): We should probably just have SandboxedUnpacker use the common
+  // ExtensionFileTaskRunner, and not pass in a separate one.
+  // TODO(devlin): SKIP_ON_SHUTDOWN is also not quite sufficient for this. We
+  // should probably instead be using base::ImportantFileWriter or similar.
   SandboxedUnpacker(
       Manifest::Location location,
       int creation_flags,
@@ -159,7 +175,7 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
     INVALID_PATH_FOR_BITMAP_IMAGE,
     ERROR_RE_ENCODING_THEME_IMAGE,
     ERROR_SAVING_THEME_IMAGE,
-    ABORTED_DUE_TO_SHUTDOWN,
+    DEPRECATED_ABORTED_DUE_TO_SHUTDOWN,  // No longer used; kept for UMA.
 
     // SandboxedUnpacker::RewriteCatalogFiles()
     COULD_NOT_READ_CATALOG_DATA_FROM_DISK,
@@ -173,6 +189,14 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
 
     UNZIP_FAILED,
     DIRECTORY_MOVE_FAILED,
+
+    // SandboxedUnpacker::ValidateSignature()
+    CRX_FILE_IS_DELTA_UPDATE,
+    CRX_EXPECTED_HASH_INVALID,
+
+    // SandboxedUnpacker::IndexAndPersistRulesIfNeeded()
+    ERROR_PARSING_DNR_RULESET,
+    ERROR_INDEXING_DNR_RULESET,
 
     NUM_FAILURE_REASONS
   };
@@ -206,14 +230,16 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
   // Unpacks the extension in directory and returns the manifest.
   void Unpack(const base::FilePath& directory);
   void UnpackDone(const base::string16& error,
-                  std::unique_ptr<base::DictionaryValue> manifest);
-  void UnpackExtensionSucceeded(
-      std::unique_ptr<base::DictionaryValue> manifest);
+                  std::unique_ptr<base::DictionaryValue> manifest,
+                  std::unique_ptr<base::ListValue> json_ruleset);
+  void UnpackExtensionSucceeded(std::unique_ptr<base::DictionaryValue> manifest,
+                                std::unique_ptr<base::ListValue> json_ruleset);
   void UnpackExtensionFailed(const base::string16& error);
 
   // Reports unpack success or failure, or unzip failure.
   void ReportSuccess(std::unique_ptr<base::DictionaryValue> original_manifest,
-                     const SkBitmap& install_icon);
+                     const SkBitmap& install_icon,
+                     const base::Optional<int>& dnr_ruleset_checksum);
   void ReportFailure(FailureReason reason, const base::string16& error);
 
   // Overwrites original manifest with safe result from utility process.
@@ -228,6 +254,14 @@ class SandboxedUnpacker : public base::RefCountedThreadSafe<SandboxedUnpacker> {
 
   // Cleans up temp directory artifacts.
   void Cleanup();
+
+  // Indexes |json_ruleset| if it is non-null and persists the corresponding
+  // indexed file for the Declarative Net Request API. Also, returns the
+  // checksum of the indexed ruleset file if the ruleset was persisted. Returns
+  // false and reports failure in case of an error.
+  bool IndexAndPersistRulesIfNeeded(
+      std::unique_ptr<base::ListValue> json_ruleset,
+      base::Optional<int>* dnr_ruleset_checksum);
 
   // If we unpacked a CRX file, we hold on to the path name for use
   // in various histograms.

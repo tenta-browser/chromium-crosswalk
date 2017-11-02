@@ -25,7 +25,6 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_util.h"
 #include "net/base/completion_callback.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
@@ -34,9 +33,11 @@
 #include "net/base/proxy_delegate.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_transaction_test_util.h"
+#include "net/http/http_util.h"
 #include "net/proxy/proxy_server.h"
 #include "net/proxy/proxy_service.h"
 #include "net/socket/socket_test_util.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/static_http_user_agent_settings.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -189,14 +190,26 @@ class DataReductionProxyProtocolTest : public testing::Test {
       response2_via_header = "Via: 1.1 Chrome-Compression-Proxy\r\n";
     }
 
-    request2 = base::StringPrintf(
+    std::string request2_prefix = base::StringPrintf(
         "%s %s HTTP/1.1\r\n"
         "Host: www.google.com\r\n"
-        "%sConnection: keep-alive\r\n%s"
-        "User-Agent:\r\n"
-        "Accept-Encoding: gzip, deflate\r\n\r\n",
+        "%sConnection: keep-alive\r\n%s",
         method, request2_path.c_str(), request2_connection_type.c_str(),
         trailer.c_str());
+
+    // Cache headers are set only if the request was intercepted and retried by
+    // data reduction proxy. If the request was restarted by the network stack,
+    // then the cache headers are unset.
+    std::string request2_middle = expected_bad_proxy_count == 0
+                                      ? "Pragma: no-cache\r\n"
+                                        "Cache-Control: no-cache\r\n"
+                                      : "";
+
+    std::string request2_suffix =
+        "User-Agent:\r\n"
+        "Accept-Encoding: gzip, deflate\r\n\r\n";
+
+    request2 = request2_prefix + request2_middle + request2_suffix;
 
     response2 = base::StringPrintf(
         "HTTP/1.0 200 OK\r\n"
@@ -237,7 +250,8 @@ class DataReductionProxyProtocolTest : public testing::Test {
         network_delegate_->headers_received_count();
     TestDelegate d;
     std::unique_ptr<URLRequest> r(context_->CreateRequest(
-        GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, &d));
+        GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, &d,
+        TRAFFIC_ANNOTATION_FOR_TESTS));
     r->set_method(method);
     r->SetLoadFlags(net::LOAD_NORMAL);
 
@@ -340,10 +354,11 @@ TEST_F(DataReductionProxyProtocolTest, TestIdempotency) {
   };
   for (size_t i = 0; i < arraysize(tests); ++i) {
     std::unique_ptr<net::URLRequest> request(context.CreateRequest(
-        GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, NULL));
+        GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, NULL,
+        TRAFFIC_ANNOTATION_FOR_TESTS));
     request->set_method(tests[i].method);
     EXPECT_EQ(tests[i].expected_result,
-              util::IsMethodIdempotent(request->method()));
+              net::HttpUtil::IsMethodIdempotent(request->method()));
   }
 }
 
@@ -740,9 +755,21 @@ TEST_F(DataReductionProxyProtocolTest, BypassLogic) {
       BYPASS_EVENT_TYPE_SHORT
     },
   };
-  std::string primary = test_context_->config()->test_params()->DefaultOrigin();
-  std::string fallback =
-      test_context_->config()->test_params()->DefaultFallbackOrigin();
+  test_context_->config()->test_params()->UseNonSecureProxiesForHttp();
+  std::string primary = test_context_->config()
+                            ->test_params()
+                            ->proxies_for_http()
+                            .front()
+                            .proxy_server()
+                            .host_port_pair()
+                            .ToString();
+  std::string fallback = test_context_->config()
+                             ->test_params()
+                             ->proxies_for_http()
+                             .at(1)
+                             .proxy_server()
+                             .host_port_pair()
+                             .ToString();
   for (size_t i = 0; i < arraysize(tests); ++i) {
     ConfigureTestDependencies(ProxyService::CreateFixedFromPacResult(
         net::ProxyServer::FromURI(
@@ -876,8 +903,9 @@ TEST_F(DataReductionProxyBypassProtocolEndToEndTest,
       mock_socket_factory()->AddSocketDataProvider(&retry_socket);
 
     net::TestDelegate delegate;
-    std::unique_ptr<net::URLRequest> url_request(context()->CreateRequest(
-        GURL("http://www.google.com"), net::IDLE, &delegate));
+    std::unique_ptr<net::URLRequest> url_request(
+        context()->CreateRequest(GURL("http://www.google.com"), net::IDLE,
+                                 &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
     url_request->Start();
     drp_test_context()->RunUntilIdle();
 
@@ -924,8 +952,11 @@ TEST_F(DataReductionProxyBypassProtocolEndToEndTest,
     storage()->set_proxy_service(
         net::ProxyService::CreateFixed(test.proxy_rules));
     AttachToContextAndInit();
-    if (test.enable_data_reduction_proxy)
+    if (test.enable_data_reduction_proxy) {
+      drp_test_context()->DisableWarmupURLFetch();
       drp_test_context()->EnableDataReductionProxyWithSecureProxyCheckSuccess();
+    }
+    drp_test_context()->config()->test_params()->UseNonSecureProxiesForHttp();
 
     MockRead reads[] = {MockRead(test.response_headers),
                         MockRead(""),
@@ -935,8 +966,9 @@ TEST_F(DataReductionProxyBypassProtocolEndToEndTest,
 
     base::HistogramTester histogram_tester;
     net::TestDelegate delegate;
-    std::unique_ptr<net::URLRequest> request(context()->CreateRequest(
-        GURL("http://google.com"), net::IDLE, &delegate));
+    std::unique_ptr<net::URLRequest> request(
+        context()->CreateRequest(GURL("http://google.com"), net::IDLE,
+                                 &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
     request->Start();
     drp_test_context()->RunUntilIdle();
 
@@ -971,7 +1003,8 @@ TEST_F(DataReductionProxyProtocolTest,
 
   TestDelegate d;
   std::unique_ptr<URLRequest> r(context_->CreateRequest(
-      GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, &d));
+      GURL("http://www.google.com/"), net::DEFAULT_PRIORITY, &d,
+      TRAFFIC_ANNOTATION_FOR_TESTS));
   r->set_method("GET");
   r->SetLoadFlags(net::LOAD_NORMAL);
 

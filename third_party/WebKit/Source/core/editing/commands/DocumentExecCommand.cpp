@@ -29,9 +29,11 @@
 
 #include "core/dom/Document.h"
 
+#include "core/dom/events/ScopedEventQueue.h"
+#include "core/editing/EditingTriState.h"
 #include "core/editing/Editor.h"
-#include "core/events/ScopedEventQueue.h"
-#include "core/html/TextControlElement.h"
+#include "core/frame/UseCounter.h"
+#include "core/html/forms/TextControlElement.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "platform/Histogram.h"
 #include "platform/wtf/AutoReset.h"
@@ -62,7 +64,7 @@ bool Document::execCommand(const String& command_name,
     return false;
   }
   if (FocusedElement() && IsTextControlElement(*FocusedElement()))
-    UseCounter::Count(*this, UseCounter::kExecCommandOnInputOrTextarea);
+    UseCounter::Count(*this, WebFeature::kExecCommandOnInputOrTextarea);
 
   // We don't allow recursive |execCommand()| to protect against attack code.
   // Recursive call of |execCommand()| could be happened by moving iframe
@@ -112,7 +114,7 @@ bool Document::queryCommandIndeterm(const String& command_name,
     return false;
   }
 
-  return GetCommand(this, command_name).GetState() == kMixedTriState;
+  return GetCommand(this, command_name).GetState() == EditingTriState::kMixed;
 }
 
 bool Document::queryCommandState(const String& command_name,
@@ -124,7 +126,7 @@ bool Document::queryCommandState(const String& command_name,
     return false;
   }
 
-  return GetCommand(this, command_name).GetState() == kTrueTriState;
+  return GetCommand(this, command_name).GetState() == EditingTriState::kTrue;
 }
 
 bool Document::queryCommandSupported(const String& command_name,

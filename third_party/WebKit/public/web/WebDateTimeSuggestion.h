@@ -26,6 +26,7 @@
 #ifndef WebDateTimeSuggestion_h
 #define WebDateTimeSuggestion_h
 
+#include "public/platform/WebCommon.h"
 #include "public/platform/WebString.h"
 
 namespace blink {
@@ -39,9 +40,9 @@ struct WebDateTimeSuggestion {
 
   WebDateTimeSuggestion() {}
 
-#if BLINK_IMPLEMENTATION
-  WebDateTimeSuggestion(const DateTimeSuggestion&);
-  WebDateTimeSuggestion& operator=(const DateTimeSuggestion&);
+#if INSIDE_BLINK
+  BLINK_EXPORT WebDateTimeSuggestion(const DateTimeSuggestion&);
+  BLINK_EXPORT WebDateTimeSuggestion& operator=(const DateTimeSuggestion&);
 #endif
 };
 

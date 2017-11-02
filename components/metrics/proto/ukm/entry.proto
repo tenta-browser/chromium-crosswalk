@@ -4,9 +4,9 @@
 
 syntax = "proto2";
 
-package ukm;
-
 option optimize_for = LITE_RUNTIME;
+
+package ukm;
 
 // Next tag: 6
 message Entry {
@@ -20,7 +20,7 @@ message Entry {
   optional int32 parent_id = 2;
 
   // The id of the Source this Event is associated with.
-  optional int32 source_id = 3;
+  optional int64 source_id = 3;
 
   // Type of the Event. This is a hash of the name (as a string).
   optional fixed64 event_hash = 4;

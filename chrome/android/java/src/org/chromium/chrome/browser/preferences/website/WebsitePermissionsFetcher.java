@@ -34,11 +34,23 @@ public class WebsitePermissionsFetcher {
     // The callback to run when the permissions have been fetched.
     private final WebsitePermissionsCallback mCallback;
 
+    private final boolean mFetchSiteImportantInfo;
+
     /**
      * @param callback The callback to run when the fetch is complete.
      */
     public WebsitePermissionsFetcher(WebsitePermissionsCallback callback) {
+        this(callback, false);
+    }
+
+    /**
+     * @param callback The callback to run when the fetch is complete.
+     * @param fetchSiteImportantInfo if the fetcher should query whether each site is 'important'.
+     */
+    public WebsitePermissionsFetcher(
+            WebsitePermissionsCallback callback, boolean fetchSiteImportantInfo) {
         mCallback = callback;
+        mFetchSiteImportantInfo = fetchSiteImportantInfo;
     }
 
     /**
@@ -62,10 +74,12 @@ public class WebsitePermissionsFetcher {
         // Popup exceptions are host-based patterns (unless we start
         // synchronizing popup exceptions with desktop Chrome).
         queue.add(new PopupExceptionInfoFetcher());
-        // Subresource filter exceptions are host-based.
-        queue.add(new SubresourceFilterExceptionInfoFetcher());
+        // Ads exceptions are host-based.
+        queue.add(new AdsExceptionInfoFetcher());
         // JavaScript exceptions are host-based patterns.
         queue.add(new JavaScriptExceptionInfoFetcher());
+        // Sound exceptions are host-based patterns.
+        queue.add(new SoundExceptionInfoFetcher());
         // Protected media identifier permission is per-origin and per-embedder.
         queue.add(new ProtectedMediaIdentifierInfoFetcher());
         // Notification permission is per-origin.
@@ -120,12 +134,15 @@ public class WebsitePermissionsFetcher {
             // Popup exceptions are host-based patterns (unless we start
             // synchronizing popup exceptions with desktop Chrome.)
             queue.add(new PopupExceptionInfoFetcher());
-        } else if (category.showSubresourceFilterSites()) {
-            // Subresource filter exceptions are host-based.
-            queue.add(new SubresourceFilterExceptionInfoFetcher());
+        } else if (category.showAdsSites()) {
+            // Ads exceptions are host-based.
+            queue.add(new AdsExceptionInfoFetcher());
         } else if (category.showJavaScriptSites()) {
             // JavaScript exceptions are host-based patterns.
             queue.add(new JavaScriptExceptionInfoFetcher());
+        } else if (category.showSoundSites()) {
+            // Sound exceptions are host-based patterns.
+            queue.add(new SoundExceptionInfoFetcher());
         } else if (category.showNotificationsSites()) {
             // Push notification permission is per-origin.
             queue.add(new NotificationInfoFetcher());
@@ -169,6 +186,9 @@ public class WebsitePermissionsFetcher {
             if (address == null) continue;
             Website site = findOrCreateSite(address, null);
             switch (contentSettingsType) {
+                case ContentSettingsType.CONTENT_SETTINGS_TYPE_ADS:
+                    site.setAdsException(exception);
+                    break;
                 case ContentSettingsType.CONTENT_SETTINGS_TYPE_AUTOPLAY:
                     site.setAutoplayException(exception);
                     break;
@@ -184,8 +204,8 @@ public class WebsitePermissionsFetcher {
                 case ContentSettingsType.CONTENT_SETTINGS_TYPE_POPUPS:
                     site.setPopupException(exception);
                     break;
-                case ContentSettingsType.CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER:
-                    site.setSubresourceFilterException(exception);
+                case ContentSettingsType.CONTENT_SETTINGS_TYPE_SOUND:
+                    site.setSoundException(exception);
                     break;
                 default:
                     assert false : "Unexpected content setting type received: "
@@ -261,10 +281,10 @@ public class WebsitePermissionsFetcher {
         }
     }
 
-    private class SubresourceFilterExceptionInfoFetcher extends Task {
+    private class AdsExceptionInfoFetcher extends Task {
         @Override
         public void run() {
-            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_SUBRESOURCE_FILTER);
+            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_ADS);
         }
     }
 
@@ -272,6 +292,13 @@ public class WebsitePermissionsFetcher {
         @Override
         public void run() {
             setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_JAVASCRIPT);
+        }
+    }
+
+    private class SoundExceptionInfoFetcher extends Task {
+        @Override
+        public void run() {
+            setException(ContentSettingsType.CONTENT_SETTINGS_TYPE_SOUND);
         }
     }
 
@@ -298,7 +325,7 @@ public class WebsitePermissionsFetcher {
                     }
                     queue.next();
                 }
-            });
+            }, mFetchSiteImportantInfo);
         }
     }
 

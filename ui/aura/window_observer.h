@@ -84,13 +84,15 @@ class AURA_EXPORT WindowObserver {
                                      const gfx::Rect& old_bounds,
                                      const gfx::Rect& new_bounds) {}
 
+  // Invoked when the opacity of the |window|'s layer changes. Can be invoked
+  // multiple times during animation.
+  virtual void OnWindowOpacityChanged(Window* window,
+                                      float old_opacity,
+                                      float new_opacity) {}
+
   // Invoked when SetTransform() is invoked on |window|.
   virtual void OnWindowTransforming(Window* window) {}
   virtual void OnWindowTransformed(Window* window) {}
-
-  // Invoked when SetTransform() is invoked on an ancestor of the window being
-  // observed (including the window itself).
-  virtual void OnAncestorWindowTransformed(Window* source, Window* window) {}
 
   // Invoked when |window|'s position among its siblings in the stacking order
   // has changed.

@@ -8,12 +8,12 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
+#include <vector>
 
 #include "base/containers/hash_tables.h"
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "ppapi/proxy/connection.h"
 #include "ppapi/proxy/plugin_resource.h"
 #include "ppapi/proxy/ppapi_proxy_export.h"
@@ -143,19 +143,19 @@ class PPAPI_PROXY_EXPORT VideoDecoderResource
   void DeleteGLTexture(uint32_t texture_id);
   void WriteNextPicture();
 
-  // ScopedVector to own the shared memory buffers.
-  ScopedVector<ShmBuffer> shm_buffers_;
+  // The shared memory buffers.
+  std::vector<std::unique_ptr<ShmBuffer>> shm_buffers_;
 
   // List of available shared memory buffers.
-  typedef std::vector<ShmBuffer*> ShmBufferList;
+  using ShmBufferList = std::vector<ShmBuffer*>;
   ShmBufferList available_shm_buffers_;
 
   // Map of GL texture id to texture info.
-  typedef base::hash_map<uint32_t, Texture> TextureMap;
+  using TextureMap = base::hash_map<uint32_t, Texture>;
   TextureMap textures_;
 
   // Queue of received pictures.
-  typedef std::queue<Picture> PictureQueue;
+  using PictureQueue = base::queue<Picture>;
   PictureQueue received_pictures_;
 
   // Pending callbacks.

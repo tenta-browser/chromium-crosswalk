@@ -4,12 +4,17 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutTableRow TR id='target' class='green'",
           "rect": [8, 10, 106, 100],
           "reason": "style change"
+        },
+        {
+          "object": "LayoutTableCell TD",
+          "rect": [10, 10, 102, 100],
+          "reason": "geometry"
         }
       ]
     }
@@ -21,7 +26,7 @@
     },
     {
       "object": "LayoutTableCell TD",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/browser/extension_navigation_throttle.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
@@ -9,9 +10,9 @@
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/common/content_client.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
-#include "extensions/browser/extension_navigation_throttle.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
@@ -40,10 +41,7 @@ class MockBrowserClient : public content::ContentBrowserClient {
   std::vector<std::unique_ptr<NavigationThrottle>> CreateThrottlesForNavigation(
       content::NavigationHandle* handle) override {
     std::vector<std::unique_ptr<NavigationThrottle>> throttles;
-    if (!handle->IsInMainFrame()) {  // Mirrors ChromeContentBrowserClient.
-      throttles.push_back(
-          base::MakeUnique<ExtensionNavigationThrottle>(handle));
-    }
+    throttles.push_back(base::MakeUnique<ExtensionNavigationThrottle>(handle));
     return throttles;
   }
 };
@@ -65,19 +63,50 @@ class ExtensionNavigationThrottleUnitTest
     ChromeRenderViewHostTestHarness::TearDown();
   }
 
-  // Checks that trying to navigate the given |host| to |url| results in the
-  // |expected_result|.
-  void CheckTestCase(content::RenderFrameHost* host,
-                     const GURL& url,
-                     NavigationThrottle::ThrottleCheckResult expected_result) {
+  // Checks that trying to navigate the given |host| to |extension_url| results
+  // in the |expected_will_start_result|, and also that navigating to
+  // |extension_url| via http redirect will cancel the request unless
+  // |expected_will_start_result| is PROCEED.
+  void CheckTestCase(
+      content::RenderFrameHost* host,
+      const GURL& extension_url,
+      NavigationThrottle::ThrottleAction expected_will_start_result) {
+    // First subtest: direct navigation to |extension_url|.
     std::unique_ptr<content::NavigationHandle> handle =
-        content::NavigationHandle::CreateNavigationHandleForTesting(url, host);
-    EXPECT_EQ(expected_result,
+        content::NavigationHandle::CreateNavigationHandleForTesting(
+            extension_url, host);
+    EXPECT_EQ(expected_will_start_result,
               handle->CallWillStartRequestForTesting(
                   /*is_post=*/false, content::Referrer(),
                   /*has_user_gesture=*/false, ui::PAGE_TRANSITION_LINK,
                   /*is_external_protocol=*/false))
-        << url;
+        << extension_url;
+
+    // Reset the handle for a second subtest: server redirect to
+    // |extension_url|.
+    GURL http_url("https://example.com");
+    handle = content::NavigationHandle::CreateNavigationHandleForTesting(
+        http_url, host);
+
+    // TODO(nick): https://crbug.com/695421 Once PlzNavigate is enabled 100%, it
+    // should be possible to support return values other than PROCEED and CANCEL
+    // from ExtensionNavigationThrottle::WillRedirectRequest.
+    NavigationThrottle::ThrottleAction expected_will_redirect_result =
+        (expected_will_start_result == NavigationThrottle::PROCEED)
+            ? NavigationThrottle::PROCEED
+            : NavigationThrottle::CANCEL;
+    EXPECT_EQ(NavigationThrottle::PROCEED,
+              handle->CallWillStartRequestForTesting(
+                  /*is_post=*/false, content::Referrer(),
+                  /*has_user_gesture=*/false, ui::PAGE_TRANSITION_LINK,
+                  /*is_external_protocol=*/false))
+        << http_url;
+    EXPECT_EQ(expected_will_redirect_result,
+              handle->CallWillRedirectRequestForTesting(
+                  extension_url,
+                  /*new_method_is_post=*/false, http_url,
+                  /*new_is_external_protocol=*/false))
+        << extension_url;
   }
 
   const Extension* extension() { return extension_.get(); }
@@ -153,8 +182,8 @@ TEST_F(ExtensionNavigationThrottleUnitTest, WebPageAncestor) {
   content::RenderFrameHost* child =
       render_frame_host_tester(main_rfh())->AppendChild("subframe1");
   GURL url = extension()->GetResourceURL(kAccessible);
-  render_frame_host_tester(child)->SimulateNavigationStart(url);
-  render_frame_host_tester(child)->SimulateNavigationCommit(url);
+  child =
+      content::NavigationSimulator::NavigateAndCommitFromDocument(url, child);
   content::RenderFrameHost* grand_child =
       render_frame_host_tester(child)->AppendChild("grandchild");
 
@@ -170,7 +199,7 @@ TEST_F(ExtensionNavigationThrottleUnitTest, WebPageAncestor) {
 }
 
 // Tests that requests to disabled or non-existent extensions are blocked.
-TEST_F(ExtensionNavigationThrottleUnitTest, InvalidExtension) {
+TEST_F(ExtensionNavigationThrottleUnitTest, DisabledExtensionChildFrame) {
   web_contents_tester()->NavigateAndCommit(GURL("http://example.com"));
   content::RenderFrameHost* child =
       render_frame_host_tester(main_rfh())->AppendChild("child");
@@ -189,10 +218,69 @@ TEST_F(ExtensionNavigationThrottleUnitTest, InvalidExtension) {
 
   std::string second_id = crx_file::id_util::GenerateId("bar");
   ASSERT_NE(second_id, extension()->id());
-  GURL invalid_url(base::StringPrintf("chrome-extension://%s/accessible.html",
+  GURL unknown_url(base::StringPrintf("chrome-extension://%s/accessible.html",
                                       second_id.c_str()));
   // Requests to non-existent extensions should be blocked.
-  CheckTestCase(child, invalid_url, NavigationThrottle::BLOCK_REQUEST);
+  CheckTestCase(child, unknown_url, NavigationThrottle::BLOCK_REQUEST);
+
+  // Test blob and filesystem URLs with disabled/unknown extensions.
+  GURL disabled_blob(base::StringPrintf("blob:chrome-extension://%s/SOMEGUID",
+                                        extension()->id().c_str()));
+  GURL unknown_blob(base::StringPrintf("blob:chrome-extension://%s/SOMEGUID",
+                                       second_id.c_str()));
+  CheckTestCase(child, disabled_blob, NavigationThrottle::BLOCK_REQUEST);
+  CheckTestCase(child, unknown_blob, NavigationThrottle::BLOCK_REQUEST);
+  GURL disabled_filesystem(
+      base::StringPrintf("filesystem:chrome-extension://%s/temporary/foo.html",
+                         extension()->id().c_str()));
+  GURL unknown_filesystem(
+      base::StringPrintf("filesystem:chrome-extension://%s/temporary/foo.html",
+                         second_id.c_str()));
+  CheckTestCase(child, disabled_filesystem, NavigationThrottle::BLOCK_REQUEST);
+  CheckTestCase(child, unknown_filesystem, NavigationThrottle::BLOCK_REQUEST);
+}
+
+// Tests that requests to disabled or non-existent extensions are blocked.
+TEST_F(ExtensionNavigationThrottleUnitTest, DisabledExtensionMainFrame) {
+  web_contents_tester()->NavigateAndCommit(GURL("http://example.com"));
+
+  ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context());
+  registry->RemoveEnabled(extension()->id());
+  registry->AddDisabled(extension());
+
+  // Since the extension is disabled, all requests should be blocked.
+  CheckTestCase(main_rfh(), extension()->GetResourceURL(kPrivate),
+                NavigationThrottle::BLOCK_REQUEST);
+  CheckTestCase(main_rfh(), extension()->GetResourceURL(kAccessible),
+                NavigationThrottle::BLOCK_REQUEST);
+  CheckTestCase(main_rfh(), extension()->GetResourceURL(kAccessibleDirResource),
+                NavigationThrottle::BLOCK_REQUEST);
+
+  std::string second_id = crx_file::id_util::GenerateId("bar");
+
+  ASSERT_NE(second_id, extension()->id());
+  GURL unknown_url(base::StringPrintf("chrome-extension://%s/accessible.html",
+                                      second_id.c_str()));
+  // Requests to non-existent extensions should be blocked.
+  CheckTestCase(main_rfh(), unknown_url, NavigationThrottle::BLOCK_REQUEST);
+
+  // Test blob and filesystem URLs with disabled/unknown extensions.
+  GURL disabled_blob(base::StringPrintf("blob:chrome-extension://%s/SOMEGUID",
+                                        extension()->id().c_str()));
+  GURL unknown_blob(base::StringPrintf("blob:chrome-extension://%s/SOMEGUID",
+                                       second_id.c_str()));
+  CheckTestCase(main_rfh(), disabled_blob, NavigationThrottle::BLOCK_REQUEST);
+  CheckTestCase(main_rfh(), unknown_blob, NavigationThrottle::BLOCK_REQUEST);
+  GURL disabled_filesystem(
+      base::StringPrintf("filesystem:chrome-extension://%s/temporary/foo.html",
+                         extension()->id().c_str()));
+  GURL unknown_filesystem(
+      base::StringPrintf("filesystem:chrome-extension://%s/temporary/foo.html",
+                         second_id.c_str()));
+  CheckTestCase(main_rfh(), disabled_filesystem,
+                NavigationThrottle::BLOCK_REQUEST);
+  CheckTestCase(main_rfh(), unknown_filesystem,
+                NavigationThrottle::BLOCK_REQUEST);
 }
 
 }  // namespace extensions

@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/compiler/compiler.gni")
 import("//build/config/ui.gni")
 import("//third_party/WebKit/public/public_features.gni")
 
@@ -17,12 +18,11 @@ declare_args() {
   # size of the binary and increasing the speed of gdb.
   remove_webcore_debug_symbols = false
 
-  # If true, enables WTF::ScopedLogger unconditionally.
-  # When false, WTF::ScopedLogger is enabled only if assertions are enabled.
-  blink_logging_always_on = false
-
   # If true, defaults image interpolation to low quality.
   use_low_quality_image_interpolation = is_android
+
+  # If true, ffmpeg will be used for decoding audio.
+  use_webaudio_ffmpeg = !is_mac && !is_android
 }
 
 # Whether Android build uses OpenMAX DL FFT. Currently supported only on
@@ -33,26 +33,15 @@ use_openmax_dl_fft =
                    (current_cpu == "arm" && arm_version >= 7) ||
                    current_cpu == "arm64" || current_cpu == "mipsel")
 
-use_webaudio_ffmpeg = !is_mac && !is_android
-
-# Set this to true to enable use of concatenated impulse responses for the HRTF
-# panner in WebAudio.
-# TODO(brettw) do we need this or can we assume its always on?
-use_concatenated_impulse_responses = true
+# TODO(tkent): Remove this flag after the great mv. crbug.com/760462
+snake_case_source_files = false
 
 # feature_defines_list ---------------------------------------------------------
 
-feature_defines_list = [
-  "ENABLE_LAYOUT_UNIT_IN_INLINE_BOXES=0",
-  "ENABLE_OILPAN=1",
-]
+feature_defines_list = []
 
 if (is_debug) {
   feature_defines_list += [ "WTF_USE_DYNAMIC_ANNOTATIONS=1" ]
-}
-
-if (use_concatenated_impulse_responses) {
-  feature_defines_list += [ "WTF_USE_CONCATENATED_IMPULSE_RESPONSES=1" ]
 }
 
 if (use_low_quality_image_interpolation) {
@@ -73,6 +62,18 @@ if (use_default_render_theme) {
   # preference to that.
   feature_defines_list += [ "WTF_USE_DEFAULT_RENDER_THEME=1" ]
 }
-if (blink_logging_always_on) {
-  feature_defines_list += [ "LOG_DISABLED=0" ]
+
+if (remove_webcore_debug_symbols) {
+  if (is_win && symbol_level != 0) {
+    # If we use no_symbols on Windows when symbol_level is not zero then no
+    # PDB will be generated but ninja will be expecting one. This would mean
+    # that the build would always be dirty. Using minimal_symbols in this
+    # situation keeps the build times fast (roughly identical to no_symbols)
+    # while still generating a PDB to keep ninja happy (and it gives us proper
+    # call stacks).
+    remove_webcore_symbols_config =
+        [ "//build/config/compiler:minimal_symbols" ]
+  } else {
+    remove_webcore_symbols_config = [ "//build/config/compiler:no_symbols" ]
+  }
 }

@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include "base/android/context_utils.h"
 #include "base/bind.h"
 #include "base/containers/hash_tables.h"
 #include "base/memory/ptr_util.h"
@@ -30,8 +29,7 @@ UsbMidiDeviceFactoryAndroid::UsbMidiDeviceFactoryAndroid() : delegate_(NULL) {}
 UsbMidiDeviceFactoryAndroid::~UsbMidiDeviceFactoryAndroid() {
   JNIEnv* env = base::android::AttachCurrentThread();
   if (!raw_factory_.is_null())
-    Java_UsbMidiDeviceFactoryAndroid_close(
-        env, raw_factory_, base::android::GetApplicationContext());
+    Java_UsbMidiDeviceFactoryAndroid_close(env, raw_factory_);
 }
 
 void UsbMidiDeviceFactoryAndroid::EnumerateDevices(
@@ -40,20 +38,18 @@ void UsbMidiDeviceFactoryAndroid::EnumerateDevices(
   DCHECK(!delegate_);
   JNIEnv* env = base::android::AttachCurrentThread();
   uintptr_t pointer = reinterpret_cast<uintptr_t>(this);
-  raw_factory_.Reset(Java_UsbMidiDeviceFactoryAndroid_create(
-      env, base::android::GetApplicationContext(), pointer));
+  raw_factory_.Reset(Java_UsbMidiDeviceFactoryAndroid_create(env, pointer));
 
   delegate_ = delegate;
-  callback_ = callback;
+  callback_ = std::move(callback);
 
-  if (Java_UsbMidiDeviceFactoryAndroid_enumerateDevices(
-          env, raw_factory_, base::android::GetApplicationContext())) {
+  if (Java_UsbMidiDeviceFactoryAndroid_enumerateDevices(env, raw_factory_)) {
     // Asynchronous operation.
     return;
   }
   // No devices are found.
-  ScopedVector<UsbMidiDevice> devices;
-  callback.Run(true, &devices);
+  UsbMidiDevice::Devices devices;
+  std::move(callback_).Run(true, &devices);
 }
 
 // Called from the Java world.
@@ -62,14 +58,15 @@ void UsbMidiDeviceFactoryAndroid::OnUsbMidiDeviceRequestDone(
     const JavaParamRef<jobject>& caller,
     const JavaParamRef<jobjectArray>& devices) {
   size_t size = env->GetArrayLength(devices);
-  ScopedVector<UsbMidiDevice> devices_to_pass;
+  UsbMidiDevice::Devices devices_to_pass;
   for (size_t i = 0; i < size; ++i) {
     base::android::ScopedJavaLocalRef<jobject> raw_device(
         env, env->GetObjectArrayElement(devices, i));
-    devices_to_pass.push_back(new UsbMidiDeviceAndroid(raw_device, delegate_));
+    devices_to_pass.push_back(
+        base::MakeUnique<UsbMidiDeviceAndroid>(raw_device, delegate_));
   }
 
-  callback_.Run(true, &devices_to_pass);
+  std::move(callback_).Run(true, &devices_to_pass);
 }
 
 // Called from the Java world.
@@ -87,10 +84,6 @@ void UsbMidiDeviceFactoryAndroid::OnUsbMidiDeviceDetached(
     const JavaParamRef<jobject>& caller,
     jint index) {
   delegate_->OnDeviceDetached(index);
-}
-
-bool UsbMidiDeviceFactoryAndroid::RegisterUsbMidiDeviceFactory(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace midi

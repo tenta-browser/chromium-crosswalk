@@ -41,11 +41,12 @@ sk_sp<SkImageFilter> FEMerge::CreateImageFilter() {
 
   std::unique_ptr<sk_sp<SkImageFilter>[]> input_refs =
       WrapArrayUnique(new sk_sp<SkImageFilter>[size]);
-  for (unsigned i = 0; i < size; ++i)
-    input_refs[i] =
-        SkiaImageFilterBuilder::Build(InputEffect(i), OperatingColorSpace());
+  for (unsigned i = 0; i < size; ++i) {
+    input_refs[i] = SkiaImageFilterBuilder::Build(
+        InputEffect(i), OperatingInterpolationSpace());
+  }
   SkImageFilter::CropRect rect = GetCropRect();
-  return SkMergeImageFilter::MakeN(input_refs.get(), size, nullptr, &rect);
+  return SkMergeImageFilter::Make(input_refs.get(), size, &rect);
 }
 
 TextStream& FEMerge::ExternalRepresentation(TextStream& ts, int indent) const {

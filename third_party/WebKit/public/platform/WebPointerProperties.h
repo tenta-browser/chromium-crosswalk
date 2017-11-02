@@ -5,16 +5,21 @@
 #ifndef WebPointerProperties_h
 #define WebPointerProperties_h
 
+#include "WebCommon.h"
+#include "WebFloatPoint.h"
+
 #include <cstdint>
 #include <limits>
 
 namespace blink {
 
+using PointerId = int32_t;
+
 // This class encapsulates the properties that are common between mouse and
 // pointer events and touch points as we transition towards the unified pointer
 // event model.
-// TODO(e_hakkinen): Replace WebTouchEvent with WebPointerEvent, remove
-// WebTouchEvent and WebTouchPoint and merge this into WebPointerEvent.
+// TODO(mustaq): Unify WebTouchPoint & WebMouseEvent into WebPointerEvent.
+// crbug.com/508283
 class WebPointerProperties {
  public:
   enum class Button {
@@ -22,9 +27,11 @@ class WebPointerProperties {
     kLeft,
     kMiddle,
     kRight,
+    kBarrel = kRight,  // Barrel is aliased per pointer event spec
     kBack,
     kForward,
-    kEraser
+    kEraser,
+    kLastEntry = kEraser  // Must be the last entry in the list
   };
 
   enum class Buttons : unsigned {
@@ -46,20 +53,13 @@ class WebPointerProperties {
     kLastEntry = kTouch  // Must be the last entry in the list
   };
 
-  WebPointerProperties()
-      : id(0),
-        force(std::numeric_limits<float>::quiet_NaN()),
-        tilt_x(0),
-        tilt_y(0),
-        tangential_pressure(0.0f),
-        twist(0),
-        button(Button::kNoButton),
-        pointer_type(PointerType::kUnknown),
-        movement_x(0),
-        movement_y(0) {}
-
-  WebPointerProperties(Button button_param, PointerType pointer_type_param)
-      : id(0),
+  explicit WebPointerProperties(
+      PointerId id_param,
+      PointerType pointer_type_param = PointerType::kUnknown,
+      Button button_param = Button::kNoButton,
+      WebFloatPoint position_in_widget = WebFloatPoint(),
+      WebFloatPoint position_in_screen = WebFloatPoint())
+      : id(id_param),
         force(std::numeric_limits<float>::quiet_NaN()),
         tilt_x(0),
         tilt_y(0),
@@ -68,9 +68,18 @@ class WebPointerProperties {
         button(button_param),
         pointer_type(pointer_type_param),
         movement_x(0),
-        movement_y(0) {}
+        movement_y(0),
+        position_in_widget_(position_in_widget),
+        position_in_screen_(position_in_screen) {}
 
-  int id;
+  WebFloatPoint PositionInWidget() const { return position_in_widget_; }
+  WebFloatPoint PositionInScreen() const { return position_in_screen_; }
+
+  // TODO(mustaq): Move the setters for position_in_widget_ and
+  // position_in_screen_ here from the subclasses when mouse event coordinate
+  // truncation is removed. crbug.com/456625
+
+  PointerId id;
 
   // The valid range is [0,1], with NaN meaning pressure is not supported by
   // the input device.
@@ -103,6 +112,15 @@ class WebPointerProperties {
 
   int movement_x;
   int movement_y;
+
+ protected:
+  // Widget coordinate, which is relative to the bound of current RenderWidget
+  // (e.g. a plugin or OOPIF inside a RenderView). Similar to viewport
+  // coordinates but without DevTools emulation transform or overscroll applied.
+  WebFloatPoint position_in_widget_;
+
+  // Screen coordinate
+  WebFloatPoint position_in_screen_;
 };
 
 }  // namespace blink

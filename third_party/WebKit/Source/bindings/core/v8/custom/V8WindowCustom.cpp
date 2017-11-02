@@ -35,33 +35,30 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptController.h"
 #include "bindings/core/v8/ScriptSourceCode.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/core/v8/SerializedScriptValueFactory.h"
-#include "bindings/core/v8/Transferables.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8EventListener.h"
 #include "bindings/core/v8/V8HTMLCollection.h"
 #include "bindings/core/v8/V8Node.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
-#include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/MessagePort.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/FrameOwner.h"
-#include "core/frame/FrameView.h"
-#include "core/frame/ImageBitmap.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Location.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/html/HTMLCollection.h"
 #include "core/html/HTMLDocument.h"
+#include "core/imagebitmap/ImageBitmap.h"
 #include "core/inspector/MainThreadDebugger.h"
 #include "core/loader/FrameLoadRequest.h"
 #include "core/loader/FrameLoader.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "platform/LayoutTestSupport.h"
+#include "platform/bindings/V8PrivateProperty.h"
 #include "platform/wtf/Assertions.h"
 
 namespace blink {
@@ -71,12 +68,11 @@ void V8Window::locationAttributeGetterCustom(
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Object> holder = info.Holder();
 
-  DOMWindow* window = V8Window::toImpl(holder);
+  DOMWindow* window = V8Window::ToImpl(holder);
   Location* location = window->location();
   DCHECK(location);
 
-  // Keep the wrapper object for the return value alive as long as |this|
-  // object is alive in order to save creation time of the wrapper object.
+  // If we have already created a wrapper object in this world, returns it.
   if (DOMDataStore::SetReturnValue(info.GetReturnValue(), location))
     return;
 
@@ -101,23 +97,12 @@ void V8Window::locationAttributeGetterCustom(
     wrapper = ToV8(location, holder, isolate);
   }
 
-  // Keep the wrapper object for the return value alive as long as |this|
-  // object is alive in order to save creation time of the wrapper object.
-  //
-  // TODO(dcheng): The hidden reference behavior is broken in many ways. We
-  // should be caching for all DOM attributes. Even if it's not critical for
-  // remote Location objects, we should clean this up to improve
-  // maintainability. In the long-term, this will be superseded by wrapper
-  // tracing.
-  V8PrivateProperty::GetSymbol(isolate, "KeepAlive#Window#location")
-      .Set(holder, wrapper);
-
   V8SetReturnValue(info, wrapper);
 }
 
 void V8Window::eventAttributeGetterCustom(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  LocalDOMWindow* impl = ToLocalDOMWindow(V8Window::toImpl(info.Holder()));
+  LocalDOMWindow* impl = ToLocalDOMWindow(V8Window::ToImpl(info.Holder()));
   v8::Isolate* isolate = info.GetIsolate();
   ExceptionState exception_state(isolate, ExceptionState::kGetterContext,
                                  "Window", "event");
@@ -134,7 +119,7 @@ void V8Window::eventAttributeGetterCustom(
 void V8Window::eventAttributeSetterCustom(
     v8::Local<v8::Value> value,
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  LocalDOMWindow* impl = ToLocalDOMWindow(V8Window::toImpl(info.Holder()));
+  LocalDOMWindow* impl = ToLocalDOMWindow(V8Window::ToImpl(info.Holder()));
   v8::Isolate* isolate = info.GetIsolate();
   ExceptionState exception_state(isolate, ExceptionState::kSetterContext,
                                  "Window", "event");
@@ -148,10 +133,11 @@ void V8Window::eventAttributeSetterCustom(
 
 void V8Window::frameElementAttributeGetterCustom(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  LocalDOMWindow* impl = ToLocalDOMWindow(V8Window::toImpl(info.Holder()));
+  LocalDOMWindow* impl = ToLocalDOMWindow(V8Window::ToImpl(info.Holder()));
+  Element* frameElement = impl->frameElement();
 
   if (!BindingSecurity::ShouldAllowAccessTo(
-          CurrentDOMWindow(info.GetIsolate()), impl->frameElement(),
+          CurrentDOMWindow(info.GetIsolate()), frameElement,
           BindingSecurity::ErrorReportOption::kDoNotReport)) {
     V8SetReturnValueNull(info);
     return;
@@ -160,11 +146,12 @@ void V8Window::frameElementAttributeGetterCustom(
   // The wrapper for an <iframe> should get its prototype from the context of
   // the frame it's in, rather than its own frame.
   // So, use its containing document as the creation context when wrapping.
-  v8::Local<v8::Value> creation_context = ToV8(
-      &impl->frameElement()->GetDocument(), info.Holder(), info.GetIsolate());
-  RELEASE_ASSERT(!creation_context.IsEmpty());
+  v8::Local<v8::Value> creation_context =
+      ToV8(frameElement->GetDocument().domWindow(), info.Holder(),
+           info.GetIsolate());
+  CHECK(!creation_context.IsEmpty());
   v8::Local<v8::Value> wrapper =
-      ToV8(impl->frameElement(), v8::Local<v8::Object>::Cast(creation_context),
+      ToV8(frameElement, v8::Local<v8::Object>::Cast(creation_context),
            info.GetIsolate());
   V8SetReturnValue(info, wrapper);
 }
@@ -173,15 +160,9 @@ void V8Window::openerAttributeSetterCustom(
     v8::Local<v8::Value> value,
     const v8::PropertyCallbackInfo<void>& info) {
   v8::Isolate* isolate = info.GetIsolate();
-  DOMWindow* impl = V8Window::toImpl(info.Holder());
-  // TODO(dcheng): Investigate removing this, since opener is not really a
-  // cross-origin property (so it shouldn't be accessible to begin with)
-  ExceptionState exception_state(isolate, ExceptionState::kSetterContext,
-                                 "Window", "opener");
-  if (!BindingSecurity::ShouldAllowAccessTo(CurrentDOMWindow(info.GetIsolate()),
-                                            impl, exception_state)) {
+  DOMWindow* impl = V8Window::ToImpl(info.Holder());
+  if (!impl->GetFrame())
     return;
-  }
 
   // Opener can be shadowed if it is in the same domain.
   // Have a special handling of null value to behave
@@ -189,7 +170,7 @@ void V8Window::openerAttributeSetterCustom(
   if (value->IsNull()) {
     // impl->frame() has to be a non-null LocalFrame.  Otherwise, the
     // same-origin check would have failed.
-    ASSERT(impl->GetFrame());
+    DCHECK(impl->GetFrame());
     ToLocalFrame(impl->GetFrame())->Loader().SetOpener(0);
   }
 
@@ -224,15 +205,15 @@ void V8Window::postMessageMethodCustom(
 
   // None of these need to be RefPtr because info and context are guaranteed
   // to hold on to them.
-  DOMWindow* window = V8Window::toImpl(info.Holder());
+  DOMWindow* window = V8Window::ToImpl(info.Holder());
   // TODO(yukishiino): The HTML spec specifies that we should use the
   // Incumbent Realm instead of the Current Realm, but currently we don't have
   // a way to retrieve the Incumbent Realm.  See also:
   // https://html.spec.whatwg.org/multipage/comms.html#dom-window-postmessage
   LocalDOMWindow* source = CurrentDOMWindow(info.GetIsolate());
 
-  ASSERT(window);
-  UseCounter::Count(window->GetFrame(), UseCounter::kWindowPostMessage);
+  DCHECK(window);
+  UseCounter::Count(source->GetFrame(), WebFeature::kWindowPostMessage);
 
   // If called directly by WebCore we don't have a calling context.
   if (!source) {
@@ -269,13 +250,13 @@ void V8Window::postMessageMethodCustom(
     return;
 
   message->UnregisterMemoryAllocatedWithCurrentScriptContext();
-  window->postMessage(message.Get(), transferables.message_ports, target_origin,
+  window->postMessage(message.get(), transferables.message_ports, target_origin,
                       source, exception_state);
 }
 
 void V8Window::openMethodCustom(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  DOMWindow* impl = V8Window::toImpl(info.Holder());
+  DOMWindow* impl = V8Window::ToImpl(info.Holder());
   ExceptionState exception_state(
       info.GetIsolate(), ExceptionState::kExecutionContext, "Window", "open");
   if (!BindingSecurity::ShouldAllowAccessTo(CurrentDOMWindow(info.GetIsolate()),
@@ -299,7 +280,11 @@ void V8Window::openMethodCustom(
   // passed the BindingSecurity check above.
   DOMWindow* opened_window = ToLocalDOMWindow(impl)->open(
       url_string, frame_name, window_features_string,
-      CurrentDOMWindow(info.GetIsolate()), EnteredDOMWindow(info.GetIsolate()));
+      CurrentDOMWindow(info.GetIsolate()), EnteredDOMWindow(info.GetIsolate()),
+      exception_state);
+  if (exception_state.HadException()) {
+    return;
+  }
   if (!opened_window) {
     V8SetReturnValueNull(info);
     return;
@@ -311,7 +296,7 @@ void V8Window::openMethodCustom(
 void V8Window::namedPropertyGetterCustom(
     const AtomicString& name,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
-  DOMWindow* window = V8Window::toImpl(info.Holder());
+  DOMWindow* window = V8Window::ToImpl(info.Holder());
   if (!window)
     return;
 
@@ -329,8 +314,8 @@ void V8Window::namedPropertyGetterCustom(
   // https://html.spec.whatwg.org/multipage/browsers.html#document-tree-child-browsing-context-name-property-set
   Frame* child = frame->Tree().ScopedChild(name);
   if (child) {
-    UseCounter::Count(window->GetFrame(),
-                      UseCounter::kNamedAccessOnWindow_ChildBrowsingContext);
+    UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
+                      WebFeature::kNamedAccessOnWindow_ChildBrowsingContext);
 
     // step 3. Remove each browsing context from childBrowsingContexts whose
     // active document's origin is not same origin with activeDocument's origin
@@ -343,8 +328,8 @@ void V8Window::namedPropertyGetterCustom(
     }
 
     UseCounter::Count(
-        window->GetFrame(),
-        UseCounter::
+        CurrentExecutionContext(info.GetIsolate()),
+        WebFeature::
             kNamedAccessOnWindow_ChildBrowsingContext_CrossOriginNameMismatch);
     // In addition to the above spec'ed case, we return the child window
     // regardless of step 3 due to crbug.com/701489 for the time being.
@@ -360,7 +345,8 @@ void V8Window::namedPropertyGetterCustom(
   if (!BindingSecurity::ShouldAllowAccessTo(
           CurrentDOMWindow(info.GetIsolate()), window,
           BindingSecurity::ErrorReportOption::kDoNotReport)) {
-    BindingSecurity::FailedAccessCheckFor(info.GetIsolate(), frame);
+    BindingSecurity::FailedAccessCheckFor(
+        info.GetIsolate(), window->GetWrapperTypeInfo(), info.Holder());
     return;
   }
 
@@ -377,14 +363,14 @@ void V8Window::namedPropertyGetterCustom(
 
   if (!has_named_item && has_id_item &&
       !doc->ContainsMultipleElementsWithId(name)) {
-    UseCounter::Count(doc, UseCounter::kDOMClobberedVariableAccessed);
-    V8SetReturnValueFast(info, doc->GetElementById(name), window);
+    UseCounter::Count(doc, WebFeature::kDOMClobberedVariableAccessed);
+    V8SetReturnValueFast(info, doc->getElementById(name), window);
     return;
   }
 
   HTMLCollection* items = doc->WindowNamedItems(name);
   if (!items->IsEmpty()) {
-    UseCounter::Count(doc, UseCounter::kDOMClobberedVariableAccessed);
+    UseCounter::Count(doc, WebFeature::kDOMClobberedVariableAccessed);
 
     // TODO(esprehn): Firefox doesn't return an HTMLCollection here if there's
     // multiple with the same name, but Chrome and Safari does. What's the

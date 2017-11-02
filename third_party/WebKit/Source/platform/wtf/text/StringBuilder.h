@@ -145,6 +145,8 @@ class WTF_EXPORT StringBuilder {
   void AppendNumber(unsigned long long);
   void AppendNumber(double, unsigned precision = 6);
 
+  void erase(unsigned);
+
   String ToString();
   AtomicString ToAtomicString();
   String Substring(unsigned start, unsigned length) const;
@@ -172,7 +174,7 @@ class WTF_EXPORT StringBuilder {
     if (!string_.IsNull())
       return string_.Characters8();
     DCHECK(buffer8_);
-    return buffer8_->Data();
+    return buffer8_->data();
   }
 
   const UChar* Characters16() const {
@@ -182,7 +184,7 @@ class WTF_EXPORT StringBuilder {
     if (!string_.IsNull())
       return string_.Characters16();
     DCHECK(buffer16_);
-    return buffer16_->Data();
+    return buffer16_->data();
   }
 
   bool Is8Bit() const { return is8_bit_; }

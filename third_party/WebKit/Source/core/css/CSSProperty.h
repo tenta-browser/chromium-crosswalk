@@ -22,14 +22,9 @@
 #define CSSProperty_h
 
 #include "core/CSSPropertyNames.h"
-#include "core/css/CSSPropertyMetadata.h"
 #include "core/css/CSSValue.h"
-#include "platform/RuntimeEnabledFeatures.h"
-#include "platform/text/TextDirection.h"
-#include "platform/text/WritingMode.h"
+#include "core/css/properties/CSSPropertyAPI.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
@@ -77,7 +72,7 @@ class CSSProperty {
                   index_in_shorthands_vector,
                   important,
                   implicit,
-                  CSSPropertyMetadata::IsInheritedProperty(property_id)),
+                  CSSPropertyAPI::Get(property_id).IsInherited()),
         value_(value) {}
 
   // FIXME: Remove this.
@@ -92,11 +87,6 @@ class CSSProperty {
   bool IsImportant() const { return metadata_.important_; }
 
   const CSSValue* Value() const { return value_.Get(); }
-
-  static CSSPropertyID ResolveDirectionAwareProperty(CSSPropertyID,
-                                                     TextDirection,
-                                                     WritingMode);
-  static bool IsAffectedByAllProperty(CSSPropertyID);
 
   const StylePropertyMetadata& Metadata() const { return metadata_; }
 

@@ -32,12 +32,11 @@ namespace blink {
 
 class LayoutThemeMobile : public LayoutThemeDefault {
  public:
-  static PassRefPtr<LayoutTheme> Create();
+  static RefPtr<LayoutTheme> Create();
   String ExtraDefaultStyleSheet() override;
 
   void AdjustInnerSpinButtonStyle(ComputedStyle&) const override;
 
-  String ExtraMediaControlsStyleSheet() override;
   String ExtraFullscreenStyleSheet() override;
 
   Color PlatformTapHighlightColor() const override {

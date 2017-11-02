@@ -34,10 +34,10 @@
 #define InputType_h
 
 #include "core/CoreExport.h"
-#include "core/frame/UseCounter.h"
-#include "core/html/TextControlElement.h"
+#include "core/frame/WebFeatureForward.h"
 #include "core/html/forms/ColorChooserClient.h"
 #include "core/html/forms/StepRange.h"
+#include "core/html/forms/TextControlElement.h"
 
 namespace blink {
 
@@ -235,7 +235,7 @@ class CORE_EXPORT InputType : public GarbageCollectedFinalized<InputType> {
   ChromeClient* GetChromeClient() const;
   Locale& GetLocale() const;
   Decimal ParseToNumberOrNaN(const String&) const;
-  void CountUsageIfVisible(UseCounter::Feature) const;
+  void CountUsageIfVisible(WebFeature) const;
 
   // Derive the step base, following the HTML algorithm steps.
   Decimal FindStepBase(const Decimal&) const;

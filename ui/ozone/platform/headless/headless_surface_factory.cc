@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/task_scheduler/post_task.h"
+#include "build/build_config.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -49,16 +50,14 @@ class FileSurface : public SurfaceOzoneCanvas {
     if (location_.empty())
       return;
     SkBitmap bitmap;
-    bitmap.setInfo(surface_->getCanvas()->imageInfo());
+    bitmap.allocPixels(surface_->getCanvas()->imageInfo());
 
     // TODO(dnicoara) Use SkImage instead to potentially avoid a copy.
     // See crbug.com/361605 for details.
-    if (surface_->getCanvas()->readPixels(&bitmap, 0, 0)) {
+    if (surface_->getCanvas()->readPixels(bitmap, 0, 0)) {
       base::PostTaskWithTraits(
-          FROM_HERE, base::TaskTraits()
-                         .WithShutdownBehavior(
-                             base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                         .MayBlock(),
+          FROM_HERE,
+          {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
           base::Bind(&WriteDataToFile, location_, bitmap));
     }
   }
@@ -91,8 +90,6 @@ class TestPixmap : public gfx::NativePixmap {
                             const gfx::RectF& crop_rect) override {
     return true;
   }
-  void SetProcessingCallback(
-      const ProcessingCallback& processing_callback) override {}
   gfx::NativePixmapHandle ExportHandle() override {
     return gfx::NativePixmapHandle();
   }
@@ -112,14 +109,21 @@ HeadlessSurfaceFactory::HeadlessSurfaceFactory()
 
 HeadlessSurfaceFactory::HeadlessSurfaceFactory(
     HeadlessWindowManager* window_manager)
-    : window_manager_(window_manager),
-      osmesa_implementation_(base::MakeUnique<GLOzoneOSMesa>()) {}
+    : window_manager_(window_manager) {
+#if !defined(OS_FUCHSIA)
+  osmesa_implementation_ = base::MakeUnique<GLOzoneOSMesa>();
+#endif
+}
 
 HeadlessSurfaceFactory::~HeadlessSurfaceFactory() {}
 
 std::vector<gl::GLImplementation>
 HeadlessSurfaceFactory::GetAllowedGLImplementations() {
+#if defined(OS_FUCHSIA)
+  return std::vector<gl::GLImplementation>{gl::kGLImplementationStubGL};
+#else
   return std::vector<gl::GLImplementation>{gl::kGLImplementationOSMesaGL};
+#endif
 }
 
 GLOzone* HeadlessSurfaceFactory::GetGLOzone(

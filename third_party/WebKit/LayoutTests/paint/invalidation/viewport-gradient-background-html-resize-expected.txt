@@ -4,17 +4,17 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
           "rect": [0, 0, 800, 600],
-          "reason": "view background"
+          "reason": "background"
         },
         {
           "object": "LayoutBlockFlow BODY",
           "rect": [0, 0, 800, 200],
-          "reason": "border box change"
+          "reason": "geometry"
         }
       ]
     }
@@ -22,11 +22,11 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutView #document",
-      "reason": "view background"
+      "reason": "background"
     },
     {
       "object": "LayoutBlockFlow BODY",
-      "reason": "border box change"
+      "reason": "geometry"
     }
   ]
 }

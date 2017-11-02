@@ -263,11 +263,12 @@ NativeAppWindowCocoa::NativeAppWindowCocoa(
   // the window bounds and constraints can be set precisely.
   NSRect cocoa_bounds = GfxToCocoaBounds(
       params.GetInitialWindowBounds(gfx::Insets()));
-  NSWindow* window =
-      [[window_class alloc] initWithContentRect:cocoa_bounds
-                                      styleMask:GetWindowStyleMask()
-                                        backing:NSBackingStoreBuffered
-                                          defer:NO];
+  base::scoped_nsobject<NSWindow> window([[window_class alloc]
+      initWithContentRect:cocoa_bounds
+                styleMask:GetWindowStyleMask()
+                  backing:NSBackingStoreBuffered
+                    defer:NO]);
+  [window setReleasedWhenClosed:NO];  // Owned by the window controller.
 
   std::string name;
   const extensions::Extension* extension = app_window_->GetExtension();
@@ -539,7 +540,7 @@ void NativeAppWindowCocoa::UpdateWindowTitle() {
   [window() setTitle:base::SysUTF16ToNSString(title)];
 }
 
-void NativeAppWindowCocoa::UpdateShape(std::unique_ptr<SkRegion> region) {
+void NativeAppWindowCocoa::UpdateShape(std::unique_ptr<ShapeRects> rects) {
   NOTIMPLEMENTED();
 }
 
@@ -661,6 +662,10 @@ gfx::Insets NativeAppWindowCocoa::GetFrameInsets() const {
 
 bool NativeAppWindowCocoa::CanHaveAlphaEnabled() const {
   return false;
+}
+
+void NativeAppWindowCocoa::SetActivateOnPointer(bool activate_on_pointer) {
+  NOTIMPLEMENTED();
 }
 
 gfx::NativeView NativeAppWindowCocoa::GetHostView() const {

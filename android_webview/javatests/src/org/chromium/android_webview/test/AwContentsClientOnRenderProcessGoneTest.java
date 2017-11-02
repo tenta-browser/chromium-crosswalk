@@ -6,6 +6,11 @@ package org.chromium.android_webview.test;
 
 import android.support.test.filters.SmallTest;
 
+import org.junit.Assert;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwRenderProcessGoneDetail;
 import org.chromium.android_webview.AwSwitches;
@@ -14,14 +19,18 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.parameter.ParameterizedTest;
+import org.chromium.base.test.util.parameter.SkipCommandLineParameterization;
 
 import java.util.concurrent.TimeUnit;
 
 /**
  * Tests for AwContentsClient.onRenderProcessGone callback.
  */
-public class AwContentsClientOnRenderProcessGoneTest extends AwTestBase {
+@RunWith(AwJUnit4ClassRunner.class)
+public class AwContentsClientOnRenderProcessGoneTest {
+    @Rule
+    public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
+
     private static final String TAG = "AwRendererGone";
     private static class GetRenderProcessGoneHelper extends CallbackHelper {
         private AwRenderProcessGoneDetail mDetail;
@@ -56,46 +65,48 @@ public class AwContentsClientOnRenderProcessGoneTest extends AwTestBase {
         }
     }
 
-    @DisabledTest  // http://crbug.com/689292
+    @Test
+    @DisabledTest // http://crbug.com/689292
     @Feature({"AndroidWebView"})
     @SmallTest
-    @CommandLineFlags
-            .Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
-            @ParameterizedTest.Set
+    @CommandLineFlags.Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
+    @SkipCommandLineParameterization
     public void testOnRenderProcessCrash() throws Throwable {
         RenderProcessGoneTestAwContentsClient contentsClient =
                 new RenderProcessGoneTestAwContentsClient();
-        AwTestContainerView testView = createAwTestContainerViewOnMainSync(contentsClient);
+        AwTestContainerView testView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
         AwContents awContents = testView.getAwContents();
         GetRenderProcessGoneHelper helper = contentsClient.getGetRenderProcessGoneHelper();
-        loadUrlAsync(awContents, "chrome://crash");
+        mActivityTestRule.loadUrlAsync(awContents, "chrome://crash");
         int callCount = helper.getCallCount();
         helper.waitForCallback(callCount, 1, CallbackHelper.WAIT_TIMEOUT_SECONDS * 5,
                 TimeUnit.SECONDS);
-        assertEquals(callCount + 1, helper.getCallCount());
-        assertTrue(helper.getAwRenderProcessGoneDetail().didCrash());
-        assertEquals(RendererPriority.HIGH,
-                helper.getAwRenderProcessGoneDetail().rendererPriority());
+        Assert.assertEquals(callCount + 1, helper.getCallCount());
+        Assert.assertTrue(helper.getAwRenderProcessGoneDetail().didCrash());
+        Assert.assertEquals(
+                RendererPriority.HIGH, helper.getAwRenderProcessGoneDetail().rendererPriority());
     }
 
+    @Test
     @Feature({"AndroidWebView"})
     @SmallTest
-    @CommandLineFlags
-            .Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
-            @ParameterizedTest.Set
+    @CommandLineFlags.Add(AwSwitches.WEBVIEW_SANDBOXED_RENDERER)
+    @SkipCommandLineParameterization
     public void testOnRenderProcessKill() throws Throwable {
         RenderProcessGoneTestAwContentsClient contentsClient =
                 new RenderProcessGoneTestAwContentsClient();
-        AwTestContainerView testView = createAwTestContainerViewOnMainSync(contentsClient);
+        AwTestContainerView testView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(contentsClient);
         AwContents awContents = testView.getAwContents();
         GetRenderProcessGoneHelper helper = contentsClient.getGetRenderProcessGoneHelper();
-        loadUrlAsync(awContents, "chrome://kill");
+        mActivityTestRule.loadUrlAsync(awContents, "chrome://kill");
         int callCount = helper.getCallCount();
         helper.waitForCallback(callCount);
 
-        assertEquals(callCount + 1, helper.getCallCount());
-        assertFalse(helper.getAwRenderProcessGoneDetail().didCrash());
-        assertEquals(RendererPriority.HIGH,
-                helper.getAwRenderProcessGoneDetail().rendererPriority());
+        Assert.assertEquals(callCount + 1, helper.getCallCount());
+        Assert.assertFalse(helper.getAwRenderProcessGoneDetail().didCrash());
+        Assert.assertEquals(
+                RendererPriority.HIGH, helper.getAwRenderProcessGoneDetail().rendererPriority());
     }
 }

@@ -6,8 +6,9 @@
 
 #include "core/dom/ParentNode.h"
 #include "core/dom/Text.h"
-#include "core/editing/EditingTestBase.h"
 #include "core/editing/FrameSelection.h"
+#include "core/editing/SelectionTemplate.h"
+#include "core/editing/testing/EditingTestBase.h"
 
 namespace blink {
 
@@ -32,7 +33,7 @@ TEST_F(InsertListCommandTest, ShouldCleanlyRemoveSpuriousTextNode) {
   SetBodyContent("\nd\n<ol>");
   Text* empty_text = GetDocument().createTextNode("");
   GetDocument().body()->InsertBefore(empty_text,
-                                     GetDocument().body()->FirstChild());
+                                     GetDocument().body()->firstChild());
   UpdateAllLifecyclePhases();
   GetDocument().GetFrame()->Selection().SetSelection(
       SelectionInDOMTree::Builder()
@@ -45,6 +46,6 @@ TEST_F(InsertListCommandTest, ShouldCleanlyRemoveSpuriousTextNode) {
   // This should not DCHECK.
   EXPECT_TRUE(command->Apply())
       << "The insert ordered list command should have succeeded";
-  EXPECT_EQ("<ol><li>d</li></ol>", GetDocument().body()->innerHTML());
+  EXPECT_EQ("<ol><li>d</li></ol>", GetDocument().body()->InnerHTMLAsString());
 }
 }

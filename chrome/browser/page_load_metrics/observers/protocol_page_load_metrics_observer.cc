@@ -16,20 +16,21 @@ ProtocolPageLoadMetricsObserver::OnStart(
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 ProtocolPageLoadMetricsObserver::OnCommit(
-    content::NavigationHandle* navigation_handle) {
+    content::NavigationHandle* navigation_handle,
+    ukm::SourceId source_id) {
   connection_info_ = navigation_handle->GetConnectionInfo();
   return CONTINUE_OBSERVING;
 }
 
 page_load_metrics::PageLoadMetricsObserver::ObservePolicy
 ProtocolPageLoadMetricsObserver::OnHidden(
-    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& info) {
   return STOP_OBSERVING;
 }
 
 void ProtocolPageLoadMetricsObserver::OnParseStart(
-    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& info) {
   switch (connection_info_) {
     case net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN:
@@ -44,12 +45,12 @@ void ProtocolPageLoadMetricsObserver::OnParseStart(
     case net::HttpResponseInfo::CONNECTION_INFO_HTTP1_1:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H11.ParseTiming.NavigationToParseStart",
-          timing.parse_start.value());
+          timing.parse_timing->parse_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_HTTP2:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H2.ParseTiming.NavigationToParseStart",
-          timing.parse_start.value());
+          timing.parse_timing->parse_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_32:
@@ -59,15 +60,19 @@ void ProtocolPageLoadMetricsObserver::OnParseStart(
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_36:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_37:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_38:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_39:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_40:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_41:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_42:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.QUIC.ParseTiming.NavigationToParseStart",
-          timing.parse_start.value());
+          timing.parse_timing->parse_start.value());
       break;
   }
 }
 
-void ProtocolPageLoadMetricsObserver::OnFirstContentfulPaint(
-    const page_load_metrics::PageLoadTiming& timing,
+void ProtocolPageLoadMetricsObserver::OnFirstContentfulPaintInPage(
+    const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
   switch (connection_info_) {
     case net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN:
@@ -83,21 +88,23 @@ void ProtocolPageLoadMetricsObserver::OnFirstContentfulPaint(
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H11.PaintTiming."
           "NavigationToFirstContentfulPaint",
-          timing.first_contentful_paint.value());
+          timing.paint_timing->first_contentful_paint.value());
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H11.PaintTiming."
           "ParseStartToFirstContentfulPaint",
-          timing.first_contentful_paint.value() - timing.parse_start.value());
+          timing.paint_timing->first_contentful_paint.value() -
+              timing.parse_timing->parse_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_HTTP2:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H2.PaintTiming."
           "NavigationToFirstContentfulPaint",
-          timing.first_contentful_paint.value());
+          timing.paint_timing->first_contentful_paint.value());
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H2.PaintTiming."
           "ParseStartToFirstContentfulPaint",
-          timing.first_contentful_paint.value() - timing.parse_start.value());
+          timing.paint_timing->first_contentful_paint.value() -
+              timing.parse_timing->parse_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_32:
@@ -107,20 +114,25 @@ void ProtocolPageLoadMetricsObserver::OnFirstContentfulPaint(
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_36:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_37:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_38:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_39:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_40:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_41:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_42:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.QUIC.PaintTiming."
           "NavigationToFirstContentfulPaint",
-          timing.first_contentful_paint.value());
+          timing.paint_timing->first_contentful_paint.value());
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.QUIC.PaintTiming."
           "ParseStartToFirstContentfulPaint",
-          timing.first_contentful_paint.value() - timing.parse_start.value());
+          timing.paint_timing->first_contentful_paint.value() -
+              timing.parse_timing->parse_start.value());
       break;
   }
 }
 
-void ProtocolPageLoadMetricsObserver::OnFirstMeaningfulPaint(
-    const page_load_metrics::PageLoadTiming& timing,
+void ProtocolPageLoadMetricsObserver::OnFirstMeaningfulPaintInMainFrameDocument(
+    const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
   switch (connection_info_) {
     case net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN:
@@ -136,21 +148,23 @@ void ProtocolPageLoadMetricsObserver::OnFirstMeaningfulPaint(
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H11.Experimental.PaintTiming."
           "NavigationToFirstMeaningfulPaint",
-          timing.first_meaningful_paint.value());
+          timing.paint_timing->first_meaningful_paint.value());
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H11.Experimental.PaintTiming."
           "ParseStartToFirstMeaningfulPaint",
-          timing.first_meaningful_paint.value() - timing.parse_start.value());
+          timing.paint_timing->first_meaningful_paint.value() -
+              timing.parse_timing->parse_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_HTTP2:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H2.Experimental.PaintTiming."
           "NavigationToFirstMeaningfulPaint",
-          timing.first_meaningful_paint.value());
+          timing.paint_timing->first_meaningful_paint.value());
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H2.Experimental.PaintTiming."
           "ParseStartToFirstMeaningfulPaint",
-          timing.first_meaningful_paint.value() - timing.parse_start.value());
+          timing.paint_timing->first_meaningful_paint.value() -
+              timing.parse_timing->parse_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_32:
@@ -160,20 +174,25 @@ void ProtocolPageLoadMetricsObserver::OnFirstMeaningfulPaint(
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_36:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_37:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_38:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_39:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_40:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_41:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_42:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.QUIC.Experimental.PaintTiming."
           "NavigationToFirstMeaningfulPaint",
-          timing.first_meaningful_paint.value());
+          timing.paint_timing->first_meaningful_paint.value());
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.QUIC.Experimental.PaintTiming."
           "ParseStartToFirstMeaningfulPaint",
-          timing.first_meaningful_paint.value() - timing.parse_start.value());
+          timing.paint_timing->first_meaningful_paint.value() -
+              timing.parse_timing->parse_start.value());
       break;
   }
 }
 
 void ProtocolPageLoadMetricsObserver::OnDomContentLoadedEventStart(
-    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
   switch (connection_info_) {
     case net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN:
@@ -189,13 +208,13 @@ void ProtocolPageLoadMetricsObserver::OnDomContentLoadedEventStart(
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H11.DocumentTiming."
           "NavigationToDOMContentLoadedEventFired",
-          timing.dom_content_loaded_event_start.value());
+          timing.document_timing->dom_content_loaded_event_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_HTTP2:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H2.DocumentTiming."
           "NavigationToDOMContentLoadedEventFired",
-          timing.dom_content_loaded_event_start.value());
+          timing.document_timing->dom_content_loaded_event_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_32:
@@ -205,16 +224,20 @@ void ProtocolPageLoadMetricsObserver::OnDomContentLoadedEventStart(
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_36:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_37:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_38:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_39:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_40:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_41:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_42:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.QUIC.DocumentTiming."
           "NavigationToDOMContentLoadedEventFired",
-          timing.dom_content_loaded_event_start.value());
+          timing.document_timing->dom_content_loaded_event_start.value());
       break;
   }
 }
 
 void ProtocolPageLoadMetricsObserver::OnLoadEventStart(
-    const page_load_metrics::PageLoadTiming& timing,
+    const page_load_metrics::mojom::PageLoadTiming& timing,
     const page_load_metrics::PageLoadExtraInfo& extra_info) {
   switch (connection_info_) {
     case net::HttpResponseInfo::CONNECTION_INFO_UNKNOWN:
@@ -230,13 +253,13 @@ void ProtocolPageLoadMetricsObserver::OnLoadEventStart(
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H11.DocumentTiming."
           "NavigationToLoadEventFired",
-          timing.load_event_start.value());
+          timing.document_timing->load_event_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_HTTP2:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.H2.DocumentTiming."
           "NavigationToLoadEventFired",
-          timing.load_event_start.value());
+          timing.document_timing->load_event_start.value());
       break;
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_UNKNOWN_VERSION:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_32:
@@ -246,10 +269,14 @@ void ProtocolPageLoadMetricsObserver::OnLoadEventStart(
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_36:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_37:
     case net::HttpResponseInfo::CONNECTION_INFO_QUIC_38:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_39:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_40:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_41:
+    case net::HttpResponseInfo::CONNECTION_INFO_QUIC_42:
       PAGE_LOAD_HISTOGRAM(
           "PageLoad.Clients.Protocol.QUIC.DocumentTiming."
           "NavigationToLoadEventFired",
-          timing.load_event_start.value());
+          timing.document_timing->load_event_start.value());
       break;
   }
 }

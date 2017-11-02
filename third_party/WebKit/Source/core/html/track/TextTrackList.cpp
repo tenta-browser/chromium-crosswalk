@@ -26,7 +26,7 @@
 #include "core/html/track/TextTrackList.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/events/GenericEventQueue.h"
+#include "core/dom/events/MediaElementEventQueue.h"
 #include "core/html/HTMLMediaElement.h"
 #include "core/html/track/InbandTextTrack.h"
 #include "core/html/track/LoadableTextTrack.h"
@@ -36,7 +36,9 @@
 namespace blink {
 
 TextTrackList::TextTrackList(HTMLMediaElement* owner)
-    : owner_(owner), async_event_queue_(GenericEventQueue::Create(this)) {}
+    : owner_(owner),
+      async_event_queue_(
+          MediaElementEventQueue::Create(this, &owner_->GetDocument())) {}
 
 TextTrackList::~TextTrackList() {}
 
@@ -169,13 +171,13 @@ void TextTrackList::InvalidateTrackIndexesAfterTrack(TextTrack* track) {
 
 void TextTrackList::Append(TextTrack* track) {
   if (track->TrackType() == TextTrack::kAddTrack) {
-    add_track_tracks_.push_back(TraceWrapperMember<TextTrack>(this, track));
+    add_track_tracks_.push_back(track);
   } else if (track->TrackType() == TextTrack::kTrackElement) {
     // Insert tracks added for <track> element in tree order.
     size_t index = ToLoadableTextTrack(track)->TrackElementIndex();
-    element_tracks_.insert(index, TraceWrapperMember<TextTrack>(this, track));
+    element_tracks_.insert(index, track);
   } else if (track->TrackType() == TextTrack::kInBand) {
-    inband_tracks_.push_back(TraceWrapperMember<TextTrack>(this, track));
+    inband_tracks_.push_back(track);
   } else {
     NOTREACHED();
   }
@@ -210,7 +212,7 @@ void TextTrackList::Remove(TextTrack* track) {
   DCHECK_EQ(track->TrackList(), this);
   track->SetTrackList(0);
 
-  tracks->erase(index);
+  tracks->EraseAt(index);
 
   ScheduleRemoveTrackEvent(track);
 }
@@ -219,7 +221,7 @@ void TextTrackList::RemoveAllInbandTracks() {
   for (const auto& track : inband_tracks_) {
     track->SetTrackList(0);
   }
-  inband_tracks_.Clear();
+  inband_tracks_.clear();
 }
 
 bool TextTrackList::Contains(TextTrack* track) const {
@@ -247,7 +249,8 @@ ExecutionContext* TextTrackList::GetExecutionContext() const {
 
 void TextTrackList::ScheduleTrackEvent(const AtomicString& event_name,
                                        TextTrack* track) {
-  async_event_queue_->EnqueueEvent(TrackEvent::Create(event_name, track));
+  async_event_queue_->EnqueueEvent(BLINK_FROM_HERE,
+                                   TrackEvent::Create(event_name, track));
 }
 
 void TextTrackList::ScheduleAddTrackEvent(TextTrack* track) {
@@ -269,7 +272,8 @@ void TextTrackList::ScheduleChangeEvent() {
   // Fire a simple event named change at the media element's textTracks
   // attribute's TextTrackList object.
 
-  async_event_queue_->EnqueueEvent(Event::Create(EventTypeNames::change));
+  async_event_queue_->EnqueueEvent(BLINK_FROM_HERE,
+                                   Event::Create(EventTypeNames::change));
 }
 
 void TextTrackList::ScheduleRemoveTrackEvent(TextTrack* track) {

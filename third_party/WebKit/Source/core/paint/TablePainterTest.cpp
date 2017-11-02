@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "core/layout/LayoutTable.h"
+#include "core/layout/LayoutTableCell.h"
 #include "core/paint/PaintControllerPaintTest.h"
 #include "core/paint/PaintLayerPainter.h"
 
@@ -12,20 +14,22 @@
 namespace blink {
 
 using TablePainterTest = PaintControllerPaintTest;
+INSTANTIATE_TEST_CASE_P(All,
+                        TablePainterTest,
+                        ::testing::Values(0, kRootLayerScrolling));
 
-TEST_F(TablePainterTest, Background) {
+TEST_P(TablePainterTest, Background) {
   SetBodyInnerHTML(
       "<style>"
-      "  td { width: 200px; height: 200px; border: none; }"
+      "  td { width: 200px; height: 200px; padding: 0; border: none; }"
       "  tr { background-color: blue; }"
-      "  table { border: none; border-spacing: 0; border-collapse: collapse; }"
+      "  table { border: none; border-spacing: 0 }"
       "</style>"
       "<table>"
       "  <tr id='row1'><td></td></tr>"
       "  <tr id='row2'><td></td></tr>"
       "</table>");
 
-  LayoutView& layout_view = *GetDocument().GetLayoutView();
   LayoutObject& row1 = *GetLayoutObjectByElementId("row1");
   LayoutObject& row2 = *GetLayoutObjectByElementId("row2");
 
@@ -34,9 +38,19 @@ TEST_F(TablePainterTest, Background) {
   IntRect interest_rect(0, 0, 200, 200);
   Paint(&interest_rect);
 
+  DisplayItemClient* background_client = nullptr;
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+      RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
+    // With SPv1 and RLS, the document background uses the scrolling contents
+    // layer as its DisplayItemClient.
+    background_client = GetLayoutView().Layer()->GraphicsLayerBacking();
+  } else {
+    background_client = &GetLayoutView();
+  }
+
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 2,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(row1, DisplayItem::kBoxDecorationBackground));
 
   GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
@@ -45,11 +59,11 @@ TEST_F(TablePainterTest, Background) {
 
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 2,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(row2, DisplayItem::kBoxDecorationBackground));
 }
 
-TEST_F(TablePainterTest, BackgroundWithCellSpacing) {
+TEST_P(TablePainterTest, BackgroundWithCellSpacing) {
   SetBodyInnerHTML(
       "<style>"
       "  body { margin: 0; }"
@@ -64,7 +78,6 @@ TEST_F(TablePainterTest, BackgroundWithCellSpacing) {
       "  <tr id='row2'><td id='cell2'></td></tr>"
       "</table>");
 
-  LayoutView& layout_view = *GetDocument().GetLayoutView();
   LayoutObject& row1 = *GetLayoutObjectByElementId("row1");
   LayoutObject& row2 = *GetLayoutObjectByElementId("row2");
   LayoutObject& cell1 = *GetLayoutObjectByElementId("cell1");
@@ -76,9 +89,19 @@ TEST_F(TablePainterTest, BackgroundWithCellSpacing) {
   IntRect interest_rect(0, 200, 200, 150);
   Paint(&interest_rect);
 
+  DisplayItemClient* background_client = nullptr;
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+      RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
+    // With SPv1 and RLS, the document background uses the scrolling contents
+    // layer as its DisplayItemClient.
+    background_client = GetLayoutView().Layer()->GraphicsLayerBacking();
+  } else {
+    background_client = &GetLayoutView();
+  }
+
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 3,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(row1, DisplayItem::kBoxDecorationBackground),
       TestDisplayItem(cell1, DisplayItem::kBoxDecorationBackground));
 
@@ -89,7 +112,7 @@ TEST_F(TablePainterTest, BackgroundWithCellSpacing) {
 
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 2,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(row1, DisplayItem::kBoxDecorationBackground));
 
   GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
@@ -99,12 +122,12 @@ TEST_F(TablePainterTest, BackgroundWithCellSpacing) {
 
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 3,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(row2, DisplayItem::kBoxDecorationBackground),
       TestDisplayItem(cell2, DisplayItem::kBoxDecorationBackground));
 }
 
-TEST_F(TablePainterTest, BackgroundInSelfPaintingRow) {
+TEST_P(TablePainterTest, BackgroundInSelfPaintingRow) {
   SetBodyInnerHTML(
       "<style>"
       "  body { margin: 0 }"
@@ -118,7 +141,6 @@ TEST_F(TablePainterTest, BackgroundInSelfPaintingRow) {
       "  <tr id='row'><td id='cell1'><td id='cell2'></td></tr>"
       "</table>");
 
-  LayoutView& layout_view = *GetDocument().GetLayoutView();
   LayoutObject& cell1 = *GetLayoutObjectByElementId("cell1");
   LayoutObject& cell2 = *GetLayoutObjectByElementId("cell2");
   LayoutObject& row = *GetLayoutObjectByElementId("row");
@@ -129,9 +151,19 @@ TEST_F(TablePainterTest, BackgroundInSelfPaintingRow) {
   IntRect interest_rect(200, 0, 200, 200);
   Paint(&interest_rect);
 
+  DisplayItemClient* background_client = nullptr;
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+      RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
+    // With SPv1 and RLS, the document background uses the scrolling contents
+    // layer as its DisplayItemClient.
+    background_client = GetLayoutView().Layer()->GraphicsLayerBacking();
+  } else {
+    background_client = &GetLayoutView();
+  }
+
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 5,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(row, DisplayItem::kBeginCompositing),
       TestDisplayItem(row, DisplayItem::kBoxDecorationBackground),
       TestDisplayItem(cell1, DisplayItem::kBoxDecorationBackground),
@@ -144,7 +176,7 @@ TEST_F(TablePainterTest, BackgroundInSelfPaintingRow) {
 
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 1,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground));
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground));
 
   GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
   // Intersects cell2 only.
@@ -153,14 +185,14 @@ TEST_F(TablePainterTest, BackgroundInSelfPaintingRow) {
 
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 5,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(row, DisplayItem::kBeginCompositing),
       TestDisplayItem(row, DisplayItem::kBoxDecorationBackground),
       TestDisplayItem(cell2, DisplayItem::kBoxDecorationBackground),
       TestDisplayItem(row, DisplayItem::kEndCompositing));
 }
 
-TEST_F(TablePainterTest, CollapsedBorderAndOverflow) {
+TEST_P(TablePainterTest, CollapsedBorderAndOverflow) {
   SetBodyInnerHTML(
       "<style>"
       "  body { margin: 0 }"
@@ -172,8 +204,7 @@ TEST_F(TablePainterTest, CollapsedBorderAndOverflow) {
       "  <tr><td id='cell'></td></tr>"
       "</table>");
 
-  LayoutView& layout_view = *GetDocument().GetLayoutView();
-  LayoutObject& cell = *GetLayoutObjectByElementId("cell");
+  auto& cell = *ToLayoutTableCell(GetLayoutObjectByElementId("cell"));
 
   RootPaintController().InvalidateAll();
   GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
@@ -181,12 +212,22 @@ TEST_F(TablePainterTest, CollapsedBorderAndOverflow) {
   IntRect interest_rect(0, 0, 100, 100);
   Paint(&interest_rect);
 
+  DisplayItemClient* background_client = nullptr;
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+      RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
+    // With SPv1 and RLS, the document background uses the scrolling contents
+    // layer as its DisplayItemClient.
+    background_client = GetLayoutView().Layer()->GraphicsLayerBacking();
+  } else {
+    background_client = &GetLayoutView();
+  }
+
   // We should paint all display items of cell.
   EXPECT_DISPLAY_LIST(
       RootPaintController().GetDisplayItemList(), 4,
-      TestDisplayItem(layout_view, DisplayItem::kDocumentBackground),
+      TestDisplayItem(*background_client, DisplayItem::kDocumentBackground),
       TestDisplayItem(cell, DisplayItem::kBoxDecorationBackground),
-      TestDisplayItem(cell, DisplayItem::kTableCollapsedBorderLast),
+      TestDisplayItem(*cell.Row(), DisplayItem::kTableCollapsedBorders),
       TestDisplayItem(cell, DisplayItem::PaintPhaseToDrawingType(
                                 kPaintPhaseSelfOutlineOnly)));
 }

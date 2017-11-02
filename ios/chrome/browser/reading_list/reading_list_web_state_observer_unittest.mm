@@ -17,6 +17,10 @@
 #include "net/base/network_change_notifier.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 const char kTestURL[] = "http://foo.bar";
 const char kTestTitle[] = "title";
@@ -137,7 +141,7 @@ TEST_F(ReadingListWebStateObserverTest, TestLoadReadingListDistilledCommitted) {
   GURL distilled_url = reading_list::OfflineURLForPath(
       entry->DistilledPath(), entry->URL(), entry->DistilledURL());
 
-  // Test on commited entry, there must be no pending item.
+  // Test on committed entry, there must be no pending item.
   test_navigation_manager_->SetPendingItem(nullptr);
   test_navigation_manager_->GetLastCommittedItem()->SetURL(url);
   test_web_state_.SetLoading(true);

@@ -87,7 +87,7 @@ While clang has a [`clang::tooling::RefactoringTool`](http://clang.llvm.org/doxy
 to automatically apply the generated replacements and save the results, it
 doesn't work well for Chromium:
 
-*   Clang tools run actions serially, so runtime scales poorly to tens of
+*   Clang tools run actions serially, so run time scales poorly to tens of
     thousands of files.
 *   A parsing error in any file (quite common in NaCl source) prevents any of
     the generated replacements from being applied.
@@ -110,6 +110,12 @@ subdirectories in
 It is important to use --bootstrap as there appear to be [bugs](https://crbug.com/580745)
 in the clang library this script produces if you build it with gcc, which is the default.
 
+Once clang is bootsrapped, incremental builds can be done by invoking `ninja` in
+the `third_party/llvm-build/Release+Asserts` directory. In particular,
+recompiling solely the tool you are writing can be accomplished by executing
+`ninja rewrite_to_chrome_style` (replace `rewrite_to_chrome_style` with your
+tool's name).
+
 ## Running
 First, build all Chromium targets to avoid failures due to missing dependencies
 that are generated as part of the build:
@@ -128,9 +134,9 @@ ninja -C out/Debug $gen_targets
 Then run the actual clang tool to generate a list of edits:
 
 ```shell
-tools/clang/scripts/run_tool.py <toolname> \
+tools/clang/scripts/run_tool.py --tool <path to tool> \
   --generate-compdb
-  out/Debug <path 1> <path 2> ... >/tmp/list-of-edits.debug
+  -p out/Debug <path 1> <path 2> ... >/tmp/list-of-edits.debug
 ```
 
 `--generate-compdb` can be omitted if the compile DB was already generated and
@@ -145,9 +151,9 @@ edits that apply to files outside of `//cc` (i.e. edits that apply to headers
 from `//base` that got included by source files in `//cc`).
 
 ```shell
-tools/clang/scripts/run_tool.py empty_string  \
+tools/clang/scripts/run_tool.py --tool empty_string  \
   --generated-compdb \
-  out/Debug net >/tmp/list-of-edits.debug
+  -p out/Debug net >/tmp/list-of-edits.debug
 ```
 
 Note that some header files might only be included from generated files (e.g.
@@ -162,7 +168,7 @@ Finally, apply the edits as follows:
 ```shell
 cat /tmp/list-of-edits.debug \
   | tools/clang/scripts/extract_edits.py \
-  | tools/clang/scripts/apply_edits.py out/Debug <path 1> <path 2> ...
+  | tools/clang/scripts/apply_edits.py -p out/Debug <path 1> <path 2> ...
 ```
 
 The apply_edits.py tool will only apply edits to files actually under control of
@@ -202,11 +208,16 @@ that is to `return 1` from the `main()` function of the clang tool.
 Synposis:
 
 ```shell
-tools/clang/scripts/test_tool.py <tool name>
+tools/clang/scripts/test_tool.py <tool name> [--apply-edits]
 ```
 
 The name of the tool binary and the subdirectory for the tool in
 `//tools/clang` must match. The test runner finds all files that match the
-pattern `//tools/clang/<tool name>/tests/*-original.cc`, runs the tool across
-those files, and compared it to the `*-expected.cc` version. If there is a
-mismatch, the result is saved in `*-actual.cc`.
+pattern `//tools/clang/<tool name>/tests/*-original.cc`, and runs the tool
+across those files.
+If `--apply-edits` switch is presented, tool outputs are applied to respective
+files and compared to the `*-expected.cc` version. If there is a mismatch, the
+result is saved in `*-actual.cc`.
+When `--apply-edits` switch is not presented, tool outputs are compared to
+`*-expected.txt` and if different, the result is saved in `*-actual.txt`. Note
+that in this case, only one test file is expected.

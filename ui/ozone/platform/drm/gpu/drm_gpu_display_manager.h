@@ -13,8 +13,10 @@
 #include "base/macros.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
+#include "ui/ozone/platform/drm/common/display_types.h"
 
 namespace display {
+class DisplayMode;
 struct GammaRampRGBEntry;
 }
 
@@ -32,7 +34,7 @@ class DrmGpuDisplayManager {
 
   // Returns a list of the connected displays. When this is called the list of
   // displays is refreshed.
-  std::vector<DisplaySnapshot_Params> GetDisplays();
+  MovableDisplaySnapshots GetDisplays();
 
   // Returns all scanout formats for |widget| representing a particular display
   // controller or default display controller for kNullAcceleratedWidget.
@@ -44,7 +46,7 @@ class DrmGpuDisplayManager {
   void RelinquishDisplayControl();
 
   bool ConfigureDisplay(int64_t id,
-                        const DisplayMode_Params& mode,
+                        const display::DisplayMode& display_mode,
                         const gfx::Point& origin);
   bool DisableDisplay(int64_t id);
   bool GetHDCPState(int64_t display_id, display::HDCPState* state);

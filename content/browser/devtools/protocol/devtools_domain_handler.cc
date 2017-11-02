@@ -10,12 +10,6 @@
 namespace content {
 namespace protocol {
 
-// static
-DevToolsSession* DevToolsDomainHandler::GetFirstSession(
-    DevToolsAgentHostImpl* host) {
-  return host->session();
-}
-
 DevToolsDomainHandler::DevToolsDomainHandler(const std::string& name)
     : name_(name) {
 }
@@ -23,8 +17,8 @@ DevToolsDomainHandler::DevToolsDomainHandler(const std::string& name)
 DevToolsDomainHandler::~DevToolsDomainHandler() {
 }
 
-void DevToolsDomainHandler::SetRenderFrameHost(RenderFrameHostImpl* host) {
-}
+void DevToolsDomainHandler::SetRenderer(RenderProcessHost* process_host,
+                                        RenderFrameHostImpl* frame_host) {}
 
 void DevToolsDomainHandler::Wire(UberDispatcher* dispatcher) {
 }

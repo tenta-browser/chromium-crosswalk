@@ -4,6 +4,8 @@
 
 #include "chromeos/dbus/fake_cras_audio_client.h"
 
+#include <utility>
+
 namespace chromeos {
 
 FakeCrasAudioClient::FakeCrasAudioClient()
@@ -100,6 +102,11 @@ void FakeCrasAudioClient::GetVolumeState(
   callback.Run(volume_state_, true);
 }
 
+void FakeCrasAudioClient::GetDefaultOutputBufferSize(
+    const GetDefaultOutputBufferSizeCallback& callback) {
+  callback.Run(512, true);
+}
+
 void FakeCrasAudioClient::GetNodes(const GetNodesCallback& callback,
                                    const ErrorCallback& error_callback) {
   callback.Run(node_list_, true);
@@ -183,8 +190,8 @@ void FakeCrasAudioClient::AddActiveOutputNode(uint64_t node_id) {
 }
 
 void FakeCrasAudioClient::WaitForServiceToBeAvailable(
-    const WaitForServiceToBeAvailableCallback& callback) {
-  callback.Run(true);
+    WaitForServiceToBeAvailableCallback callback) {
+  std::move(callback).Run(true);
 }
 
 void FakeCrasAudioClient::RemoveActiveOutputNode(uint64_t node_id) {
@@ -230,6 +237,12 @@ void FakeCrasAudioClient::NotifyOutputNodeVolumeChangedForTesting(
     int volume) {
   for (auto& observer : observers_)
     observer.OutputNodeVolumeChanged(node_id, volume);
+}
+
+void FakeCrasAudioClient::NotifyHotwordTriggeredForTesting(uint64_t tv_sec,
+                                                           uint64_t tv_nsec) {
+  for (auto& observer : observers_)
+    observer.HotwordTriggered(tv_sec, tv_nsec);
 }
 
 AudioNodeList::iterator FakeCrasAudioClient::FindNode(uint64_t node_id) {

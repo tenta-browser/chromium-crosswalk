@@ -26,7 +26,7 @@
 #ifndef AXMenuListOption_h
 #define AXMenuListOption_h
 
-#include "core/html/HTMLOptionElement.h"
+#include "core/html/forms/HTMLOptionElement.h"
 #include "modules/accessibility/AXMockObject.h"
 
 namespace blink {
@@ -52,16 +52,17 @@ class AXMenuListOption final : public AXMockObject {
   Node* GetNode() const override { return element_; }
   void Detach() override;
   bool IsDetached() const override { return !element_; }
+  LocalFrameView* DocumentFrameView() const override;
   AccessibilityRole RoleValue() const override;
   bool CanHaveChildren() const override { return false; }
+  AXObject* ComputeParent() const override;
 
   Element* ActionElement() const override;
-  bool IsEnabled() const override;
   bool IsVisible() const override;
   bool IsOffScreen() const override;
   bool IsSelected() const override;
-  void SetSelected(bool) override;
-  bool CanSetSelectedAttribute() const override;
+  bool OnNativeSetSelectedAction(bool) override;
+
   void GetRelativeBounds(AXObject** out_container,
                          FloatRect& out_bounds_in_container,
                          SkMatrix44& out_container_transform) const override;
@@ -72,6 +73,7 @@ class AXMenuListOption final : public AXMockObject {
                          AXRelatedObjectVector*,
                          NameSources*) const override;
   bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
+  HTMLSelectElement* ParentSelectNode() const;
 
   Member<HTMLOptionElement> element_;
 };

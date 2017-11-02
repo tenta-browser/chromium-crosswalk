@@ -4,6 +4,7 @@
 
 #include "chrome/browser/engagement/site_engagement_service.h"
 
+#include <algorithm>
 #include <utility>
 
 #include "base/files/scoped_temp_dir.h"
@@ -35,8 +36,11 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/navigation_simulator.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using content::NavigationSimulator;
 
 namespace {
 
@@ -170,11 +174,10 @@ class SiteEngagementServiceTest : public ChromeRenderViewHostTestHarness {
       const GURL& url,
       ui::PageTransition transition) {
     double prev_score = service->GetScore(url);
-    controller().LoadURL(url, content::Referrer(), transition, std::string());
-    int pending_id = controller().GetPendingEntry()->GetUniqueID();
-    content::WebContentsTester::For(web_contents())
-        ->TestDidNavigate(web_contents()->GetMainFrame(), pending_id, true,
-                          url, transition);
+    auto navigation =
+        NavigationSimulator::CreateBrowserInitiated(url, web_contents());
+    navigation->SetTransition(transition);
+    navigation->Commit();
     EXPECT_LT(prev_score, service->GetScore(url));
   }
 
@@ -183,11 +186,10 @@ class SiteEngagementServiceTest : public ChromeRenderViewHostTestHarness {
       const GURL& url,
       ui::PageTransition transition) {
     double prev_score = service->GetScore(url);
-    controller().LoadURL(url, content::Referrer(), transition, std::string());
-    int pending_id = controller().GetPendingEntry()->GetUniqueID();
-    content::WebContentsTester::For(web_contents())
-        ->TestDidNavigate(web_contents()->GetMainFrame(), pending_id, true,
-                          url, transition);
+    auto navigation =
+        NavigationSimulator::CreateBrowserInitiated(url, web_contents());
+    navigation->SetTransition(transition);
+    navigation->Commit();
     EXPECT_EQ(prev_score, service->GetScore(url));
   }
 
@@ -205,13 +207,40 @@ class SiteEngagementServiceTest : public ChromeRenderViewHostTestHarness {
       const GURL& url) {
     double score = 0;
     base::RunLoop run_loop;
-    content::BrowserThread::PostTaskAndReply(
-        thread_id, FROM_HERE,
-        base::Bind(&SiteEngagementServiceTest::CheckScoreFromSettings,
-                   base::Unretained(this), settings_map, url, &score),
-                   run_loop.QuitClosure());
+    content::BrowserThread::GetTaskRunnerForThread(thread_id)->PostTaskAndReply(
+        FROM_HERE,
+        base::BindOnce(&SiteEngagementServiceTest::CheckScoreFromSettings,
+                       base::Unretained(this), base::RetainedRef(settings_map),
+                       url, &score),
+        run_loop.QuitClosure());
     run_loop.Run();
     return score;
+  }
+
+  void CheckMedian(SiteEngagementService* service,
+                   size_t expected_size,
+                   double expected_median) {
+    std::vector<mojom::SiteEngagementDetails> details =
+        service->GetAllDetails();
+    std::sort(details.begin(), details.end(),
+              [](const mojom::SiteEngagementDetails& lhs,
+                 const mojom::SiteEngagementDetails& rhs) {
+                return lhs.total_score < rhs.total_score;
+              });
+    EXPECT_EQ(expected_size, details.size());
+    EXPECT_DOUBLE_EQ(expected_median,
+                     service->GetMedianEngagementFromSortedDetails(details));
+  }
+
+  std::map<GURL, double> GetScoreMap(SiteEngagementService* service) {
+    std::vector<mojom::SiteEngagementDetails> details =
+        service->GetAllDetails();
+    std::map<GURL, double> score_map;
+
+    for (const auto& detail : details)
+      score_map[detail.origin] = detail.total_score;
+
+    return score_map;
   }
 
  protected:
@@ -237,56 +266,28 @@ TEST_F(SiteEngagementServiceTest, GetMedianEngagement) {
   GURL url5("https://youtube.com/");
   GURL url6("https://images.google.com/");
 
-  {
-    // For zero total sites, the median is 0.
-    std::map<GURL, double> score_map = service->GetScoreMap();
-    EXPECT_TRUE(0 == score_map.size());
-    EXPECT_DOUBLE_EQ(0, service->GetMedianEngagement(score_map));
-  }
+  // For zero total sites, the median is 0.
+  CheckMedian(service, 0, 0);
 
-  {
-    // For odd total sites, the median is the middle score.
-    service->AddPoints(url1, 1);
-    std::map<GURL, double> score_map = service->GetScoreMap();
-    EXPECT_TRUE(1 == score_map.size());
-    EXPECT_DOUBLE_EQ(1, service->GetMedianEngagement(score_map));
-  }
+  // For odd total sites, the median is the middle score.
+  service->AddPoints(url1, 1);
+  CheckMedian(service, 1, 1);
 
-  {
-    // For even total sites, the median is the mean of the middle two scores.
-    service->AddPoints(url2, 2);
-    std::map<GURL, double> score_map = service->GetScoreMap();
-    EXPECT_TRUE(2 == score_map.size());
-    EXPECT_DOUBLE_EQ(1.5, service->GetMedianEngagement(score_map));
-  }
+  // For even total sites, the median is the mean of the middle two scores.
+  service->AddPoints(url2, 2);
+  CheckMedian(service, 2, 1.5);
 
-  {
-    service->AddPoints(url3, 1.4);
-    std::map<GURL, double> score_map = service->GetScoreMap();
-    EXPECT_TRUE(3 == score_map.size());
-    EXPECT_DOUBLE_EQ(1.4, service->GetMedianEngagement(score_map));
-  }
+  service->AddPoints(url3, 1.4);
+  CheckMedian(service, 3, 1.4);
 
-  {
-    service->AddPoints(url4, 1.8);
-    std::map<GURL, double> score_map = service->GetScoreMap();
-    EXPECT_TRUE(4 == score_map.size());
-    EXPECT_DOUBLE_EQ(1.6, service->GetMedianEngagement(score_map));
-  }
+  service->AddPoints(url4, 1.8);
+  CheckMedian(service, 4, 1.6);
 
-  {
-    service->AddPoints(url5, 2.5);
-    std::map<GURL, double> score_map = service->GetScoreMap();
-    EXPECT_TRUE(5 == score_map.size());
-    EXPECT_DOUBLE_EQ(1.8, service->GetMedianEngagement(score_map));
-  }
+  service->AddPoints(url5, 2.5);
+  CheckMedian(service, 5, 1.8);
 
-  {
-    service->AddPoints(url6, 3);
-    std::map<GURL, double> score_map = service->GetScoreMap();
-    EXPECT_TRUE(6 == score_map.size());
-    EXPECT_DOUBLE_EQ(1.9, service->GetMedianEngagement(score_map));
-  }
+  service->AddPoints(url6, 3);
+  CheckMedian(service, 6, 1.9);
 }
 
 // Tests that the Site Engagement service is hooked up properly to navigations
@@ -557,7 +558,7 @@ TEST_F(SiteEngagementServiceTest, NotificationPermission) {
 
   settings_map->SetContentSettingDefaultScope(
       url3, GURL(), CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
-      content_settings::ResourceIdentifier(), CONTENT_SETTING_ASK);
+      content_settings::ResourceIdentifier(), CONTENT_SETTING_DEFAULT);
 
   EXPECT_EQ(5, service_->GetScore(url1));
   EXPECT_EQ(0, service_->GetScore(url2));
@@ -593,10 +594,6 @@ TEST_F(SiteEngagementServiceTest, CheckHistograms) {
   histograms.ExpectTotalCount(SiteEngagementMetrics::kEngagementScoreHistogram,
                               0);
   histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTP, 0);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTPS, 0);
-  histograms.ExpectTotalCount(
       SiteEngagementMetrics::kOriginsWithMaxEngagementHistogram, 0);
   histograms.ExpectTotalCount(
       SiteEngagementMetrics::kOriginsWithMaxDailyEngagementHistogram, 0);
@@ -614,12 +611,6 @@ TEST_F(SiteEngagementServiceTest, CheckHistograms) {
                                 0, 1);
   histograms.ExpectTotalCount(SiteEngagementMetrics::kEngagementScoreHistogram,
                               0);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTP, 0);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTPS, 0);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementPercentageForHTTPSHistogram, 0);
   histograms.ExpectUniqueSample(SiteEngagementMetrics::kMeanEngagementHistogram,
                                 0, 1);
   histograms.ExpectUniqueSample(
@@ -667,12 +658,6 @@ TEST_F(SiteEngagementServiceTest, CheckHistograms) {
   // Recorded per origin.
   histograms.ExpectTotalCount(SiteEngagementMetrics::kEngagementScoreHistogram,
                               1);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTP, 0);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTPS, 1);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementPercentageForHTTPSHistogram, 1);
   histograms.ExpectUniqueSample(
       SiteEngagementMetrics::kOriginsWithMaxEngagementHistogram, 0, 2);
   histograms.ExpectUniqueSample(
@@ -741,12 +726,6 @@ TEST_F(SiteEngagementServiceTest, CheckHistograms) {
   // Recorded per origin.
   histograms.ExpectTotalCount(SiteEngagementMetrics::kEngagementScoreHistogram,
                               4);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTP, 2);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTPS, 2);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementPercentageForHTTPSHistogram, 2);
   histograms.ExpectUniqueSample(
       SiteEngagementMetrics::kOriginsWithMaxEngagementHistogram, 0, 3);
   histograms.ExpectUniqueSample(
@@ -827,12 +806,6 @@ TEST_F(SiteEngagementServiceTest, CheckHistograms) {
                               4);
   histograms.ExpectTotalCount(SiteEngagementMetrics::kEngagementScoreHistogram,
                               7);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTP, 4);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTPS, 3);
-  histograms.ExpectTotalCount(
-      SiteEngagementMetrics::kEngagementScoreHistogramHTTPS, 3);
   histograms.ExpectUniqueSample(
       SiteEngagementMetrics::kOriginsWithMaxEngagementHistogram, 0, 4);
   histograms.ExpectBucketCount(
@@ -957,7 +930,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     service_->CleanupEngagementScores(true);
     ASSERT_FALSE(service_->IsLastEngagementStale());
 
-    std::map<GURL, double> score_map = service_->GetScoreMap();
+    std::map<GURL, double> score_map = GetScoreMap(service_.get());
     EXPECT_EQ(3u, score_map.size());
     EXPECT_EQ(8.5, score_map[url1]);
     EXPECT_EQ(2.0, score_map[url2]);
@@ -980,7 +953,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     clock_->SetNow(base_time);
     ASSERT_TRUE(service_->IsLastEngagementStale());
 
-    std::map<GURL, double> score_map = service_->GetScoreMap();
+    std::map<GURL, double> score_map = GetScoreMap(service_.get());
     EXPECT_EQ(3u, score_map.size());
     EXPECT_EQ(8.5, score_map[url1]);
     EXPECT_EQ(2.0, score_map[url2]);
@@ -1002,7 +975,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     service_->AddPoints(url2, 0.5);
     service_->AddPoints(url4, 1);
 
-    std::map<GURL, double> score_map = service_->GetScoreMap();
+    std::map<GURL, double> score_map = GetScoreMap(service_.get());
     EXPECT_EQ(3u, score_map.size());
     EXPECT_EQ(9.0, score_map[url1]);
     EXPECT_EQ(2.5, score_map[url2]);
@@ -1023,7 +996,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     clock_->SetNow(base_time);
     ASSERT_FALSE(service_->IsLastEngagementStale());
 
-    std::map<GURL, double> score_map = service_->GetScoreMap();
+    std::map<GURL, double> score_map = GetScoreMap(service_.get());
     EXPECT_EQ(3u, score_map.size());
     EXPECT_EQ(4, score_map[url1]);
     EXPECT_EQ(0, score_map[url2]);
@@ -1032,7 +1005,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     service_->CleanupEngagementScores(false);
     ASSERT_FALSE(service_->IsLastEngagementStale());
 
-    score_map = service_->GetScoreMap();
+    score_map = GetScoreMap(service_.get());
     EXPECT_EQ(1u, score_map.size());
     EXPECT_EQ(4, score_map[url1]);
     EXPECT_EQ(0, service_->GetScore(url2));
@@ -1046,7 +1019,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     // Add points to commit the decay.
     service_->AddPoints(url1, 0.5);
 
-    std::map<GURL, double> score_map = service_->GetScoreMap();
+    std::map<GURL, double> score_map = GetScoreMap(service_.get());
     EXPECT_EQ(1u, score_map.size());
     EXPECT_EQ(4.5, score_map[url1]);
     EXPECT_EQ(clock_->Now(),
@@ -1059,7 +1032,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     clock_->SetNow(clock_->Now() + decay_period);
     ASSERT_FALSE(service_->IsLastEngagementStale());
 
-    std::map<GURL, double> score_map = service_->GetScoreMap();
+    std::map<GURL, double> score_map = GetScoreMap(service_.get());
     EXPECT_EQ(1u, score_map.size());
     EXPECT_EQ(0, score_map[url1]);
     EXPECT_EQ(clock_->Now() - decay_period,
@@ -1069,7 +1042,7 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScores) {
     service_->CleanupEngagementScores(false);
     ASSERT_FALSE(service_->IsLastEngagementStale());
 
-    score_map = service_->GetScoreMap();
+    score_map = GetScoreMap(service_.get());
     EXPECT_EQ(0u, score_map.size());
     EXPECT_EQ(0, service_->GetScore(url1));
     EXPECT_EQ(clock_->Now() - decay_period, service_->GetLastEngagementTime());
@@ -1092,13 +1065,13 @@ TEST_F(SiteEngagementServiceTest, CleanupEngagementScoresProportional) {
 
   current_day += base::TimeDelta::FromDays(7);
   clock_->SetNow(current_day);
-  std::map<GURL, double> score_map = service_->GetScoreMap();
+  std::map<GURL, double> score_map = GetScoreMap(service_.get());
   EXPECT_EQ(2u, score_map.size());
   AssertInRange(0.5, service_->GetScore(url1));
   AssertInRange(0.6, service_->GetScore(url2));
 
   service_->CleanupEngagementScores(false);
-  score_map = service_->GetScoreMap();
+  score_map = GetScoreMap(service_.get());
   EXPECT_EQ(1u, score_map.size());
   EXPECT_EQ(0, service_->GetScore(url1));
   AssertInRange(0.6, service_->GetScore(url2));
@@ -1787,9 +1760,9 @@ TEST_F(SiteEngagementServiceTest, GetScoreFromSettings) {
   // All scores are 0 to start.
   EXPECT_EQ(0, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               settings_map, url1));
-  EXPECT_EQ(0, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(0, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               settings_map, url2));
-  EXPECT_EQ(0, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(0, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               incognito_settings_map, url1));
   EXPECT_EQ(0, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               incognito_settings_map, url2));
@@ -1799,11 +1772,11 @@ TEST_F(SiteEngagementServiceTest, GetScoreFromSettings) {
   service->AddPoints(url1, 1);
   service->AddPoints(url2, 2);
 
-  EXPECT_EQ(1, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(1, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               settings_map, url1));
   EXPECT_EQ(2, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               settings_map, url2));
-  EXPECT_EQ(1, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(1, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               incognito_settings_map, url1));
   EXPECT_EQ(2, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               incognito_settings_map, url2));
@@ -1816,11 +1789,11 @@ TEST_F(SiteEngagementServiceTest, GetScoreFromSettings) {
 
   EXPECT_EQ(1, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               settings_map, url1));
-  EXPECT_EQ(2, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(2, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               settings_map, url2));
   EXPECT_EQ(4, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               incognito_settings_map, url1));
-  EXPECT_EQ(3, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(3, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               incognito_settings_map, url2));
 
   service->AddPoints(url1, 2);
@@ -1828,9 +1801,9 @@ TEST_F(SiteEngagementServiceTest, GetScoreFromSettings) {
 
   EXPECT_EQ(3, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               settings_map, url1));
-  EXPECT_EQ(3, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(3, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               settings_map, url2));
-  EXPECT_EQ(4, CheckScoreFromSettingsOnThread(content::BrowserThread::FILE,
+  EXPECT_EQ(4, CheckScoreFromSettingsOnThread(content::BrowserThread::UI,
                                               incognito_settings_map, url1));
   EXPECT_EQ(3, CheckScoreFromSettingsOnThread(content::BrowserThread::IO,
                                               incognito_settings_map, url2));

@@ -4,11 +4,16 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
+          "object": "LayoutSVGInlineText #text",
+          "rect": [33, 21, 618, 197],
+          "reason": "geometry"
+        },
+        {
           "object": "LayoutSVGText text",
-          "rect": [33, 22, 618, 196],
+          "rect": [33, 21, 618, 197],
           "reason": "style change"
         }
       ]
@@ -25,23 +30,11 @@
     },
     {
       "object": "LayoutSVGInlineText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox 'Pattern on fill'",
-      "reason": "forced by layout"
-    },
-    {
-      "object": "LayoutSVGResourcePattern pattern id='dynPattern'",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
+      "reason": "geometry"
     }
   ]
 }

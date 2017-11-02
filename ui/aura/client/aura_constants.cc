@@ -9,6 +9,7 @@
 #include "ui/gfx/geometry/rect.h"
 
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, bool)
+DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, base::TimeDelta)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, base::string16*)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, ui::ModalType)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, gfx::ImageSkia*)
@@ -24,6 +25,7 @@ DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, int64_t)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT,
                                         aura::client::WindowEmbedType)
 DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, aura::client::FocusClient*)
+DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(AURA_EXPORT, aura::Window*)
 
 namespace aura {
 namespace client {
@@ -32,21 +34,28 @@ namespace client {
 
 DEFINE_UI_CLASS_PROPERTY_KEY(
      bool, kAccessibilityFocusFallsbackToWidgetKey, true);
+DEFINE_UI_CLASS_PROPERTY_KEY(bool,
+                             kAccessibilityTouchExplorationPassThrough,
+                             false);
+DEFINE_UI_CLASS_PROPERTY_KEY(bool, kActivateOnPointerKey, true);
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kAlwaysOnTopKey, false);
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kAnimationsDisabledKey, false);
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::ImageSkia, kAppIconKey, nullptr);
-DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kAppIdKey, nullptr);
 DEFINE_UI_CLASS_PROPERTY_KEY(int, kAppType, 0);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::ImageSkia, kAvatarIconKey, nullptr);
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kConstrainedWindowKey, false);
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kCreatedByUserGesture, false);
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kDrawAttentionKey, false);
 DEFINE_UI_CLASS_PROPERTY_KEY(FocusClient*, kFocusClientKey, nullptr);
+DEFINE_UI_CLASS_PROPERTY_KEY(bool, kHasBackdrop, false);
 DEFINE_UI_CLASS_PROPERTY_KEY(Window*, kHostWindowKey, nullptr);
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kImmersiveFullscreenKey, false);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::Size, kMinimumSize, nullptr);
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kMirroringEnabledKey, false);
 DEFINE_UI_CLASS_PROPERTY_KEY(WindowEmbedType,
                              kEmbedType,
                              WindowEmbedType::NONE);
+DEFINE_UI_CLASS_PROPERTY_KEY(Window*, kChildModalParentKey, nullptr);
 DEFINE_UI_CLASS_PROPERTY_KEY(ui::ModalType, kModalKey, ui::MODAL_TYPE_NONE);
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kNameKey, nullptr);
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::Size, kPreferredSize, nullptr);

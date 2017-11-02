@@ -121,6 +121,9 @@ class AutocompleteController : public AutocompleteProviderListener {
       const TemplateURLRef::SearchTermsArgs& search_terms_args,
       AutocompleteMatch* match) const;
 
+  // Prepend missing tail suggestion prefixes in results, if present.
+  void InlineTailPrefixes();
+
   HistoryURLProvider* history_url_provider() const {
     return history_url_provider_;
   }
@@ -142,6 +145,8 @@ class AutocompleteController : public AutocompleteProviderListener {
   FRIEND_TEST_ALL_PREFIXES(AutocompleteProviderTest, UpdateAssistedQueryStats);
   FRIEND_TEST_ALL_PREFIXES(OmniboxViewTest, DoesNotUpdateAutocompleteOnBlur);
   FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, CloseOmniboxPopupOnTextDrag);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxViewViewsTest, MaintainCursorAfterFocusCycle);
+  FRIEND_TEST_ALL_PREFIXES(OmniboxEditTest, SetSelectedLine);
 
   // Updates |result_| to reflect the current provider state and fires
   // notifications.  If |regenerate_result| then we clear the result
@@ -246,6 +251,11 @@ class AutocompleteController : public AutocompleteProviderListener {
   // Are we in Start()? This is used to avoid updating |result_| and sending
   // notifications until Start() has been invoked on all providers.
   bool in_start_;
+
+  // True if the signal predicting a likely search has already been sent to the
+  // service worker context during the current input session. False on
+  // controller creation and after |ResetSession| is called.
+  bool search_service_worker_signal_sent_;
 
   TemplateURLService* template_url_service_;
 

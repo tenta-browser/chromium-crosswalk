@@ -5,20 +5,15 @@
 #include "core/css/properties/CSSPropertyAPITextUnderlinePosition.h"
 
 #include "core/css/parser/CSSPropertyParserHelpers.h"
-#include "platform/RuntimeEnabledFeatures.h"
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPITextUnderlinePosition::parseSingleValue(
+const CSSValue* CSSPropertyAPITextUnderlinePosition::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   // auto | [ under || [ left | right ] ], but we only support auto | under
   // for now
-  DCHECK(RuntimeEnabledFeatures::css3TextDecorationsEnabled());
-  // auto | [ under || [ left | right ] ], but we only support auto | under
-  // for now
-  DCHECK(RuntimeEnabledFeatures::css3TextDecorationsEnabled());
   return CSSPropertyParserHelpers::ConsumeIdent<CSSValueAuto, CSSValueUnder>(
       range);
 }

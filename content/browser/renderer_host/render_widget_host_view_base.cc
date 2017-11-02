@@ -4,7 +4,9 @@
 
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 
+#include "base/bind.h"
 #include "base/logging.h"
+#include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
@@ -16,30 +18,32 @@
 #include "content/browser/renderer_host/render_widget_host_view_frame_subscriber.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
+#include "content/public/common/content_features.h"
 #include "media/base/video_frame.h"
 #include "ui/base/layout.h"
+#include "ui/base/ui_base_types.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/geometry/size_f.h"
 
+#if defined(USE_AURA)
+#include "base/unguessable_token.h"
+#include "content/common/render_widget_window_tree_client_factory.mojom.h"
+#endif
+
 namespace content {
-
-namespace {
-
-// How many microseconds apart input events should be flushed.
-const int kFlushInputRateInUs = 16666;
-
-}
 
 RenderWidgetHostViewBase::RenderWidgetHostViewBase()
     : is_fullscreen_(false),
       popup_type_(blink::kWebPopupTypeNone),
       mouse_locked_(false),
-      showing_context_menu_(false),
       current_device_scale_factor_(0),
       current_display_rotation_(display::Display::ROTATE_0),
       text_input_manager_(nullptr),
+      wheel_scroll_latching_enabled_(base::FeatureList::IsEnabled(
+          features::kTouchpadAndWheelScrollLatching)),
+      web_contents_accessibility_(nullptr),
       renderer_frame_number_(0),
       weak_factory_(this) {}
 
@@ -162,15 +166,6 @@ void RenderWidgetHostViewBase::CopyFromSurfaceToVideoFrame(
   callback.Run(gfx::Rect(), false);
 }
 
-bool RenderWidgetHostViewBase::IsShowingContextMenu() const {
-  return showing_context_menu_;
-}
-
-void RenderWidgetHostViewBase::SetShowingContextMenu(bool showing) {
-  DCHECK_NE(showing_context_menu_, showing);
-  showing_context_menu_ = showing;
-}
-
 base::string16 RenderWidgetHostViewBase::GetSelectedText() {
   if (!GetTextInputManager())
     return base::string16();
@@ -187,15 +182,10 @@ InputEventAckState RenderWidgetHostViewBase::FilterInputEvent(
   return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
 }
 
-void RenderWidgetHostViewBase::OnSetNeedsFlushInput() {
-  if (flush_input_timer_.IsRunning())
-    return;
-
-  flush_input_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromMicroseconds(kFlushInputRateInUs),
-      this,
-      &RenderWidgetHostViewBase::FlushInput);
+InputEventAckState RenderWidgetHostViewBase::FilterChildGestureEvent(
+    const blink::WebGestureEvent& gesture_event) {
+  // By default, do nothing with the child's gesture events.
+  return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
 }
 
 void RenderWidgetHostViewBase::WheelEventAck(
@@ -229,7 +219,7 @@ void RenderWidgetHostViewBase::AccessibilityShowMenu(const gfx::Point& point) {
     impl = RenderWidgetHostImpl::From(GetRenderWidgetHost());
 
   if (impl)
-    impl->ShowContextMenuAtPoint(point);
+    impl->ShowContextMenuAtPoint(point, ui::MENU_SOURCE_NONE);
 }
 
 gfx::Point RenderWidgetHostViewBase::AccessibilityOriginInScreen(
@@ -264,13 +254,15 @@ bool RenderWidgetHostViewBase::HasDisplayPropertyChanged(gfx::NativeView view) {
       display::Screen::GetScreen()->GetDisplayNearestView(view);
   if (current_display_area_ == display.work_area() &&
       current_device_scale_factor_ == display.device_scale_factor() &&
-      current_display_rotation_ == display.rotation()) {
+      current_display_rotation_ == display.rotation() &&
+      current_display_color_space_ == display.color_space()) {
     return false;
   }
 
   current_display_area_ = display.work_area();
   current_device_scale_factor_ = display.device_scale_factor();
   current_display_rotation_ = display.rotation();
+  current_display_color_space_ = display.color_space();
   return true;
 }
 
@@ -317,15 +309,6 @@ void RenderWidgetHostViewBase::DidReceiveRendererFrame() {
   ++renderer_frame_number_;
 }
 
-void RenderWidgetHostViewBase::FlushInput() {
-  RenderWidgetHostImpl* impl = NULL;
-  if (GetRenderWidgetHost())
-    impl = RenderWidgetHostImpl::From(GetRenderWidgetHost());
-  if (!impl)
-    return;
-  impl->FlushInput();
-}
-
 void RenderWidgetHostViewBase::ShowDisambiguationPopup(
     const gfx::Rect& rect_pixels,
     const SkBitmap& zoomed_bitmap) {
@@ -338,6 +321,14 @@ gfx::Size RenderWidgetHostViewBase::GetVisibleViewportSize() const {
 
 void RenderWidgetHostViewBase::SetInsets(const gfx::Insets& insets) {
   NOTIMPLEMENTED();
+}
+
+void RenderWidgetHostViewBase::DisplayCursor(const WebCursor& cursor) {
+  return;
+}
+
+CursorManager* RenderWidgetHostViewBase::GetCursorManager() {
+  return nullptr;
 }
 
 // static
@@ -402,16 +393,20 @@ ScreenOrientationValues RenderWidgetHostViewBase::GetOrientationTypeForDesktop(
 void RenderWidgetHostViewBase::OnDidNavigateMainFrameToNewPage() {
 }
 
-cc::FrameSinkId RenderWidgetHostViewBase::GetFrameSinkId() {
-  return cc::FrameSinkId();
+viz::FrameSinkId RenderWidgetHostViewBase::GetFrameSinkId() {
+  return viz::FrameSinkId();
 }
 
-cc::FrameSinkId RenderWidgetHostViewBase::FrameSinkIdAtPoint(
-    cc::SurfaceHittestDelegate* delegate,
+viz::LocalSurfaceId RenderWidgetHostViewBase::GetLocalSurfaceId() const {
+  return viz::LocalSurfaceId();
+}
+
+viz::FrameSinkId RenderWidgetHostViewBase::FrameSinkIdAtPoint(
+    viz::SurfaceHittestDelegate* delegate,
     const gfx::Point& point,
     gfx::Point* transformed_point) {
   NOTREACHED();
-  return cc::FrameSinkId();
+  return viz::FrameSinkId();
 }
 
 gfx::Point RenderWidgetHostViewBase::TransformPointToRootCoordSpace(
@@ -427,7 +422,7 @@ gfx::PointF RenderWidgetHostViewBase::TransformPointToRootCoordSpaceF(
 
 bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpace(
     const gfx::Point& point,
-    const cc::SurfaceId& original_surface,
+    const viz::SurfaceId& original_surface,
     gfx::Point* transformed_point) {
   *transformed_point = point;
   return true;
@@ -497,12 +492,76 @@ void RenderWidgetHostViewBase::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
+TouchSelectionControllerClientManager*
+RenderWidgetHostViewBase::GetTouchSelectionControllerClientManager() {
+  return nullptr;
+}
+
+#if defined(USE_AURA)
+void RenderWidgetHostViewBase::EmbedChildFrameRendererWindowTreeClient(
+    RenderWidgetHostViewBase* root_view,
+    int routing_id,
+    ui::mojom::WindowTreeClientPtr renderer_window_tree_client) {
+  RenderWidgetHost* render_widget_host = GetRenderWidgetHost();
+  if (!render_widget_host)
+    return;
+  const int embed_id = ++next_embed_id_;
+  pending_embeds_[routing_id] = embed_id;
+  root_view->ScheduleEmbed(
+      std::move(renderer_window_tree_client),
+      base::BindOnce(&RenderWidgetHostViewBase::OnDidScheduleEmbed,
+                     GetWeakPtr(), routing_id, embed_id));
+}
+
+void RenderWidgetHostViewBase::OnChildFrameDestroyed(int routing_id) {
+  DCHECK(render_widget_window_tree_client_);
+  pending_embeds_.erase(routing_id);
+  render_widget_window_tree_client_->DestroyFrame(routing_id);
+}
+#endif
+
 bool RenderWidgetHostViewBase::IsChildFrameForTesting() const {
   return false;
 }
 
-cc::SurfaceId RenderWidgetHostViewBase::SurfaceIdForTesting() const {
-  return cc::SurfaceId();
+viz::SurfaceId RenderWidgetHostViewBase::SurfaceIdForTesting() const {
+  return viz::SurfaceId();
 }
+
+#if defined(USE_AURA)
+void RenderWidgetHostViewBase::OnDidScheduleEmbed(
+    int routing_id,
+    int embed_id,
+    const base::UnguessableToken& token) {
+  auto iter = pending_embeds_.find(routing_id);
+  if (iter == pending_embeds_.end() || iter->second != embed_id)
+    return;
+  pending_embeds_.erase(iter);
+  DCHECK(render_widget_window_tree_client_);
+  render_widget_window_tree_client_->Embed(routing_id, token);
+}
+
+void RenderWidgetHostViewBase::ScheduleEmbed(
+    ui::mojom::WindowTreeClientPtr client,
+    base::OnceCallback<void(const base::UnguessableToken&)> callback) {
+  NOTREACHED();
+}
+
+ui::mojom::WindowTreeClientPtr
+RenderWidgetHostViewBase::GetWindowTreeClientFromRenderer() {
+  // NOTE: this function may be called multiple times.
+  RenderWidgetHost* render_widget_host = GetRenderWidgetHost();
+  mojom::RenderWidgetWindowTreeClientFactoryPtr factory;
+  BindInterface(render_widget_host->GetProcess(), &factory);
+
+  ui::mojom::WindowTreeClientPtr window_tree_client;
+  factory->CreateWindowTreeClientForRenderWidget(
+      render_widget_host->GetRoutingID(),
+      mojo::MakeRequest(&window_tree_client),
+      mojo::MakeRequest(&render_widget_window_tree_client_));
+  return window_tree_client;
+}
+
+#endif
 
 }  // namespace content

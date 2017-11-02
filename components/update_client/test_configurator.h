@@ -18,17 +18,14 @@
 
 class PrefService;
 
-namespace base {
-class SequencedTaskRunner;
-class SingleThreadTaskRunner;
-}  // namespace base
-
 namespace net {
 class TestURLRequestContextGetter;
 class URLRequestContextGetter;
 }  // namespace net
 
 namespace update_client {
+
+class ActivityDataService;
 
 #define POST_INTERCEPT_SCHEME "https"
 #define POST_INTERCEPT_HOSTNAME "localhost2"
@@ -53,11 +50,15 @@ const uint8_t ihfo_hash[] = {0x87, 0x5e, 0xa1, 0xa6, 0x9f, 0x85, 0xd1, 0x1e,
                              0xe7, 0xc5, 0xc8, 0xf5, 0x60, 0x19, 0x78, 0x1b,
                              0x6d, 0xe9, 0x4c, 0xeb, 0x96, 0x05, 0x42, 0x17};
 
+// runaction_test_win.crx and its payload id: gjpmebpgbhcamgdgjcmnjfhggjpgcimm
+const uint8_t gjpm_hash[] = {0x69, 0xfc, 0x41, 0xf6, 0x17, 0x20, 0xc6, 0x36,
+                             0x92, 0xcd, 0x95, 0x76, 0x69, 0xf6, 0x28, 0xcc,
+                             0xbe, 0x98, 0x4b, 0x93, 0x17, 0xd6, 0x9c, 0xb3,
+                             0x64, 0x0c, 0x0d, 0x25, 0x61, 0xc5, 0x80, 0x1d};
+
 class TestConfigurator : public Configurator {
  public:
-  TestConfigurator(
-      const scoped_refptr<base::SequencedTaskRunner>& worker_task_runner,
-      const scoped_refptr<base::SingleThreadTaskRunner>& network_task_runner);
+  TestConfigurator();
 
   // Overrrides for Configurator.
   int InitialDelay() const override;
@@ -80,10 +81,10 @@ class TestConfigurator : public Configurator {
   bool EnabledComponentUpdates() const override;
   bool EnabledBackgroundDownloader() const override;
   bool EnabledCupSigning() const override;
-  scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner()
-      const override;
   PrefService* GetPrefService() const override;
+  ActivityDataService* GetActivityDataService() const override;
   bool IsPerUserInstall() const override;
+  std::vector<uint8_t> GetRunActionKeyHash() const override;
 
   void SetBrand(const std::string& brand);
   void SetOnDemandTime(int seconds);
@@ -96,10 +97,7 @@ class TestConfigurator : public Configurator {
 
  private:
   friend class base::RefCountedThreadSafe<TestConfigurator>;
-
   ~TestConfigurator() override;
-
-  scoped_refptr<base::SequencedTaskRunner> worker_task_runner_;
 
   std::string brand_;
   int initial_time_;

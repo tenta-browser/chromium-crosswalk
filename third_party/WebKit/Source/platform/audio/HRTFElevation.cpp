@@ -33,7 +33,6 @@
 #include <memory>
 #include "platform/audio/AudioBus.h"
 #include "platform/audio/HRTFPanner.h"
-#include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/ThreadingPrimitives.h"
 #include "platform/wtf/text/StringHash.h"
 
@@ -56,8 +55,6 @@ const size_t kResponseFrameSize = 256;
 // (depending on the audio hardware) when they are loaded.
 const float kResponseSampleRate = 44100;
 
-#if USE(CONCATENATED_IMPULSE_RESPONSES)
-
 // This table maps the index into the elevation table with the corresponding
 // angle. See https://bugs.webkit.org/show_bug.cgi?id=98294#c9 for the
 // elevation angles and their order in the concatenated response.
@@ -67,20 +64,18 @@ const int kElevationIndexTable[kElevationIndexTableSize] = {
 
 // Lazily load a concatenated HRTF database for given subject and store it in a
 // local hash table to ensure quick efficient future retrievals.
-static PassRefPtr<AudioBus> GetConcatenatedImpulseResponsesForSubject(
+static RefPtr<AudioBus> GetConcatenatedImpulseResponsesForSubject(
     const String& subject_name) {
   typedef HashMap<String, RefPtr<AudioBus>> AudioBusMap;
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(AudioBusMap, audio_bus_map,
-                                  new AudioBusMap());
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(Mutex, mutex, new Mutex());
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(AudioBusMap, audio_bus_map, ());
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(Mutex, mutex, ());
 
   MutexLocker locker(mutex);
   RefPtr<AudioBus> bus;
-  AudioBusMap::iterator iterator = audio_bus_map.Find(subject_name);
+  AudioBusMap::iterator iterator = audio_bus_map.find(subject_name);
   if (iterator == audio_bus_map.end()) {
-    RefPtr<AudioBus> concatenated_impulse_responses(
-        AudioBus::LoadPlatformResource(subject_name.Utf8().Data(),
-                                       kResponseSampleRate));
+    RefPtr<AudioBus> concatenated_impulse_responses(AudioBus::GetDataResource(
+        subject_name.Utf8().data(), kResponseSampleRate));
     DCHECK(concatenated_impulse_responses);
     if (!concatenated_impulse_responses)
       return nullptr;
@@ -103,7 +98,6 @@ static PassRefPtr<AudioBus> GetConcatenatedImpulseResponsesForSubject(
 
   return bus;
 }
-#endif
 
 bool HRTFElevation::CalculateKernelsForAzimuthElevation(
     int azimuth,
@@ -135,7 +129,6 @@ bool HRTFElevation::CalculateKernelsForAzimuthElevation(
   // implementation detail.
   int positive_elevation = elevation < 0 ? elevation + 360 : elevation;
 
-#if USE(CONCATENATED_IMPULSE_RESPONSES)
   RefPtr<AudioBus> bus(GetConcatenatedImpulseResponsesForSubject(subject_name));
 
   if (!bus)
@@ -175,40 +168,13 @@ bool HRTFElevation::CalculateKernelsForAzimuthElevation(
   unsigned start_frame = index * kResponseFrameSize;
   unsigned stop_frame = start_frame + kResponseFrameSize;
   RefPtr<AudioBus> pre_sample_rate_converted_response(
-      AudioBus::CreateBufferFromRange(bus.Get(), start_frame, stop_frame));
+      AudioBus::CreateBufferFromRange(bus.get(), start_frame, stop_frame));
   RefPtr<AudioBus> response(AudioBus::CreateBySampleRateConverting(
-      pre_sample_rate_converted_response.Get(), false, sample_rate));
+      pre_sample_rate_converted_response.get(), false, sample_rate));
   AudioChannel* left_ear_impulse_response =
       response->Channel(AudioBus::kChannelLeft);
   AudioChannel* right_ear_impulse_response =
       response->Channel(AudioBus::kChannelRight);
-#else
-  String resourceName =
-      String::format("IRC_%s_C_R0195_T%03d_P%03d", subjectName.utf8().data(),
-                     azimuth, positiveElevation);
-
-  RefPtr<AudioBus> impulseResponse(
-      AudioBus::loadPlatformResource(resourceName.utf8().data(), sampleRate));
-
-  DCHECK(impulseResponse.get());
-  if (!impulseResponse.get())
-    return false;
-
-  size_t responseLength = impulseResponse->length();
-  size_t expectedLength = static_cast<size_t>(256 * (sampleRate / 44100.0));
-
-  // Check number of channels and length.  For now these are fixed and known.
-  bool isBusGood = responseLength == expectedLength &&
-                   impulseResponse->numberOfChannels() == 2;
-  DCHECK(isBusGood);
-  if (!isBusGood)
-    return false;
-
-  AudioChannel* leftEarImpulseResponse =
-      impulseResponse->channelByType(AudioBus::ChannelLeft);
-  AudioChannel* rightEarImpulseResponse =
-      impulseResponse->channelByType(AudioBus::ChannelRight);
-#endif
 
   // Note that depending on the fftSize returned by the panner, we may be
   // truncating the impulse response we just loaded in.
@@ -265,9 +231,9 @@ std::unique_ptr<HRTFElevation> HRTFElevation::CreateForSubject(
     return nullptr;
 
   std::unique_ptr<HRTFKernelList> kernel_list_l =
-      WTF::MakeUnique<HRTFKernelList>(kNumberOfTotalAzimuths);
+      std::make_unique<HRTFKernelList>(kNumberOfTotalAzimuths);
   std::unique_ptr<HRTFKernelList> kernel_list_r =
-      WTF::MakeUnique<HRTFKernelList>(kNumberOfTotalAzimuths);
+      std::make_unique<HRTFKernelList>(kNumberOfTotalAzimuths);
 
   // Load convolution kernels from HRTF files.
   int interpolated_index = 0;
@@ -322,9 +288,9 @@ std::unique_ptr<HRTFElevation> HRTFElevation::CreateByInterpolatingSlices(
   DCHECK_LT(x, 1.0);
 
   std::unique_ptr<HRTFKernelList> kernel_list_l =
-      WTF::MakeUnique<HRTFKernelList>(kNumberOfTotalAzimuths);
+      std::make_unique<HRTFKernelList>(kNumberOfTotalAzimuths);
   std::unique_ptr<HRTFKernelList> kernel_list_r =
-      WTF::MakeUnique<HRTFKernelList>(kNumberOfTotalAzimuths);
+      std::make_unique<HRTFKernelList>(kNumberOfTotalAzimuths);
 
   HRTFKernelList* kernel_list_l1 = hrtf_elevation1->KernelListL();
   HRTFKernelList* kernel_list_r1 = hrtf_elevation1->KernelListR();

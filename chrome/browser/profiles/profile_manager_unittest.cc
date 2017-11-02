@@ -14,12 +14,12 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/io_thread.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -44,6 +44,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -59,10 +60,10 @@
 #include "chromeos/chromeos_switches.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_names.h"
+#include "extensions/common/features/feature_session_type.h"
 #endif  // defined(OS_CHROMEOS)
 
 using base::ASCIIToUTF16;
-using content::BrowserThread;
 
 namespace {
 
@@ -86,10 +87,11 @@ class UnittestProfileManager : public ::ProfileManagerWithoutInit {
 
   Profile* CreateProfileAsyncHelper(const base::FilePath& path,
                                     Delegate* delegate) override {
-    // This is safe while all file operations are done on the FILE thread.
-    BrowserThread::PostTask(
-        BrowserThread::FILE, FROM_HERE,
-        base::Bind(base::IgnoreResult(&base::CreateDirectory), path));
+    // ThreadTaskRunnerHandle::Get() is TestingProfile's "async" IOTaskRunner
+    // (ref. TestingProfile::GetIOTaskRunner()).
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
+        base::BindOnce(base::IgnoreResult(&base::CreateDirectory), path));
 
     return new TestingProfile(path, this);
   }
@@ -140,13 +142,21 @@ class ProfileManagerTest : public testing::Test {
     base::CommandLine* cl = base::CommandLine::ForCurrentProcess();
     cl->AppendSwitch(switches::kTestType);
     chromeos::WallpaperManager::Initialize();
+
+    // Have to manually reset the session type in between test runs because
+    // some tests log in users.
+    ASSERT_EQ(extensions::FeatureSessionType::INITIAL,
+              extensions::GetCurrentFeatureSessionType());
+    session_type_ = extensions::ScopedCurrentFeatureSessionType(
+        extensions::GetCurrentFeatureSessionType());
 #endif
   }
 
   void TearDown() override {
     TestingBrowserProcess::GetGlobal()->SetProfileManager(NULL);
-    base::RunLoop().RunUntilIdle();
+    content::RunAllTasksUntilIdle();
 #if defined(OS_CHROMEOS)
+    session_type_.reset();
     chromeos::WallpaperManager::Shutdown();
 #endif
   }
@@ -194,6 +204,8 @@ class ProfileManagerTest : public testing::Test {
     entry->SetIsEphemeral(true);
   }
 
+  content::TestBrowserThreadBundle thread_bundle_;
+
 #if defined(OS_CHROMEOS)
   // Helper function to register an user with id |user_id| and create profile
   // with a correct path.
@@ -215,10 +227,11 @@ class ProfileManagerTest : public testing::Test {
   base::ScopedTempDir temp_dir_;
   ScopedTestingLocalState local_state_;
 
-  content::TestBrowserThreadBundle thread_bundle_;
 
 #if defined(OS_CHROMEOS)
   chromeos::ScopedTestUserManager test_user_manager_;
+  std::unique_ptr<base::AutoReset<extensions::FeatureSessionType>>
+      session_type_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(ProfileManagerTest);
@@ -291,6 +304,56 @@ TEST_F(ProfileManagerTest, LoggedInProfileDir) {
                  .value();
 }
 
+// Test Get[ActiveUser|PrimaryUser|LastUsed]Profile does not load user profile.
+TEST_F(ProfileManagerTest, UserProfileLoading) {
+  using chromeos::ProfileHelper;
+
+  Profile* const signin_profile = ProfileHelper::GetSigninProfile();
+
+  // Get[Active|Primary|LastUsed]Profile return the sign-in profile before login
+  // happens. IsSameProfile() is used to properly test against TestProfile whose
+  // OTR version uses a different temp path.
+  EXPECT_TRUE(
+      ProfileManager::GetActiveUserProfile()->IsSameProfile(signin_profile));
+  EXPECT_TRUE(
+      ProfileManager::GetPrimaryUserProfile()->IsSameProfile(signin_profile));
+  EXPECT_TRUE(
+      ProfileManager::GetLastUsedProfile()->IsSameProfile(signin_profile));
+
+  // User signs in but user profile loading has not started.
+  const std::string user_id = "test-user@example.com";
+  const std::string user_id_hash =
+      ProfileHelper::Get()->GetUserIdHashByUserIdForTesting(user_id);
+  user_manager::UserManager::Get()->UserLoggedIn(
+      AccountId::FromUserEmail(user_id), user_id_hash, false);
+
+  // Sign-in profile should be returned at this stage. Otherwise, login code
+  // ends up in an invalid state. Strange things as in http://crbug.com/728683
+  // and http://crbug.com/718734 happens.
+  EXPECT_TRUE(
+      ProfileManager::GetActiveUserProfile()->IsSameProfile(signin_profile));
+  EXPECT_TRUE(
+      ProfileManager::GetPrimaryUserProfile()->IsSameProfile(signin_profile));
+
+  // GetLastUsedProfile() after login but before a user profile is loaded is
+  // fatal.
+  EXPECT_DEATH_IF_SUPPORTED(ProfileManager::GetLastUsedProfile(), ".*");
+
+  // Simulate UserSessionManager loads the profile.
+  Profile* const user_profile =
+      g_browser_process->profile_manager()->GetProfile(
+          ProfileHelper::Get()->GetProfilePathByUserIdHash(user_id_hash));
+  ASSERT_FALSE(user_profile->IsSameProfile(signin_profile));
+
+  // User profile is returned thereafter.
+  EXPECT_TRUE(
+      ProfileManager::GetActiveUserProfile()->IsSameProfile(user_profile));
+  EXPECT_TRUE(
+      ProfileManager::GetPrimaryUserProfile()->IsSameProfile(user_profile));
+  EXPECT_TRUE(
+      ProfileManager::GetLastUsedProfile()->IsSameProfile(user_profile));
+}
+
 #endif
 
 TEST_F(ProfileManagerTest, CreateAndUseTwoProfiles) {
@@ -324,12 +387,12 @@ TEST_F(ProfileManagerTest, CreateAndUseTwoProfiles) {
       profile2, ServiceAccessType::EXPLICIT_ACCESS));
 
   // Make sure any pending tasks run before we destroy the profiles.
-    base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   TestingBrowserProcess::GetGlobal()->SetProfileManager(NULL);
 
   // Make sure history cleans up correctly.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 }
 
 TEST_F(ProfileManagerTest, LoadNonExistingProfile) {
@@ -360,7 +423,7 @@ TEST_F(ProfileManagerTest, LoadExistingProfile) {
   CreateProfileAsync(profile_manager, profile_name, false, &mock_observer1);
 
   // Make sure a real profile is created before continuing.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   base::RunLoop load_profile;
   bool incognito = false;
@@ -405,7 +468,7 @@ TEST_F(ProfileManagerTest, CreateProfileAsyncMultipleRequests) {
   CreateProfileAsync(profile_manager, profile_name, false, &mock_observer2);
   CreateProfileAsync(profile_manager, profile_name, false, &mock_observer3);
 
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 }
 
 TEST_F(ProfileManagerTest, CreateProfilesAsync) {
@@ -421,7 +484,7 @@ TEST_F(ProfileManagerTest, CreateProfilesAsync) {
   CreateProfileAsync(profile_manager, profile_name1, false, &mock_observer);
   CreateProfileAsync(profile_manager, profile_name2, false, &mock_observer);
 
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 }
 
 TEST_F(ProfileManagerTest, CreateProfileAsyncCheckOmitted) {
@@ -437,7 +500,7 @@ TEST_F(ProfileManagerTest, CreateProfileAsyncCheckOmitted) {
   EXPECT_EQ(0u, storage.GetNumberOfProfiles());
 
   CreateProfileAsync(profile_manager, name, true, &mock_observer);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(1u, storage.GetNumberOfProfiles());
   // Supervised profiles should start out omitted from the profile list.
@@ -445,7 +508,7 @@ TEST_F(ProfileManagerTest, CreateProfileAsyncCheckOmitted) {
 
   name = "1 Regular Profile";
   CreateProfileAsync(profile_manager, name, false, &mock_observer);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(2u, storage.GetNumberOfProfiles());
   // Non-supervised profiles should be included in the profile list.
@@ -531,6 +594,13 @@ class ProfileManagerGuestTest : public ProfileManagerTest  {
     cl->AppendSwitch(::switches::kIncognito);
 
     chromeos::WallpaperManager::Initialize();
+    // Have to manually reset the session type in between test runs because
+    // RegisterUser() changes it.
+    ASSERT_EQ(extensions::FeatureSessionType::INITIAL,
+              extensions::GetCurrentFeatureSessionType());
+    session_type_ = extensions::ScopedCurrentFeatureSessionType(
+        extensions::GetCurrentFeatureSessionType());
+
     RegisterUser(user_manager::kGuestUserName);
 #endif
   }
@@ -678,7 +748,7 @@ TEST_F(ProfileManagerTest, GetLastUsedProfileAllowedByPolicy) {
   ASSERT_TRUE(profile_manager);
 
 #if defined(OS_CHROMEOS)
-  // On CrOS, profile returned by GetLastUsedProfile is a singin profile that
+  // On CrOS, profile returned by GetLastUsedProfile is a sign-in profile that
   // is forced to be incognito. That's why we need to create at least one user
   // to get a regular profile.
   RegisterUser("test-user@example.com");
@@ -1006,7 +1076,7 @@ TEST_F(ProfileManagerTest, CleanUpEphemeralProfiles) {
   local_state->SetString(prefs::kProfileLastUsed, profile_name1);
 
   profile_manager->CleanUpEphemeralProfiles();
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // The ephemeral profile should be deleted, and the last used profile set to
   // the other one.
@@ -1018,7 +1088,7 @@ TEST_F(ProfileManagerTest, CleanUpEphemeralProfiles) {
   // Mark the remaining profile ephemeral and clean up.
   storage.GetAllProfilesAttributes()[0u]->SetIsEphemeral(true);
   profile_manager->CleanUpEphemeralProfiles();
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // The profile should be deleted, and the last used profile set to a new one.
   EXPECT_FALSE(base::DirectoryExists(path2));
@@ -1042,7 +1112,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeleted) {
 
   CreateProfileAsync(profile_manager, profile_name1, false, &mock_observer);
   CreateProfileAsync(profile_manager, profile_name2, false, &mock_observer);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(2u, profile_manager->GetLoadedProfiles().size());
   EXPECT_EQ(2u, profile_manager->GetProfileAttributesStorage().
@@ -1055,8 +1125,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeleted) {
   // Delete the active profile.
   profile_manager->ScheduleProfileForDeletion(dest_path1,
                                               ProfileManager::CreateCallback());
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(dest_path2, profile_manager->GetLastUsedProfile()->GetPath());
   EXPECT_EQ(profile_name2, local_state->GetString(prefs::kProfileLastUsed));
@@ -1077,7 +1146,7 @@ TEST_F(ProfileManagerTest, LastProfileDeleted) {
       testing::NotNull(), NotFail())).Times(testing::AtLeast(1));
 
   CreateProfileAsync(profile_manager, profile_name1, false, &mock_observer);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(1u, profile_manager->GetLoadedProfiles().size());
   EXPECT_EQ(1u, storage.GetNumberOfProfiles());
@@ -1089,8 +1158,7 @@ TEST_F(ProfileManagerTest, LastProfileDeleted) {
   // Delete the active profile.
   profile_manager->ScheduleProfileForDeletion(dest_path1,
                                               ProfileManager::CreateCallback());
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // A new profile should have been created
   const std::string profile_name2 = "Profile 1";
@@ -1116,7 +1184,7 @@ TEST_F(ProfileManagerTest, LastProfileDeletedWithGuestActiveProfile) {
       testing::NotNull(), NotFail())).Times(testing::AtLeast(2));
 
   CreateProfileAsync(profile_manager, profile_name1, false, &mock_observer);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(1u, profile_manager->GetLoadedProfiles().size());
   EXPECT_EQ(1u, storage.GetNumberOfProfiles());
@@ -1144,8 +1212,7 @@ TEST_F(ProfileManagerTest, LastProfileDeletedWithGuestActiveProfile) {
   // Delete the other profile.
   profile_manager->ScheduleProfileForDeletion(dest_path1,
                                               ProfileManager::CreateCallback());
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // A new profile should have been created.
   const std::string profile_name2 = "Profile 1";
@@ -1186,8 +1253,7 @@ TEST_F(ProfileManagerTest, ProfileDisplayNameResetsDefaultName) {
   // Deleting a profile means returning to the default name.
   profile_manager->ScheduleProfileForDeletion(profile2->GetPath(),
                                               ProfileManager::CreateCallback());
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(default_profile_name,
             profiles::GetAvatarNameForProfile(profile1->GetPath()));
 }
@@ -1232,8 +1298,7 @@ TEST_F(ProfileManagerTest, ProfileDisplayNamePreservesCustomName) {
   // Deleting a profile means returning to the original, custom name.
   profile_manager->ScheduleProfileForDeletion(profile2->GetPath(),
                                               ProfileManager::CreateCallback());
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(custom_profile_name,
             profiles::GetAvatarNameForProfile(profile1->GetPath()));
 }
@@ -1285,8 +1350,7 @@ TEST_F(ProfileManagerTest, ProfileDisplayNamePreservesSignedInName) {
   // Deleting a profile means returning to the original, actual profile name.
   profile_manager->ScheduleProfileForDeletion(profile2->GetPath(),
                                               ProfileManager::CreateCallback());
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_EQ(gaia_given_name,
             profiles::GetAvatarNameForProfile(profile1->GetPath()));
 }
@@ -1373,14 +1437,14 @@ TEST_F(ProfileManagerTest, ActiveProfileDeletedNeedsToLoadNextProfile) {
   EXPECT_CALL(mock_observer, OnProfileCreated(
       testing::NotNull(), NotFail())).Times(testing::AtLeast(2));
   CreateProfileAsync(profile_manager, profile_name1, false, &mock_observer);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // Track the profile, but don't load it.
   ProfileAttributesStorage& storage =
       profile_manager->GetProfileAttributesStorage();
   storage.AddProfile(dest_path2, ASCIIToUTF16(profile_name2), "23456",
                      base::string16(), 0, std::string());
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(1u, profile_manager->GetLoadedProfiles().size());
   EXPECT_EQ(2u, storage.GetNumberOfProfiles());
@@ -1395,8 +1459,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeletedNeedsToLoadNextProfile) {
   profile_manager->ScheduleProfileForDeletion(dest_path1,
                                               ProfileManager::CreateCallback());
 
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(dest_path2, profile_manager->GetLastUsedProfile()->GetPath());
   EXPECT_EQ(profile_name2, local_state->GetString(prefs::kProfileLastUsed));
@@ -1422,7 +1485,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeletedNextProfileDeletedToo) {
   EXPECT_CALL(mock_observer, OnProfileCreated(
       testing::NotNull(), NotFail())).Times(testing::AtLeast(2));
   CreateProfileAsync(profile_manager, profile_name1, false, &mock_observer);
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // Create the other profiles, but don't load them. Assign a fake avatar icon
   // to ensure that profiles in the profile attributes storage are sorted by the
@@ -1434,7 +1497,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeletedNextProfileDeletedToo) {
   storage.AddProfile(dest_path3, ASCIIToUTF16(profile_name3), "34567",
                      ASCIIToUTF16(profile_name3), 2, std::string());
 
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(1u, profile_manager->GetLoadedProfiles().size());
   EXPECT_EQ(3u, storage.GetNumberOfProfiles());
@@ -1457,8 +1520,7 @@ TEST_F(ProfileManagerTest, ActiveProfileDeletedNextProfileDeletedToo) {
                          dest_path2.BaseName().MaybeAsASCII());
   profile_manager->ScheduleProfileForDeletion(dest_path2,
                                               ProfileManager::CreateCallback());
-  // Spin the message loop so that all the callbacks can finish running.
-  base::RunLoop().RunUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_EQ(dest_path3, profile_manager->GetLastUsedProfile()->GetPath());
   EXPECT_EQ(profile_name3, local_state->GetString(prefs::kProfileLastUsed));

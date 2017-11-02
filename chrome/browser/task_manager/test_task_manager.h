@@ -26,7 +26,7 @@ class TestTaskManager : public TaskManagerInterface {
   void ActivateTask(TaskId task_id) override;
   bool IsTaskKillable(TaskId task_id) override;
   void KillTask(TaskId task_id) override;
-  double GetCpuUsage(TaskId task_id) const override;
+  double GetPlatformIndependentCPUUsage(TaskId task_id) const override;
   base::Time GetStartTime(TaskId task_id) const override;
   base::TimeDelta GetCpuTime(TaskId task_id) const override;
   int64_t GetPhysicalMemoryUsage(TaskId task_id) const override;
@@ -60,6 +60,8 @@ class TestTaskManager : public TaskManagerInterface {
                             int* out_error_code) const override;
   int64_t GetNetworkUsage(TaskId task_id) const override;
   int64_t GetProcessTotalNetworkUsage(TaskId task_id) const override;
+  int64_t GetCumulativeNetworkUsage(TaskId task_id) const override;
+  int64_t GetCumulativeProcessTotalNetworkUsage(TaskId task_id) const override;
   int64_t GetSqliteMemoryUsed(TaskId task_id) const override;
   bool GetV8Memory(TaskId task_id,
                    int64_t* allocated,

@@ -14,6 +14,12 @@ Polymer({
   properties: {
     prefs: Object,
 
+    // <if expr="chromeos">
+    arcEnabled: Boolean,
+
+    voiceInteractionValuePropAccepted: Boolean,
+    // </if>
+
     /**
      * List of default search engines available.
      * @private {!Array<!SearchEngine>}
@@ -24,6 +30,9 @@ Polymer({
         return [];
       }
     },
+
+    /** @private Filter applied to search engines. */
+    searchEnginesFilter_: String,
 
     /** @private {!SearchPageHotwordInfo|undefined} */
     hotwordInfo_: Object,
@@ -37,11 +46,25 @@ Polymer({
      */
     hotwordSearchEnablePref_: Object,
 
-    /** @private */
-    googleNowAvailable_: Boolean,
-
     /** @type {?Map<string, string>} */
     focusConfig_: Object,
+
+    // <if expr="chromeos">
+    /** @private */
+    voiceInteractionFeatureEnabled_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enableVoiceInteraction');
+      },
+    },
+
+    /** @private */
+    assistantOn_: {
+      type: Boolean,
+      computed:
+          'isAssistantTurnedOn_(arcEnabled, voiceInteractionValuePropAccepted)',
+    }
+    // </if>
   },
 
   /** @private {?settings.SearchEnginesBrowserProxy} */
@@ -55,10 +78,10 @@ Polymer({
   /** @override */
   ready: function() {
     // Omnibox search engine
-    var updateSearchEngines = function(searchEngines) {
+    var updateSearchEngines = searchEngines => {
       this.set('searchEngines_', searchEngines.defaults);
       this.requestHotwordInfoUpdate_();
-    }.bind(this);
+    };
     this.browserProxy_.getSearchEnginesList().then(updateSearchEngines);
     cr.addWebUIListener('search-engines-changed', updateSearchEngines);
 
@@ -66,17 +89,19 @@ Polymer({
     cr.addWebUIListener(
         'hotword-info-update', this.hotwordInfoUpdate_.bind(this));
 
-    // Google Now cards in the launcher
-    cr.addWebUIListener(
-        'google-now-availability-changed',
-        this.googleNowAvailabilityUpdate_.bind(this));
-    this.browserProxy_.getGoogleNowAvailability().then(function(available) {
-        this.googleNowAvailabilityUpdate_(available);
-    }.bind(this));
-
     this.focusConfig_ = new Map();
-    this.focusConfig_.set(
-        settings.Route.SEARCH_ENGINES.path, '#subpage-trigger .subpage-arrow');
+    if (settings.routes.SEARCH_ENGINES) {
+      this.focusConfig_.set(
+          settings.routes.SEARCH_ENGINES.path,
+          '#engines-subpage-trigger .subpage-arrow');
+    }
+    // <if expr="chromeos">
+    if (settings.routes.GOOGLE_ASSISTANT) {
+      this.focusConfig_.set(
+          settings.routes.GOOGLE_ASSISTANT.path,
+          '#assistant-subpage-trigger .subpage-arrow');
+    }
+    // </if>
   },
 
   /** @private */
@@ -93,11 +118,29 @@ Polymer({
 
   /** @private */
   onManageSearchEnginesTap_: function() {
-    settings.navigateTo(settings.Route.SEARCH_ENGINES);
+    settings.navigateTo(settings.routes.SEARCH_ENGINES);
   },
 
+  // <if expr="chromeos">
+  /** @private */
+  onGoogleAssistantTap_: function() {
+    assert(this.voiceInteractionFeatureEnabled_);
+
+    if (!this.assistantOn_) {
+      return;
+    }
+
+    settings.navigateTo(settings.routes.GOOGLE_ASSISTANT);
+  },
+
+  /** @private */
+  onAssistantTurnOnTap_: function(event) {
+    this.browserProxy_.turnOnGoogleAssistant();
+  },
+  // </if>
+
   /**
-   * @param {Event} event
+   * @param {!Event} event
    * @private
    */
   onHotwordSearchEnableChange_: function(event) {
@@ -108,9 +151,9 @@ Polymer({
 
   /** @private */
   requestHotwordInfoUpdate_: function() {
-    this.browserProxy_.getHotwordInfo().then(function(hotwordInfo) {
+    this.browserProxy_.getHotwordInfo().then(hotwordInfo => {
       this.hotwordInfoUpdate_(hotwordInfo);
-    }.bind(this));
+    });
   },
 
   /**
@@ -124,14 +167,6 @@ Polymer({
       type: chrome.settingsPrivate.PrefType.BOOLEAN,
       value: this.hotwordInfo_.enabled,
     };
-  },
-
-  /**
-   * @param {boolean} available
-   * @private
-   */
-  googleNowAvailabilityUpdate_: function(available) {
-    this.googleNowAvailable_ = available;
   },
 
   /**
@@ -166,13 +201,30 @@ Polymer({
     this.browserProxy_.setHotwordSearchEnabled(this.hotwordInfo_.enabled);
   },
 
-  /** @private */
-  onManageAudioHistoryTap_: function() {
-    window.open(loadTimeData.getString('manageAudioHistoryUrl'));
+  // <if expr="chromeos">
+  /**
+   * @param {boolean} toggleValue
+   * @return {string}
+   * @private
+   */
+  getAssistantEnabledDisabledLabel_: function(toggleValue) {
+    return this.i18n(
+        toggleValue ? 'searchGoogleAssistantEnabled' :
+                      'searchGoogleAssistantDisabled');
   },
 
+  /** @private
+   *  @param {boolean} arcEnabled
+   *  @param {boolean} valuePropAccepted
+   *  @return {boolean}
+   */
+  isAssistantTurnedOn_: function(arcEnabled, valuePropAccepted) {
+    return arcEnabled && valuePropAccepted;
+  },
+  // </if>
+
   /**
-   * @param {Event} event
+   * @param {!Event} event
    * @private
    */
   doNothing_: function(event) {

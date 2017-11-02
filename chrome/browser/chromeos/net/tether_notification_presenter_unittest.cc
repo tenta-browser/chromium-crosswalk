@@ -8,11 +8,18 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/observer_list.h"
+#include "chrome/common/url_constants.h"
+#include "chrome/test/base/testing_profile.h"
 #include "components/cryptauth/remote_device_test_util.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/fake_message_center.h"
 #include "ui/message_center/message_center_observer.h"
+
+namespace {
+const int kTestNetworkSignalStrength = 50;
+}  // namespace
 
 namespace chromeos {
 
@@ -20,16 +27,14 @@ namespace tether {
 
 namespace {
 
+const char kTetherSettingsSubpage[] = "networks?type=Tether";
+
 class TestMessageCenter : public message_center::FakeMessageCenter {
  public:
   TestMessageCenter() : message_center::FakeMessageCenter() {}
   ~TestMessageCenter() override {}
 
   void NotifyNotificationTapped(const std::string& notification_id) {
-    // Simulate the notification being removed, since a tap on the notification
-    // removes that notification.
-    RemoveNotification(notification_id, true /* by_user */);
-
     for (auto& observer : observer_list_) {
       observer.OnNotificationClicked(notification_id);
     }
@@ -37,10 +42,6 @@ class TestMessageCenter : public message_center::FakeMessageCenter {
 
   void NotifyNotificationButtonTapped(const std::string& notification_id,
                                       int button_index) {
-    // Simulate the notification being removed, since a tap on a notification
-    // button removes that notification.
-    RemoveNotification(notification_id, true /* by_user */);
-
     for (auto& observer : observer_list_) {
       observer.OnNotificationButtonClicked(notification_id, button_index);
     }
@@ -125,8 +126,6 @@ class TetherNotificationPresenterTest : public testing::Test {
         bool shared) override {}
     void CreateConfigurationAndConnect(base::DictionaryValue* shill_properties,
                                        bool shared) override {}
-    void SetTetherDelegate(TetherDelegate* tether_delegate) override {}
-
     void CreateConfiguration(base::DictionaryValue* shill_properties,
                              bool shared) override {}
 
@@ -138,14 +137,50 @@ class TetherNotificationPresenterTest : public testing::Test {
     std::string network_id_to_connect_;
   };
 
+  class TestSettingsUiDelegate
+      : public TetherNotificationPresenter::SettingsUiDelegate {
+   public:
+    TestSettingsUiDelegate() {}
+    ~TestSettingsUiDelegate() override {}
+
+    Profile* last_profile() { return last_profile_; }
+    std::string last_settings_subpage() { return last_settings_subpage_; }
+
+    // TetherNotificationPresenter::SettingsUiDelegate:
+    void ShowSettingsSubPageForProfile(Profile* profile,
+                                       const std::string& sub_page) override {
+      last_profile_ = profile;
+      last_settings_subpage_ = sub_page;
+    }
+
+   private:
+    Profile* last_profile_ = nullptr;
+    std::string last_settings_subpage_;
+  };
+
  protected:
   TetherNotificationPresenterTest() : test_device_(CreateTestRemoteDevice()) {}
 
   void SetUp() override {
+    message_center::MessageCenter::Initialize();
+
+    TestingProfile::Builder builder;
+    profile_ = builder.Build();
     test_message_center_ = base::WrapUnique(new TestMessageCenter());
     test_network_connect_ = base::WrapUnique(new TestNetworkConnect());
-    notification_presenter_ = base::WrapUnique(new TetherNotificationPresenter(
-        test_message_center_.get(), test_network_connect_.get()));
+
+    notification_presenter_ = base::MakeUnique<TetherNotificationPresenter>(
+        profile_.get(), test_message_center_.get(),
+        test_network_connect_.get());
+
+    test_settings_ui_delegate_ = new TestSettingsUiDelegate();
+    notification_presenter_->SetSettingsUiDelegateForTesting(
+        base::WrapUnique(test_settings_ui_delegate_));
+  }
+
+  void TearDown() override {
+    profile_.reset();
+    message_center::MessageCenter::Shutdown();
   }
 
   std::string GetActiveHostNotificationId() {
@@ -157,11 +192,29 @@ class TetherNotificationPresenterTest : public testing::Test {
         TetherNotificationPresenter::kPotentialHotspotNotificationId);
   }
 
+  std::string GetSetupRequiredNotificationId() {
+    return std::string(
+        TetherNotificationPresenter::kSetupRequiredNotificationId);
+  }
+
+  void VerifySettingsOpened(const std::string& expected_subpage) {
+    EXPECT_EQ(profile_.get(), test_settings_ui_delegate_->last_profile());
+    EXPECT_EQ(expected_subpage,
+              test_settings_ui_delegate_->last_settings_subpage());
+  }
+
+  void VerifySettingsNotOpened() {
+    EXPECT_FALSE(test_settings_ui_delegate_->last_profile());
+    EXPECT_TRUE(test_settings_ui_delegate_->last_settings_subpage().empty());
+  }
+
+  const content::TestBrowserThreadBundle thread_bundle_;
   const cryptauth::RemoteDevice test_device_;
 
+  std::unique_ptr<TestingProfile> profile_;
   std::unique_ptr<TestMessageCenter> test_message_center_;
   std::unique_ptr<TestNetworkConnect> test_network_connect_;
-
+  TestSettingsUiDelegate* test_settings_ui_delegate_;
   std::unique_ptr<TetherNotificationPresenter> notification_presenter_;
 
  private:
@@ -185,6 +238,8 @@ TEST_F(TetherNotificationPresenterTest,
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetActiveHostNotificationId()));
   EXPECT_EQ(0u, test_message_center_->GetNumNotifications());
+
+  VerifySettingsNotOpened();
 }
 
 TEST_F(TetherNotificationPresenterTest,
@@ -201,14 +256,60 @@ TEST_F(TetherNotificationPresenterTest,
 
   // Tap the notification.
   test_message_center_->NotifyNotificationTapped(GetActiveHostNotificationId());
-  // TODO(khorimoto): Test that the tethering settings page is opened.
+  VerifySettingsOpened(kTetherSettingsSubpage);
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetActiveHostNotificationId()));
+  EXPECT_EQ(0u, test_message_center_->GetNumNotifications());
+}
+
+TEST_F(TetherNotificationPresenterTest,
+       TestSetupRequiredNotification_RemoveProgrammatically) {
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetSetupRequiredNotificationId()));
+  notification_presenter_->NotifySetupRequired(test_device_.name,
+                                               kTestNetworkSignalStrength);
+
+  message_center::Notification* notification =
+      test_message_center_->FindVisibleNotificationById(
+          GetSetupRequiredNotificationId());
+  EXPECT_TRUE(notification);
+  EXPECT_EQ(GetSetupRequiredNotificationId(), notification->id());
+
+  EXPECT_EQ(1u, test_message_center_->GetNumNotifications());
+  notification_presenter_->RemoveSetupRequiredNotification();
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetSetupRequiredNotificationId()));
+  EXPECT_EQ(0u, test_message_center_->GetNumNotifications());
+}
+
+TEST_F(TetherNotificationPresenterTest,
+       TestSetupRequiredNotification_TapNotification) {
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetSetupRequiredNotificationId()));
+  notification_presenter_->NotifySetupRequired(test_device_.name,
+                                               kTestNetworkSignalStrength);
+
+  message_center::Notification* notification =
+      test_message_center_->FindVisibleNotificationById(
+          GetSetupRequiredNotificationId());
+  EXPECT_TRUE(notification);
+  EXPECT_EQ(GetSetupRequiredNotificationId(), notification->id());
+
+  // Tap the notification.
+  test_message_center_->NotifyNotificationTapped(
+      GetSetupRequiredNotificationId());
+  VerifySettingsOpened(kTetherSettingsSubpage);
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetSetupRequiredNotificationId()));
+  EXPECT_EQ(0u, test_message_center_->GetNumNotifications());
 }
 
 TEST_F(TetherNotificationPresenterTest,
        TestSinglePotentialHotspotNotification_RemoveProgrammatically) {
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetPotentialHotspotNotificationId()));
-  notification_presenter_->NotifyPotentialHotspotNearby(test_device_);
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
 
   message_center::Notification* notification =
       test_message_center_->FindVisibleNotificationById(
@@ -219,13 +320,16 @@ TEST_F(TetherNotificationPresenterTest,
   notification_presenter_->RemovePotentialHotspotNotification();
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetPotentialHotspotNotificationId()));
+
+  VerifySettingsNotOpened();
 }
 
 TEST_F(TetherNotificationPresenterTest,
        TestSinglePotentialHotspotNotification_TapNotification) {
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetPotentialHotspotNotificationId()));
-  notification_presenter_->NotifyPotentialHotspotNearby(test_device_);
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
 
   message_center::Notification* notification =
       test_message_center_->FindVisibleNotificationById(
@@ -236,14 +340,18 @@ TEST_F(TetherNotificationPresenterTest,
   // Tap the notification.
   test_message_center_->NotifyNotificationTapped(
       GetPotentialHotspotNotificationId());
-  // TODO(khorimoto): Test that the tethering settings page is opened.
+  VerifySettingsOpened(kTetherSettingsSubpage);
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetPotentialHotspotNotificationId()));
+  EXPECT_EQ(0u, test_message_center_->GetNumNotifications());
 }
 
 TEST_F(TetherNotificationPresenterTest,
        TestSinglePotentialHotspotNotification_TapNotificationButton) {
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetPotentialHotspotNotificationId()));
-  notification_presenter_->NotifyPotentialHotspotNearby(test_device_);
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
 
   message_center::Notification* notification =
       test_message_center_->FindVisibleNotificationById(
@@ -254,12 +362,12 @@ TEST_F(TetherNotificationPresenterTest,
   // Tap the notification's button.
   test_message_center_->NotifyNotificationButtonTapped(
       GetPotentialHotspotNotificationId(), 0 /* button_index */);
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetPotentialHotspotNotificationId()));
+  EXPECT_EQ(0u, test_message_center_->GetNumNotifications());
 
   EXPECT_EQ(test_device_.GetDeviceId(),
             test_network_connect_->network_id_to_connect());
-
-  // TODO(hansberry): Test for the case of the user not yet going through
-  // the connection dialog.
 }
 
 TEST_F(TetherNotificationPresenterTest,
@@ -277,6 +385,8 @@ TEST_F(TetherNotificationPresenterTest,
   notification_presenter_->RemovePotentialHotspotNotification();
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetPotentialHotspotNotificationId()));
+
+  VerifySettingsNotOpened();
 }
 
 TEST_F(TetherNotificationPresenterTest,
@@ -294,14 +404,18 @@ TEST_F(TetherNotificationPresenterTest,
   // Tap the notification.
   test_message_center_->NotifyNotificationTapped(
       GetPotentialHotspotNotificationId());
-  // TODO(khorimoto): Test that the tethering settings page is opened.
+  VerifySettingsOpened(kTetherSettingsSubpage);
+  EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
+      GetPotentialHotspotNotificationId()));
+  EXPECT_EQ(0u, test_message_center_->GetNumNotifications());
 }
 
 TEST_F(TetherNotificationPresenterTest,
        TestPotentialHotspotNotifications_UpdatesOneNotification) {
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetPotentialHotspotNotificationId()));
-  notification_presenter_->NotifyPotentialHotspotNearby(test_device_);
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
 
   message_center::Notification* notification =
       test_message_center_->FindVisibleNotificationById(
@@ -325,6 +439,88 @@ TEST_F(TetherNotificationPresenterTest,
   notification_presenter_->RemovePotentialHotspotNotification();
   EXPECT_FALSE(test_message_center_->FindVisibleNotificationById(
       GetPotentialHotspotNotificationId()));
+
+  VerifySettingsNotOpened();
+}
+
+TEST_F(TetherNotificationPresenterTest,
+       TestDoesNotOpenSettingsWhenOtherNotificationClicked) {
+  test_message_center_->NotifyNotificationTapped("otherNotificationId");
+  VerifySettingsNotOpened();
+}
+
+TEST_F(TetherNotificationPresenterTest,
+       TestGetPotentialHotspotNotificationState) {
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                NO_HOTSPOT_NOTIFICATION_SHOWN);
+
+  // Notify single host available and remove.
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                SINGLE_HOTSPOT_NEARBY_SHOWN);
+  notification_presenter_->RemovePotentialHotspotNotification();
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                NO_HOTSPOT_NOTIFICATION_SHOWN);
+
+  // Notify single host available and remove by tapping notification.
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                SINGLE_HOTSPOT_NEARBY_SHOWN);
+  test_message_center_->NotifyNotificationTapped(
+      GetPotentialHotspotNotificationId());
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                NO_HOTSPOT_NOTIFICATION_SHOWN);
+
+  // Notify single host available and remove by tapping notification button.
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                SINGLE_HOTSPOT_NEARBY_SHOWN);
+  test_message_center_->NotifyNotificationButtonTapped(
+      GetPotentialHotspotNotificationId(), 0 /* button_index */);
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                NO_HOTSPOT_NOTIFICATION_SHOWN);
+
+  // Notify single, then multiple hosts available and remove.
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                SINGLE_HOTSPOT_NEARBY_SHOWN);
+  notification_presenter_->NotifyMultiplePotentialHotspotsNearby();
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                MULTIPLE_HOTSPOTS_NEARBY_SHOWN);
+  notification_presenter_->RemovePotentialHotspotNotification();
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                NO_HOTSPOT_NOTIFICATION_SHOWN);
+
+  // Notify single, then multiple hosts available and remove by tapping
+  // notification.
+  notification_presenter_->NotifyPotentialHotspotNearby(
+      test_device_, kTestNetworkSignalStrength);
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                SINGLE_HOTSPOT_NEARBY_SHOWN);
+  notification_presenter_->NotifyMultiplePotentialHotspotsNearby();
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                MULTIPLE_HOTSPOTS_NEARBY_SHOWN);
+  test_message_center_->NotifyNotificationTapped(
+      GetPotentialHotspotNotificationId());
+  EXPECT_EQ(notification_presenter_->GetPotentialHotspotNotificationState(),
+            NotificationPresenter::PotentialHotspotNotificationState::
+                NO_HOTSPOT_NOTIFICATION_SHOWN);
 }
 
 }  // namespace tether

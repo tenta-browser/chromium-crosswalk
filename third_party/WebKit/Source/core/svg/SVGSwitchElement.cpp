@@ -20,15 +20,15 @@
 
 #include "core/svg/SVGSwitchElement.h"
 
-#include "core/SVGNames.h"
 #include "core/frame/UseCounter.h"
 #include "core/layout/svg/LayoutSVGTransformableContainer.h"
+#include "core/svg_names.h"
 
 namespace blink {
 
 inline SVGSwitchElement::SVGSwitchElement(Document& document)
     : SVGGraphicsElement(SVGNames::switchTag, document) {
-  UseCounter::Count(document, UseCounter::kSVGSwitchElement);
+  UseCounter::Count(document, WebFeature::kSVGSwitchElement);
 }
 
 DEFINE_NODE_FACTORY(SVGSwitchElement)

@@ -76,15 +76,15 @@ struct SideTypes {
 class CSSBorderImageLengthBoxNonInterpolableValue
     : public NonInterpolableValue {
  public:
-  static PassRefPtr<CSSBorderImageLengthBoxNonInterpolableValue> Create(
+  static RefPtr<CSSBorderImageLengthBoxNonInterpolableValue> Create(
       const SideTypes& side_types,
       Vector<RefPtr<NonInterpolableValue>>&& side_non_interpolable_values) {
-    return AdoptRef(new CSSBorderImageLengthBoxNonInterpolableValue(
+    return WTF::AdoptRef(new CSSBorderImageLengthBoxNonInterpolableValue(
         side_types, std::move(side_non_interpolable_values)));
   }
 
-  PassRefPtr<CSSBorderImageLengthBoxNonInterpolableValue> Clone() {
-    return AdoptRef(new CSSBorderImageLengthBoxNonInterpolableValue(
+  RefPtr<CSSBorderImageLengthBoxNonInterpolableValue> Clone() {
+    return WTF::AdoptRef(new CSSBorderImageLengthBoxNonInterpolableValue(
         side_types_,
         Vector<RefPtr<NonInterpolableValue>>(side_non_interpolable_values_)));
   }
@@ -119,7 +119,8 @@ DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(
 
 namespace {
 
-class UnderlyingSideTypesChecker : public InterpolationType::ConversionChecker {
+class UnderlyingSideTypesChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<UnderlyingSideTypesChecker> Create(
       const SideTypes& underlying_side_types) {
@@ -138,7 +139,7 @@ class UnderlyingSideTypesChecker : public InterpolationType::ConversionChecker {
   UnderlyingSideTypesChecker(const SideTypes& underlying_side_types)
       : underlying_side_types_(underlying_side_types) {}
 
-  bool IsValid(const InterpolationEnvironment&,
+  bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     return underlying_side_types_ == GetUnderlyingSideTypes(underlying);
   }
@@ -146,7 +147,8 @@ class UnderlyingSideTypesChecker : public InterpolationType::ConversionChecker {
   const SideTypes underlying_side_types_;
 };
 
-class InheritedSideTypesChecker : public InterpolationType::ConversionChecker {
+class InheritedSideTypesChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedSideTypesChecker> Create(
       CSSPropertyID property,
@@ -160,12 +162,12 @@ class InheritedSideTypesChecker : public InterpolationType::ConversionChecker {
                             const SideTypes& inherited_side_types)
       : property_(property), inherited_side_types_(inherited_side_types) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     return inherited_side_types_ ==
            SideTypes(
                BorderImageLengthBoxPropertyFunctions::GetBorderImageLengthBox(
-                   property_, *environment.GetState().ParentStyle()));
+                   property_, *state.ParentStyle()));
   }
 
   const CSSPropertyID property_;
@@ -355,7 +357,7 @@ void CSSBorderImageLengthBoxInterpolationType::Composite(
         LengthInterpolationFunctions::Composite(
             underlying_list.GetMutable(i),
             underlying_side_non_interpolable_values[i], underlying_fraction,
-            *list.Get(i), side_non_interpolable_values[i].Get());
+            *list.Get(i), side_non_interpolable_values[i].get());
         break;
       case SideType::kAuto:
         break;
@@ -388,7 +390,7 @@ void CSSBorderImageLengthBoxInterpolationType::ApplyStandardPropertyValue(
         return Length(kAuto);
       case SideType::kLength:
         return LengthInterpolationFunctions::CreateLength(
-            *list.Get(index), non_interpolable_values[index].Get(),
+            *list.Get(index), non_interpolable_values[index].get(),
             state.CssToLengthConversionData(), kValueRangeNonNegative);
       default:
         NOTREACHED();

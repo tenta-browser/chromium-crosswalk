@@ -65,6 +65,7 @@
     overflow: hidden;
     min-width: 28px;
     background: transparent;
+    border-radius: 0;
 }
 
 .toolbar-text {
@@ -80,7 +81,6 @@
 .toolbar-has-dropdown {
     justify-content: space-between;
     padding: 0 3px 0 5px;
-    margin: 0 -3px 0 -5px;
 }
 
 .toolbar-has-dropdown .toolbar-text {
@@ -118,7 +118,6 @@
 .toolbar-glyph {
     background-color: #5a5a5a;
     flex: none;
-    transform: translateX(-2px);
 }
 
 /* Button */
@@ -224,11 +223,12 @@ select.toolbar-item[data-keyboard-focus="true"]:focus > * {
 
 .toolbar-input {
     width: 120px;
-    height: 20px;
-    padding: 3px;
+    height: 19px;
+    padding: 4px 3px 3px 3px;
     margin: 1px 3px;
     background-color: white;
     border: solid 1px #d8d8d8;
+    border-radius: 2px;
     min-width: 35px;
 }
 
@@ -255,6 +255,17 @@ select.toolbar-item[data-keyboard-focus="true"]:focus > * {
 
 .toolbar-input-empty .toolbar-input-clear-button {
     display: none;
+}
+
+.toolbar-prompt-proxy {
+    flex: 1;
+}
+
+.toolbar-input-prompt {
+    flex: 1;
+    overflow: hidden;
+    white-space: nowrap;
+    cursor: auto;
 }
 
 /* Separator */
@@ -302,10 +313,4 @@ select.toolbar-item[data-keyboard-focus="true"]:focus > * {
     margin-top: -1px;
     width: 28px;
     left: -2px;
-}
-
-span.toolbar-select-container.toolbar-item.warning {
-    background: #ffd7d7;
-    padding: 0 5px 0 0;
-    margin-right: 1px;
 }

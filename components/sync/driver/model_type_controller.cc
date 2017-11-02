@@ -8,7 +8,6 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/sync/base/bind_to_task_runner.h"
 #include "components/sync/base/data_type_histogram.h"
@@ -39,9 +38,10 @@ void ReportError(ModelType model_type,
                  scoped_refptr<base::SingleThreadTaskRunner> ui_thread,
                  const ModelErrorHandler& error_handler,
                  const ModelError& error) {
+  // TODO(wychen): enum uma should be strongly typed. crbug.com/661401
   UMA_HISTOGRAM_ENUMERATION("Sync.DataTypeRunFailures",
                             ModelTypeToHistogramInt(model_type),
-                            MODEL_TYPE_COUNT);
+                            static_cast<int>(MODEL_TYPE_COUNT));
   ui_thread->PostTask(error.location(), base::Bind(error_handler, error));
 }
 
@@ -70,7 +70,6 @@ ModelTypeController::ModelTypeController(
       model_thread_(model_thread),
       sync_prefs_(sync_client->GetPrefService()),
       state_(NOT_RUNNING) {
-  DCHECK(model_thread_);
 }
 
 ModelTypeController::~ModelTypeController() {}
@@ -216,11 +215,6 @@ void ModelTypeController::Stop() {
   state_ = NOT_RUNNING;
 }
 
-std::string ModelTypeController::name() const {
-  // For logging only.
-  return ModelTypeToString(type());
-}
-
 DataTypeController::State ModelTypeController::state() const {
   return state_;
 }
@@ -236,6 +230,11 @@ void ModelTypeController::GetStatusCounters(
                  base::Bind(&ModelTypeDebugInfo::GetStatusCounters, callback));
 }
 
+void ModelTypeController::RecordMemoryUsageHistogram() {
+  PostBridgeTask(FROM_HERE,
+                 base::Bind(&ModelTypeDebugInfo::RecordMemoryUsageHistogram));
+}
+
 void ModelTypeController::ReportModelError(const ModelError& error) {
   DCHECK(CalledOnValidThread());
   LoadModelsDone(UNRECOVERABLE_ERROR,
@@ -245,8 +244,10 @@ void ModelTypeController::ReportModelError(const ModelError& error) {
 
 void ModelTypeController::RecordStartFailure(ConfigureResult result) const {
   DCHECK(CalledOnValidThread());
+  // TODO(wychen): enum uma should be strongly typed. crbug.com/661401
   UMA_HISTOGRAM_ENUMERATION("Sync.DataTypeStartFailures",
-                            ModelTypeToHistogramInt(type()), MODEL_TYPE_COUNT);
+                            ModelTypeToHistogramInt(type()),
+                            static_cast<int>(MODEL_TYPE_COUNT));
 #define PER_DATA_TYPE_MACRO(type_str)                                    \
   UMA_HISTOGRAM_ENUMERATION("Sync." type_str "ConfigureFailure", result, \
                             MAX_CONFIGURE_RESULT);
@@ -261,10 +262,11 @@ BridgeProvider ModelTypeController::GetBridgeProvider() {
   return base::Bind(&ReturnCapturedBridge, bridge);
 }
 
-void ModelTypeController::PostBridgeTask(
-    const tracked_objects::Location& location,
-    const BridgeTask& task) {
+void ModelTypeController::PostBridgeTask(const base::Location& location,
+                                         const BridgeTask& task) {
+  DCHECK(model_thread_);
   model_thread_->PostTask(
       location, base::Bind(&RunBridgeTask, GetBridgeProvider(), task));
 }
+
 }  // namespace syncer

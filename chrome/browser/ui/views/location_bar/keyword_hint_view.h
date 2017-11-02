@@ -10,7 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 
 class Profile;
 
@@ -31,23 +31,21 @@ class Label;
 //
 // NOTE: This should really be called LocationBarKeywordHintView, but I
 // couldn't bring myself to use such a long name.
-class KeywordHintView : public views::CustomButton {
+class KeywordHintView : public views::Button {
  public:
   KeywordHintView(views::ButtonListener* listener,
                   Profile* profile,
                   const gfx::FontList& font_list,
                   const gfx::FontList& chip_font_list,
-                  int chip_height,
                   SkColor text_color,
                   SkColor background_color);
   ~KeywordHintView() override;
 
   void SetKeyword(const base::string16& keyword);
-  base::string16 keyword() const { return keyword_; }
 
  private:
   // views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   // The minimum size is just big enough to show the tab.
   gfx::Size GetMinimumSize() const override;
   void Layout() override;
@@ -60,10 +58,9 @@ class KeywordHintView : public views::CustomButton {
   Profile* profile_;
 
   views::Label* leading_label_;
-  views::Label* chip_view_;
+  views::View* chip_container_;
+  views::Label* chip_label_;
   views::Label* trailing_label_;
-
-  int chip_view_height_;
 
   base::string16 keyword_;
 

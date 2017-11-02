@@ -10,21 +10,23 @@ namespace content {
 
 SharedWorkerInstance::SharedWorkerInstance(
     const GURL& url,
-    const base::string16& name,
-    const base::string16& content_security_policy,
+    const std::string& name,
+    const std::string& content_security_policy,
     blink::WebContentSecurityPolicyType security_policy_type,
     blink::WebAddressSpace creation_address_space,
     ResourceContext* resource_context,
     const WorkerStoragePartitionId& partition_id,
-    blink::WebSharedWorkerCreationContextType creation_context_type)
+    blink::mojom::SharedWorkerCreationContextType creation_context_type,
+    bool data_saver_enabled)
     : url_(url),
       name_(name),
       content_security_policy_(content_security_policy),
-      security_policy_type_(security_policy_type),
+      content_security_policy_type_(security_policy_type),
       creation_address_space_(creation_address_space),
       resource_context_(resource_context),
       partition_id_(partition_id),
-      creation_context_type_(creation_context_type) {
+      creation_context_type_(creation_context_type),
+      data_saver_enabled_(data_saver_enabled) {
   DCHECK(resource_context_);
 }
 
@@ -32,16 +34,17 @@ SharedWorkerInstance::SharedWorkerInstance(const SharedWorkerInstance& other)
     : url_(other.url_),
       name_(other.name_),
       content_security_policy_(other.content_security_policy_),
-      security_policy_type_(other.security_policy_type_),
+      content_security_policy_type_(other.content_security_policy_type_),
       creation_address_space_(other.creation_address_space_),
       resource_context_(other.resource_context_),
       partition_id_(other.partition_id_),
-      creation_context_type_(other.creation_context_type_) {}
+      creation_context_type_(other.creation_context_type_),
+      data_saver_enabled_(other.data_saver_enabled_) {}
 
 SharedWorkerInstance::~SharedWorkerInstance() {}
 
 bool SharedWorkerInstance::Matches(const GURL& match_url,
-                                   const base::string16& match_name,
+                                   const std::string& match_name,
                                    const WorkerStoragePartitionId& partition_id,
                                    ResourceContext* resource_context) const {
   // ResourceContext equivalence is being used as a proxy to ensure we only

@@ -4,52 +4,50 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) UL id='submenu'",
           "rect": [48, 92, 40, 18],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutBlockFlow (positioned) UL id='submenu'",
           "rect": [48, -158, 40, 18],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutListMarker (anonymous)",
           "rect": [71, 92, 7, 18],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutListMarker (anonymous)",
           "rect": [71, -158, 7, 18],
-          "reason": "bounds change"
+          "reason": "geometry"
         }
       ]
     },
     {
       "name": "LayoutListItem (floating) LI id='watches'",
       "position": [31, 42],
-      "transformOrigin": [17, 9],
-      "bounds": [24, 18],
-      "drawsContent": true
+      "bounds": [24, 18]
     },
     {
       "name": "LayoutInline (relative positioned) SPAN id='placeholder'",
-      "position": [17, 0],
+      "position": [48, 42],
+      "drawsContent": false,
       "backfaceVisibility": "hidden"
     },
     {
       "name": "LayoutListItem (relative positioned) (floating) LI id='menu'",
       "position": [31, 42],
       "bounds": [17, 18],
-      "drawsContent": true,
       "paintInvalidations": [
         {
           "object": "LayoutListMarker (anonymous)",
           "rect": [0, 0, 7, 18],
-          "reason": "forced by layout"
+          "reason": "geometry"
         }
       ]
     }
@@ -57,23 +55,23 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutListMarker (anonymous)",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow (positioned) UL id='submenu'",
-      "reason": "bounds change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutListItem LI",
-      "reason": "location change"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "location change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutListMarker (anonymous)",
-      "reason": "bounds change"
+      "reason": "geometry"
     }
   ]
 }

@@ -8,8 +8,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
+#include "base/values.h"
 #include "components/sync/syncable/entry_kernel.h"
 #include "components/sync/syncable/syncable_base_transaction.h"
 
@@ -19,20 +21,18 @@ namespace syncable {
 // A struct describing the changes made during a transaction.
 struct WriteTransactionInfo {
   WriteTransactionInfo(int64_t id,
-                       tracked_objects::Location location,
+                       base::Location location,
                        WriterTag writer,
                        ImmutableEntryKernelMutationMap mutations);
   WriteTransactionInfo();
   WriteTransactionInfo(const WriteTransactionInfo& other);
   ~WriteTransactionInfo();
 
-  // Caller owns the return value.
-  base::DictionaryValue* ToValue(size_t max_mutations_size) const;
+  std::unique_ptr<base::DictionaryValue> ToValue(
+      size_t max_mutations_size) const;
 
   int64_t id;
-  // If tracked_objects::Location becomes assignable, we can use that
-  // instead.
-  std::string location_string;
+  base::Location location_;
   WriterTag writer;
   ImmutableEntryKernelMutationMap mutations;
 };

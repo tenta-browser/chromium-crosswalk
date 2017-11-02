@@ -7,7 +7,7 @@
 #include <cmath>
 #include <string>
 
-#include "content/common/media/media_stream_options.h"
+#include "content/common/media/media_stream_controls.h"
 #include "content/renderer/media/mock_constraint_factory.h"
 #include "media/base/limits.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -19,9 +19,11 @@ namespace {
 
 void CheckNonResolutionDefaults(const VideoCaptureSettings& result) {
   EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
+  EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
+  EXPECT_EQ(base::Optional<double>(), result.max_frame_rate());
   EXPECT_EQ(base::Optional<bool>(), result.noise_reduction());
   EXPECT_EQ(std::string(), result.device_id());
-  EXPECT_EQ(0.0, result.min_frame_rate());
+  EXPECT_FALSE(result.min_frame_rate().has_value());
 }
 
 void CheckNonFrameRateDefaults(const VideoCaptureSettings& result) {
@@ -1252,29 +1254,73 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryExactFrameRate) {
   auto result = SelectSettings();
   EXPECT_TRUE(result.HasValue());
   EXPECT_EQ(kFrameRate, result.FrameRate());
+  EXPECT_EQ(kFrameRate, result.min_frame_rate());
+  EXPECT_EQ(kFrameRate, result.max_frame_rate());
   CheckNonFrameRateDefaults(result);
   CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
 }
 
 TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryMinFrameRate) {
-  constraint_factory_.Reset();
-  const double kFrameRate = 45.0;
-  constraint_factory_.basic().frame_rate.SetMin(kFrameRate);
-  auto result = SelectSettings();
-  EXPECT_TRUE(result.HasValue());
-  // kFrameRate is greater that the default, so expect kFrameRate.
-  EXPECT_EQ(kFrameRate, result.FrameRate());
-  CheckNonFrameRateDefaults(result);
-  CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
+  // MinFrameRate greater than the default frame rate.
+  {
+    constraint_factory_.Reset();
+    const double kMinFrameRate = 45.0;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // kMinFrameRate is greater that the default, so expect kMinFrameRate.
+    EXPECT_EQ(kMinFrameRate, result.FrameRate());
+    EXPECT_TRUE(result.min_frame_rate().has_value());
+    EXPECT_EQ(kMinFrameRate, result.min_frame_rate());
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+    CheckNonFrameRateDefaults(result);
+    CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
+  }
 
-  const double kSmallFrameRate = 5.0;
-  constraint_factory_.basic().frame_rate.SetMin(kSmallFrameRate);
-  result = SelectSettings();
-  EXPECT_TRUE(result.HasValue());
-  // kFrameRate is greater that the default, so expect kFrameRate.
-  EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
-  CheckNonFrameRateDefaults(result);
-  CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
+  // MinFrameRate less than the default frame rate.
+  {
+    const double kMinFrameRate = 5.0;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // No ideal or maximum frame rate given, expect default.
+    EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
+    EXPECT_TRUE(result.min_frame_rate().has_value());
+    EXPECT_EQ(kMinFrameRate, result.min_frame_rate());
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+    CheckNonFrameRateDefaults(result);
+    CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
+  }
+
+  // MinFrameRate less than the minimum allowed.
+  {
+    const double kMinFrameRate = -0.01;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // No ideal or maximum frame rate given, expect default.
+    EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
+    // kMinFrameRate should be ignored.
+    EXPECT_FALSE(result.min_frame_rate().has_value());
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+    CheckNonFrameRateDefaults(result);
+    CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
+  }
+
+  // MinFrameRate equal to the minimum allowed.
+  {
+    const double kMinFrameRate = 0.0;
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
+    auto result = SelectSettings();
+    EXPECT_TRUE(result.HasValue());
+    // No ideal or maximum frame rate given, expect default.
+    EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
+    EXPECT_TRUE(result.min_frame_rate().has_value());
+    EXPECT_EQ(kMinFrameRate, result.min_frame_rate());
+    EXPECT_FALSE(result.max_frame_rate().has_value());
+    CheckNonFrameRateDefaults(result);
+    CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
+  }
 }
 
 TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryMaxFrameRate) {
@@ -1287,6 +1333,8 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryMaxFrameRate) {
     EXPECT_TRUE(result.HasValue());
     // If max frame rate is provided, it is used as default.
     EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1299,6 +1347,8 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryMaxFrameRate) {
     EXPECT_TRUE(result.HasValue());
     // If max frame rate is provided, it is used as default.
     EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1311,6 +1361,8 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryMaxFrameRate) {
     EXPECT_TRUE(result.HasValue());
     // Expect the default, since the given maximum is invalid.
     EXPECT_EQ(kDefaultScreenCastFrameRate, result.FrameRate());
+    EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
+    EXPECT_EQ(base::Optional<double>(), result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1323,6 +1375,8 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryMaxFrameRate) {
     EXPECT_TRUE(result.HasValue());
     // If max frame rate is provided, it is used as default.
     EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1333,12 +1387,14 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryRangeFrameRate) {
   {
     const double kMinFrameRate = 15.0;
     const double kMaxFrameRate = 45.0;
-    constraint_factory_.basic().frame_rate.SetMax(kMinFrameRate);
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
     constraint_factory_.basic().frame_rate.SetMax(kMaxFrameRate);
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     // If max frame rate is provided, it is used as default.
     EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(kMinFrameRate, result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1346,12 +1402,14 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryRangeFrameRate) {
   {
     const double kMinFrameRate = 45.0;
     const double kMaxFrameRate = 55.0;
-    constraint_factory_.basic().frame_rate.SetMax(kMinFrameRate);
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
     constraint_factory_.basic().frame_rate.SetMax(kMaxFrameRate);
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     // If max frame rate is provided, it is used as default.
     EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(kMinFrameRate, result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1359,12 +1417,14 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, MandatoryRangeFrameRate) {
   {
     const double kMinFrameRate = 10.0;
     const double kMaxFrameRate = 15.0;
-    constraint_factory_.basic().frame_rate.SetMax(kMinFrameRate);
+    constraint_factory_.basic().frame_rate.SetMin(kMinFrameRate);
     constraint_factory_.basic().frame_rate.SetMax(kMaxFrameRate);
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     // If max frame rate is provided, it is used as default.
     EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(kMinFrameRate, result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1379,6 +1439,8 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, IdealFrameRate) {
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     EXPECT_EQ(kIdealFrameRate, result.FrameRate());
+    EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
+    EXPECT_EQ(base::Optional<double>(), result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1393,6 +1455,8 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, IdealFrameRate) {
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     EXPECT_EQ(kMaxFrameRate, result.FrameRate());
+    EXPECT_EQ(base::Optional<double>(), result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1407,6 +1471,7 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, IdealFrameRate) {
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     EXPECT_EQ(kMinFrameRate, result.FrameRate());
+    EXPECT_EQ(base::Optional<double>(), result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }
@@ -1423,6 +1488,8 @@ TEST_F(MediaStreamConstraintsUtilVideoContentTest, IdealFrameRate) {
     auto result = SelectSettings();
     EXPECT_TRUE(result.HasValue());
     EXPECT_EQ(kIdealFrameRate, result.FrameRate());
+    EXPECT_EQ(kMinFrameRate, result.min_frame_rate());
+    EXPECT_EQ(kMaxFrameRate, result.max_frame_rate());
     CheckNonFrameRateDefaults(result);
     CheckTrackAdapterSettingsEqualsFormatDefaultAspectRatio(result);
   }

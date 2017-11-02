@@ -17,20 +17,23 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/single_thread_task_runner.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/common/chrome_utility_messages.h"
 #include "chrome/common/chrome_utility_printing_messages.h"
+#include "chrome/common/printing/pdf_to_pwg_raster_converter.mojom.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/cloud_devices/common/cloud_device_description.h"
 #include "components/cloud_devices/common/printer_description.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_data.h"
-#include "content/public/browser/utility_process_host.h"
-#include "content/public/browser/utility_process_host_client.h"
+#include "content/public/common/service_manager_connection.h"
+#include "mojo/public/cpp/system/platform_handle.h"
 #include "printing/pdf_render_settings.h"
 #include "printing/pwg_raster_settings.h"
 #include "printing/units.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -45,9 +48,7 @@ class FileHandlers {
  public:
   FileHandlers() {}
 
-  ~FileHandlers() {
-    DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-  }
+  ~FileHandlers() { base::ThreadRestrictions::AssertIOAllowed(); }
 
   void Init(base::RefCountedMemory* data);
   bool IsValid();
@@ -60,18 +61,14 @@ class FileHandlers {
     return temp_dir_.GetPath().AppendASCII("input.pdf");
   }
 
-  IPC::PlatformFileForTransit GetPdfForProcess() {
+  base::PlatformFile GetPdfForProcess() {
     DCHECK(pdf_file_.IsValid());
-    IPC::PlatformFileForTransit transit =
-        IPC::TakePlatformFileForTransit(std::move(pdf_file_));
-    return transit;
+    return pdf_file_.TakePlatformFile();
   }
 
-  IPC::PlatformFileForTransit GetPwgForProcess() {
+  base::PlatformFile GetPwgForProcess() {
     DCHECK(pwg_file_.IsValid());
-    IPC::PlatformFileForTransit transit =
-        IPC::TakePlatformFileForTransit(std::move(pwg_file_));
-    return transit;
+    return pwg_file_.TakePlatformFile();
   }
 
  private:
@@ -83,7 +80,7 @@ class FileHandlers {
 };
 
 void FileHandlers::Init(base::RefCountedMemory* data) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   if (!temp_dir_.CreateUniqueTempDir())
     return;
@@ -105,61 +102,59 @@ bool FileHandlers::IsValid() {
 }
 
 // Converts PDF into PWG raster.
-// Class uses 3 threads: UI, IO and FILE.
+// Class uses UI thread and |blocking_task_runner_|.
 // Internal workflow is following:
 // 1. Create instance on the UI thread. (files_, settings_,)
-// 2. Create file on the FILE thread.
-// 3. Start utility process and start conversion on the IO thread.
+// 2. Create file on |blocking_task_runner_|.
+// 3. Connect to the printing utility service and start the conversion.
 // 4. Run result callback on the UI thread.
 // 5. Instance is destroyed from any thread that has the last reference.
-// 6. FileHandlers destroyed on the FILE thread.
-//    This step posts |FileHandlers| to be destroyed on the FILE thread.
+// 6. FileHandlers destroyed on |blocking_task_runner_|.
+//    This step posts |FileHandlers| to be destroyed on |blocking_task_runner_|.
 // All these steps work sequentially, so no data should be accessed
 // simultaneously by several threads.
-class PwgUtilityProcessHostClient : public content::UtilityProcessHostClient {
+class PWGRasterConverterHelper
+    : public base::RefCountedThreadSafe<PWGRasterConverterHelper> {
  public:
-  PwgUtilityProcessHostClient(
-      const PdfRenderSettings& settings,
-      const PwgRasterSettings& bitmap_settings);
+  PWGRasterConverterHelper(const PdfRenderSettings& settings,
+                           const PwgRasterSettings& bitmap_settings);
 
   void Convert(base::RefCountedMemory* data,
                const PWGRasterConverter::ResultCallback& callback);
 
-  // UtilityProcessHostClient implementation.
-  void OnProcessCrashed(int exit_code) override;
-  bool OnMessageReceived(const IPC::Message& message) override;
-
  private:
-  ~PwgUtilityProcessHostClient() override;
+  friend class base::RefCountedThreadSafe<PWGRasterConverterHelper>;
 
-  // Message handlers.
-  void OnSucceeded();
-  void OnFailed();
+  ~PWGRasterConverterHelper();
 
   void RunCallback(bool success);
 
-  void StartProcessOnIOThread();
-
-  void RunCallbackOnUIThread(bool success);
   void OnFilesReadyOnUIThread();
 
-  std::unique_ptr<FileHandlers, BrowserThread::DeleteOnFileThread> files_;
   PdfRenderSettings settings_;
   PwgRasterSettings bitmap_settings_;
+  mojo::InterfacePtr<printing::mojom::PDFToPWGRasterConverter>
+      pdf_to_pwg_raster_converter_ptr_;
   PWGRasterConverter::ResultCallback callback_;
+  const scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
+  std::unique_ptr<FileHandlers, base::OnTaskRunnerDeleter> files_;
 
-  DISALLOW_COPY_AND_ASSIGN(PwgUtilityProcessHostClient);
+  DISALLOW_COPY_AND_ASSIGN(PWGRasterConverterHelper);
 };
 
-PwgUtilityProcessHostClient::PwgUtilityProcessHostClient(
+PWGRasterConverterHelper::PWGRasterConverterHelper(
     const PdfRenderSettings& settings,
     const PwgRasterSettings& bitmap_settings)
-    : settings_(settings), bitmap_settings_(bitmap_settings) {}
+    : settings_(settings),
+      bitmap_settings_(bitmap_settings),
+      blocking_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
+      files_(nullptr, base::OnTaskRunnerDeleter(blocking_task_runner_)) {}
 
-PwgUtilityProcessHostClient::~PwgUtilityProcessHostClient() {
-}
+PWGRasterConverterHelper::~PWGRasterConverterHelper() {}
 
-void PwgUtilityProcessHostClient::Convert(
+void PWGRasterConverterHelper::Convert(
     base::RefCountedMemory* data,
     const PWGRasterConverter::ResultCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -168,80 +163,39 @@ void PwgUtilityProcessHostClient::Convert(
   CHECK(!files_);
   files_.reset(new FileHandlers());
 
-  BrowserThread::PostTaskAndReply(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&FileHandlers::Init, base::Unretained(files_.get()),
-                 base::RetainedRef(data)),
-      base::Bind(&PwgUtilityProcessHostClient::OnFilesReadyOnUIThread, this));
+  blocking_task_runner_->PostTaskAndReply(
+      FROM_HERE,
+      base::BindOnce(&FileHandlers::Init, base::Unretained(files_.get()),
+                     base::RetainedRef(data)),
+      base::BindOnce(&PWGRasterConverterHelper::OnFilesReadyOnUIThread, this));
 }
 
-void PwgUtilityProcessHostClient::OnProcessCrashed(int exit_code) {
-  OnFailed();
-}
-
-bool PwgUtilityProcessHostClient::OnMessageReceived(
-  const IPC::Message& message) {
-  bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(PwgUtilityProcessHostClient, message)
-    IPC_MESSAGE_HANDLER(
-        ChromeUtilityHostMsg_RenderPDFPagesToPWGRaster_Succeeded, OnSucceeded)
-    IPC_MESSAGE_HANDLER(ChromeUtilityHostMsg_RenderPDFPagesToPWGRaster_Failed,
-                        OnFailed)
-    IPC_MESSAGE_UNHANDLED(handled = false)
-  IPC_END_MESSAGE_MAP()
-  return handled;
-}
-
-void PwgUtilityProcessHostClient::OnSucceeded() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  RunCallback(true);
-}
-
-void PwgUtilityProcessHostClient::OnFailed() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  RunCallback(false);
-}
-
-void PwgUtilityProcessHostClient::OnFilesReadyOnUIThread() {
+void PWGRasterConverterHelper::OnFilesReadyOnUIThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (!files_->IsValid()) {
-    RunCallbackOnUIThread(false);
+    RunCallback(false);
     return;
   }
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&PwgUtilityProcessHostClient::StartProcessOnIOThread, this));
+
+  content::ServiceManagerConnection::GetForProcess()
+      ->GetConnector()
+      ->BindInterface(printing::mojom::kPdfToPwgRasterConverterServiceName,
+                      &pdf_to_pwg_raster_converter_ptr_);
+
+  pdf_to_pwg_raster_converter_ptr_.set_connection_error_handler(
+      base::Bind(&PWGRasterConverterHelper::RunCallback, this, false));
+
+  pdf_to_pwg_raster_converter_ptr_->Convert(
+      mojo::WrapPlatformFile(files_->GetPdfForProcess()), settings_,
+      bitmap_settings_, mojo::WrapPlatformFile(files_->GetPwgForProcess()),
+      base::Bind(&PWGRasterConverterHelper::RunCallback, this));
 }
 
-void PwgUtilityProcessHostClient::StartProcessOnIOThread() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-
-  content::UtilityProcessHost* utility_process_host =
-      content::UtilityProcessHost::Create(this,
-                                          base::ThreadTaskRunnerHandle::Get());
-  utility_process_host->SetName(l10n_util::GetStringUTF16(
-      IDS_UTILITY_PROCESS_PWG_RASTER_CONVERTOR_NAME));
-  utility_process_host->Send(new ChromeUtilityMsg_RenderPDFPagesToPWGRaster(
-      files_->GetPdfForProcess(), settings_, bitmap_settings_,
-      files_->GetPwgForProcess()));
-}
-
-void PwgUtilityProcessHostClient::RunCallback(bool success) {
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&PwgUtilityProcessHostClient::RunCallbackOnUIThread, this,
-                 success));
-}
-
-void PwgUtilityProcessHostClient::RunCallbackOnUIThread(bool success) {
+void PWGRasterConverterHelper::RunCallback(bool success) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (callback_.is_null())
-    return;
-
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(callback_, success, files_->GetPwgPath()));
-  callback_.Reset();
+  if (callback_)
+    std::move(callback_).Run(success, files_->GetPwgPath());
 }
 
 class PWGRasterConverterImpl : public PWGRasterConverter {
@@ -255,7 +209,7 @@ class PWGRasterConverterImpl : public PWGRasterConverter {
              const ResultCallback& callback) override;
 
  private:
-  scoped_refptr<PwgUtilityProcessHostClient> utility_client_;
+  scoped_refptr<PWGRasterConverterHelper> utility_client_;
   base::CancelableCallback<ResultCallback::RunType> callback_;
 
   DISALLOW_COPY_AND_ASSIGN(PWGRasterConverterImpl);
@@ -274,8 +228,8 @@ void PWGRasterConverterImpl::Start(base::RefCountedMemory* data,
   // Rebind cancelable callback to avoid calling callback if
   // PWGRasterConverterImpl is destroyed.
   callback_.Reset(callback);
-  utility_client_ =
-      new PwgUtilityProcessHostClient(conversion_settings, bitmap_settings);
+  utility_client_ = base::MakeRefCounted<PWGRasterConverterHelper>(
+      conversion_settings, bitmap_settings);
   utility_client_->Convert(data, callback_.callback());
 }
 

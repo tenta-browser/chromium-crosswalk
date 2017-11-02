@@ -11,6 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/screens/user_image_view.h"
+#include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_screen_handler.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/native_widget_types.h"
@@ -49,15 +50,12 @@ class UserImageScreenHandler : public UserImageView, public BaseScreenHandler {
   // Handles photo taken with WebRTC UI.
   void HandlePhotoTaken(const std::string& image_url);
 
-  // Handles 'take-photo' button click.
-  void HandleTakePhoto();
-
   // Handles 'discard-photo' button click.
   void HandleDiscardPhoto();
 
   // Handles clicking on default user image.
-  void HandleSelectImage(const std::string& image_url,
-                         const std::string& image_type,
+  void HandleSelectImage(const std::string& image_type,
+                         const std::string& image_url,
                          bool is_user_selection);
 
   // Called when user accept the image closing the screen.
@@ -65,6 +63,9 @@ class UserImageScreenHandler : public UserImageView, public BaseScreenHandler {
 
   // Called when the user image screen has been loaded and shown.
   void HandleScreenShown();
+
+  // Called when video mode allowance changed.
+  void UpdateAllowVideoMode();
 
   UserImageScreen* screen_ = nullptr;
 
@@ -75,6 +76,8 @@ class UserImageScreenHandler : public UserImageView, public BaseScreenHandler {
   bool is_ready_ = false;
 
   base::Time screen_show_time_;
+
+  std::unique_ptr<CrosSettings::ObserverSubscription> device_settings_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(UserImageScreenHandler);
 };

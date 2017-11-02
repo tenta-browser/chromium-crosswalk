@@ -44,7 +44,7 @@ ContextMenuParams ContextMenuParamsBuilder::Build(
 
   if (!data.image_response.IsNull()) {
     GetContentClient()->renderer()->AddImageContextMenuProperties(
-        data.image_response, &params.properties);
+        data.image_response, data.is_placeholder_image, &params.properties);
   }
 
   for (size_t i = 0; i < data.dictionary_suggestions.size(); ++i)
@@ -61,6 +61,7 @@ ContextMenuParams ContextMenuParamsBuilder::Build(
   }
 
   params.link_text = data.link_text.Utf16();
+  params.source_type = static_cast<ui::MenuSourceType>(data.source_type);
 
   return params;
 }

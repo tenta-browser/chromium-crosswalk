@@ -5,13 +5,16 @@
 #include "ui/views/controls/native/native_view_host_aura.h"
 
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/focus_client.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/hit_test.h"
+#include "ui/compositor/paint_recorder.h"
 #include "ui/views/controls/native/native_view_host.h"
+#include "ui/views/painter.h"
 #include "ui/views/view_constants_aura.h"
 #include "ui/views/widget/widget.h"
 
@@ -51,7 +54,8 @@ class NativeViewHostAura::ClippingWindowDelegate : public aura::WindowDelegate {
   }
   void OnCaptureLost() override {}
   void OnPaint(const ui::PaintContext& context) override {}
-  void OnDeviceScaleFactorChanged(float device_scale_factor) override {}
+  void OnDeviceScaleFactorChanged(float old_device_scale_factor,
+                                  float new_device_scale_factor) override {}
   void OnWindowDestroying(aura::Window* window) override {}
   void OnWindowDestroyed(aura::Window* window) override {}
   void OnWindowTargetVisibilityChanged(bool visible) override {}
@@ -68,7 +72,7 @@ NativeViewHostAura::NativeViewHostAura(NativeViewHost* host)
       clipping_window_(clipping_window_delegate_.get()) {
   // Set the type so descendant views (including popups) get positioned
   // appropriately.
-  clipping_window_.SetType(ui::wm::WINDOW_TYPE_CONTROL);
+  clipping_window_.SetType(aura::client::WINDOW_TYPE_CONTROL);
   clipping_window_.Init(ui::LAYER_NOT_DRAWN);
   clipping_window_.set_owned_by_parent(false);
   clipping_window_.SetName("NativeViewHostAuraClip");
@@ -95,6 +99,7 @@ void NativeViewHostAura::AttachNativeView() {
   host_->native_view()->SetProperty(views::kHostViewKey,
       static_cast<View*>(host_));
   AddClippingWindow();
+  InstallMask();
 }
 
 void NativeViewHostAura::NativeViewDetaching(bool destroyed) {
@@ -130,6 +135,20 @@ void NativeViewHostAura::RemovedFromWidget() {
       host_->native_view()->parent()->RemoveChild(host_->native_view());
     RemoveClippingWindow();
   }
+}
+
+bool NativeViewHostAura::SetCornerRadius(int corner_radius) {
+#if defined(OS_WIN)
+  // Layer masks don't work on Windows. See crbug.com/713359
+  return false;
+#else
+  mask_ = views::Painter::CreatePaintedLayer(
+      views::Painter::CreateSolidRoundRectPainter(SK_ColorBLACK,
+                                                  corner_radius));
+  mask_->layer()->SetFillsBoundsOpaquely(false);
+  InstallMask();
+  return true;
+#endif
 }
 
 void NativeViewHostAura::InstallClip(int x, int y, int w, int h) {
@@ -187,6 +206,13 @@ gfx::NativeCursor NativeViewHostAura::GetCursor(int x, int y) {
   return gfx::kNullCursor;
 }
 
+void NativeViewHostAura::OnWindowBoundsChanged(aura::Window* window,
+                                               const gfx::Rect& old_bounds,
+                                               const gfx::Rect& new_bounds) {
+  if (mask_)
+    mask_->layer()->SetBounds(gfx::Rect(host_->native_view()->bounds().size()));
+}
+
 void NativeViewHostAura::OnWindowDestroying(aura::Window* window) {
   DCHECK(window == host_->native_view());
   clipping_window_delegate_->set_native_view(NULL);
@@ -232,6 +258,15 @@ void NativeViewHostAura::RemoveClippingWindow() {
   }
   if (clipping_window_.parent())
     clipping_window_.parent()->RemoveChild(&clipping_window_);
+}
+
+void NativeViewHostAura::InstallMask() {
+  if (!mask_)
+    return;
+  if (host_->native_view()) {
+    mask_->layer()->SetBounds(gfx::Rect(host_->native_view()->bounds().size()));
+    host_->native_view()->layer()->SetMaskLayer(mask_->layer());
+  }
 }
 
 }  // namespace views

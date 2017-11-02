@@ -7,10 +7,10 @@
 #include <memory>
 
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker_tester.h"
 #include "chrome/browser/chromeos/login/ui/user_adding_screen.h"
@@ -47,14 +47,10 @@ namespace {
 // An object that wait for lock state and fullscreen state.
 class Waiter : public content::NotificationObserver {
  public:
-  explicit Waiter(Browser* browser)
-      : browser_(browser),
-        running_(false) {
-    registrar_.Add(this,
-                   chrome::NOTIFICATION_SCREEN_LOCK_STATE_CHANGED,
+  explicit Waiter(Browser* browser) : browser_(browser), running_(false) {
+    registrar_.Add(this, chrome::NOTIFICATION_SCREEN_LOCK_STATE_CHANGED,
                    content::NotificationService::AllSources());
-    registrar_.Add(this,
-                   chrome::NOTIFICATION_FULLSCREEN_CHANGED,
+    registrar_.Add(this, chrome::NOTIFICATION_FULLSCREEN_CHANGED,
                    content::NotificationService::AllSources());
   }
 
@@ -66,7 +62,7 @@ class Waiter : public content::NotificationObserver {
     DCHECK(type == chrome::NOTIFICATION_SCREEN_LOCK_STATE_CHANGED ||
            type == chrome::NOTIFICATION_FULLSCREEN_CHANGED);
     if (running_)
-      base::MessageLoop::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   // Wait until the two conditions are met.
@@ -99,8 +95,7 @@ namespace chromeos {
 
 class ScreenLockerTest : public InProcessBrowserTest {
  public:
-  ScreenLockerTest() : fake_session_manager_client_(NULL) {
-  }
+  ScreenLockerTest() : fake_session_manager_client_(NULL) {}
 
  protected:
   FakeSessionManagerClient* fake_session_manager_client_;
@@ -118,8 +113,8 @@ class ScreenLockerTest : public InProcessBrowserTest {
 
   // Verifies if LockScreenDismissed() was called once.
   bool VerifyLockScreenDismissed() {
-    return 1 == fake_session_manager_client_->
-                    notify_lock_screen_dismissed_call_count();
+    return 1 == fake_session_manager_client_
+                    ->notify_lock_screen_dismissed_call_count();
   }
 
  private:
@@ -128,7 +123,6 @@ class ScreenLockerTest : public InProcessBrowserTest {
     DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
         std::unique_ptr<SessionManagerClient>(fake_session_manager_client_));
 
-    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
     zero_duration_mode_.reset(new ui::ScopedAnimationDurationScaleMode(
         ui::ScopedAnimationDurationScaleMode::ZERO_DURATION));
   }
@@ -174,8 +168,7 @@ IN_PROC_BROWSER_TEST_F(ScreenLockerTest, TestBasic) {
   // SessionManager to announce this over DBus.
   EXPECT_FALSE(tester->IsLocked());
   EXPECT_EQ(
-      1,
-      fake_session_manager_client_->notify_lock_screen_shown_call_count());
+      1, fake_session_manager_client_->notify_lock_screen_shown_call_count());
   EXPECT_EQ(session_manager::SessionState::ACTIVE,
             session_manager::SessionManager::Get()->session_state());
 
@@ -198,8 +191,8 @@ IN_PROC_BROWSER_TEST_F(ScreenLockerTest, TestFullscreenExit) {
   // auto hidden when in immersive fullscreen.
   std::unique_ptr<test::ScreenLockerTester> tester(ScreenLocker::GetTester());
   BrowserWindow* browser_window = browser()->window();
-  ash::wm::WindowState* window_state = ash::wm::GetWindowState(
-      browser_window->GetNativeWindow());
+  ash::wm::WindowState* window_state =
+      ash::wm::GetWindowState(browser_window->GetNativeWindow());
   {
     Waiter waiter(browser());
     browser()
@@ -270,16 +263,15 @@ IN_PROC_BROWSER_TEST_F(ScreenLockerTest, TestFullscreenExit) {
   EXPECT_FALSE(tester->IsLocked());
 
   EXPECT_EQ(
-      2,
-      fake_session_manager_client_->notify_lock_screen_shown_call_count());
+      2, fake_session_manager_client_->notify_lock_screen_shown_call_count());
   EXPECT_EQ(
       2,
       fake_session_manager_client_->notify_lock_screen_dismissed_call_count());
 }
 
 void SimulateKeyPress(views::Widget* widget, ui::KeyboardCode key_code) {
-  ui_controls::SendKeyPress(widget->GetNativeWindow(),
-                            key_code, false, false, false, false);
+  ui_controls::SendKeyPress(widget->GetNativeWindow(), key_code, false, false,
+                            false, false);
 }
 
 void UnlockKeyPress(views::Widget* widget) {
@@ -294,9 +286,7 @@ IN_PROC_BROWSER_TEST_F(ScreenLockerTest, TestShowTwice) {
   ScreenLocker::Show();
   EXPECT_TRUE(tester->IsLocked());
   EXPECT_EQ(
-      2,
-      fake_session_manager_client_->notify_lock_screen_shown_call_count());
-
+      2, fake_session_manager_client_->notify_lock_screen_shown_call_count());
 
   // Close the locker to match expectations.
   ScreenLocker::Hide();
@@ -312,8 +302,7 @@ IN_PROC_BROWSER_TEST_F(ScreenLockerTest, DISABLED_TestEscape) {
   LockScreen(tester.get());
 
   EXPECT_EQ(
-      1,
-      fake_session_manager_client_->notify_lock_screen_shown_call_count());
+      1, fake_session_manager_client_->notify_lock_screen_shown_call_count());
 
   tester->SetPassword("password");
   EXPECT_EQ("password", tester->GetPassword());

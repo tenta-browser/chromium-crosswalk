@@ -6,7 +6,6 @@
 
 #include <string>
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/arc/optin/arc_optin_preference_handler.h"
 
 namespace arc {
@@ -20,25 +19,25 @@ ArcTermsOfServiceDefaultNegotiator::ArcTermsOfServiceDefaultNegotiator(
 }
 
 ArcTermsOfServiceDefaultNegotiator::~ArcTermsOfServiceDefaultNegotiator() {
-  support_host_->RemoveObserver(this);
+  support_host_->SetTermsOfServiceDelegate(nullptr);
 }
 
 void ArcTermsOfServiceDefaultNegotiator::StartNegotiationImpl() {
   DCHECK(!preference_handler_);
   preference_handler_ =
-      base::MakeUnique<ArcOptInPreferenceHandler>(this, pref_service_);
+      std::make_unique<ArcOptInPreferenceHandler>(this, pref_service_);
   // This automatically updates all preferences.
   preference_handler_->Start();
 
-  support_host_->AddObserver(this);
+  support_host_->SetTermsOfServiceDelegate(this);
   support_host_->ShowTermsOfService();
 }
 
-void ArcTermsOfServiceDefaultNegotiator::OnWindowClosed() {
+void ArcTermsOfServiceDefaultNegotiator::OnTermsRejected() {
   // User cancels terms-of-service agreement UI by clicking "Cancel" button
   // or closing the window directly.
   DCHECK(preference_handler_);
-  support_host_->RemoveObserver(this);
+  support_host_->SetTermsOfServiceDelegate(nullptr);
   preference_handler_.reset();
 
   ReportResult(false);
@@ -49,7 +48,7 @@ void ArcTermsOfServiceDefaultNegotiator::OnTermsAgreed(
     bool is_backup_and_restore_enabled,
     bool is_location_service_enabled) {
   DCHECK(preference_handler_);
-  support_host_->RemoveObserver(this);
+  support_host_->SetTermsOfServiceDelegate(nullptr);
 
   // Update the preferences with the value passed from UI.
   preference_handler_->EnableMetrics(is_metrics_enabled);
@@ -60,17 +59,8 @@ void ArcTermsOfServiceDefaultNegotiator::OnTermsAgreed(
   ReportResult(true);
 }
 
-void ArcTermsOfServiceDefaultNegotiator::OnAuthSucceeded(
-    const std::string& auth_code) {
-  NOTREACHED();
-}
-
-void ArcTermsOfServiceDefaultNegotiator::OnRetryClicked() {
+void ArcTermsOfServiceDefaultNegotiator::OnTermsRetryClicked() {
   support_host_->ShowTermsOfService();
-}
-
-void ArcTermsOfServiceDefaultNegotiator::OnSendFeedbackClicked() {
-  NOTREACHED();
 }
 
 void ArcTermsOfServiceDefaultNegotiator::OnMetricsModeChanged(bool enabled,

@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/favicon/core/favicon_service.h"
@@ -77,9 +78,9 @@ class MockFaviconService : public FaviconService {
                    base::CancelableTaskTracker* tracker));
   MOCK_METHOD6(UpdateFaviconMappingsAndFetch,
                base::CancelableTaskTracker::TaskId(
-                   const GURL& page_url,
-                   const std::vector<GURL>& icon_urls,
-                   int icon_types,
+                   const base::flat_set<GURL>& page_urls,
+                   const GURL& icon_url,
+                   favicon_base::IconType icon_type,
                    int desired_size_in_dip,
                    const favicon_base::FaviconResultsCallback& callback,
                    base::CancelableTaskTracker* tracker));
@@ -89,6 +90,7 @@ class MockFaviconService : public FaviconService {
                    const favicon_base::FaviconRawBitmapCallback& callback,
                    base::CancelableTaskTracker* tracker));
   MOCK_METHOD1(SetFaviconOutOfDateForPage, void(const GURL& page_url));
+  MOCK_METHOD1(TouchOnDemandFavicon, void(const GURL& icon_url));
   MOCK_METHOD1(SetImportedFavicons,
                void(const favicon_base::FaviconUsageDataList& favicon_usage));
   MOCK_METHOD5(MergeFavicon,
@@ -98,11 +100,11 @@ class MockFaviconService : public FaviconService {
                     scoped_refptr<base::RefCountedMemory> bitmap_data,
                     const gfx::Size& pixel_size));
   MOCK_METHOD4(SetFavicons,
-               void(const GURL& page_url,
+               void(const base::flat_set<GURL>& page_urls,
                     const GURL& icon_url,
                     favicon_base::IconType icon_type,
                     const gfx::Image& image));
-  MOCK_METHOD5(SetLastResortFavicons,
+  MOCK_METHOD5(SetOnDemandFavicons,
                void(const GURL& page_url,
                     const GURL& icon_url,
                     favicon_base::IconType icon_type,

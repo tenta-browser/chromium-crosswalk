@@ -33,7 +33,7 @@
 
 #include "bindings/core/v8/RejectedPromises.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8CacheOptions.h"
 #include "core/CoreExport.h"
 #include "platform/wtf/Allocator.h"
@@ -71,14 +71,14 @@ class CORE_EXPORT WorkerOrWorkletScriptController
 
   // Used by WorkerThread. Returns true if the context is successfully
   // initialized or already initialized.
-  bool InitializeContextIfNeeded();
+  bool InitializeContextIfNeeded(const String& human_readable_name);
 
   // Used by WorkerGlobalScope:
   void RethrowExceptionFromImportedScript(ErrorEvent*, ExceptionState&);
   void DisableEval(const String&);
 
   // Used by Inspector agents:
-  ScriptState* GetScriptState() { return script_state_.Get(); }
+  ScriptState* GetScriptState() { return script_state_.get(); }
 
   // Used by V8 bindings:
   v8::Local<v8::Context> GetContext() {
@@ -87,7 +87,7 @@ class CORE_EXPORT WorkerOrWorkletScriptController
   }
 
   RejectedPromises* GetRejectedPromises() const {
-    return rejected_promises_.Get();
+    return rejected_promises_.get();
   }
 
   DECLARE_TRACE();
@@ -95,6 +95,8 @@ class CORE_EXPORT WorkerOrWorkletScriptController
   bool IsContextInitialized() const {
     return script_state_ && !!script_state_->PerContextData();
   }
+
+  ScriptValue EvaluateAndReturnValueForTest(const ScriptSourceCode&);
 
  private:
   WorkerOrWorkletScriptController(WorkerOrWorkletGlobalScope*, v8::Isolate*);

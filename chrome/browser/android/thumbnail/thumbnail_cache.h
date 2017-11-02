@@ -8,16 +8,17 @@
 #include <stddef.h>
 
 #include <list>
+#include <map>
 #include <set>
 #include <string>
 
 #include "base/bind.h"
-#include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
+#include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/thumbnail/scoped_ptr_expiring_cache.h"
 #include "chrome/browser/android/thumbnail/thumbnail.h"
@@ -90,8 +91,8 @@ class ThumbnailCache : ThumbnailDelegate {
     GURL url_;
   };
 
-  typedef ScopedPtrExpiringCache<TabId, Thumbnail> ExpiringThumbnailCache;
-  typedef base::hash_map<TabId, ThumbnailMetaData> ThumbnailMetaDataMap;
+  using ExpiringThumbnailCache = ScopedPtrExpiringCache<TabId, Thumbnail>;
+  using ThumbnailMetaDataMap = std::map<TabId, ThumbnailMetaData>;
 
   void RemoveFromDisk(TabId tab_id);
   static void RemoveFromDiskTask(TabId tab_id);
@@ -145,6 +146,8 @@ class ThumbnailCache : ThumbnailDelegate {
 
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel level);
+
+  const scoped_refptr<base::SequencedTaskRunner> file_sequenced_task_runner_;
 
   const size_t compression_queue_max_size_;
   const size_t write_queue_max_size_;

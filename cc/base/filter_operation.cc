@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/numerics/ranges.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
 #include "cc/base/filter_operation.h"
@@ -22,6 +23,8 @@ bool FilterOperation::operator==(const FilterOperation& other) const {
     return false;
   if (type_ == COLOR_MATRIX)
     return !memcmp(matrix_, other.matrix_, sizeof(matrix_));
+  if (type_ == BLUR)
+    return amount_ == other.amount_ && blur_tile_mode_ == other.blur_tile_mode_;
   if (type_ == DROP_SHADOW) {
     return amount_ == other.amount_ &&
            drop_shadow_offset_ == other.drop_shadow_offset_ &&
@@ -31,7 +34,7 @@ bool FilterOperation::operator==(const FilterOperation& other) const {
     return image_filter_.get() == other.image_filter_.get();
   }
   if (type_ == ALPHA_THRESHOLD) {
-    return region_ == other.region_ && amount_ == other.amount_ &&
+    return shape_ == other.shape_ && amount_ == other.amount_ &&
            outer_threshold_ == other.outer_threshold_;
   }
   return amount_ == other.amount_;
@@ -53,6 +56,20 @@ FilterOperation::FilterOperation(FilterType type, float amount)
 }
 
 FilterOperation::FilterOperation(FilterType type,
+                                 float amount,
+                                 SkBlurImageFilter::TileMode tile_mode)
+    : type_(type),
+      amount_(amount),
+      outer_threshold_(0),
+      drop_shadow_offset_(0, 0),
+      drop_shadow_color_(0),
+      zoom_inset_(0),
+      blur_tile_mode_(tile_mode) {
+  DCHECK_EQ(type_, BLUR);
+  memset(matrix_, 0, sizeof(matrix_));
+}
+
+FilterOperation::FilterOperation(FilterType type,
                                  const gfx::Point& offset,
                                  float stdDeviation,
                                  SkColor color)
@@ -66,7 +83,7 @@ FilterOperation::FilterOperation(FilterType type,
   memset(matrix_, 0, sizeof(matrix_));
 }
 
-FilterOperation::FilterOperation(FilterType type, SkScalar matrix[20])
+FilterOperation::FilterOperation(FilterType type, const Matrix& matrix)
     : type_(type),
       amount_(0),
       outer_threshold_(0),
@@ -102,7 +119,7 @@ FilterOperation::FilterOperation(FilterType type,
 }
 
 FilterOperation::FilterOperation(FilterType type,
-                                 const SkRegion& region,
+                                 const ShapeRects& shape,
                                  float inner_threshold,
                                  float outer_threshold)
     : type_(type),
@@ -111,7 +128,7 @@ FilterOperation::FilterOperation(FilterType type,
       drop_shadow_offset_(0, 0),
       drop_shadow_color_(0),
       zoom_inset_(0),
-      region_(region) {
+      shape_(shape) {
   DCHECK_EQ(type_, ALPHA_THRESHOLD);
   memset(matrix_, 0, sizeof(matrix_));
 }
@@ -124,7 +141,8 @@ FilterOperation::FilterOperation(const FilterOperation& other)
       drop_shadow_color_(other.drop_shadow_color_),
       image_filter_(other.image_filter_),
       zoom_inset_(other.zoom_inset_),
-      region_(other.region_) {
+      shape_(other.shape_),
+      blur_tile_mode_(other.blur_tile_mode_) {
   memcpy(matrix_, other.matrix_, sizeof(matrix_));
 }
 
@@ -154,8 +172,7 @@ static FilterOperation CreateNoOpFilter(FilterOperation::FilterType type) {
       return FilterOperation::CreateDropShadowFilter(gfx::Point(0, 0), 0.f,
                                                      SK_ColorTRANSPARENT);
     case FilterOperation::COLOR_MATRIX: {
-      SkScalar matrix[20];
-      memset(matrix, 0, 20 * sizeof(SkScalar));
+      FilterOperation::Matrix matrix = {};
       matrix[0] = matrix[6] = matrix[12] = matrix[18] = 1.f;
       return FilterOperation::CreateColorMatrixFilter(matrix);
     }
@@ -166,7 +183,8 @@ static FilterOperation CreateNoOpFilter(FilterOperation::FilterType type) {
     case FilterOperation::REFERENCE:
       return FilterOperation::CreateReferenceFilter(nullptr);
     case FilterOperation::ALPHA_THRESHOLD:
-      return FilterOperation::CreateAlphaThresholdFilter(SkRegion(), 1.f, 0.f);
+      return FilterOperation::CreateAlphaThresholdFilter(
+          FilterOperation::ShapeRects(), 1.f, 0.f);
   }
   NOTREACHED();
   return FilterOperation::CreateEmptyFilter();
@@ -180,7 +198,7 @@ static float ClampAmountForFilterType(float amount,
     case FilterOperation::INVERT:
     case FilterOperation::OPACITY:
     case FilterOperation::ALPHA_THRESHOLD:
-      return MathUtil::ClampToRange(amount, 0.f, 1.f);
+      return base::ClampToRange(amount, 0.f, 1.f);
     case FilterOperation::SATURATE:
     case FilterOperation::BRIGHTNESS:
     case FilterOperation::CONTRAST:
@@ -231,7 +249,9 @@ FilterOperation FilterOperation::Blend(const FilterOperation* from,
       gfx::Tween::FloatValueBetween(progress, from_op.amount(), to_op.amount()),
       to_op.type()));
 
-  if (to_op.type() == FilterOperation::DROP_SHADOW) {
+  if (to_op.type() == FilterOperation::BLUR) {
+    blended_filter.set_blur_tile_mode(to_op.blur_tile_mode());
+  } else if (to_op.type() == FilterOperation::DROP_SHADOW) {
     gfx::Point blended_offset(gfx::Tween::LinearIntValueBetween(
                                   progress, from_op.drop_shadow_offset().x(),
                                   to_op.drop_shadow_offset().x()),
@@ -251,7 +271,7 @@ FilterOperation FilterOperation::Blend(const FilterOperation* from,
         gfx::Tween::FloatValueBetween(progress, from_op.outer_threshold(),
                                       to_op.outer_threshold()),
         to_op.type()));
-    blended_filter.set_region(to_op.region());
+    blended_filter.set_shape(to_op.shape());
   }
 
   return blended_filter;
@@ -300,13 +320,13 @@ void FilterOperation::AsValueInto(base::trace_event::TracedValue* value) const {
     case FilterOperation::ALPHA_THRESHOLD: {
       value->SetDouble("inner_threshold", amount_);
       value->SetDouble("outer_threshold", outer_threshold_);
-      std::unique_ptr<base::ListValue> region_value(new base::ListValue());
-      value->BeginArray("region");
-      for (SkRegion::Iterator it(region_); !it.done(); it.next()) {
-        value->AppendInteger(it.rect().x());
-        value->AppendInteger(it.rect().y());
-        value->AppendInteger(it.rect().width());
-        value->AppendInteger(it.rect().height());
+      std::unique_ptr<base::ListValue> shape_value(new base::ListValue());
+      value->BeginArray("shape");
+      for (const gfx::Rect& rect : shape_) {
+        value->AppendInteger(rect.x());
+        value->AppendInteger(rect.y());
+        value->AppendInteger(rect.width());
+        value->AppendInteger(rect.height());
       }
       value->EndArray();
     } break;

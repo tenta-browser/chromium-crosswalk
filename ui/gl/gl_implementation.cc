@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <string>
 
 #include "base/at_exit.h"
@@ -14,6 +13,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -55,6 +55,28 @@ void CleanupNativeLibraries(void* unused) {
   }
 }
 
+ExtensionSet GetGLExtensionsFromCurrentContext(GLApi* api,
+                                               GLenum extensions_enum,
+                                               GLenum num_extensions_enum) {
+  if (WillUseGLGetStringForExtensions(api)) {
+    const char* extensions =
+        reinterpret_cast<const char*>(api->glGetStringFn(extensions_enum));
+    return extensions ? MakeExtensionSet(extensions) : ExtensionSet();
+  }
+
+  GLint num_extensions = 0;
+  api->glGetIntegervFn(num_extensions_enum, &num_extensions);
+
+  std::vector<base::StringPiece> exts(num_extensions);
+  for (GLint i = 0; i < num_extensions; ++i) {
+    const char* extension =
+        reinterpret_cast<const char*>(api->glGetStringiFn(extensions_enum, i));
+    DCHECK(extension != NULL);
+    exts[i] = extension;
+  }
+  return ExtensionSet(exts);
+}
+
 }  // namespace
 
 base::ThreadLocalPointer<CurrentGL>* g_current_gl_context_tls = NULL;
@@ -82,7 +104,11 @@ GLImplementation GetNamedGLImplementation(const std::string& name) {
 }
 
 GLImplementation GetSoftwareGLImplementation() {
+#if (defined(OS_WIN) || (defined(OS_LINUX) && !defined(OS_CHROMEOS) && !defined(USE_OZONE)))
+  return kGLImplementationSwiftShaderGL;
+#else
   return kGLImplementationOSMesaGL;
+#endif
 }
 
 const char* GetGLImplementationName(GLImplementation implementation) {
@@ -167,8 +193,7 @@ std::string FilterGLExtensionList(
       extensions, " ", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   auto is_disabled = [&disabled_extensions](const base::StringPiece& ext) {
-    return std::find(disabled_extensions.begin(), disabled_extensions.end(),
-                     ext) != disabled_extensions.end();
+    return base::ContainsValue(disabled_extensions, ext);
   };
   extension_vec.erase(
       std::remove_if(extension_vec.begin(), extension_vec.end(), is_disabled),
@@ -212,6 +237,15 @@ std::string GetGLExtensionsFromCurrentContext(GLApi* api) {
   return base::JoinString(exts, " ");
 }
 
+ExtensionSet GetRequestableGLExtensionsFromCurrentContext() {
+  return GetRequestableGLExtensionsFromCurrentContext(g_current_gl_context);
+}
+
+ExtensionSet GetRequestableGLExtensionsFromCurrentContext(GLApi* api) {
+  return GetGLExtensionsFromCurrentContext(api, GL_REQUESTABLE_EXTENSIONS_ANGLE,
+                                           GL_NUM_REQUESTABLE_EXTENSIONS_ANGLE);
+}
+
 bool WillUseGLGetStringForExtensions() {
   return WillUseGLGetStringForExtensions(g_current_gl_context);
 }
@@ -224,14 +258,6 @@ bool WillUseGLGetStringForExtensions(GLApi* api) {
   GLVersionInfo::ParseVersionString(version_str, &major_version, &minor_version,
                                     &is_es, &is_es2, &is_es3);
   return is_es || major_version < 3;
-}
-
-std::unique_ptr<GLVersionInfo> GetVersionInfoFromContext(GLApi* api) {
-  std::string extensions = GetGLExtensionsFromCurrentContext(api);
-  return base::MakeUnique<GLVersionInfo>(
-      reinterpret_cast<const char*>(api->glGetStringFn(GL_VERSION)),
-      reinterpret_cast<const char*>(api->glGetStringFn(GL_RENDERER)),
-      extensions.c_str());
 }
 
 base::NativeLibrary LoadLibraryAndPrintError(

@@ -32,13 +32,12 @@
 
 #include <memory>
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8EventTarget.h"
 #include "bindings/core/v8/V8HTMLAllCollection.h"
 #include "bindings/core/v8/V8HTMLCollection.h"
 #include "bindings/core/v8/V8Node.h"
 #include "bindings/core/v8/V8Window.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
@@ -56,7 +55,7 @@ namespace blink {
 
 void V8Document::openMethodCustom(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
-  Document* document = V8Document::toImpl(info.Holder());
+  Document* document = V8Document::ToImpl(info.Holder());
 
   if (info.Length() > 2) {
     LocalFrame* frame = document->GetFrame();
@@ -108,19 +107,19 @@ void V8Document::createTouchMethodPrologueCustom(
   v8::Local<v8::Value> v8_window = info[0];
   if (IsUndefinedOrNull(v8_window)) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchWindowNull);
+                      WebFeature::kDocumentCreateTouchWindowNull);
   } else if (!ToDOMWindow(info.GetIsolate(), v8_window)) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchWindowWrongType);
+                      WebFeature::kDocumentCreateTouchWindowWrongType);
   }
 
   v8::Local<v8::Value> v8_target = info[1];
   if (IsUndefinedOrNull(v8_target)) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchTargetNull);
+                      WebFeature::kDocumentCreateTouchTargetNull);
   } else if (!V8EventTarget::hasInstance(v8_target, info.GetIsolate())) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentCreateTouchTargetWrongType);
+                      WebFeature::kDocumentCreateTouchTargetWrongType);
   }
 }
 

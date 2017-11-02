@@ -16,9 +16,12 @@
 #include "components/domain_reliability/clear_mode.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/common/network_service.mojom.h"
 
+#if !defined(OS_ANDROID)
 class ChromeZoomLevelPrefs;
-class DevToolsNetworkControllerHandle;
+#endif
+
 class ExtensionSpecialStoragePolicy;
 class PrefProxyConfigTracker;
 class PrefService;
@@ -176,15 +179,22 @@ class Profile : public content::BrowserContext {
   virtual PrefService* GetPrefs() = 0;
   virtual const PrefService* GetPrefs() const = 0;
 
+#if !defined(OS_ANDROID)
   // Retrieves a pointer to the PrefService that manages the default zoom
   // level and the per-host zoom levels for this user profile.
   // TODO(wjmaclean): Remove this when HostZoomMap migrates to StoragePartition.
   virtual ChromeZoomLevelPrefs* GetZoomLevelPrefs();
+#endif
 
   // Retrieves a pointer to the PrefService that manages the preferences
   // for OffTheRecord Profiles.  This PrefService is lazily created the first
   // time that this method is called.
   virtual PrefService* GetOffTheRecordPrefs() = 0;
+
+  // Like GetOffTheRecordPrefs but gives a read-only view of prefs that can be
+  // used even if there's no OTR profile at the moment
+  // (i.e. HasOffTheRecordProfile is false).
+  virtual PrefService* GetReadOnlyOffTheRecordPrefs();
 
   // Returns the main request context.
   virtual net::URLRequestContextGetter* GetRequestContext() = 0;
@@ -244,10 +254,6 @@ class Profile : public content::BrowserContext {
   // Returns the Predictor object used for dns prefetch.
   virtual chrome_browser_net::Predictor* GetNetworkPredictor() = 0;
 
-  // Returns the DevToolsNetworkControllerHandle for this profile.
-  virtual DevToolsNetworkControllerHandle*
-  GetDevToolsNetworkControllerHandle() = 0;
-
   // Deletes all network related data since |time|. It deletes transport
   // security state since |time| and it also deletes HttpServerProperties data.
   // Works asynchronously, however if the |completion| callback is non-null, it
@@ -293,6 +299,10 @@ class Profile : public content::BrowserContext {
   // Returns how the last session was shutdown.
   virtual ExitType GetLastSessionExitType() = 0;
 
+  // Creates the main NetworkContext for the profile, or returns nullptr to
+  // defer NetworkContext creation to the caller.
+  virtual content::mojom::NetworkContextPtr CreateMainNetworkContext();
+
   // Stop sending accessibility events until ResumeAccessibilityEvents().
   // Calls to Pause nest; no events will be sent until the number of
   // Resume calls matches the number of Pause calls received.
@@ -325,9 +335,11 @@ class Profile : public content::BrowserContext {
   // Creates an OffTheRecordProfile which points to this Profile.
   Profile* CreateOffTheRecordProfile();
 
+#if !defined(OS_ANDROID)
   // Convenience method to retrieve the default zoom level for the default
   // storage partition.
   double GetDefaultZoomLevelForProfile();
+#endif
 
  protected:
   void set_is_guest_profile(bool is_guest_profile) {

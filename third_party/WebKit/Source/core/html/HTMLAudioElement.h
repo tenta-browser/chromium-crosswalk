@@ -39,10 +39,16 @@ class CORE_EXPORT HTMLAudioElement final : public HTMLMediaElement {
 
  public:
   static HTMLAudioElement* Create(Document&);
-  static HTMLAudioElement* CreateForJSConstructor(Document&,
-                                                  const AtomicString& src);
+  static HTMLAudioElement* CreateForJSConstructor(
+      Document&,
+      const AtomicString& src = g_null_atom);
 
   bool IsHTMLAudioElement() const override { return true; }
+
+  // WebMediaPlayerClient implementation.
+  void MediaRemotingStarted(
+      const WebString& remote_device_friendly_name) override {}
+  void MediaRemotingStopped() override {}
 
  private:
   HTMLAudioElement(Document&);

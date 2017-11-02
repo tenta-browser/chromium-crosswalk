@@ -21,14 +21,14 @@
 #include "core/html/HTMLSummaryElement.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/FlatTreeTraversal.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/html/HTMLContentElement.h"
 #include "core/html/HTMLDetailsElement.h"
 #include "core/html/shadow/DetailsMarkerControl.h"
 #include "core/html/shadow/ShadowElementNames.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutBlockFlow.h"
 
 namespace blink {
@@ -62,17 +62,15 @@ void HTMLSummaryElement::DidAddUserAgentShadowRoot(ShadowRoot& root) {
 }
 
 HTMLDetailsElement* HTMLSummaryElement::DetailsElement() const {
-  Node* parent = parentNode();
-  if (isHTMLDetailsElement(parent))
-    return toHTMLDetailsElement(parent);
-  Element* host = OwnerShadowHost();
-  if (isHTMLDetailsElement(host))
-    return toHTMLDetailsElement(host);
+  if (auto* details = ToHTMLDetailsElementOrNull(parentNode()))
+    return details;
+  if (auto* details = ToHTMLDetailsElementOrNull(OwnerShadowHost()))
+    return details;
   return nullptr;
 }
 
 Element* HTMLSummaryElement::MarkerControl() {
-  return EnsureUserAgentShadowRoot().GetElementById(
+  return EnsureUserAgentShadowRoot().getElementById(
       ShadowElementNames::DetailsMarker());
 }
 
@@ -94,7 +92,7 @@ static bool IsClickableControl(Node* node) {
 }
 
 bool HTMLSummaryElement::SupportsFocus() const {
-  return IsMainSummary();
+  return IsMainSummary() || HTMLElement::SupportsFocus();
 }
 
 void HTMLSummaryElement::DefaultEventHandler(Event* event) {
@@ -137,6 +135,10 @@ void HTMLSummaryElement::DefaultEventHandler(Event* event) {
   }
 
   HTMLElement::DefaultEventHandler(event);
+}
+
+bool HTMLSummaryElement::HasActivationBehavior() const {
+  return true;
 }
 
 bool HTMLSummaryElement::WillRespondToMouseClickEvents() {

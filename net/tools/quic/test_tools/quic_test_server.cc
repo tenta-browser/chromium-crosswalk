@@ -86,18 +86,18 @@ class QuicTestDispatcher : public QuicSimpleDispatcher {
         stream_factory_(nullptr),
         crypto_stream_factory_(nullptr) {}
 
-  QuicServerSessionBase* CreateQuicSession(
-      QuicConnectionId id,
-      const QuicSocketAddress& client) override {
+  QuicServerSessionBase* CreateQuicSession(QuicConnectionId id,
+                                           const QuicSocketAddress& client,
+                                           QuicStringPiece alpn) override {
     QuicReaderMutexLock lock(&factory_lock_);
     if (session_factory_ == nullptr && stream_factory_ == nullptr &&
         crypto_stream_factory_ == nullptr) {
-      return QuicSimpleDispatcher::CreateQuicSession(id, client);
+      return QuicSimpleDispatcher::CreateQuicSession(id, client, alpn);
     }
     QuicConnection* connection = new QuicConnection(
         id, client, helper(), alarm_factory(), CreatePerConnectionWriter(),
         /* owns_writer= */ true, Perspective::IS_SERVER,
-        GetSupportedVersions());
+        GetSupportedTransportVersions());
 
     QuicServerSessionBase* session = nullptr;
     if (stream_factory_ != nullptr || crypto_stream_factory_ != nullptr) {
@@ -147,10 +147,11 @@ QuicTestServer::QuicTestServer(std::unique_ptr<ProofSource> proof_source,
                                QuicHttpResponseCache* response_cache)
     : QuicServer(std::move(proof_source), response_cache) {}
 
-QuicTestServer::QuicTestServer(std::unique_ptr<ProofSource> proof_source,
-                               const QuicConfig& config,
-                               const QuicVersionVector& supported_versions,
-                               QuicHttpResponseCache* response_cache)
+QuicTestServer::QuicTestServer(
+    std::unique_ptr<ProofSource> proof_source,
+    const QuicConfig& config,
+    const QuicTransportVersionVector& supported_versions,
+    QuicHttpResponseCache* response_cache)
     : QuicServer(std::move(proof_source),
                  config,
                  QuicCryptoServerConfig::ConfigOptions(),

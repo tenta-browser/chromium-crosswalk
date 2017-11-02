@@ -8,6 +8,7 @@
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "chrome/browser/chromeos/camera_presence_notifier.h"
+#include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/image_decoder.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "components/user_manager/user_manager.h"
@@ -60,8 +61,11 @@ class ChangePictureHandler : public ::settings::SettingsPageUIHandler,
   // if any, on the page. Shouldn't be called before |SendProfileImage|.
   void UpdateProfileImage();
 
-  // Sends previous user image to the page.
-  void SendOldImage(const std::string& image_url);
+  // Sends the previous user image to the page. Also sends |image_index| which
+  // is either the index of the previous user image (if it was from an older
+  // default image set) or -1 otherwise. This allows the WebUI to show credits
+  // for older default images.
+  void SendOldImage(const std::string& image_url, int image_index);
 
   // Starts camera presence check.
   void CheckCameraPresence();
@@ -87,6 +91,9 @@ class ChangePictureHandler : public ::settings::SettingsPageUIHandler,
   // Selects one of the available images as user's.
   void HandleSelectImage(const base::ListValue* args);
 
+  // Requests the currently selected image.
+  void HandleRequestSelectedImage(const base::ListValue* args);
+
   // SelectFileDialog::Delegate implementation.
   void FileSelected(const base::FilePath& path,
                     int index,
@@ -98,7 +105,8 @@ class ChangePictureHandler : public ::settings::SettingsPageUIHandler,
                                  const gfx::ImageSkia& profile_image) override;
 
   // Sets user image to photo taken from camera.
-  void SetImageFromCamera(const gfx::ImageSkia& photo);
+  void SetImageFromCamera(const gfx::ImageSkia& photo,
+                          base::RefCountedBytes* image_bytes);
 
   // Returns handle to browser window or NULL if it can't be found.
   gfx::NativeWindow GetBrowserWindow() const;
@@ -111,11 +119,15 @@ class ChangePictureHandler : public ::settings::SettingsPageUIHandler,
   // returns active user.
   const user_manager::User* GetUser() const;
 
+  void UpdateAllowVideoMode();
+
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
 
   // Previous user image from camera/file and its data URL.
   gfx::ImageSkia previous_image_;
-  std::string previous_image_url_;
+  scoped_refptr<base::RefCountedBytes> previous_image_bytes_;
+  user_manager::UserImage::ImageFormat previous_image_format_ =
+      user_manager::UserImage::FORMAT_UNKNOWN;
 
   // Index of the previous user image.
   int previous_image_index_;
@@ -123,12 +135,14 @@ class ChangePictureHandler : public ::settings::SettingsPageUIHandler,
   // Last user photo, if taken.
   gfx::ImageSkia user_photo_;
 
-  // Data URL for |user_photo_|.
-  std::string user_photo_data_url_;
+  // Data for |user_photo_|.
+  scoped_refptr<base::RefCountedBytes> user_photo_data_;
 
   ScopedObserver<user_manager::UserManager, ChangePictureHandler>
       user_manager_observer_;
   ScopedObserver<CameraPresenceNotifier, ChangePictureHandler> camera_observer_;
+
+  std::unique_ptr<CrosSettings::ObserverSubscription> device_settings_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(ChangePictureHandler);
 };

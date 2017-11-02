@@ -16,7 +16,6 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "printing/features/features.h"
-#include "printing/printed_pages_source.h"
 
 struct PrintHostMsg_DidPrintPage_Params;
 
@@ -33,7 +32,6 @@ class PrintQueriesQueue;
 
 // Base class for managing the print commands for a WebContents.
 class PrintViewManagerBase : public content::NotificationObserver,
-                             public PrintedPagesSource,
                              public PrintManager {
  public:
   ~PrintViewManagerBase() override;
@@ -48,8 +46,13 @@ class PrintViewManagerBase : public content::NotificationObserver,
   // Whether printing is enabled or not.
   void UpdatePrintingEnabled();
 
-  // PrintedPagesSource implementation.
-  base::string16 RenderSourceName() override;
+// Notifies the print view manager that the system dialog has been cancelled
+// after being opened from Print Preview.
+#if defined(OS_WIN) && BUILDFLAG(ENABLE_PRINT_PREVIEW)
+  void SystemDialogCancelled();
+#endif
+
+  base::string16 RenderSourceName();
 
  protected:
   explicit PrintViewManagerBase(content::WebContents* web_contents);

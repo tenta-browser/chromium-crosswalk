@@ -14,6 +14,7 @@
 #include "ui/views/widget/widget_observer.h"
 
 class CommandUpdater;
+class LocationBarBubbleDelegateView;
 
 namespace gfx {
 struct VectorIcon;
@@ -24,10 +25,14 @@ class BubbleDialogDelegateView;
 }
 
 // Represents an icon on the omnibox that shows a bubble when clicked.
+// TODO(spqchan): Convert this to subclass Button.
 class BubbleIconView : public views::InkDropHostView,
                        public views::WidgetObserver {
  public:
   void Init();
+
+  // Invoked when a bubble for this icon is created.
+  void OnBubbleCreated(LocationBarBubbleDelegateView* bubble);
 
  protected:
   enum ExecuteSource {
@@ -62,7 +67,7 @@ class BubbleIconView : public views::InkDropHostView,
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   bool GetTooltipText(const gfx::Point& p,
                       base::string16* tooltip) const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
@@ -74,6 +79,7 @@ class BubbleIconView : public views::InkDropHostView,
   void AddInkDropLayer(ui::Layer* ink_drop_layer) override;
   void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override;
   std::unique_ptr<views::InkDrop> CreateInkDrop() override;
+  std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
   SkColor GetInkDropBaseColor() const override;
 
   // ui::EventHandler:

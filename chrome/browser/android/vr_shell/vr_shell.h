@@ -9,43 +9,44 @@
 
 #include <memory>
 
-#include "base/android/jni_weak_ref.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "chrome/browser/android/vr_shell/ui_interface.h"
-#include "chrome/browser/android/vr_shell/vr_controller_model.h"
+#include "chrome/browser/ui/toolbar/chrome_toolbar_model_delegate.h"
+#include "chrome/browser/vr/exit_vr_prompt_choice.h"
+#include "chrome/browser/vr/ui.h"
+#include "chrome/browser/vr/ui_unsupported_mode.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "device/vr/android/gvr/gvr_delegate.h"
+#include "device/geolocation/public/interfaces/geolocation_config.mojom.h"
+#include "device/vr/android/gvr/cardboard_gamepad_data_provider.h"
 #include "device/vr/android/gvr/gvr_gamepad_data_provider.h"
 #include "device/vr/vr_service.mojom.h"
-#include "third_party/gvr-android-sdk/src/libraries/headers/vr/gvr/capi/include/gvr.h"
 #include "third_party/gvr-android-sdk/src/libraries/headers/vr/gvr/capi/include/gvr_types.h"
 
 namespace blink {
 class WebInputEvent;
-}
+}  // namespace blink
 
 namespace content {
 class WebContents;
-}
-
-namespace gpu {
-struct MailboxHolder;
-}
+}  // namespace content
 
 namespace ui {
 class WindowAndroid;
-}
+}  // namespace ui
+
+namespace vr {
+class BrowserUiInterface;
+class ToolbarHelper;
+class WebContentsEventForwarder;
+}  // namespace vr
 
 namespace vr_shell {
 
 class AndroidUiGestureTarget;
-class UiInterface;
 class VrCompositor;
 class VrGLThread;
-class VrInputManager;
 class VrMetricsHelper;
 class VrShellDelegate;
 class VrWebContentsObserver;
@@ -54,7 +55,6 @@ enum UiAction {
   HISTORY_BACK = 0,
   HISTORY_FORWARD,
   RELOAD,
-  SET_CONTENT_PAUSED,
   SHOW_TAB,
   OPEN_NEW_TAB,
   EXIT_PRESENT,
@@ -64,26 +64,30 @@ class VrMetricsHelper;
 
 // The native instance of the Java VrShell. This class is not threadsafe and
 // must only be used on the UI thread.
-class VrShell : public device::PresentingGvrDelegate,
-                device::GvrGamepadDataProvider {
+class VrShell : device::GvrGamepadDataProvider,
+                device::CardboardGamepadDataProvider,
+                public ChromeToolbarModelDelegate {
  public:
   VrShell(JNIEnv* env,
-          jobject obj,
+          const base::android::JavaParamRef<jobject>& obj,
           ui::WindowAndroid* window,
-          bool for_web_vr,
+          const vr::UiInitialState& ui_initial_state,
           VrShellDelegate* delegate,
           gvr_context* gvr_api,
-          bool reprojected_rendering);
+          bool reprojected_rendering,
+          float display_width_meters,
+          float display_height_meters,
+          int display_width_pixels,
+          int display_height_pixels);
   void SwapContents(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& web_contents,
-      const base::android::JavaParamRef<jobject>& touch_event_synthesizer);
-  void LoadUIContent(JNIEnv* env,
-                     const base::android::JavaParamRef<jobject>& obj);
+      const base::android::JavaParamRef<jobject>& android_ui_gesture_target);
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   void OnTriggerEvent(JNIEnv* env,
-                      const base::android::JavaParamRef<jobject>& obj);
+                      const base::android::JavaParamRef<jobject>& obj,
+                      bool touched);
   void OnPause(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   void OnResume(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   void SetSurface(JNIEnv* env,
@@ -91,7 +95,14 @@ class VrShell : public device::PresentingGvrDelegate,
                   const base::android::JavaParamRef<jobject>& surface);
   void SetWebVrMode(JNIEnv* env,
                     const base::android::JavaParamRef<jobject>& obj,
-                    bool enabled);
+                    bool enabled,
+                    bool show_toast);
+  bool GetWebVrMode(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& obj);
+  bool IsDisplayingUrlForTesting(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+  void OnFullscreenChanged(bool enabled);
   void OnLoadProgressChanged(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& obj,
                              double progress);
@@ -108,6 +119,11 @@ class VrShell : public device::PresentingGvrDelegate,
                     const base::android::JavaParamRef<jobject>& obj,
                     jboolean incognito,
                     jint id);
+  void OnContentPaused(bool paused);
+  void NavigateBack();
+  void ExitCct();
+  void ToggleCardboardGamepad(bool enabled);
+  void ToggleGvrGamepad(bool enabled);
   base::android::ScopedJavaGlobalRef<jobject> TakeContentSurface(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
@@ -117,6 +133,13 @@ class VrShell : public device::PresentingGvrDelegate,
                                 const base::android::JavaParamRef<jobject>& obj,
                                 jboolean can_go_back,
                                 jboolean can_go_forward);
+  void RequestToExitVr(JNIEnv* env,
+                       const base::android::JavaParamRef<jobject>& obj,
+                       int reason);
+  void LogUnsupportedModeUserMetric(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      int mode);
 
   void ContentWebContentsDestroyed();
   // Called when our WebContents have been hidden. Usually a sign that something
@@ -125,10 +148,14 @@ class VrShell : public device::PresentingGvrDelegate,
   void ContentWasShown();
 
   void ContentSurfaceChanged(jobject surface);
-  void GvrDelegateReady();
-  void AppButtonGesturePerformed(UiInterface::Direction direction);
-  void AppButtonPressed();
+  void GvrDelegateReady(gvr::ViewerType viewer_type);
 
+  void OnPhysicalBackingSizeChanged(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& jweb_contents,
+      jint width,
+      jint height);
   void ContentPhysicalBoundsChanged(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& object,
@@ -140,54 +167,62 @@ class VrShell : public device::PresentingGvrDelegate,
   void DoUiAction(const UiAction action,
                   const base::DictionaryValue* arguments);
 
+  void SetHighAccuracyLocation(bool high_accuracy_location);
   void SetContentCssSize(float width, float height, float dpr);
 
   void ContentFrameWasResized(bool width_changed);
 
   void ForceExitVr();
+  void ExitPresent();
+  void ExitFullscreen();
+  void LogUnsupportedModeUserMetric(vr::UiUnsupportedMode mode);
+  void OnUnsupportedMode(vr::UiUnsupportedMode mode);
+  void OnExitVrPromptResult(vr::UiUnsupportedMode reason,
+                            vr::ExitVrPromptChoice choice);
+  void OnContentScreenBoundsChanged(const gfx::SizeF& bounds);
 
-  void ProcessContentGesture(std::unique_ptr<blink::WebInputEvent> event);
-  void SubmitControllerModel(std::unique_ptr<VrControllerModel> model);
+  void ProcessContentGesture(std::unique_ptr<blink::WebInputEvent> event,
+                             int content_id);
+
+  void ConnectPresentingService(
+      device::mojom::VRSubmitFrameClientPtr submit_client,
+      device::mojom::VRPresentationProviderRequest request,
+      device::mojom::VRDisplayInfoPtr display_info);
 
   // device::GvrGamepadDataProvider implementation.
   void UpdateGamepadData(device::GvrGamepadData) override;
-  void RegisterGamepadDataFetcher(device::GvrGamepadDataFetcher*) override;
+  void RegisterGvrGamepadDataFetcher(device::GvrGamepadDataFetcher*) override;
+
+  // device::CardboardGamepadDataProvider implementation.
+  void RegisterCardboardGamepadDataFetcher(
+      device::CardboardGamepadDataFetcher*) override;
+
+  // ChromeToolbarModelDelegate implementation.
+  content::WebContents* GetActiveWebContents() const override;
+  bool ShouldDisplayURL() const override;
 
  private:
   ~VrShell() override;
-  void PostToGlThreadWhenReady(const base::Closure& task);
-  void SetContentPaused(bool paused);
+  void PostToGlThread(const base::Location& from_here,
+                      const base::Closure& task);
   void SetUiState();
-
-  // device::GvrDelegate implementation.
-  void SetWebVRSecureOrigin(bool secure_origin) override;
-  void SubmitWebVRFrame(int16_t frame_index,
-                        const gpu::MailboxHolder& mailbox) override;
-  void UpdateWebVRTextureBounds(int16_t frame_index,
-                                const gfx::RectF& left_bounds,
-                                const gfx::RectF& right_bounds,
-                                const gfx::Size& source_size) override;
-  void OnVRVsyncProviderRequest(
-      device::mojom::VRVSyncProviderRequest request) override;
-  void UpdateVSyncInterval(int64_t timebase_nanos,
-                           double interval_seconds) override;
-  void CreateVRDisplayInfo(
-      const base::Callback<void(device::mojom::VRDisplayInfoPtr)>& callback,
-      uint32_t device_id) override;
-
-  // device::PresentingGvrDelegate implementation.
-  void SetSubmitClient(
-      device::mojom::VRSubmitFrameClientPtr submit_client) override;
 
   void ProcessTabArray(JNIEnv* env, jobjectArray tabs, bool incognito);
 
+  void PollMediaAccessFlag();
+
+  bool HasDaydreamSupport(JNIEnv* env);
+
+  void ExitVrDueToUnsupportedMode(vr::UiUnsupportedMode mode);
+
+  content::WebContents* GetNonNativePageWebContents() const;
+
   bool vr_shell_enabled_;
 
-  std::unique_ptr<UiInterface> ui_;
-  bool content_paused_ = false;
   bool webvr_mode_ = false;
 
   content::WebContents* web_contents_ = nullptr;
+  bool web_contents_is_native_page_ = false;
   base::android::ScopedJavaGlobalRef<jobject> j_motion_event_synthesizer_;
   ui::WindowAndroid* window_;
   std::unique_ptr<VrCompositor> compositor_;
@@ -197,7 +232,7 @@ class VrShell : public device::PresentingGvrDelegate,
   VrShellDelegate* delegate_provider_ = nullptr;
   base::android::ScopedJavaGlobalRef<jobject> j_vr_shell_;
 
-  std::unique_ptr<VrInputManager> input_manager_;
+  std::unique_ptr<vr::WebContentsEventForwarder> web_contents_event_forwarder_;
   std::unique_ptr<AndroidUiGestureTarget> android_ui_gesture_target_;
   std::unique_ptr<VrMetricsHelper> metrics_helper_;
 
@@ -205,24 +240,42 @@ class VrShell : public device::PresentingGvrDelegate,
   std::unique_ptr<VrGLThread> gl_thread_;
   bool reprojected_rendering_;
 
-  jobject content_surface_ = nullptr;
+  vr::BrowserUiInterface* ui_;
+  std::unique_ptr<vr::ToolbarHelper> toolbar_;
 
-  // TODO(mthiesse): Remove the need for this to be stored here.
-  // crbug.com/674594
-  gvr_context* gvr_api_;
+  device::mojom::GeolocationConfigPtr geolocation_config_;
+
+  jobject content_surface_ = nullptr;
+  bool taken_surface_ = false;
+  base::CancelableClosure poll_capturing_media_task_;
+  bool is_capturing_audio_ = false;
+  bool is_capturing_video_ = false;
+  bool is_capturing_screen_ = false;
+  bool is_bluetooth_connected_ = false;
+  bool high_accuracy_location_ = false;
 
   // Are we currently providing a gamepad factory to the gamepad manager?
-  bool gamepad_source_active_ = false;
-  // Registered fetcher, must remain alive for UpdateGamepadData calls.
+  bool gvr_gamepad_source_active_ = false;
+  bool cardboard_gamepad_source_active_ = false;
+  bool pending_cardboard_trigger_ = false;
+
+  // Registered fetchers, must remain alive for UpdateGamepadData calls.
   // That's ok since the fetcher is only destroyed from VrShell's destructor.
-  device::GvrGamepadDataFetcher* gamepad_data_fetcher_ = nullptr;
+  device::GvrGamepadDataFetcher* gvr_gamepad_data_fetcher_ = nullptr;
+  device::CardboardGamepadDataFetcher* cardboard_gamepad_data_fetcher_ =
+      nullptr;
+  int64_t cardboard_gamepad_timer_ = 0;
+
+  // Content id
+  int content_id_ = 0;
+
+  gfx::SizeF display_size_meters_;
+  gfx::Size display_size_pixels_;
 
   base::WeakPtrFactory<VrShell> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(VrShell);
 };
-
-bool RegisterVrShell(JNIEnv* env);
 
 }  // namespace vr_shell
 

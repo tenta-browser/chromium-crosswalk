@@ -1,12 +1,16 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef SERVICES_SERVICE_MANAGER_PUBLIC_CPP_CONNECTOR_H_
 #define SERVICES_SERVICE_MANAGER_PUBLIC_CPP_CONNECTOR_H_
 
+#include <map>
 #include <memory>
 
+#include "base/callback.h"
+#include "base/sequence_checker.h"
+#include "services/service_manager/public/cpp/export.h"
 #include "services/service_manager/public/cpp/identity.h"
 #include "services/service_manager/public/interfaces/connector.mojom.h"
 #include "services/service_manager/public/interfaces/service.mojom.h"
@@ -31,7 +35,7 @@ namespace service_manager {
 // connection with the service manager is bound to the lifetime of the instance
 // that created it, i.e. when the application is terminated the Connector pipe
 // is closed.
-class Connector {
+class SERVICE_MANAGER_PUBLIC_CPP_EXPORT Connector {
  public:
   using StartServiceCallback =
       base::Callback<void(mojom::ConnectResult, const Identity& identity)>;
@@ -51,6 +55,14 @@ class Connector {
       connector_->OverrideBinderForTesting(service_name, interface_name,
                                            binder);
     }
+    bool HasBinderOverride(const std::string& service_name,
+                           const std::string& interface_name) {
+      return connector_->HasBinderOverride(service_name, interface_name);
+    }
+    void ClearBinderOverride(const std::string& service_name,
+                             const std::string& interface_name) {
+      connector_->ClearBinderOverride(service_name, interface_name);
+    }
     void ClearBinderOverrides() { connector_->ClearBinderOverrides(); }
 
     // Register a callback to be run with the result of an attempt to start a
@@ -64,25 +76,31 @@ class Connector {
     Connector* connector_;
   };
 
-  virtual ~Connector() {}
+  explicit Connector(mojom::ConnectorPtrInfo unbound_state);
+  explicit Connector(mojom::ConnectorPtr connector);
+  ~Connector();
 
   // Creates a new Connector instance and fills in |*request| with a request
   // for the other end the Connector's interface.
   static std::unique_ptr<Connector> Create(mojom::ConnectorRequest* request);
 
   // Creates an instance of a service for |identity|.
-  virtual void StartService(const Identity& identity) = 0;
+  void StartService(const Identity& identity);
 
   // Creates an instance of the service |name| inheriting the caller's identity.
-  virtual void StartService(const std::string& name) = 0;
+  void StartService(const std::string& name);
 
   // Creates an instance of a service for |identity| in a process started by the
   // client (or someone else). Must be called before BindInterface() may be
   // called to |identity|.
-  virtual void StartService(
-      const Identity& identity,
-      mojom::ServicePtr service,
-      mojom::PIDReceiverRequest pid_receiver_request) = 0;
+  void StartService(const Identity& identity,
+                    mojom::ServicePtr service,
+                    mojom::PIDReceiverRequest pid_receiver_request);
+
+  // Determines if the service for |Identity| is known, and returns information
+  // about it from the catalog.
+  void QueryService(const Identity& identity,
+                    mojom::Connector::QueryServiceCallback callback);
 
   // Connect to |target| & request to bind |Interface|.
   template <typename Interface>
@@ -103,29 +121,59 @@ class Connector {
     return BindInterface(Identity(name, mojom::kInheritUserID),
                          Interface::Name_, request.PassMessagePipe());
   }
-  virtual void BindInterface(const Identity& target,
-                             const std::string& interface_name,
-                             mojo::ScopedMessagePipeHandle interface_pipe) = 0;
+  void BindInterface(const Identity& target,
+                     const std::string& interface_name,
+                     mojo::ScopedMessagePipeHandle interface_pipe);
 
   // Creates a new instance of this class which may be passed to another thread.
   // The returned object may be passed multiple times until StartService() or
   // BindInterface() is called, at which point this method must be called again
   // to pass again.
-  virtual std::unique_ptr<Connector> Clone() = 0;
+  std::unique_ptr<Connector> Clone();
+
+  void FilterInterfaces(const std::string& spec,
+                        const Identity& source_identity,
+                        mojom::InterfaceProviderRequest request,
+                        mojom::InterfaceProviderPtr target);
 
   // Binds a Connector request to the other end of this Connector.
-  virtual void BindConnectorRequest(mojom::ConnectorRequest request) = 0;
+  void BindConnectorRequest(mojom::ConnectorRequest request);
 
-  virtual base::WeakPtr<Connector> GetWeakPtr() = 0;
+  base::WeakPtr<Connector> GetWeakPtr();
 
- protected:
-  virtual void OverrideBinderForTesting(const std::string& service_name,
-                                        const std::string& interface_name,
-                                        const TestApi::Binder& binder) = 0;
-  virtual void ClearBinderOverrides() = 0;
-  virtual void SetStartServiceCallback(
-      const StartServiceCallback& callback) = 0;
-  virtual void ResetStartServiceCallback() = 0;
+ private:
+  using BinderOverrideMap = std::map<std::string, TestApi::Binder>;
+
+  void OnConnectionError();
+
+  void OverrideBinderForTesting(const std::string& service_name,
+                                const std::string& interface_name,
+                                const TestApi::Binder& binder);
+  bool HasBinderOverride(const std::string& service_name,
+                         const std::string& interface_name);
+  void ClearBinderOverride(const std::string& service_name,
+                           const std::string& interface_name);
+  void ClearBinderOverrides();
+  void SetStartServiceCallback(const StartServiceCallback& callback);
+  void ResetStartServiceCallback();
+
+  bool BindConnectorIfNecessary();
+
+  // Callback passed to mojom methods StartService()/BindInterface().
+  void RunStartServiceCallback(mojom::ConnectResult result,
+                               const Identity& user_id);
+
+  mojom::ConnectorPtrInfo unbound_state_;
+  mojom::ConnectorPtr connector_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
+
+  std::map<std::string, BinderOverrideMap> local_binder_overrides_;
+  StartServiceCallback start_service_callback_;
+
+  base::WeakPtrFactory<Connector> weak_factory_;
+
+  DISALLOW_COPY_AND_ASSIGN(Connector);
 };
 
 }  // namespace service_manager

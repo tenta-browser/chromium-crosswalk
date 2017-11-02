@@ -4,12 +4,17 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (floating) DIV id='target'",
           "rect": [8, 58, 200, 20],
-          "reason": "forced by layout"
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [8, 58, 38, 19],
+          "reason": "full"
         }
       ]
     }
@@ -17,11 +22,11 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow (floating) DIV id='target'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutText #text",

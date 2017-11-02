@@ -15,7 +15,6 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/variations/variations_associated_data.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/public/provider/chrome/browser/images/whats_new_icon.h"
 #include "testing/platform_test.h"
@@ -92,7 +91,7 @@ class NotificationPromoWhatsNewTest : public PlatformTest {
   void RunTests(const std::string& promo_text,
                 const std::string& promo_type,
                 const std::string& url,
-                int command_id,
+                const std::string& command,
                 WhatsNewIcon icon,
                 bool valid) {
     EXPECT_EQ(promo_text, promo_.promo_text());
@@ -100,7 +99,7 @@ class NotificationPromoWhatsNewTest : public PlatformTest {
     if (promo_type == "url")
       EXPECT_EQ(url, promo_.url().spec());
     else
-      EXPECT_EQ(command_id, promo_.command_id());
+      EXPECT_EQ(command, promo_.command());
 
     EXPECT_EQ(valid, promo_.CanShow());
     // |icon()| is set only if the promo is valid.
@@ -128,59 +127,55 @@ class NotificationPromoWhatsNewTest : public PlatformTest {
 
 // Test that a command-based, valid promo is shown with the correct text.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoCommandTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_APP_RATING_PROMO_STRING", "0", "chrome_command", "",
-       "ratethisapp", "RateThisAppPromo", "logo", "0", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "appRatingPromo",
+       "0", "chrome_command", "", "ratethisapp", "RateThisAppPromo", "logo",
+       "0", "0");
   RunTests(l10n_util::GetStringUTF8(IDS_IOS_APP_RATING_PROMO_STRING),
-           "chrome_command", "", IDC_RATE_THIS_APP, WHATS_NEW_LOGO, true);
+           "chrome_command", "", "ratethisapp", WHATS_NEW_LOGO, true);
 }
 
 // Test that a url-based, valid promo is shown with the correct text and icon.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoURLTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_MOVE_TO_DOCK_TIP", "0", "url", "http://blog.chromium.org", "",
-       "TestURLPromo", "", "0", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "moveToDockTip", "0",
+       "url", "http://blog.chromium.org", "", "TestURLPromo", "", "0", "0");
   RunTests(l10n_util::GetStringUTF8(IDS_IOS_MOVE_TO_DOCK_TIP), "url",
-           "http://blog.chromium.org/", 0, WHATS_NEW_INFO, true);
+           "http://blog.chromium.org/", "", WHATS_NEW_INFO, true);
 }
 
 // Test that a promo without a valid promo type is not shown.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoNoTypeTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_MOVE_TO_DOCK_TIP", "0", "invalid type",
-       "http://blog.chromium.org", "", "TestPromo", "", "0", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "moveToDockTip", "0",
+       "invalid type", "http://blog.chromium.org", "", "TestPromo", "", "0",
+       "0");
   EXPECT_FALSE(promo_.CanShow());
 }
 
 // Test that a url promo with an empty url is not shown.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoEmptyURLTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_MOVE_TO_DOCK_TIP", "0", "url", "", "", "TestURLPromo", "", "0",
-       "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "moveToDockTip", "0",
+       "url", "", "", "TestURLPromo", "", "0", "0");
   EXPECT_FALSE(promo_.CanShow());
 }
 
 // Test that a url promo with an invalid url is not shown.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoInvalidURLTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_MOVE_TO_DOCK_TIP", "0", "url", "INVALID URL", "",
-       "TestURLPromo", "", "0", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "moveToDockTip", "0",
+       "url", "INVALID URL", "", "TestURLPromo", "", "0", "0");
   EXPECT_FALSE(promo_.CanShow());
 }
 
 // Test that a command-based promo with an invalid command is not shown.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoInvalidCommandTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_APP_RATING_PROMO_STRING", "0", "chrome_command", "",
-       "INVALID COMMAND", "CommandPromo", "logo", "0", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "appRatingPromo",
+       "0", "chrome_command", "", "INVALID COMMAND", "CommandPromo", "logo",
+       "0", "0");
   EXPECT_FALSE(promo_.CanShow());
 }
 
 // Test that a promo without a metric name is not shown.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoNoMetricTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_MOVE_TO_DOCK_TIP", "0", "url", "http://blog.chromium.org", "",
-       "", "", "0", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "moveToDockTip", "0",
+       "url", "http://blog.chromium.org", "", "", "", "0", "0");
   EXPECT_FALSE(promo_.CanShow());
 }
 
@@ -196,9 +191,9 @@ TEST_F(NotificationPromoWhatsNewTest, NotificationPromoNoLocalizedTextTest) {
 // the cut off, the promo still shows.
 TEST_F(NotificationPromoWhatsNewTest, MaxSecondsSinceInstallSuccessTest) {
   //  Init with max_seconds_since_install set to 2 days.
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_APP_RATING_PROMO_STRING", "0", "chrome_command", "",
-       "ratethisapp", "RateThisAppPromo", "logo", "0", "172800");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "appRatingPromo",
+       "0", "chrome_command", "", "ratethisapp", "RateThisAppPromo", "logo",
+       "0", "172800");
   // Set install date to one day before now.
   base::Time one_day_before_now_time =
       base::Time::Now() - base::TimeDelta::FromDays(1);
@@ -213,9 +208,9 @@ TEST_F(NotificationPromoWhatsNewTest, MaxSecondsSinceInstallSuccessTest) {
 // the cut off, the promo does not show.
 TEST_F(NotificationPromoWhatsNewTest, MaxSecondsSinceInstallFailureTest) {
   //  Init with max_seconds_since_install set to 2 days.
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_APP_RATING_PROMO_STRING", "0", "chrome_command", "",
-       "ratethisapp", "RateThisAppPromo", "logo", "0", "172800");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "appRatingPromo",
+       "0", "chrome_command", "", "ratethisapp", "RateThisAppPromo", "logo",
+       "0", "172800");
   // Set install date to three days before now.
   base::Time three_days_before_now_time =
       base::Time::Now() - base::TimeDelta::FromDays(3);
@@ -229,9 +224,9 @@ TEST_F(NotificationPromoWhatsNewTest, MaxSecondsSinceInstallFailureTest) {
 // install_date + seconds_since_install, the promo still shows.
 TEST_F(NotificationPromoWhatsNewTest, SecondsSinceInstallSuccessTest) {
   //  Init with seconds_since_install set to 2 days.
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_APP_RATING_PROMO_STRING", "0", "chrome_command", "",
-       "ratethisapp", "RateThisAppPromo", "logo", "172800", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "appRatingPromo",
+       "0", "chrome_command", "", "ratethisapp", "RateThisAppPromo", "logo",
+       "172800", "0");
   // Set install date to three days before now.
   base::Time three_days_before_now_time =
       base::Time::Now() - base::TimeDelta::FromDays(3);
@@ -246,9 +241,9 @@ TEST_F(NotificationPromoWhatsNewTest, SecondsSinceInstallSuccessTest) {
 // install_date + seconds_since_install, the promo does not show.
 TEST_F(NotificationPromoWhatsNewTest, SecondsSinceInstallFailureTest) {
   //  Init with seconds_since_install set to 2 days.
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_APP_RATING_PROMO_STRING", "0", "chrome_command", "",
-       "ratethisapp", "RateThisAppPromo", "logo", "172800", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "appRatingPromo",
+       "0", "chrome_command", "", "ratethisapp", "RateThisAppPromo", "logo",
+       "172800", "0");
   // Set install date to one day before now.
   base::Time one_day_before_now_time =
       base::Time::Now() - base::TimeDelta::FromDays(1);
@@ -261,9 +256,9 @@ TEST_F(NotificationPromoWhatsNewTest, SecondsSinceInstallFailureTest) {
 
 // Test that user actions are recorded when promo is viewed and closed.
 TEST_F(NotificationPromoWhatsNewTest, NotificationPromoMetricTest) {
-  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT",
-       "IDS_IOS_APP_RATING_PROMO_STRING", "0", "chrome_command", "",
-       "ratethisapp", "RateThisAppPromo", "logo", "0", "0");
+  Init("3 Aug 1999 9:26:06 GMT", "3 Aug 2199 9:26:06 GMT", "appRatingPromo",
+       "0", "chrome_command", "", "ratethisapp", "RateThisAppPromo", "logo",
+       "0", "0");
 
   // Assert that promo is appropriately set up to be viewed.
   ASSERT_TRUE(promo_.CanShow());

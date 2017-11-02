@@ -9,11 +9,13 @@
 #include <memory>
 #include <utility>
 
+#include "base/containers/circular_deque.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/renderer_host/input/timeout_monitor.h"
 #include "content/common/input/synthetic_web_input_event_builders.h"
@@ -43,7 +45,9 @@ class LegacyTouchEventQueueTest : public testing::Test,
                                   public TouchEventQueueClient {
  public:
   LegacyTouchEventQueueTest()
-      : acked_event_count_(0),
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        acked_event_count_(0),
         last_acked_event_state_(INPUT_EVENT_ACK_STATE_UNKNOWN),
         slop_length_dips_(0) {}
 
@@ -112,9 +116,9 @@ class LegacyTouchEventQueueTest : public testing::Test,
     if (slop_length_dips_) {
       event.moved_beyond_slop_region = false;
       if (WebTouchEventTraits::IsTouchSequenceStart(event))
-        anchor_ = event.touches[0].position;
+        anchor_ = event.touches[0].PositionInWidget();
       if (event.GetType() == WebInputEvent::kTouchMove) {
-        gfx::Vector2dF delta = anchor_ - event.touches[0].position;
+        gfx::Vector2dF delta = anchor_ - event.touches[0].PositionInWidget();
         if (delta.LengthSquared() > slop_length_dips_ * slop_length_dips_)
           event.moved_beyond_slop_region = true;
       }
@@ -324,6 +328,7 @@ class LegacyTouchEventQueueTest : public testing::Test,
     queue_->OnHasTouchEventHandlers(true);
   }
 
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<LegacyTouchEventQueue> queue_;
   size_t acked_event_count_;
   WebTouchEvent last_acked_event_;
@@ -335,8 +340,7 @@ class LegacyTouchEventQueueTest : public testing::Test,
   std::unique_ptr<InputEventAckState> sync_ack_result_;
   double slop_length_dips_;
   gfx::PointF anchor_;
-  base::MessageLoopForUI message_loop_;
-  std::deque<int> sent_events_ids_;
+  base::circular_deque<int> sent_events_ids_;
 };
 
 // Tests that touch-events are queued properly.
@@ -1787,8 +1791,8 @@ TEST_F(LegacyTouchEventQueueTest, AsyncTouchFlushedByTouchEnd) {
   EXPECT_EQ(2U, all_sent_events().size());
   EXPECT_EQ(WebInputEvent::kTouchMove, all_sent_events()[0].GetType());
   EXPECT_NE(WebInputEvent::kBlocking, all_sent_events()[0].dispatch_type);
-  EXPECT_EQ(0, all_sent_events()[0].touches[0].position.x);
-  EXPECT_EQ(0, all_sent_events()[0].touches[0].position.y);
+  EXPECT_EQ(0, all_sent_events()[0].touches[0].PositionInWidget().x);
+  EXPECT_EQ(0, all_sent_events()[0].touches[0].PositionInWidget().y);
   EXPECT_EQ(WebInputEvent::kTouchEnd, all_sent_events()[1].GetType());
   EXPECT_NE(WebInputEvent::kBlocking, all_sent_events()[1].dispatch_type);
   EXPECT_EQ(2U, GetAndResetSentEventCount());
@@ -2148,8 +2152,10 @@ TEST_F(LegacyTouchEventQueueTest, AsyncTouchFlushedByNonTouchMove) {
     EXPECT_EQ(2U, all_sent_events().size());
     EXPECT_EQ(WebInputEvent::kTouchMove, all_sent_events()[0].GetType());
     EXPECT_NE(WebInputEvent::kBlocking, all_sent_events()[0].dispatch_type);
-    EXPECT_EQ(10 + 10 * i, all_sent_events()[0].touches[0].position.x);
-    EXPECT_EQ(10 + 10 * i, all_sent_events()[0].touches[0].position.y);
+    EXPECT_EQ(10 + 10 * i,
+              all_sent_events()[0].touches[0].PositionInWidget().x);
+    EXPECT_EQ(10 + 10 * i,
+              all_sent_events()[0].touches[0].PositionInWidget().y);
     EXPECT_EQ(static_cast<size_t>(i + 2),
               uncancelable_touch_moves_pending_ack_count());
     EXPECT_EQ(WebInputEvent::kTouchStart, all_sent_events()[1].GetType());

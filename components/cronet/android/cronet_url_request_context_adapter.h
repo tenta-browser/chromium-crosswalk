@@ -9,18 +9,20 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 #include <string>
 
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread.h"
 #include "components/prefs/json_pref_store.h"
 #include "net/nqe/effective_connection_type.h"
+#include "net/nqe/effective_connection_type_observer.h"
 #include "net/nqe/network_quality_estimator.h"
 #include "net/nqe/network_quality_observation_source.h"
+#include "net/nqe/rtt_throughput_estimates_observer.h"
 
 class PrefService;
 
@@ -30,30 +32,22 @@ class TimeTicks;
 }  // namespace base
 
 namespace net {
-class HttpServerPropertiesManager;
 class NetLog;
-class NetworkQualitiesPrefsManager;
 class ProxyConfigService;
-class SdchOwner;
 class URLRequestContext;
 class FileNetLogObserver;
 }  // namespace net
 
 namespace cronet {
+class CronetPrefsManager;
 class TestUtil;
-
-#if defined(DATA_REDUCTION_PROXY_SUPPORT)
-class CronetDataReductionProxy;
-#endif
 
 struct URLRequestContextConfig;
 
-bool CronetUrlRequestContextAdapterRegisterJni(JNIEnv* env);
-
 // Adapter between Java CronetUrlRequestContext and net::URLRequestContext.
 class CronetURLRequestContextAdapter
-    : public net::NetworkQualityEstimator::EffectiveConnectionTypeObserver,
-      public net::NetworkQualityEstimator::RTTAndThroughputEstimatesObserver,
+    : public net::EffectiveConnectionTypeObserver,
+      public net::RTTAndThroughputEstimatesObserver,
       public net::NetworkQualityEstimator::RTTObserver,
       public net::NetworkQualityEstimator::ThroughputObserver {
  public:
@@ -62,8 +56,8 @@ class CronetURLRequestContextAdapter
 
   ~CronetURLRequestContextAdapter() override;
 
-  // Called on main Java thread to initialize URLRequestContext.
-  void InitRequestContextOnMainThread(
+  // Called on init Java thread to initialize URLRequestContext.
+  void InitRequestContextOnInitThread(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller);
 
@@ -74,7 +68,7 @@ class CronetURLRequestContextAdapter
 
   // Posts a task that might depend on the context being initialized
   // to the network thread.
-  void PostTaskToNetworkThread(const tracked_objects::Location& posted_from,
+  void PostTaskToNetworkThread(const base::Location& posted_from,
                                const base::Closure& callback);
 
   bool IsOnNetworkThread() const;
@@ -109,10 +103,10 @@ class CronetURLRequestContextAdapter
                            const base::android::JavaParamRef<jobject>& jcaller);
 
   // Default net::LOAD flags used to create requests.
-  int default_load_flags() const { return default_load_flags_; }
+  int default_load_flags() const;
 
-  // Called on main Java thread to initialize URLRequestContext.
-  void InitRequestContextOnMainThread();
+  // Called on init Java thread to initialize URLRequestContext.
+  void InitRequestContextOnInitThread();
 
   // Configures the network quality estimator to observe requests to localhost,
   // to use smaller responses when estimating throughput, and to disable the
@@ -211,6 +205,10 @@ class CronetURLRequestContextAdapter
   // signals that it is safe to access the NetLog files.
   void StopNetLogCompleted();
 
+  // Initializes Network Quality Estimator (NQE) prefs manager on network
+  // thread.
+  void InitializeNQEPrefsOnNetworkThread() const;
+
   std::unique_ptr<base::DictionaryValue> GetNetLogInfo() const;
 
   // Network thread is owned by |this|, but is destroyed from java thread.
@@ -221,43 +219,35 @@ class CronetURLRequestContextAdapter
 
   std::unique_ptr<net::FileNetLogObserver> net_log_file_observer_;
 
-  // |pref_service_| should outlive the HttpServerPropertiesManager owned by
-  // |context_|.
-  std::unique_ptr<PrefService> pref_service_;
-  std::unique_ptr<net::URLRequestContext> context_;
-  std::unique_ptr<net::ProxyConfigService> proxy_config_service_;
-  scoped_refptr<JsonPrefStore> json_pref_store_;
-  net::HttpServerPropertiesManager* http_server_properties_manager_;
+  // A network quality estimator. This member variable has to be destroyed after
+  // destroying |cronet_prefs_manager_|, which owns NetworkQualityPrefsManager
+  // that weakly references |network_quality_estimator_|.
+  std::unique_ptr<net::NetworkQualityEstimator> network_quality_estimator_;
 
-  // |sdch_owner_| should be destroyed before |json_pref_store_|, because
-  // tearing down |sdch_owner_| forces |json_pref_store_| to flush pending
-  // writes to the disk.
-  std::unique_ptr<net::SdchOwner> sdch_owner_;
+  // Manages the PrefService and all associated persistence managers
+  // such as NetworkQualityPrefsManager, HostCachePersistenceManager, etc.
+  // It should be destroyed before |network_quality_estimator_| and
+  // after |context_|.
+  std::unique_ptr<CronetPrefsManager> cronet_prefs_manager_;
+
+  std::unique_ptr<net::URLRequestContext> context_;
 
   // Context config is only valid until context is initialized.
   std::unique_ptr<URLRequestContextConfig> context_config_;
+  // As is the proxy config service, as ownership is passed to the
+  // URLRequestContextBuilder.
+  std::unique_ptr<net::ProxyConfigService> proxy_config_service_;
 
   // Effective experimental options. Kept for NetLog.
   std::unique_ptr<base::DictionaryValue> effective_experimental_options_;
 
   // A queue of tasks that need to be run after context has been initialized.
-  std::queue<base::Closure> tasks_waiting_for_context_;
+  base::queue<base::Closure> tasks_waiting_for_context_;
   bool is_context_initialized_;
   int default_load_flags_;
 
-  // A network quality estimator.
-  std::unique_ptr<net::NetworkQualityEstimator> network_quality_estimator_;
-
-  // Manages the writing and reading of the network quality prefs.
-  std::unique_ptr<net::NetworkQualitiesPrefsManager>
-      network_qualities_prefs_manager_;
-
   // Java object that owns this CronetURLRequestContextAdapter.
   base::android::ScopedJavaGlobalRef<jobject> jcronet_url_request_context_;
-
-#if defined(DATA_REDUCTION_PROXY_SUPPORT)
-  std::unique_ptr<CronetDataReductionProxy> data_reduction_proxy_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(CronetURLRequestContextAdapter);
 };

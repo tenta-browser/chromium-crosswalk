@@ -13,14 +13,17 @@
 #include <vector>
 
 #include "base/atomic_sequence_num.h"
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
+#include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/gpu_export.h"
-#include "gpu/ipc/common/gpu_stream_constants.h"
+#include "gpu/ipc/common/flush_params.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/message_filter.h"
@@ -33,7 +36,7 @@ class WaitableEvent;
 }
 
 namespace IPC {
-class SyncMessageFilter;
+struct PendingSyncMsg;
 }
 
 namespace gpu {
@@ -80,6 +83,7 @@ class GPU_EXPORT GpuChannelHost
       GpuChannelHostFactory* factory,
       int channel_id,
       const gpu::GPUInfo& gpu_info,
+      const gpu::GpuFeatureInfo& gpu_feature_info,
       const IPC::ChannelHandle& channel_handle,
       base::WaitableEvent* shutdown_event,
       gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager);
@@ -93,25 +97,29 @@ class GPU_EXPORT GpuChannelHost
 
   // The GPU stats reported by the GPU process.
   const gpu::GPUInfo& gpu_info() const { return gpu_info_; }
+  const gpu::GpuFeatureInfo& gpu_feature_info() const {
+    return gpu_feature_info_;
+  }
 
   // IPC::Sender implementation:
   bool Send(IPC::Message* msg) override;
 
-  // Set an ordering barrier.  AsyncFlushes any pending barriers on other
-  // routes. Combines multiple OrderingBarriers into a single AsyncFlush.
-  // Returns the flush ID for the stream or 0 if put offset was not changed.
-  // Outputs *highest_verified_flush_id.
+  // Enqueue an ordering barrier to defer the flush and return an identifier
+  // that can be used to ensure or verify the flush later.
   uint32_t OrderingBarrier(int32_t route_id,
-                           int32_t stream_id,
                            int32_t put_offset,
-                           uint32_t flush_count,
-                           const std::vector<ui::LatencyInfo>& latency_info,
-                           const std::vector<SyncToken>& sync_token_fences,
-                           bool put_offset_changed,
-                           bool do_flush,
-                           uint32_t* highest_verified_flush_id);
+                           std::vector<ui::LatencyInfo> latency_info,
+                           std::vector<SyncToken> sync_token_fences);
 
-  void FlushPendingStream(int32_t stream_id);
+  // Ensure that the all ordering barriers prior upto |flush_id| have been
+  // flushed. Pass UINT32_MAX to force all pending ordering barriers to be
+  // flushed.
+  void EnsureFlush(uint32_t flush_id);
+
+  // Verify that the all ordering barriers prior upto |flush_id| have reached
+  // the service. Pass UINT32_MAX to force all pending ordering barriers to be
+  // verified.
+  void VerifyFlush(uint32_t flush_id);
 
   // Destroy this channel. Must be called on the main thread, before
   // destruction.
@@ -150,22 +158,6 @@ class GPU_EXPORT GpuChannelHost
   // Generate a route ID guaranteed to be unique for this channel.
   int32_t GenerateRouteID();
 
-  // Generate a stream ID guaranteed to be unique for this channel.
-  int32_t GenerateStreamID();
-
-  // Sends a synchronous nop to the server which validate that all previous IPC
-  // messages have been received. Once the synchronous nop has been sent to the
-  // server all previous flushes will all be marked as validated, including
-  // flushes for other streams on the same channel. Once a validation has been
-  // sent, it will return the highest validated flush id for the stream.
-  // If the validation fails (which can only happen upon context lost), the
-  // highest validated flush id will not change. If no flush ID were ever
-  // validated then it will return 0 (Note the lowest valid flush ID is 1).
-  uint32_t ValidateFlushIDReachedServer(int32_t stream_id, bool force_validate);
-
-  // Returns the highest validated flush ID for a given stream.
-  uint32_t GetHighestValidatedFlushID(int32_t stream_id);
-
  private:
   friend class base::RefCountedThreadSafe<GpuChannelHost>;
 
@@ -185,8 +177,13 @@ class GPU_EXPORT GpuChannelHost
 
     // IPC::MessageFilter implementation
     // (called on the IO thread):
+    void OnFilterAdded(IPC::Channel* channel) override;
     bool OnMessageReceived(const IPC::Message& msg) override;
     void OnChannelError() override;
+    void OnChannelClosing() override;
+
+    void SendMessage(std::unique_ptr<IPC::Message> msg,
+                     IPC::PendingSyncMsg* pending_sync);
 
     // The following methods can be called on any thread.
 
@@ -205,64 +202,45 @@ class GPU_EXPORT GpuChannelHost
 
     ~MessageFilter() override;
 
-    // Threading notes: |listeners_| is only accessed on the IO thread. Every
-    // other field is protected by |lock_|.
+    // Threading notes: most fields are only accessed on the IO thread, except
+    // for lost_ which is protected by |lock_|.
     base::hash_map<int32_t, ListenerInfo> listeners_;
+    IPC::Channel* channel_ = nullptr;
+    std::vector<std::unique_ptr<IPC::Message>> pending_messages_;
+    base::flat_map<int, IPC::PendingSyncMsg*> pending_syncs_;
 
     // Protects all fields below this one.
     mutable base::Lock lock_;
 
     // Whether the channel has been lost.
-    bool lost_;
-  };
-
-  struct StreamFlushInfo {
-    StreamFlushInfo();
-    StreamFlushInfo(const StreamFlushInfo& other);
-    ~StreamFlushInfo();
-
-    // These are global per stream.
-    uint32_t next_stream_flush_id;
-    uint32_t flushed_stream_flush_id;
-    uint32_t verified_stream_flush_id;
-
-    // These are local per context.
-    bool flush_pending;
-    int32_t route_id;
-    int32_t put_offset;
-    uint32_t flush_count;
-    uint32_t flush_id;
-    std::vector<ui::LatencyInfo> latency_info;
-    std::vector<SyncToken> sync_token_fences;
+    bool lost_ = false;
   };
 
   GpuChannelHost(GpuChannelHostFactory* factory,
                  int channel_id,
                  const gpu::GPUInfo& gpu_info,
+                 const gpu::GpuFeatureInfo& gpu_feature_info,
                  gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager);
   ~GpuChannelHost() override;
   void Connect(const IPC::ChannelHandle& channel_handle,
                base::WaitableEvent* shutdown_event);
   bool InternalSend(IPC::Message* msg);
-  void InternalFlush(StreamFlushInfo* flush_info);
+  void InternalFlush(uint32_t flush_id);
 
   // Threading notes: all fields are constant during the lifetime of |this|
   // except:
   // - |next_image_id_|, atomic type
   // - |next_route_id_|, atomic type
-  // - |next_stream_id_|, atomic type
-  // - |channel_| and |stream_flush_info_|, protected by |context_lock_|
+  // - |channel_| and |flush_list_|, protected by |context_lock_|
   GpuChannelHostFactory* const factory_;
 
   const int channel_id_;
   const gpu::GPUInfo gpu_info_;
+  const gpu::GpuFeatureInfo gpu_feature_info_;
 
   scoped_refptr<MessageFilter> channel_filter_;
 
   gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager_;
-
-  // A filter for sending messages from thread other than the main thread.
-  scoped_refptr<IPC::SyncMessageFilter> sync_filter_;
 
   // Image IDs are allocated in sequence.
   base::AtomicSequenceNumber next_image_id_;
@@ -270,13 +248,13 @@ class GPU_EXPORT GpuChannelHost
   // Route IDs are allocated in sequence.
   base::AtomicSequenceNumber next_route_id_;
 
-  // Stream IDs are allocated in sequence.
-  base::AtomicSequenceNumber next_stream_id_;
-
-  // Protects channel_ and stream_flush_info_.
+  // Protects channel_ and flush_list_.
   mutable base::Lock context_lock_;
   std::unique_ptr<IPC::SyncChannel> channel_;
-  base::hash_map<int32_t, StreamFlushInfo> stream_flush_info_;
+  std::vector<FlushParams> flush_list_;
+  uint32_t next_flush_id_ = 1;
+  uint32_t flushed_flush_id_ = 0;
+  uint32_t verified_flush_id_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(GpuChannelHost);
 };

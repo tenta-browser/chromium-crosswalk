@@ -112,7 +112,13 @@ enum DeviceEventType {
   // Format succeeded.
   format_success,
   // Format failed.
-  format_fail
+  format_fail,
+  // Rename started.
+  rename_start,
+  // Rename succeeded.
+  rename_success,
+  // Rename failed.
+  rename_fail
 };
 
 // Drive sync error type.
@@ -152,6 +158,7 @@ enum DriveShareType {
 enum EntryPropertyName {
   size,
   modificationTime,
+  modificationByMeTime,
   thumbnailUrl,
   croppedThumbnailUrl,
   imageWidth,
@@ -194,6 +201,18 @@ enum Verb {
   share_with
 };
 
+// Recent file sources allowed in getRecentFiles().
+enum SourceRestriction {
+  // Allows any source.
+  any_source,
+
+  // Allows source with native local file system only.
+  native_source,
+
+  // Allows native source and Drive source.
+  native_or_drive_source
+};
+
 // A file task represents an action that the file manager can perform over the
 // currently selected files. See
 // chrome/browser/chromeos/extensions/file_manager/file_tasks.h for details
@@ -229,6 +248,9 @@ dictionary EntryProperties {
 
   // Timestamp of entry update time, in milliseconds past the epoch.
   double? modificationTime;
+
+  // Timestamp of entry update time by me, in milliseconds past the epoch.
+  double? modificationByMeTime;
 
   // URL to the Drive thumbnail image for this file.
   DOMString? thumbnailUrl;
@@ -366,6 +388,9 @@ dictionary VolumeMetadata {
 
   // Context in which the volume has been mounted.
   MountContext? mountContext;
+
+  // File system type indentifier.
+  DOMString? diskFileSystemType;
 };
 
 // Payload data for mount event.
@@ -661,6 +686,9 @@ callback GetCustomActionsCallback = void(fileSystemProvider.Action[] actions);
 // |size| result size.
 callback GetDirectorySizeCallback = void(double size);
 
+// |entries| Recently modified entries.
+callback GetRecentFilesCallback = void([instanceOf=Entry] object[] entries);
+
 interface Functions {
   // Logout the current user for navigating to the re-authentication screen for
   // the Google account.
@@ -836,6 +864,11 @@ interface Functions {
   // |volumeId| ID of the volume to be formatted.
   static void formatVolume(DOMString volumeId);
 
+  // Renames a mounted volume.
+  // |volumeId| ID of the volume to be renamed.
+  // |newName| New name of the target volume.
+  static void renameVolume(DOMString volumeId, DOMString newName);
+
   // Retrieves file manager preferences.
   // |callback|
   static void getPreferences(GetPreferencesCallback callback);
@@ -987,6 +1020,13 @@ interface Functions {
   [nocompile]
   static void getDirectorySize([instanceof=DirectoryEntry] object entry,
                                GetDirectorySizeCallback callback);
+
+  // Gets recently modified files across file systems.
+  // |restriction| Flag to restrict sources of recent files.
+  // |callback|
+  [nocompile]
+  static void getRecentFiles(SourceRestriction restriction,
+                             GetRecentFilesCallback callback);
 };
 
 interface Events {

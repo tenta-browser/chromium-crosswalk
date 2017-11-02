@@ -20,8 +20,6 @@ namespace content {
 class FrameTreeNode;
 struct WebPreferences;
 
-using ThrottleCheckResult = NavigationThrottle::ThrottleCheckResult;
-
 // Responsible for browser-process-side mixed content security checks. It is
 // only enabled if PlzNavigate is and checks only for frame-level resource loads
 // (aka navigation loads). Sub-resources fetches are checked in the renderer
@@ -30,10 +28,6 @@ using ThrottleCheckResult = NavigationThrottle::ThrottleCheckResult;
 //
 // Current mixed content W3C draft that drives this implementation:
 // https://w3c.github.io/webappsec-mixed-content/
-//
-// TODO(carlosk): For HSTS to work properly in PlzNavigate when these browser
-// side mixed content checks happen it needs to be ported to the browser as a
-// navigation throttle implementation. See https://crbug.com/692157.
 class MixedContentNavigationThrottle : public NavigationThrottle {
  public:
   static std::unique_ptr<NavigationThrottle> CreateThrottleForNavigation(
@@ -46,6 +40,7 @@ class MixedContentNavigationThrottle : public NavigationThrottle {
   ThrottleCheckResult WillStartRequest() override;
   ThrottleCheckResult WillRedirectRequest() override;
   ThrottleCheckResult WillProcessResponse() override;
+  const char* GetNameForLogging() override;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(MixedContentNavigationThrottleTest, IsMixedContent);

@@ -36,7 +36,9 @@ void SetListInPref(const PolicyMap& policies,
     bool is_list = policy_value->GetAsList(&policy_list);
     DCHECK(is_list);
   }
-  dict->Set(key, policy_list ? policy_list->DeepCopy() : new base::ListValue());
+  dict->Set(key, policy_list
+                     ? base::MakeUnique<base::Value>(policy_list->Clone())
+                     : base::MakeUnique<base::Value>(base::Value::Type::LIST));
 }
 
 // Extracts a string from a policy value and adds it to a pref dictionary.
@@ -69,17 +71,12 @@ const PolicyToPreferenceMapEntry kDefaultSearchPolicyDataMap[] = {
      base::Value::Type::STRING},
     {key::kDefaultSearchProviderSuggestURL,
      DefaultSearchManager::kSuggestionsURL, base::Value::Type::STRING},
-    {key::kDefaultSearchProviderInstantURL, DefaultSearchManager::kInstantURL,
-     base::Value::Type::STRING},
     {key::kDefaultSearchProviderIconURL, DefaultSearchManager::kFaviconURL,
      base::Value::Type::STRING},
     {key::kDefaultSearchProviderEncodings,
      DefaultSearchManager::kInputEncodings, base::Value::Type::LIST},
     {key::kDefaultSearchProviderAlternateURLs,
      DefaultSearchManager::kAlternateURLs, base::Value::Type::LIST},
-    {key::kDefaultSearchProviderSearchTermsReplacementKey,
-     DefaultSearchManager::kSearchTermsReplacementKey,
-     base::Value::Type::STRING},
     {key::kDefaultSearchProviderImageURL, DefaultSearchManager::kImageURL,
      base::Value::Type::STRING},
     {key::kDefaultSearchProviderNewTabURL, DefaultSearchManager::kNewTabURL,
@@ -89,8 +86,6 @@ const PolicyToPreferenceMapEntry kDefaultSearchPolicyDataMap[] = {
     {key::kDefaultSearchProviderSuggestURLPostParams,
      DefaultSearchManager::kSuggestionsURLPostParams,
      base::Value::Type::STRING},
-    {key::kDefaultSearchProviderInstantURLPostParams,
-     DefaultSearchManager::kInstantURLPostParams, base::Value::Type::STRING},
     {key::kDefaultSearchProviderImageURLPostParams,
      DefaultSearchManager::kImageURLPostParams, base::Value::Type::STRING},
 };

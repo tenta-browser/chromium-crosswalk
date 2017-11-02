@@ -21,14 +21,13 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/font_pref_change_notifier_factory.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/renderer_preferences_util.h"
-#include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 #include "chrome/common/pref_font_webkit_names.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/pref_names_util.h"
-#include "chrome/grit/locale_settings.h"
 #include "chrome/grit/platform_locale_settings.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
@@ -51,13 +50,13 @@
 #include "third_party/icu/source/common/unicode/uscript.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
+#endif
+
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
-#endif
-
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
 #endif
 
 using content::WebContents;
@@ -85,7 +84,6 @@ const char* const kPrefsToObserve[] = {
   prefs::kWebKitForceEnableZoom,
   prefs::kWebKitPasswordEchoEnabled,
 #endif
-  prefs::kWebKitJavascriptCanOpenWindowsAutomatically,
   prefs::kWebKitJavascriptEnabled,
   prefs::kWebKitLoadsImagesAutomatically,
   prefs::kWebKitMinimumFontSize,
@@ -139,23 +137,6 @@ ALL_FONT_SCRIPTS(WEBKIT_WEBPREFS_FONTS_STANDARD)
 }
 #endif  // !defined(OS_ANDROID)
 
-// Registers |obs| to observe per-script font prefs under the path |map_name|.
-// On android, there's no exposed way to change these prefs, so we can save
-// ~715KB of heap and some startup cycles by avoiding observing these prefs
-// since they will never change.
-void RegisterFontFamilyMapObserver(
-    PrefChangeRegistrar* registrar,
-    const char* map_name,
-    const PrefChangeRegistrar::NamedChangeCallback& obs) {
-  DCHECK(base::StartsWith(map_name, "webkit.webprefs.",
-                          base::CompareCase::SENSITIVE));
-
-  for (size_t i = 0; i < prefs::kWebKitScriptsForFontFamilyMapsLength; ++i) {
-    const char* script = prefs::kWebKitScriptsForFontFamilyMaps[i];
-    registrar->Add(base::StringPrintf("%s.%s", map_name, script), obs);
-  }
-}
-
 #if defined(OS_WIN)
 // On Windows with antialising we want to use an alternate fixed font like
 // Consolas, which looks much better than Courier New.
@@ -165,8 +146,7 @@ bool ShouldUseAlternateDefaultFixedFont(const std::string& script) {
     return false;
   UINT smooth_type = 0;
   SystemParametersInfo(SPI_GETFONTSMOOTHINGTYPE, 0, &smooth_type, 0);
-  return (base::win::GetVersion() >= base::win::VERSION_WIN7) &&
-         (smooth_type == FE_FONTSMOOTHINGCLEARTYPE);
+  return smooth_type == FE_FONTSMOOTHINGCLEARTYPE;
 }
 #endif
 
@@ -372,28 +352,6 @@ class PrefWatcher : public KeyedService {
       const char* pref_name = kPrefsToObserve[i];
       pref_change_registrar_.Add(pref_name, webkit_callback);
     }
-
-    RegisterFontFamilyMapObserver(&pref_change_registrar_,
-                                  prefs::kWebKitStandardFontFamilyMap,
-                                  webkit_callback);
-    RegisterFontFamilyMapObserver(&pref_change_registrar_,
-                                  prefs::kWebKitFixedFontFamilyMap,
-                                  webkit_callback);
-    RegisterFontFamilyMapObserver(&pref_change_registrar_,
-                                  prefs::kWebKitSerifFontFamilyMap,
-                                  webkit_callback);
-    RegisterFontFamilyMapObserver(&pref_change_registrar_,
-                                  prefs::kWebKitSansSerifFontFamilyMap,
-                                  webkit_callback);
-    RegisterFontFamilyMapObserver(&pref_change_registrar_,
-                                  prefs::kWebKitCursiveFontFamilyMap,
-                                  webkit_callback);
-    RegisterFontFamilyMapObserver(&pref_change_registrar_,
-                                  prefs::kWebKitFantasyFontFamilyMap,
-                                  webkit_callback);
-    RegisterFontFamilyMapObserver(&pref_change_registrar_,
-                                  prefs::kWebKitPictographFontFamilyMap,
-                                  webkit_callback);
   }
 
   static PrefWatcher* Get(Profile* profile);
@@ -471,6 +429,7 @@ PrefsTabHelper::PrefsTabHelper(WebContents* contents)
       weak_ptr_factory_(this) {
   PrefService* prefs = profile_->GetPrefs();
   if (prefs) {
+#if !defined(OS_ANDROID)
     // If the tab is in an incognito profile, we track changes in the default
     // zoom level of the parent profile instead.
     Profile* profile_to_track = profile_->GetOriginalProfile();
@@ -484,6 +443,12 @@ PrefsTabHelper::PrefsTabHelper(WebContents* contents)
       default_zoom_level_subscription_ =
           zoom_level_prefs->RegisterDefaultZoomLevelCallback(renderer_callback);
     }
+
+    // Unretained is safe because the registrar will be scoped to this class.
+    font_change_registrar_.Register(
+        FontPrefChangeNotifierFactory::GetForProfile(profile_),
+        base::Bind(&PrefsTabHelper::OnWebPrefChanged, base::Unretained(this)));
+#endif  // !defined(OS_ANDROID)
 
     PrefWatcher::Get(profile_)->RegisterHelper(this);
   }
@@ -519,8 +484,6 @@ void PrefsTabHelper::RegisterProfilePrefs(
                                 pref_defaults.javascript_enabled);
   registry->RegisterBooleanPref(prefs::kWebKitWebSecurityEnabled,
                                 pref_defaults.web_security_enabled);
-  registry->RegisterBooleanPref(
-      prefs::kWebKitJavascriptCanOpenWindowsAutomatically, true);
   registry->RegisterBooleanPref(prefs::kWebKitLoadsImagesAutomatically,
                                 pref_defaults.loads_images_automatically);
   registry->RegisterBooleanPref(prefs::kWebKitPluginsEnabled,
@@ -639,6 +602,7 @@ void PrefsTabHelper::UpdateRendererPreferences() {
       prefs, profile_, web_contents_);
   web_contents_->GetRenderViewHost()->SyncRendererPrefs();
 }
+
 void PrefsTabHelper::OnFontFamilyPrefChanged(const std::string& pref_name) {
   // When a font family pref's value goes from non-empty to the empty string, we
   // must add it to the usual WebPreferences struct passed to the renderer.
@@ -674,8 +638,8 @@ void PrefsTabHelper::OnWebPrefChanged(const std::string& pref_name) {
   // give other observers (particularly the FontFamilyCache) a chance to react
   // to the pref change.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&PrefsTabHelper::NotifyWebkitPreferencesChanged,
-                            weak_ptr_factory_.GetWeakPtr(), pref_name));
+      FROM_HERE, base::BindOnce(&PrefsTabHelper::NotifyWebkitPreferencesChanged,
+                                weak_ptr_factory_.GetWeakPtr(), pref_name));
 }
 
 void PrefsTabHelper::NotifyWebkitPreferencesChanged(

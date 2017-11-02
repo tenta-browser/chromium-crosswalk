@@ -15,7 +15,7 @@
 #include "cc/animation/animation_player.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/animation/element_animations.h"
-#include "cc/output/begin_frame_args.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_delegate.h"
@@ -115,6 +115,7 @@ ANIMATED_PROPERTY(bool, VISIBILITY, Visibility, bool, visibility);
 ANIMATED_PROPERTY(float, BRIGHTNESS, Brightness, float, brightness);
 ANIMATED_PROPERTY(float, GRAYSCALE, Grayscale, float, grayscale);
 ANIMATED_PROPERTY(SkColor, COLOR, Color, SkColor, color);
+ANIMATED_PROPERTY(float, TEMPERATURE, Temperature, float, temperature);
 
 base::TimeDelta LayerAnimator::GetTransitionDuration() const {
   return transition_duration_;
@@ -165,7 +166,7 @@ void LayerAnimator::DetachLayerAndTimeline(Compositor* compositor) {
 
 void LayerAnimator::AttachLayerToAnimationPlayer(int layer_id) {
   // For ui, layer and element ids are equivalent.
-  cc::ElementId element_id(layer_id, 0);
+  cc::ElementId element_id(layer_id);
   if (!animation_player_->element_id())
     animation_player_->AttachElement(element_id);
   else
@@ -214,11 +215,6 @@ void LayerAnimator::StartAnimation(LayerAnimationSequence* animation) {
       case REPLACE_QUEUED_ANIMATIONS:
         ReplaceQueuedAnimations(animation);
         break;
-      case BLEND_WITH_CURRENT_ANIMATION: {
-        // TODO(vollick) Add support for blended sequences and use them here.
-        NOTIMPLEMENTED();
-        break;
-      }
     }
   }
   FinishAnyAnimationWithZeroDuration();
@@ -275,8 +271,7 @@ void LayerAnimator::StartTogether(
 
   bool wait_for_group_start = false;
   for (iter = animations.begin(); iter != animations.end(); ++iter)
-    wait_for_group_start |= (*iter)->IsFirstElementThreaded();
-
+    wait_for_group_start |= (*iter)->IsFirstElementThreaded(delegate_);
   int group_id = cc::AnimationIdProvider::NextGroupId();
 
   // These animations (provided they don't animate any common properties) will
@@ -313,7 +308,7 @@ void LayerAnimator::ScheduleTogether(
 
   bool wait_for_group_start = false;
   for (iter = animations.begin(); iter != animations.end(); ++iter)
-    wait_for_group_start |= (*iter)->IsFirstElementThreaded();
+    wait_for_group_start |= (*iter)->IsFirstElementThreaded(delegate_);
 
   int group_id = cc::AnimationIdProvider::NextGroupId();
 
@@ -375,6 +370,23 @@ void LayerAnimator::RemoveObserver(LayerAnimationObserver* observer) {
   }
 }
 
+void LayerAnimator::AddOwnedObserver(
+    std::unique_ptr<ImplicitAnimationObserver> animation_observer) {
+  owned_observer_list_.push_back(std::move(animation_observer));
+}
+
+void LayerAnimator::RemoveAndDestroyOwnedObserver(
+    ImplicitAnimationObserver* animation_observer) {
+  owned_observer_list_.erase(
+      std::remove_if(
+          owned_observer_list_.begin(), owned_observer_list_.end(),
+          [animation_observer](
+              const std::unique_ptr<ImplicitAnimationObserver>& other) {
+            return other.get() == animation_observer;
+          }),
+      owned_observer_list_.end());
+}
+
 void LayerAnimator::OnThreadedAnimationStarted(
     base::TimeTicks monotonic_time,
     cc::TargetProperty::Type target_property,
@@ -407,7 +419,7 @@ void LayerAnimator::OnThreadedAnimationStarted(
     // Ensure that each sequence is only Started once, regardless of the
     // number of sequences in the group that have threaded first elements.
     if (((*iter).sequence()->animation_group_id() == group_id) &&
-        !(*iter).sequence()->IsFirstElementThreaded() &&
+        !(*iter).sequence()->IsFirstElementThreaded(delegate_) &&
         (*iter).sequence()->waiting_for_group_start()) {
       (*iter).sequence()->set_start_time(start_time);
       (*iter).sequence()->set_waiting_for_group_start(false);
@@ -548,9 +560,8 @@ LayerAnimationSequence* LayerAnimator::RemoveAnimation(
     }
   }
 
-  if (!to_return.get() ||
-      !to_return->waiting_for_group_start() ||
-      !to_return->IsFirstElementThreaded())
+  if (!to_return.get() || !to_return->waiting_for_group_start() ||
+      !to_return->IsFirstElementThreaded(delegate_))
     return to_return.release();
 
   // The removed sequence may have been responsible for making other sequences
@@ -561,7 +572,7 @@ LayerAnimationSequence* LayerAnimator::RemoveAnimation(
   for (AnimationQueue::iterator queue_iter = animation_queue_.begin();
        queue_iter != animation_queue_.end(); ++queue_iter) {
     if (((*queue_iter)->animation_group_id() == group_id) &&
-        (*queue_iter)->IsFirstElementThreaded()) {
+        (*queue_iter)->IsFirstElementThreaded(delegate_)) {
       is_wait_still_needed = true;
       break;
     }
@@ -857,7 +868,7 @@ bool LayerAnimator::StartSequenceImmediately(LayerAnimationSequence* sequence) {
   AddToQueueIfNotPresent(sequence);
 
   if (!sequence->waiting_for_group_start() ||
-      sequence->IsFirstElementThreaded()) {
+      sequence->IsFirstElementThreaded(delegate_)) {
     sequence->set_start_time(start_time);
     sequence->Start(delegate());
   }
@@ -923,11 +934,12 @@ LayerAnimatorCollection* LayerAnimator::GetLayerAnimatorCollection() {
   return delegate_ ? delegate_->GetLayerAnimatorCollection() : NULL;
 }
 
-void LayerAnimator::NotifyAnimationStarted(
-    base::TimeTicks monotonic_time,
-    cc::TargetProperty::Type target_property,
-    int group) {
-  OnThreadedAnimationStarted(monotonic_time, target_property, group);
+void LayerAnimator::NotifyAnimationStarted(base::TimeTicks monotonic_time,
+                                           int target_property,
+                                           int group) {
+  OnThreadedAnimationStarted(
+      monotonic_time, static_cast<cc::TargetProperty::Type>(target_property),
+      group);
 }
 
 LayerAnimator::RunningAnimation::RunningAnimation(

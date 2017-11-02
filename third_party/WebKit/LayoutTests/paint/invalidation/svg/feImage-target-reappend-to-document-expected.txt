@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGRect rect",
@@ -22,23 +22,11 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGResourceFilterPrimitive feImage id='feimage-green'",
-      "reason": "layoutObject removal"
-    },
-    {
-      "object": "LayoutSVGResourceFilter filter id='filter'",
-      "reason": "full"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGRect rect",
       "reason": "full"
-    },
-    {
-      "object": "LayoutSVGResourceFilter filter id='filter'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGResourceFilterPrimitive feImage id='feimage-green'",
-      "reason": "layoutObject insertion"
     },
     {
       "object": "LayoutSVGRect rect",

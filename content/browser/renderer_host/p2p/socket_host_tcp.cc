@@ -133,8 +133,8 @@ bool P2PSocketHostTcpBase::Init(const net::IPEndPoint& local_address,
     // happen here.  This is okay, as from the caller's point of view,
     // the connect always happens asynchronously.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&P2PSocketHostTcpBase::OnConnected,
-                              base::Unretained(this), status));
+        FROM_HERE, base::BindOnce(&P2PSocketHostTcpBase::OnConnected,
+                                  base::Unretained(this), status));
   }
 
   return state_ != STATE_ERROR;
@@ -495,7 +495,11 @@ void P2PSocketHostTcpBase::DidCompleteRead(int result) {
 }
 
 bool P2PSocketHostTcpBase::SetOption(P2PSocketOption option, int value) {
-  DCHECK_EQ(STATE_OPEN, state_);
+  if (state_ != STATE_OPEN) {
+    DCHECK_EQ(state_, STATE_ERROR);
+    return false;
+  }
+
   switch (option) {
     case P2P_SOCKET_OPT_RCVBUF:
       return socket_->SetReceiveBufferSize(value) == net::OK;

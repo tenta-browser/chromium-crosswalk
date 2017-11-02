@@ -6,12 +6,13 @@
 
 #include <stddef.h>
 
-#include "base/feature_list.h"
+#include "base/bind.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
+#include "chrome/browser/autocomplete/contextual_suggestions_service_factory.h"
 #include "chrome/browser/autocomplete/in_memory_url_index_factory.h"
 #include "chrome/browser/autocomplete/shortcuts_backend_factory.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_service.h"
@@ -24,7 +25,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/browser_sync/profile_sync_service.h"
@@ -33,6 +33,8 @@
 #include "components/prefs/pref_service.h"
 #include "components/sync/driver/sync_service_utils.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/service_worker_context.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/features/features.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 
@@ -40,9 +42,9 @@
 #include "chrome/browser/autocomplete/keyword_extensions_delegate_impl.h"
 #endif
 
-#if !defined(OS_ANDROID)
 namespace {
 
+#if !defined(OS_ANDROID)
 // This list should be kept in sync with chrome/common/url_constants.h.
 // Only include useful sub-pages, confirmation alerts are not useful.
 const char* const kChromeSettingsSubPages[] = {
@@ -60,16 +62,20 @@ const char* const kChromeSettingsSubPages[] = {
     chrome::kManageProfileSubPage,
 #endif
 };
+#endif  // !defined(OS_ANDROID)
+
+// A callback that does nothing, called after the search service worker is
+// started.
+void NoopCallback(content::StartServiceWorkerForNavigationHintResult) {}
 
 }  // namespace
-#endif  // !defined(OS_ANDROID)
 
 ChromeAutocompleteProviderClient::ChromeAutocompleteProviderClient(
     Profile* profile)
     : profile_(profile),
       scheme_classifier_(profile),
-      search_terms_data_(profile_) {
-}
+      search_terms_data_(profile_),
+      storage_partition_(nullptr) {}
 
 ChromeAutocompleteProviderClient::~ChromeAutocompleteProviderClient() {
 }
@@ -126,6 +132,13 @@ TemplateURLService* ChromeAutocompleteProviderClient::GetTemplateURLService() {
 const TemplateURLService*
 ChromeAutocompleteProviderClient::GetTemplateURLService() const {
   return TemplateURLServiceFactory::GetForProfile(profile_);
+}
+
+ContextualSuggestionsService*
+ChromeAutocompleteProviderClient::GetContextualSuggestionsService(
+    bool create_if_necessary) const {
+  return ContextualSuggestionsServiceFactory::GetForProfile(
+      profile_, create_if_necessary);
 }
 
 const
@@ -186,13 +199,6 @@ std::vector<base::string16> ChromeAutocompleteProviderClient::GetBuiltinURLs() {
   for (size_t i = 0; i < arraysize(kChromeSettingsSubPages); i++) {
     builtins.push_back(settings +
                        base::ASCIIToUTF16(kChromeSettingsSubPages[i]));
-  }
-
-  if (!base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
-    builtins.push_back(
-        settings +
-        base::ASCIIToUTF16(
-            chrome::kDeprecatedOptionsContentSettingsExceptionsSubPage));
   }
 #endif
 
@@ -275,7 +281,7 @@ void ChromeAutocompleteProviderClient::PrefetchImage(const GURL& url) {
           destination: WEBSITE
         }
         policy {
-          cookies_allowed: true
+          cookies_allowed: YES
           cookies_store: "user"
           setting:
             "You can enable or disable this feature via 'Use a prediction "
@@ -291,6 +297,28 @@ void ChromeAutocompleteProviderClient::PrefetchImage(const GURL& url) {
         })");
 
   image_service->Prefetch(url, traffic_annotation);
+}
+
+void ChromeAutocompleteProviderClient::StartServiceWorker(
+    const GURL& destination_url) {
+  if (!SearchSuggestEnabled())
+    return;
+
+  if (profile_->IsOffTheRecord())
+    return;
+
+  content::StoragePartition* partition = storage_partition_;
+  if (!partition)
+    partition = content::BrowserContext::GetDefaultStoragePartition(profile_);
+  if (!partition)
+    return;
+
+  content::ServiceWorkerContext* context = partition->GetServiceWorkerContext();
+  if (!context)
+    return;
+
+  context->StartServiceWorkerForNavigationHint(destination_url,
+                                               base::BindOnce(&NoopCallback));
 }
 
 void ChromeAutocompleteProviderClient::OnAutocompleteControllerResultReady(

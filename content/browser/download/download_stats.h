@@ -103,6 +103,23 @@ enum DownloadCountTypes {
   // Downloads that are actually completed in normal profile.
   COMPLETED_COUNT_NORMAL_PROFILE,
 
+  // Downloads that are completed with a content length mismatch error.
+  COMPLETED_WITH_CONTENT_LENGTH_MISMATCH_COUNT,
+
+  // After a download is interrupted with a content length mismatch error, more
+  // bytes are received when resuming the download.
+  MORE_BYTES_RECEIVED_AFTER_CONTENT_LENGTH_MISMATCH_COUNT,
+
+  // After a download is interrupted with a content length mismatch error, no
+  // bytes are received when resuming the download.
+  NO_BYTES_RECEIVED_AFTER_CONTENT_LENGTH_MISMATCH_COUNT,
+
+  // Count of downloads that requested target determination.
+  DETERMINE_DOWNLOAD_TARGET_COUNT,
+
+  // Count of downloads that has target determination completed.
+  DOWNLOAD_TARGET_DETERMINED_COUNT,
+
   DOWNLOAD_COUNT_TYPES_LAST_ENTRY
 };
 
@@ -176,6 +193,9 @@ enum class ParallelDownloadCreationEvent {
 
   // The remaining time does not meet the requirement.
   FALLBACK_REASON_REMAINING_TIME,
+
+  // The http method or url scheme does not meet the requirement.
+  FALLBACK_REASON_HTTP_METHOD,
 
   // Last entry of the enum.
   COUNT,
@@ -255,6 +275,9 @@ void RecordFileBandwidth(size_t length,
                          base::TimeDelta disk_write_time,
                          base::TimeDelta elapsed_time);
 
+// Records the size of the download from content-length header.
+void RecordParallelizableContentLength(int64_t content_length);
+
 // Increment one of the count for parallelizable download.
 void RecordParallelizableDownloadCount(DownloadCountTypes type,
                                        bool is_parallel_download_enabled);
@@ -323,7 +346,7 @@ enum OriginStateOnResumption {
 // request. |state| is a combination of values from OriginStateOnResumption
 // enum.
 void RecordOriginStateOnResumption(bool is_partial,
-                                   int state);
+                                   OriginStateOnResumption state);
 
 void RecordDownloadConnectionSecurity(const GURL& download_url,
                                       const std::vector<GURL>& url_chain);

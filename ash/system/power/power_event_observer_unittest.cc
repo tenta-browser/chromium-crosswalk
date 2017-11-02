@@ -6,8 +6,12 @@
 
 #include <memory>
 
+#include "ash/session/session_controller.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/wm/lock_state_controller.h"
+#include "ash/wm/lock_state_controller_test_api.h"
+#include "ash/wm/test_session_state_animator.h"
 #include "base/time/time.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager_client.h"
@@ -17,20 +21,20 @@
 
 namespace ash {
 
-class PowerEventObserverTest : public test::AshTestBase {
+class PowerEventObserverTest : public AshTestBase {
  public:
   PowerEventObserverTest() {}
   ~PowerEventObserverTest() override {}
 
-  // test::AshTestBase::SetUp() overrides:
+  // AshTestBase:
   void SetUp() override {
-    test::AshTestBase::SetUp();
+    AshTestBase::SetUp();
     observer_.reset(new PowerEventObserver());
   }
 
   void TearDown() override {
     observer_.reset();
-    test::AshTestBase::TearDown();
+    AshTestBase::TearDown();
   }
 
  protected:
@@ -42,6 +46,14 @@ class PowerEventObserverTest : public test::AshTestBase {
     }
 
     return result;
+  }
+
+  bool GetLockedState() {
+    // LockScreen is an async mojo call.
+    SessionController* const session_controller =
+        Shell::Get()->session_controller();
+    session_controller->FlushMojoForTest();
+    return session_controller->IsScreenLocked();
   }
 
   std::unique_ptr<PowerEventObserver> observer_;
@@ -157,6 +169,53 @@ TEST_F(PowerEventObserverTest, DelayResuspendForLockAnimations) {
   observer_->OnLockAnimationsComplete();
   EXPECT_EQ(1, client->GetNumPendingSuspendReadinessCallbacks());
   EXPECT_EQ(0, GetNumVisibleCompositors());
+}
+
+// Tests that for suspend imminent induced locking screen, locking animations
+// are immediate.
+TEST_F(PowerEventObserverTest, ImmediateLockAnimations) {
+  TestSessionStateAnimator* test_animator = new TestSessionStateAnimator;
+  LockStateController* lock_state_controller =
+      Shell::Get()->lock_state_controller();
+  lock_state_controller->set_animator_for_test(test_animator);
+  LockStateControllerTestApi lock_state_test_api(lock_state_controller);
+  SetCanLockScreen(true);
+  SetShouldLockScreenAutomatically(true);
+  ASSERT_FALSE(GetLockedState());
+
+  observer_->SuspendImminent();
+  // Tests that locking animation starts.
+  EXPECT_TRUE(lock_state_test_api.is_animating_lock());
+
+  // Tests that we have two active animation containers for pre-lock animation,
+  // which are non lock screen containers and shelf container.
+  EXPECT_EQ(2u, test_animator->GetAnimationCount());
+  test_animator->AreContainersAnimated(
+      LockStateController::kPreLockContainersMask,
+      SessionStateAnimator::ANIMATION_HIDE_IMMEDIATELY);
+  // Tests that after finishing immediate animation, we have no active
+  // animations left.
+  test_animator->Advance(test_animator->GetDuration(
+      SessionStateAnimator::ANIMATION_SPEED_IMMEDIATE));
+  EXPECT_EQ(0u, test_animator->GetAnimationCount());
+
+  // Flushes locking screen async request to start post-lock animation.
+  EXPECT_TRUE(GetLockedState());
+  EXPECT_TRUE(lock_state_test_api.is_animating_lock());
+  // Tests that we have two active animation container for post-lock animation,
+  // which are lock screen containers and shelf container.
+  EXPECT_EQ(2u, test_animator->GetAnimationCount());
+  test_animator->AreContainersAnimated(
+      SessionStateAnimator::LOCK_SCREEN_CONTAINERS,
+      SessionStateAnimator::ANIMATION_RAISE_TO_SCREEN);
+  test_animator->AreContainersAnimated(SessionStateAnimator::SHELF,
+                                       SessionStateAnimator::ANIMATION_FADE_IN);
+  // Tests that after finishing immediate animation, we have no active
+  // animations left. Also checks that animation ends.
+  test_animator->Advance(test_animator->GetDuration(
+      SessionStateAnimator::ANIMATION_SPEED_IMMEDIATE));
+  EXPECT_EQ(0u, test_animator->GetAnimationCount());
+  EXPECT_FALSE(lock_state_test_api.is_animating_lock());
 }
 
 }  // namespace ash

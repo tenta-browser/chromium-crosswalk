@@ -4,90 +4,110 @@
 
 cr.define('settings', function() {
   /** @interface */
-  function AppearanceBrowserProxy() {}
-
-  AppearanceBrowserProxy.prototype = {
+  class AppearanceBrowserProxy {
     /** @return {!Promise<number>} */
-    getDefaultZoom: assertNotReached,
+    getDefaultZoom() {}
 
     /**
      * @param {string} themeId
      * @return {!Promise<!chrome.management.ExtensionInfo>} Theme info.
      */
-    getThemeInfo: assertNotReached,
+    getThemeInfo(themeId) {}
 
     /** @return {boolean} Whether the current profile is supervised. */
-    isSupervised: assertNotReached,
+    isSupervised() {}
 
-// <if expr="chromeos">
-    openWallpaperManager: assertNotReached,
-// </if>
+    /**
+     * @return {!Promise<boolean>} Whether the wallpaper setting row should be
+     *     visible.
+     */
+    isWallpaperSettingVisible() {}
 
-    useDefaultTheme: assertNotReached,
+    /**
+     * @return {!Promise<boolean>} Whether the wallpaper is policy controlled.
+     */
+    isWallpaperPolicyControlled() {}
 
-// <if expr="is_linux and not chromeos">
-    useSystemTheme: assertNotReached,
-// </if>
+    // <if expr="chromeos">
+    openWallpaperManager() {}
+
+    // </if>
+
+    useDefaultTheme() {}
+
+    // <if expr="is_linux and not chromeos">
+    useSystemTheme() {}
+
+    // </if>
 
     /**
      * @param {string} url The url of which to check validity.
      * @return {!Promise<boolean>}
      */
-    validateStartupPage: assertNotReached,
-  };
+    validateStartupPage(url) {}
+  }
 
   /**
    * @implements {settings.AppearanceBrowserProxy}
-   * @constructor
    */
-  function AppearanceBrowserProxyImpl() {}
-
-  cr.addSingletonGetter(AppearanceBrowserProxyImpl);
-
-  AppearanceBrowserProxyImpl.prototype = {
+  class AppearanceBrowserProxyImpl {
     /** @override */
-    getDefaultZoom: function() {
+    getDefaultZoom() {
       return new Promise(function(resolve) {
         chrome.settingsPrivate.getDefaultZoom(resolve);
       });
-    },
+    }
 
     /** @override */
-    getThemeInfo: function(themeId) {
+    getThemeInfo(themeId) {
       return new Promise(function(resolve) {
         chrome.management.get(themeId, resolve);
       });
-    },
+    }
 
     /** @override */
-    isSupervised: function() {
+    isSupervised() {
       return loadTimeData.getBoolean('isSupervised');
-    },
+    }
 
-// <if expr="chromeos">
+    // <if expr="chromeos">
     /** @override */
-    openWallpaperManager: function() {
+    isWallpaperSettingVisible() {
+      return cr.sendWithPromise('isWallpaperSettingVisible');
+    }
+
+    /** @override */
+    isWallpaperPolicyControlled() {
+      return cr.sendWithPromise('isWallpaperPolicyControlled');
+    }
+
+    /** @override */
+    openWallpaperManager() {
       chrome.send('openWallpaperManager');
-    },
-// </if>
+    }
+
+    // </if>
 
     /** @override */
-    useDefaultTheme: function() {
+    useDefaultTheme() {
       chrome.send('useDefaultTheme');
-    },
+    }
 
-// <if expr="is_linux and not chromeos">
+    // <if expr="is_linux and not chromeos">
     /** @override */
-    useSystemTheme: function() {
+    useSystemTheme() {
       chrome.send('useSystemTheme');
-    },
-// </if>
+    }
+
+    // </if>
 
     /** @override */
-    validateStartupPage: function(url) {
+    validateStartupPage(url) {
       return cr.sendWithPromise('validateStartupPage', url);
-    },
-  };
+    }
+  }
+
+  cr.addSingletonGetter(AppearanceBrowserProxyImpl);
 
   return {
     AppearanceBrowserProxy: AppearanceBrowserProxy,

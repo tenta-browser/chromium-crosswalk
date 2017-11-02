@@ -5,15 +5,13 @@
 #include "core/css/properties/CSSPropertyAPIAlignOrJustifyContent.h"
 
 #include "core/css/properties/CSSPropertyAlignmentUtils.h"
-#include "platform/RuntimeEnabledFeatures.h"
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIAlignOrJustifyContent::parseSingleValue(
+const CSSValue* CSSPropertyAPIAlignOrJustifyContent::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
-  DCHECK(RuntimeEnabledFeatures::cssGridLayoutEnabled());
+    const CSSParserLocalContext&) const {
   return CSSPropertyAlignmentUtils::ConsumeContentDistributionOverflowPosition(
       range);
 }

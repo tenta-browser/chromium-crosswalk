@@ -30,12 +30,10 @@
 
 #include "bindings/core/v8/V8PopStateEvent.h"
 
-#include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/core/v8/SerializedScriptValueFactory.h"
 #include "bindings/core/v8/V8History.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "core/events/PopStateEvent.h"
 #include "core/frame/History.h"
+#include "platform/bindings/V8PrivateProperty.h"
 
 namespace blink {
 
@@ -68,7 +66,7 @@ void V8PopStateEvent::stateAttributeGetterCustom(
     return;
   }
 
-  PopStateEvent* event = V8PopStateEvent::toImpl(info.Holder());
+  PopStateEvent* event = V8PopStateEvent::ToImpl(info.Holder());
   History* history = event->GetHistory();
   if (!history || !event->SerializedState()) {
     // If the event doesn't have serializedState(), it means that the
@@ -77,7 +75,7 @@ void V8PopStateEvent::stateAttributeGetterCustom(
     if (event->SerializedState())
       result = event->SerializedState()->Deserialize(isolate);
     else
-      result = event->state().V8ValueFor(script_state);
+      result = event->state(script_state).V8Value();
     if (result.IsEmpty())
       result = v8::Null(isolate);
     V8SetReturnValue(info, CacheState(script_state, info.Holder(), result));

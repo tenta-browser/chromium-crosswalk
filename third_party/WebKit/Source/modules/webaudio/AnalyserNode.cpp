@@ -34,13 +34,14 @@
 namespace blink {
 
 AnalyserHandler::AnalyserHandler(AudioNode& node, float sample_rate)
-    : AudioBasicInspectorHandler(kNodeTypeAnalyser, node, sample_rate, 2) {
+    : AudioBasicInspectorHandler(kNodeTypeAnalyser, node, sample_rate, 1) {
+  channel_count_ = 1;
   Initialize();
 }
 
-PassRefPtr<AnalyserHandler> AnalyserHandler::Create(AudioNode& node,
-                                                    float sample_rate) {
-  return AdoptRef(new AnalyserHandler(node, sample_rate));
+RefPtr<AnalyserHandler> AnalyserHandler::Create(AudioNode& node,
+                                                float sample_rate) {
+  return WTF::AdoptRef(new AnalyserHandler(node, sample_rate));
 }
 
 AnalyserHandler::~AnalyserHandler() {

@@ -11,6 +11,8 @@ Tag = collections.namedtuple('Tag', ['name', 'description'])
 # Below are tags that describe various aspect of system health stories.
 # A story can have multiple tags. All the tags should be noun.
 
+ACCESSIBILITY = Tag(
+    'accessibility', 'Story tests performance when accessibility is enabled.')
 AUDIO_PLAYBACK = Tag(
     'audio_playback', 'Story has audio playing.')
 CANVAS_ANIMATION = Tag(
@@ -22,14 +24,20 @@ EXTENSION = Tag(
     'extension', 'Story has browser with extension installed.')
 IMAGES = Tag(
     'images', 'Story has sites with heavy uses of images.')
+INFINITE_SCROLL = Tag('infinite_scroll', 'Story has infinite scroll action.')
 INTERNATIONAL = Tag(
     'international', 'Story has navigations to websites with content in non '
     'English languages.')
+EMERGING_MARKET = Tag(
+    'emerging_market', 'Story has significant usage in emerging markets with '
+    'low-end mobile devices and slow network connections.')
 JAVASCRIPT_HEAVY = Tag(
     'javascript_heavy', 'Story has navigations to websites with heavy usages '
     'of JavaScript. The story uses 20Mb+ memory for javascript and local '
     'run with "v8" category enabled also shows the trace has js slices across '
     'the whole run.')
+KEYBOARD_INPUT = Tag(
+    'keyboard_input', 'Story does keyboard input.')
 SCROLL = Tag(
     'scroll', 'Story has scroll gestures & scroll animation.')
 PINCH_ZOOM = Tag(

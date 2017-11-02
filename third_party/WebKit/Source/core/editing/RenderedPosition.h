@@ -32,9 +32,10 @@
 #define RenderedPosition_h
 
 #include "core/CoreExport.h"
-#include "core/editing/VisiblePosition.h"
+#include "core/editing/Forward.h"
 #include "core/layout/line/InlineBox.h"
 #include "platform/wtf/Allocator.h"
+#include "platform/wtf/Optional.h"
 
 namespace blink {
 
@@ -44,7 +45,7 @@ class LayoutUnit;
 class LayoutObject;
 struct CompositedSelectionBound;
 
-class RenderedPosition {
+class CORE_EXPORT RenderedPosition {
   STACK_ALLOCATED();
 
  public:
@@ -70,8 +71,8 @@ class RenderedPosition {
   bool AtRightBoundaryOfBidiRun() const {
     return AtRightBoundaryOfBidiRun(kIgnoreBidiLevel, 0);
   }
-  // The following two functions return true only if the current position is at
-  // the end of the bidi run of the specified bidi embedding level.
+  // The following two functions return true only if the current position is
+  // at the end of the bidi run of the specified bidi embedding level.
   bool AtLeftBoundaryOfBidiRun(unsigned char bidi_level_of_run) const {
     return AtLeftBoundaryOfBidiRun(kMatchBidiLevel, bidi_level_of_run);
   }
@@ -86,6 +87,10 @@ class RenderedPosition {
 
   void PositionInGraphicsLayerBacking(CompositedSelectionBound&,
                                       bool selection_start) const;
+
+  // Returns whether this position is not visible on the screen (because
+  // clipped out).
+  bool IsVisible(bool selection_start);
 
  private:
   bool operator==(const RenderedPosition&) const { return false; }
@@ -104,38 +109,36 @@ class RenderedPosition {
   bool AtRightBoundaryOfBidiRun(ShouldMatchBidiLevel,
                                 unsigned char bidi_level_of_run) const;
 
+  void GetLocalSelectionEndpoints(bool selection_start,
+                                  LayoutPoint& edge_top_in_layer,
+                                  LayoutPoint& edge_bottom_in_layer,
+                                  bool& is_text_direction_rtl) const;
+
   FloatPoint LocalToInvalidationBackingPoint(
       const LayoutPoint& local_point,
       GraphicsLayer** graphics_layer_backing) const;
+
+  static LayoutPoint GetSamplePointForVisibility(
+      const LayoutPoint& edge_top_in_layer,
+      const LayoutPoint& edge_bottom_in_layer);
 
   LayoutObject* layout_object_;
   InlineBox* inline_box_;
   int offset_;
 
-  static InlineBox* UncachedInlineBox() {
-    return reinterpret_cast<InlineBox*>(1);
-  }
-  // Needs to be different form 0 so pick 1 because it's also on the null page.
+  mutable Optional<InlineBox*> prev_leaf_child_;
+  mutable Optional<InlineBox*> next_leaf_child_;
 
-  mutable InlineBox* prev_leaf_child_;
-  mutable InlineBox* next_leaf_child_;
+  FRIEND_TEST_ALL_PREFIXES(RenderedPositionTest, GetSamplePointForVisibility);
 };
 
 inline RenderedPosition::RenderedPosition()
-    : layout_object_(nullptr),
-      inline_box_(nullptr),
-      offset_(0),
-      prev_leaf_child_(UncachedInlineBox()),
-      next_leaf_child_(UncachedInlineBox()) {}
+    : layout_object_(nullptr), inline_box_(nullptr), offset_(0) {}
 
 inline RenderedPosition::RenderedPosition(LayoutObject* layout_object,
                                           InlineBox* box,
                                           int offset)
-    : layout_object_(layout_object),
-      inline_box_(box),
-      offset_(offset),
-      prev_leaf_child_(UncachedInlineBox()),
-      next_leaf_child_(UncachedInlineBox()) {}
+    : layout_object_(layout_object), inline_box_(box), offset_(offset) {}
 
 CORE_EXPORT bool LayoutObjectContainsPosition(LayoutObject*, const Position&);
 

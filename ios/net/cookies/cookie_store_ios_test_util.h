@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/task_scheduler/post_task.h"
+#include "ios/net/cookies/cookie_store_ios_client.h"
 #include "net/cookies/cookie_monster.h"
 #include "net/cookies/cookie_store.h"
 #include "url/gurl.h"
@@ -38,7 +40,8 @@ class TestPersistentCookieStore
   void UpdateCookieAccessTime(const net::CanonicalCookie& cc) override;
   void DeleteCookie(const net::CanonicalCookie& cc) override;
   void SetForceKeepSessionState() override;
-  void Flush(const base::Closure& callback) override;
+  void SetBeforeFlushCallback(base::RepeatingClosure callback) override;
+  void Flush(base::OnceClosure callback) override;
 
   ~TestPersistentCookieStore() override;
 
@@ -63,6 +66,26 @@ class GetCookieCallback {
  private:
   bool did_run_;
   std::string cookie_line_;
+};
+
+class TestCookieStoreIOSClient : public CookieStoreIOSClient {
+ public:
+  TestCookieStoreIOSClient();
+  // CookieStoreIOSClient implementation.
+  scoped_refptr<base::SequencedTaskRunner> GetTaskRunner() const override;
+};
+
+class ScopedTestingCookieStoreIOSClient {
+ public:
+  explicit ScopedTestingCookieStoreIOSClient(
+      std::unique_ptr<CookieStoreIOSClient> cookie_store_client);
+  ~ScopedTestingCookieStoreIOSClient();
+
+  CookieStoreIOSClient* Get();
+
+ private:
+  std::unique_ptr<CookieStoreIOSClient> cookie_store_client_;
+  CookieStoreIOSClient* original_client_;
 };
 
 void RecordCookieChanges(std::vector<net::CanonicalCookie>* out_cookies,

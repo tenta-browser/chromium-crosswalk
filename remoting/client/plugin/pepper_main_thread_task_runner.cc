@@ -31,7 +31,7 @@ PepperMainThreadTaskRunner::PepperMainThreadTaskRunner()
 }
 
 bool PepperMainThreadTaskRunner::PostDelayedTask(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     base::OnceClosure task,
     base::TimeDelta delay) {
   auto task_ptr = base::MakeUnique<base::OnceClosure>(base::Bind(
@@ -43,13 +43,13 @@ bool PepperMainThreadTaskRunner::PostDelayedTask(
 }
 
 bool PepperMainThreadTaskRunner::PostNonNestableDelayedTask(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     base::OnceClosure task,
     base::TimeDelta delay) {
   return PostDelayedTask(from_here, std::move(task), delay);
 }
 
-bool PepperMainThreadTaskRunner::RunsTasksOnCurrentThread() const {
+bool PepperMainThreadTaskRunner::RunsTasksInCurrentSequence() const {
   return core_->IsMainThread();
 }
 

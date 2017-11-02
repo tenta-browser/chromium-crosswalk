@@ -11,16 +11,17 @@
 #include <string>
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "gpu/command_buffer/service/buffer_manager.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder_passthrough.h"
 #include "gpu/command_buffer/service/gpu_preferences.h"
-#include "gpu/command_buffer/service/mailbox_manager_impl.h"
 #include "gpu/command_buffer/service/path_manager.h"
 #include "gpu/command_buffer/service/program_manager.h"
 #include "gpu/command_buffer/service/progress_reporter.h"
 #include "gpu/command_buffer/service/renderbuffer_manager.h"
 #include "gpu/command_buffer/service/sampler_manager.h"
+#include "gpu/command_buffer/service/service_discardable_manager.h"
 #include "gpu/command_buffer/service/shader_manager.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/command_buffer/service/transfer_buffer_manager.h"
@@ -45,31 +46,33 @@ DisallowedFeatures AdjustDisallowedFeatures(
   DisallowedFeatures adjusted_disallowed_features = disallowed_features;
   if (context_type == CONTEXT_TYPE_WEBGL1) {
     adjusted_disallowed_features.npot_support = true;
-    adjusted_disallowed_features.oes_texture_half_float_linear = true;
   }
   if (context_type == CONTEXT_TYPE_WEBGL1 ||
       context_type == CONTEXT_TYPE_WEBGL2) {
     adjusted_disallowed_features.chromium_color_buffer_float_rgba = true;
     adjusted_disallowed_features.chromium_color_buffer_float_rgb = true;
     adjusted_disallowed_features.ext_color_buffer_float = true;
-    adjusted_disallowed_features.ext_color_buffer_half_float = true;
     adjusted_disallowed_features.oes_texture_float_linear = true;
+    adjusted_disallowed_features.ext_color_buffer_half_float = true;
+    adjusted_disallowed_features.oes_texture_half_float_linear = true;
   }
   return adjusted_disallowed_features;
 }
 
 ContextGroup::ContextGroup(
     const GpuPreferences& gpu_preferences,
-    const scoped_refptr<MailboxManager>& mailbox_manager,
+    bool supports_passthrough_command_decoders,
+    MailboxManager* mailbox_manager,
     const scoped_refptr<MemoryTracker>& memory_tracker,
-    const scoped_refptr<ShaderTranslatorCache>& shader_translator_cache,
-    const scoped_refptr<FramebufferCompletenessCache>&
-        framebuffer_completeness_cache,
+    ShaderTranslatorCache* shader_translator_cache,
+    FramebufferCompletenessCache* framebuffer_completeness_cache,
     const scoped_refptr<FeatureInfo>& feature_info,
     bool bind_generates_resource,
+    ImageManager* image_manager,
     gpu::ImageFactory* image_factory,
     ProgressReporter* progress_reporter,
-    const GpuFeatureInfo& gpu_feature_info)
+    const GpuFeatureInfo& gpu_feature_info,
+    ServiceDiscardableManager* discardable_manager)
     : gpu_preferences_(gpu_preferences),
       mailbox_manager_(mailbox_manager),
       memory_tracker_(memory_tracker),
@@ -81,7 +84,7 @@ ContextGroup::ContextGroup(
       // TODO(tobiasjs): determine whether GPU switching is possible
       // programmatically, rather than just hardcoding this behaviour
       // for OS X.
-      framebuffer_completeness_cache_(NULL),
+      framebuffer_completeness_cache_(nullptr),
 #else
       framebuffer_completeness_cache_(framebuffer_completeness_cache),
 #endif
@@ -104,29 +107,45 @@ ContextGroup::ContextGroup(
       max_transform_feedback_separate_attribs_(0u),
       max_uniform_buffer_bindings_(0u),
       uniform_buffer_offset_alignment_(1u),
-      program_cache_(NULL),
+      program_cache_(nullptr),
       feature_info_(feature_info),
+      image_manager_(image_manager),
       image_factory_(image_factory),
+      use_passthrough_cmd_decoder_(false),
       passthrough_resources_(new PassthroughResources),
       progress_reporter_(progress_reporter),
-      gpu_feature_info_(gpu_feature_info) {
-  {
-    DCHECK(feature_info_);
-    if (!mailbox_manager_.get())
-      mailbox_manager_ = new MailboxManagerImpl;
-    transfer_buffer_manager_ = new TransferBufferManager(memory_tracker_.get());
-  }
+      gpu_feature_info_(gpu_feature_info),
+      discardable_manager_(discardable_manager) {
+  DCHECK(discardable_manager);
+  DCHECK(feature_info_);
+  DCHECK(mailbox_manager_);
+  transfer_buffer_manager_ =
+      base::MakeUnique<TransferBufferManager>(memory_tracker_.get());
+  use_passthrough_cmd_decoder_ = supports_passthrough_command_decoders &&
+                                 gpu_preferences_.use_passthrough_cmd_decoder;
 }
 
 bool ContextGroup::Initialize(GLES2Decoder* decoder,
                               ContextType context_type,
                               const DisallowedFeatures& disallowed_features) {
-  bool enable_es3 = context_type == CONTEXT_TYPE_OPENGLES3 ||
-                    context_type == CONTEXT_TYPE_WEBGL2;
-  if (!gpu_preferences_.enable_es3_apis && enable_es3) {
-    DLOG(ERROR) << "ContextGroup::Initialize failed because ES3 APIs are "
-                << "not available.";
-    return false;
+  switch (context_type) {
+    case CONTEXT_TYPE_WEBGL1:
+      if (kGpuFeatureStatusBlacklisted ==
+          gpu_feature_info_.status_values[GPU_FEATURE_TYPE_ACCELERATED_WEBGL]) {
+        DLOG(ERROR) << "ContextGroup::Initialize failed: WebGL1 baclklisted";
+        return false;
+      }
+      break;
+    case CONTEXT_TYPE_WEBGL2:
+      if (kGpuFeatureStatusBlacklisted ==
+          gpu_feature_info_
+              .status_values[GPU_FEATURE_TYPE_ACCELERATED_WEBGL2]) {
+        DLOG(ERROR) << "ContextGroup::Initialize failed: WebGL2 blacklisted";
+        return false;
+      }
+      break;
+    default:
+      break;
   }
   if (HaveContexts()) {
     if (context_type != feature_info_->context_type()) {
@@ -135,7 +154,7 @@ bool ContextGroup::Initialize(GLES2Decoder* decoder,
       return false;
     }
     // If we've already initialized the group just add the context.
-    decoders_.push_back(base::AsWeakPtr<GLES2Decoder>(decoder));
+    decoders_.push_back(decoder->AsWeakPtr());
     return true;
   }
 
@@ -147,8 +166,6 @@ bool ContextGroup::Initialize(GLES2Decoder* decoder,
                 << "initialization failed.";
     return false;
   }
-
-  transfer_buffer_manager_->Initialize();
 
   const GLint kMinRenderbufferSize = 512;  // GL says 1 pixel!
   GLint max_renderbuffer_size = 0;
@@ -171,7 +188,9 @@ bool ContextGroup::Initialize(GLES2Decoder* decoder,
     }
   }
 
-  if (enable_es3 || feature_info_->feature_flags().ext_draw_buffers) {
+  if (context_type == CONTEXT_TYPE_OPENGLES3 ||
+      context_type == CONTEXT_TYPE_WEBGL2 ||
+      feature_info_->feature_flags().ext_draw_buffers) {
     GetIntegerv(GL_MAX_COLOR_ATTACHMENTS_EXT, &max_color_attachments_);
     if (max_color_attachments_ < 1)
       max_color_attachments_ = 1;
@@ -219,9 +238,6 @@ bool ContextGroup::Initialize(GLES2Decoder* decoder,
 
   buffer_manager_.reset(
       new BufferManager(memory_tracker_.get(), feature_info_.get()));
-  framebuffer_manager_.reset(
-      new FramebufferManager(max_draw_buffers_, max_color_attachments_,
-                             framebuffer_completeness_cache_));
   renderbuffer_manager_.reset(new RenderbufferManager(
       memory_tracker_.get(), max_renderbuffer_size, max_samples,
       feature_info_.get()));
@@ -316,8 +332,7 @@ bool ContextGroup::Initialize(GLES2Decoder* decoder,
       memory_tracker_.get(), feature_info_.get(), max_texture_size,
       max_cube_map_texture_size, max_rectangle_texture_size,
       max_3d_texture_size, max_array_texture_layers, bind_generates_resource_,
-      progress_reporter_));
-  texture_manager_->set_framebuffer_manager(framebuffer_manager_.get());
+      progress_reporter_, discardable_manager_));
 
   const GLint kMinTextureImageUnits = 8;
   const GLint kMinVertexTextureImageUnits = 0;
@@ -456,7 +471,7 @@ bool ContextGroup::Initialize(GLES2Decoder* decoder,
     return false;
   }
 
-  decoders_.push_back(base::AsWeakPtr<GLES2Decoder>(decoder));
+  decoders_.push_back(decoder->AsWeakPtr());
   return true;
 }
 
@@ -507,14 +522,6 @@ void ContextGroup::Destroy(GLES2Decoder* decoder, bool have_context) {
     }
     buffer_manager_->Destroy();
     buffer_manager_.reset();
-    ReportProgress();
-  }
-
-  if (framebuffer_manager_ != NULL) {
-    framebuffer_manager_->Destroy(have_context);
-    if (texture_manager_)
-      texture_manager_->set_framebuffer_manager(NULL);
-    framebuffer_manager_.reset();
     ReportProgress();
   }
 

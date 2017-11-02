@@ -15,8 +15,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_checker.h"
 #include "device/geolocation/geolocation_export.h"
 #include "device/geolocation/geoposition.h"
 #include "device/geolocation/location_provider.h"
@@ -24,10 +24,8 @@
 #include "device/geolocation/wifi_data_provider_manager.h"
 
 namespace device {
-class AccessTokenStore;
 
-class NetworkLocationProvider : public base::NonThreadSafe,
-                                public LocationProvider {
+class NetworkLocationProvider : public LocationProvider {
  public:
   // Cache of recently resolved locations. Public for tests.
   class DEVICE_GEOLOCATION_EXPORT PositionCache {
@@ -63,41 +61,34 @@ class NetworkLocationProvider : public base::NonThreadSafe,
     CacheAgeList cache_age_list_;  // Oldest first.
   };
 
-  NetworkLocationProvider(
-      const scoped_refptr<AccessTokenStore>& access_token_store,
-      const scoped_refptr<net::URLRequestContextGetter>& context,
-      const GURL& url,
-      const base::string16& access_token);
+  DEVICE_GEOLOCATION_EXPORT NetworkLocationProvider(
+      scoped_refptr<net::URLRequestContextGetter> context,
+      const std::string& api_key);
   ~NetworkLocationProvider() override;
 
   // LocationProvider implementation
-  void SetUpdateCallback(
-      const LocationProviderUpdateCallback& callback) override;
+  void SetUpdateCallback(const LocationProviderUpdateCallback& cb) override;
   bool StartProvider(bool high_accuracy) override;
   void StopProvider() override;
   const Geoposition& GetPosition() override;
   void OnPermissionGranted() override;
 
  private:
-  // Satisfies a position request from cache or network.
+  // Tries to update |position_| request from cache or network.
   void RequestPosition();
 
-  // Gets called when new wifi data is available.
+  // Gets called when new wifi data is available, either via explicit request to
+  // or callback from |wifi_data_provider_manager_|.
   void OnWifiDataUpdate();
-
-  // Internal helper used by OnWifiDataUpdate.
-  void OnWifiDataUpdated();
 
   bool IsStarted() const;
 
   void OnLocationResponse(const Geoposition& position,
                           bool server_error,
-                          const base::string16& access_token,
                           const WifiData& wifi_data);
 
-  const scoped_refptr<AccessTokenStore> access_token_store_;
-
-  // The wifi data provider, acquired via global factories.
+  // The wifi data provider, acquired via global factories. Valid between
+  // StartProvider() and StopProvider(), and checked via IsStarted().
   WifiDataProviderManager* wifi_data_provider_manager_;
 
   WifiDataProviderManager::WifiDataUpdateCallback wifi_data_update_callback_;
@@ -108,10 +99,6 @@ class NetworkLocationProvider : public base::NonThreadSafe,
 
   // The timestamp for the latest wifi data update.
   base::Time wifi_timestamp_;
-
-  // Cached value loaded from the token store or set by a previous server
-  // response, and sent in each subsequent network request.
-  base::string16 access_token_;
 
   // The current best position estimate.
   Geoposition position_;
@@ -124,24 +111,18 @@ class NetworkLocationProvider : public base::NonThreadSafe,
 
   bool is_new_data_available_;
 
-  // The network location request object, and the url it uses.
-  std::unique_ptr<NetworkLocationRequest> request_;
+  // The network location request object.
+  const std::unique_ptr<NetworkLocationRequest> request_;
 
   // The cache of positions.
   const std::unique_ptr<PositionCache> position_cache_;
+
+  base::ThreadChecker thread_checker_;
 
   base::WeakPtrFactory<NetworkLocationProvider> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkLocationProvider);
 };
-
-// Factory functions for the various types of location provider to abstract
-// over the platform-dependent implementations.
-DEVICE_GEOLOCATION_EXPORT LocationProvider* NewNetworkLocationProvider(
-    const scoped_refptr<AccessTokenStore>& access_token_store,
-    const scoped_refptr<net::URLRequestContextGetter>& context,
-    const GURL& url,
-    const base::string16& access_token);
 
 }  // namespace device
 

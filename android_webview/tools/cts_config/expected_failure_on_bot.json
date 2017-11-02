@@ -9,8 +9,12 @@
       "_bug_id": "crbug.com/698369"
     },
     {
-      "name": "testClearFormData",
-      "_bug_id": "crbug.com/711338"
+      "name": "testJavascriptInterfaceCustomPropertiesClearedOnReload",
+      "_bug_id": "crbug.com/767847"
+    },
+    {
+      "name": "testPauseResumeTimers",
+      "_bug_id": "crbug.com/773848"
     }
   ],
   "android.webkit.cts.WebSettingsTest": [
@@ -23,6 +27,12 @@
     {
       "name": "testShouldOverrideUrlLoadingOnCreateWindow",
       "_bug_id": "crbug.com/659077"
+    }
+  ],
+  "android.webkit.cts.WebChromeClientTest": [
+    {
+      "name": "testOnJsBeforeUnloadIsCalled",
+      "_bug_id": "crbug.com/719974"
     }
   ],
   "android.webkit.cts.ServiceWorkerClientTest": [

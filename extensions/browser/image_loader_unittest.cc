@@ -9,7 +9,6 @@
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
@@ -36,20 +35,23 @@ namespace extensions {
 
 class ImageLoaderTest : public ExtensionsTest {
  public:
-  ImageLoaderTest() : image_loaded_count_(0), quit_in_image_loaded_(false) {}
+  ImageLoaderTest()
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()),
+        image_loaded_count_(0),
+        quit_in_image_loaded_(false) {}
 
   void OnImageLoaded(const gfx::Image& image) {
     image_loaded_count_++;
     if (quit_in_image_loaded_)
-      base::MessageLoop::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
     image_ = image;
   }
 
-  void OnImageFamilyLoaded(const gfx::ImageFamily& image_family) {
+  void OnImageFamilyLoaded(gfx::ImageFamily image_family) {
     image_loaded_count_++;
     if (quit_in_image_loaded_)
-      base::MessageLoop::current()->QuitWhenIdle();
-    image_family_ = image_family;
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
+    image_family_ = std::move(image_family);
   }
 
   void WaitForImageLoad() {
@@ -96,7 +98,6 @@ class ImageLoaderTest : public ExtensionsTest {
   gfx::ImageFamily image_family_;
 
  private:
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
   int image_loaded_count_;
   bool quit_in_image_loaded_;
 };
@@ -160,8 +161,8 @@ TEST_F(ImageLoaderTest, DeleteExtensionWhileWaitingForCache) {
   EXPECT_EQ(0, image_loaded_count());
 
   // Send out notification the extension was uninstalled.
-  ExtensionRegistry::Get(browser_context())->TriggerOnUnloaded(
-      extension.get(), UnloadedExtensionInfo::REASON_UNINSTALL);
+  ExtensionRegistry::Get(browser_context())
+      ->TriggerOnUnloaded(extension.get(), UnloadedExtensionReason::UNINSTALL);
 
   // Chuck the extension, that way if anyone tries to access it we should crash
   // or get valgrind errors.

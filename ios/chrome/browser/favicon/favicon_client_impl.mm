@@ -32,8 +32,6 @@ int GetFaviconResourceIdForNativeURL(const GURL& url) {
     return IDR_CRASH_SAD_FAVICON;
   if (url.host_piece() == kChromeUIFlagsHost)
     return IDR_FLAGS_FAVICON;
-  if (url.host_piece() == kChromeUIAppleFlagsHost)
-    return IDR_FLAGS_FAVICON;
   return -1;
 }
 
@@ -66,7 +64,7 @@ void GetFaviconBitmapForNativeURL(
     favicon_bitmap.icon_type = favicon_base::FAVICON;
     favicon_bitmap.pixel_size = candidate_sizes[selected_index];
     favicon_bitmap.bitmap_data =
-        ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
+        ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytesForScale(
             resource_id, scale_factor);
 
     if (!favicon_bitmap.is_valid())

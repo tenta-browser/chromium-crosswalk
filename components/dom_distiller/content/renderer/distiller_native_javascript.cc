@@ -14,10 +14,7 @@
 #include "gin/function_template.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "v8/include/v8.h"
-
-using blink::WebLocalFrame;
 
 namespace dom_distiller {
 
@@ -44,12 +41,6 @@ void DistillerNativeJavaScript::AddJavaScriptObjectToFrame(
   // Many functions can simply call the Mojo interface directly and have no
   // wrapper function for binding. Note that calling distiller_js_service.get()
   // does not transfer ownership of the interface.
-  BindFunctionToObject(
-      distiller_obj, "closePanel",
-      base::Bind(
-          &mojom::DistillerJavaScriptService::HandleDistillerClosePanelCall,
-          base::Unretained(distiller_js_service_.get())));
-
   BindFunctionToObject(
       distiller_obj, "openSettings",
       base::Bind(

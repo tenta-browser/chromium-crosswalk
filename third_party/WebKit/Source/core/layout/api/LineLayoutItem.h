@@ -5,6 +5,7 @@
 #ifndef LineLayoutItem_h
 #define LineLayoutItem_h
 
+#include "core/editing/PositionWithAffinity.h"
 #include "core/layout/LayoutObject.h"
 #include "core/layout/LayoutObjectInlines.h"
 #include "core/layout/LayoutText.h"
@@ -24,8 +25,6 @@ class LayoutObject;
 class LineLayoutBox;
 class LineLayoutBoxModel;
 class LineLayoutAPIShim;
-
-enum HitTestFilter;
 
 static LayoutObject* const kHashTableDeletedValue =
     reinterpret_cast<LayoutObject*>(-1);
@@ -246,11 +245,6 @@ class LineLayoutItem {
     return layout_object_->GetSelectionState();
   }
 
-  // TODO(dgrogan/eae): Can we move this to style?
-  Color SelectionBackgroundColor() const {
-    return layout_object_->SelectionBackgroundColor();
-  }
-
   // TODO(dgrogan/eae): Needed for Color::current. Can we move this somewhere?
   Color ResolveColor(const ComputedStyle& style_to_use, int color_property) {
     return layout_object_->ResolveColor(style_to_use, color_property);
@@ -259,6 +253,8 @@ class LineLayoutItem {
   bool IsInFlowPositioned() const {
     return layout_object_->IsInFlowPositioned();
   }
+
+  bool IsRelPositioned() const { return layout_object_->IsRelPositioned(); }
 
   // TODO(dgrogan/eae): Can we change this to GlobalToLocal and vice versa
   // instead of having 4 methods? See localToAbsoluteQuad below.
@@ -306,6 +302,12 @@ class LineLayoutItem {
   void SlowSetPaintingLayerNeedsRepaint() {
     ObjectPaintInvalidator(*layout_object_).SlowSetPaintingLayerNeedsRepaint();
   }
+
+  void SetIsTruncated(bool set_truncation) {
+    layout_object_->SetIsTruncated(set_truncation);
+  }
+
+  bool IsTruncated() { return layout_object_->IsTruncated(); }
 
   struct LineLayoutItemHash {
     STATIC_ONLY(LineLayoutItemHash);

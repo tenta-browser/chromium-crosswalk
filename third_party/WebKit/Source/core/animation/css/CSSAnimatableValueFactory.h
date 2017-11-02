@@ -34,23 +34,17 @@
 #include "core/CSSPropertyNames.h"
 #include "core/animation/animatable/AnimatableValue.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
 class ComputedStyle;
-class PropertyHandle;
 
 class CSSAnimatableValueFactory {
   STATIC_ONLY(CSSAnimatableValueFactory);
 
  public:
-  static PassRefPtr<AnimatableValue> Create(const PropertyHandle&,
-                                            const ComputedStyle&);
-
- private:
-  static PassRefPtr<AnimatableValue> CreateFromColor(CSSPropertyID,
-                                                     const ComputedStyle&);
+  static RefPtr<AnimatableValue> Create(CSSPropertyID, const ComputedStyle&);
 };
 
 }  // namespace blink

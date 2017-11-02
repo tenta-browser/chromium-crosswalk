@@ -12,7 +12,7 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/feedback/system_logs/system_logs_fetcher_base.h"
+#include "components/feedback/system_logs/system_logs_source.h"
 
 namespace system_logs {
 
@@ -49,10 +49,13 @@ class DebugDaemonLogSource : public SystemLogsSource {
       SystemLogsResponse* response);
 
   // Merge the responses from ReadUserLogFiles into the main response dict and
-  // call RequestComplete to indicate that the user log files read is complete.
-  void MergeResponse(SystemLogsResponse* response);
+  // invoke the callback_.Run method with the assumption that all other logs
+  // have already been collected.
+  void MergeUserLogFilesResponse(SystemLogsResponse* response);
 
-  // Sends the data to the callback_ when all the requests are completed
+  // When all the requests are completed, send one last request to collect the
+  // user logs and complete the collection by invoking the callback's Run
+  // method.
   void RequestCompleted();
 
   std::unique_ptr<SystemLogsResponse> response_;

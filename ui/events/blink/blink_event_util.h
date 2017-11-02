@@ -10,6 +10,7 @@
 #include "third_party/WebKit/public/platform/WebGestureEvent.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/WebTouchEvent.h"
+#include "ui/events/event_constants.h"
 #include "ui/events/gesture_detection/motion_event.h"
 
 namespace gfx {
@@ -72,12 +73,15 @@ std::unique_ptr<blink::WebInputEvent> TranslateAndScaleWebInputEvent(
 
 blink::WebInputEvent::Type ToWebMouseEventType(MotionEvent::Action action);
 
+EventType WebEventTypeToEventType(blink::WebInputEvent::Type type);
+
 void SetWebPointerPropertiesFromMotionEventData(
     blink::WebPointerProperties& webPointerProperties,
     int pointer_id,
     float pressure,
     float orientation_rad,
-    float tilt_rad,
+    float tilt_x,
+    float tilt_y,
     int android_buttons_changed,
     int tool_type);
 
@@ -89,6 +93,9 @@ blink::WebInputEvent::Modifiers DomCodeToWebInputEventModifiers(
 bool IsGestureScrollOrFlingOrPinch(blink::WebInputEvent::Type);
 
 bool IsContinuousGestureEvent(blink::WebInputEvent::Type);
+
+EventPointerType WebPointerTypeToEventPointerType(
+    blink::WebPointerProperties::PointerType type);
 
 inline const blink::WebGestureEvent& ToWebGestureEvent(
     const blink::WebInputEvent& event) {

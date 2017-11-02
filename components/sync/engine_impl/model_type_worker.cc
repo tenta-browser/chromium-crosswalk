@@ -13,10 +13,10 @@
 #include "base/format_macros.h"
 #include "base/guid.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/trace_event/memory_usage_estimator.h"
+#include "components/sync/base/cancelation_signal.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/model_type_processor.h"
 #include "components/sync/engine_impl/commit_contribution.h"
@@ -34,13 +34,15 @@ ModelTypeWorker::ModelTypeWorker(
     std::unique_ptr<Cryptographer> cryptographer,
     NudgeHandler* nudge_handler,
     std::unique_ptr<ModelTypeProcessor> model_type_processor,
-    DataTypeDebugInfoEmitter* debug_info_emitter)
+    DataTypeDebugInfoEmitter* debug_info_emitter,
+    CancelationSignal* cancelation_signal)
     : type_(type),
       debug_info_emitter_(debug_info_emitter),
       model_type_state_(initial_state),
       model_type_processor_(std::move(model_type_processor)),
       cryptographer_(std::move(cryptographer)),
       nudge_handler_(nudge_handler),
+      cancelation_signal_(cancelation_signal),
       weak_ptr_factory_(this) {
   DCHECK(model_type_processor_);
 
@@ -53,7 +55,7 @@ ModelTypeWorker::ModelTypeWorker(
   // type state that has already done its initial sync, and is going to be
   // tracking metadata changes, however it does not have the most recent
   // encryption key name. The cryptographer was updated while the worker was not
-  // around, and we're not going to recieve the normal UpdateCryptographer() or
+  // around, and we're not going to receive the normal UpdateCryptographer() or
   // EncryptionAcceptedApplyUpdates() calls to drive this process.
   //
   // If |cryptographer_->is_ready()| is false, all the rest of this logic can be
@@ -262,9 +264,26 @@ void ModelTypeWorker::EnqueueForCommit(const CommitRequestDataList& list) {
     nudge_handler_->NudgeForCommit(type_);
 }
 
+void ModelTypeWorker::NudgeForCommit() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  nudge_handler_->NudgeForCommit(GetModelType());
+}
+
 // CommitContributor implementation.
 std::unique_ptr<CommitContribution> ModelTypeWorker::GetContribution(
     size_t max_entries) {
+  scoped_refptr<GetLocalChangesRequest> request =
+      base::MakeRefCounted<GetLocalChangesRequest>(cancelation_signal_);
+  model_type_processor_->GetLocalChanges(
+      max_entries, base::Bind(&GetLocalChangesRequest::SetResponse, request));
+  request->WaitForResponse();
+  CommitRequestDataList response;
+  if (!request->WasCancelled())
+    response = request->ExtractResponse();
+  // For now processor implementation doesn't return any local changes and this
+  // function is not ready to process them. Ensure that response is empty.
+  DCHECK(response.empty());
+
   DCHECK(thread_checker_.CalledOnValidThread());
 
   size_t space_remaining = max_entries;
@@ -288,9 +307,9 @@ std::unique_ptr<CommitContribution> ModelTypeWorker::GetContribution(
   if (commit_entities.size() == 0)
     return std::unique_ptr<CommitContribution>();
 
-  return base::MakeUnique<NonBlockingTypeCommitContribution>(
+  return std::make_unique<NonBlockingTypeCommitContribution>(
       model_type_state_.type_context(), commit_entities, this,
-      debug_info_emitter_);
+      debug_info_emitter_, CommitOnlyTypes().Has(GetModelType()));
 }
 
 void ModelTypeWorker::OnCommitResponse(CommitResponseDataList* response_list) {
@@ -312,7 +331,7 @@ void ModelTypeWorker::OnCommitResponse(CommitResponseDataList* response_list) {
 
     entity->ReceiveCommitResponse(&response);
 
-    if (is_deletion) {
+    if (is_deletion || CommitOnlyTypes().Has(GetModelType())) {
       entities_.erase(response.client_tag_hash);
     }
   }
@@ -346,8 +365,7 @@ base::WeakPtr<ModelTypeWorker> ModelTypeWorker::AsWeakPtr() {
 }
 
 bool ModelTypeWorker::IsTypeInitialized() const {
-  return model_type_state_.initial_sync_done() &&
-         !model_type_state_.progress_marker().token().empty();
+  return model_type_state_.initial_sync_done();
 }
 
 bool ModelTypeWorker::CanCommitItems() const {
@@ -397,6 +415,21 @@ void ModelTypeWorker::AdjustCommitProto(sync_pb::SyncEntity* sync_entity) {
   AddDefaultFieldValue(type_, sync_entity->mutable_specifics());
 
   // TODO(crbug.com/516866): Set parent_id_string for hierarchical types here.
+
+  if (CommitOnlyTypes().Has(GetModelType())) {
+    DCHECK(!cryptographer_);
+    // Remove absolutely everything we can get away with. We do not want to
+    // remove |client_defined_unique_tag| yet because the commit contribution
+    // needs the id to track the responses. They will remove it instead.
+    sync_entity->clear_attachment_id();
+    sync_entity->clear_ctime();
+    sync_entity->clear_deleted();
+    sync_entity->clear_folder();
+    sync_entity->clear_id_string();
+    sync_entity->clear_mtime();
+    sync_entity->clear_name();
+    sync_entity->clear_version();
+  }
 }
 
 void ModelTypeWorker::OnCryptographerUpdated() {
@@ -482,7 +515,7 @@ WorkerEntityTracker* ModelTypeWorker::CreateEntityTracker(
     const EntityData& data) {
   DCHECK(entities_.find(data.client_tag_hash) == entities_.end());
   std::unique_ptr<WorkerEntityTracker> entity =
-      base::MakeUnique<WorkerEntityTracker>(data.client_tag_hash);
+      std::make_unique<WorkerEntityTracker>(data.client_tag_hash);
   WorkerEntityTracker* entity_ptr = entity.get();
   entities_[data.client_tag_hash] = std::move(entity);
   return entity_ptr;
@@ -492,6 +525,40 @@ WorkerEntityTracker* ModelTypeWorker::GetOrCreateEntityTracker(
     const EntityData& data) {
   WorkerEntityTracker* entity = GetEntityTracker(data.client_tag_hash);
   return entity ? entity : CreateEntityTracker(data);
+}
+
+GetLocalChangesRequest::GetLocalChangesRequest(
+    CancelationSignal* cancelation_signal)
+    : cancelation_signal_(cancelation_signal),
+      response_accepted_(base::WaitableEvent::ResetPolicy::MANUAL,
+                         base::WaitableEvent::InitialState::NOT_SIGNALED) {}
+
+GetLocalChangesRequest::~GetLocalChangesRequest() {}
+
+void GetLocalChangesRequest::OnSignalReceived() {
+  response_accepted_.Signal();
+}
+
+void GetLocalChangesRequest::WaitForResponse() {
+  if (!cancelation_signal_->TryRegisterHandler(this)) {
+    return;
+  }
+  response_accepted_.Wait();
+  cancelation_signal_->UnregisterHandler(this);
+}
+
+void GetLocalChangesRequest::SetResponse(
+    CommitRequestDataList&& local_changes) {
+  response_ = local_changes;
+  response_accepted_.Signal();
+}
+
+bool GetLocalChangesRequest::WasCancelled() {
+  return cancelation_signal_->IsSignalled();
+}
+
+CommitRequestDataList&& GetLocalChangesRequest::ExtractResponse() {
+  return std::move(response_);
 }
 
 }  // namespace syncer

@@ -31,8 +31,8 @@ class AudioCapturerSource
     virtual void OnCaptureStarted() {}
 
     // Callback to deliver the captured data from the OS.
-    // TODO(chcunningham): Update delay argument to use frames instead of
-    // milliseconds to prevent loss of precision. See http://crbug.com/587291.
+    // TODO(chcunningham): Update delay argument to use base::TimeDelta instead
+    // of milliseconds to prevent precision loss. See http://crbug.com/587291.
     virtual void Capture(const AudioBus* audio_source,
                          int audio_delay_milliseconds,
                          double volume,
@@ -40,6 +40,10 @@ class AudioCapturerSource
 
     // Signals an error has occurred.
     virtual void OnCaptureError(const std::string& message) = 0;
+
+    // Signals the muted state has changed. May be called before
+    // OnCaptureStarted.
+    virtual void OnCaptureMuted(bool is_muted) = 0;
 
    protected:
     virtual ~CaptureCallback() {}

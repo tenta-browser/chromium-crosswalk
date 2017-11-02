@@ -8,7 +8,6 @@
 #include "core/CoreExport.h"
 #include "core/animation/Interpolation.h"
 #include "core/animation/Keyframe.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/animation/TimingFunction.h"
 
 namespace blink {
@@ -27,15 +26,15 @@ class CORE_EXPORT InterpolationEffect {
 
   void Clear() {
     is_populated_ = false;
-    interpolations_.Clear();
+    interpolations_.clear();
   }
 
   void GetActiveInterpolations(double fraction,
                                double iteration_duration,
                                Vector<RefPtr<Interpolation>>&) const;
 
-  void AddInterpolation(PassRefPtr<Interpolation> interpolation,
-                        PassRefPtr<TimingFunction> easing,
+  void AddInterpolation(RefPtr<Interpolation> interpolation,
+                        RefPtr<TimingFunction> easing,
                         double start,
                         double end,
                         double apply_from,
@@ -54,8 +53,8 @@ class CORE_EXPORT InterpolationEffect {
 
  private:
   struct InterpolationRecord {
-    InterpolationRecord(PassRefPtr<Interpolation> interpolation,
-                        PassRefPtr<TimingFunction> easing,
+    InterpolationRecord(RefPtr<Interpolation> interpolation,
+                        RefPtr<TimingFunction> easing,
                         double start,
                         double end,
                         double apply_from,

@@ -22,9 +22,6 @@ public interface SuggestionsSource {
         /** Called when a category has a new list of content suggestions. */
         void onNewSuggestions(@CategoryInt int category);
 
-        /** Called when a request for additional suggestions completed. */
-        void onMoreSuggestions(@CategoryInt int category, List<SnippetArticle> suggestions);
-
         /** Called when a category changed its status. */
         void onCategoryStatusChanged(@CategoryInt int category, @CategoryStatus int newStatus);
 
@@ -40,9 +37,20 @@ public interface SuggestionsSource {
     }
 
     /**
+     * Destroys the resources associated with the source and all observers will be unregistered.
+     * It should not be used after this is called.
+     */
+    void destroy();
+
+    /**
      * Fetches new snippets for all remote categories.
      */
     void fetchRemoteSuggestions();
+
+    /**
+     * @return Whether remote suggestions are enabled.
+     */
+    boolean areRemoteSuggestionsEnabled();
 
     /**
      * Gets the categories in the order in which they should be displayed.
@@ -92,8 +100,24 @@ public interface SuggestionsSource {
      * Fetches new suggestions.
      * @param category the category to fetch new suggestions for.
      * @param displayedSuggestionIds ids of suggestions already known and that we want to keep.
+     * @param successCallback The callback to run with the received suggestions.
+     * @param failureRunnable The runnable to be run if the fetch fails.
      */
-    void fetchSuggestions(@CategoryInt int category, String[] displayedSuggestionIds);
+    void fetchSuggestions(@CategoryInt int category, String[] displayedSuggestionIds,
+            Callback<List<SnippetArticle>> successCallback, Runnable failureRunnable);
+
+    /**
+     * Fetches suggestions related to the provided URL.
+     * @param url The context (site URL) for which we want to have suggestions.
+     * @param callback The callback to run with the received suggestions.
+     */
+    void fetchContextualSuggestions(String url, Callback<List<SnippetArticle>> callback);
+
+    /**
+     * Fetches the thumbnail image for a contextual suggestion. A {@code null} Bitmap is returned if
+     * no image is available.
+     */
+    void fetchContextualSuggestionImage(SnippetArticle suggestion, Callback<Bitmap> callback);
 
     /**
      * Tells the source to dismiss the content suggestion.
@@ -113,12 +137,26 @@ public interface SuggestionsSource {
     /**
      * Sets the recipient for update events from the source.
      */
-    void setObserver(Observer observer);
+    void addObserver(Observer observer);
 
     /**
-     * Notifies the scheduler to adjust the plan due to a newly opened NTP.
+     * Removes an observer. Is no-op if the observer was not already registered.
      */
-    // TODO(710268): This shouldn't have "NTP" in its name, as it's not specific to the NTP anymore.
-    // Maybe split this off into a new interface for the scheduler?
-    void onNtpInitialized();
+    void removeObserver(Observer observer);
+
+    /** No-op implementation of {@link SuggestionsSource.Observer}. */
+    class EmptyObserver implements Observer {
+        @Override
+        public void onNewSuggestions(@CategoryInt int category) {}
+
+        @Override
+        public void onCategoryStatusChanged(
+                @CategoryInt int category, @CategoryStatus int newStatus) {}
+
+        @Override
+        public void onSuggestionInvalidated(@CategoryInt int category, String idWithinCategory) {}
+
+        @Override
+        public void onFullRefreshRequired() {}
+    }
 }

@@ -6,7 +6,8 @@ import("//build/config/chrome_build.gni")
 import("//build/config/chromecast_build.gni")
 import("//build/config/compiler/compiler.gni")
 import("//build/config/features.gni")
-import("//device/vr/features.gni")
+import("//build/config/linux/gtk/gtk.gni")
+import("//device/vr/features/features.gni")
 import("//extensions/features/features.gni")
 import("//media/media_options.gni")
 import("//net/features.gni")
@@ -37,14 +38,18 @@ declare_args() {
   # It is enableable separately to facilitate testing.
   enable_hangout_services_extension = is_chrome_branded
 
-  # 'Ok Google' hotwording is disabled by default. Set to true to enable. (This
-  # will download a closed-source NaCl module at startup.) Chrome-branded
-  # ChromeOS builds have this enabled by default.
-  enable_hotwording = is_chrome_branded && is_chromeos
+  # 'Ok Google' hotwording is disabled to prepare for its removal.
+  # http://crbug.com/755579
+  enable_hotwording = false
 
   # Enables usage of the system-provided notification center.
   enable_native_notifications =
-      is_android || is_mac || (is_desktop_linux && use_glib && use_gio)
+      is_android || is_mac || is_win || (is_desktop_linux && use_dbus)
+
+  # Whether we should draw the minimize, maximize/restore, and close
+  # buttons using the system theme.  Only used on Linux with GTK3.
+  enable_native_window_nav_buttons =
+      use_aura && !use_ozone && is_desktop_linux && use_gtk3
 
   enable_one_click_signin =
       is_win || is_mac || (is_linux && !is_chromeos && !is_chromecast)
@@ -69,9 +74,8 @@ declare_args() {
 
   # Optimize parts of Chrome's UI written with web technologies (HTML/CSS/JS)
   # for runtime performance purposes. This does more work at compile time for
-  # speed benefits at runtime (so we skip in debug builds). TODO(dbeam): rename
-  # this flag "optimize_web_uis" because we run more than vulcanize these days.
-  use_vulcanize = !is_debug
+  # speed benefits at runtime (so we skip in debug builds).
+  optimize_webui = !is_debug
 }
 
 # Use brlapi from brltty for braille display support.
@@ -96,5 +100,5 @@ chrome_grit_defines = [
   "enable_vr=$enable_vr",
   "mac_views_browser=$mac_views_browser",
   "safe_browsing_mode=$safe_browsing_mode",
-  "use_vulcanize=$use_vulcanize",
+  "optimize_webui=$optimize_webui",
 ]

@@ -18,12 +18,11 @@
 #include "ash/mus/property_util.h"
 #include "ash/mus/window_manager.h"
 #include "ash/mus/window_properties.h"
-#include "ash/shared/immersive_fullscreen_controller_delegate.h"
+#include "ash/public/cpp/immersive/immersive_fullscreen_controller_delegate.h"
 #include "ash/wm/panels/panel_frame_view.h"
 #include "ash/wm/window_properties.h"
-#include "ash/wm_window.h"
+#include "ash/wm/window_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "services/ui/public/interfaces/window_manager.mojom.h"
 #include "ui/aura/client/aura_constants.h"
@@ -39,6 +38,7 @@
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/views/widget/native_widget_aura.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/core/coordinate_conversion.h"
 
 DECLARE_UI_CLASS_PROPERTY_TYPE(ash::mus::NonClientFrameController*);
 
@@ -119,8 +119,8 @@ class ImmersiveFullscreenControllerDelegateMus
     // DCHECK is to ensure when parent changes this code is updated.
     // http://crbug.com/640392.
     DCHECK_EQ(frame_window_->parent(), title_area_window->parent());
-    result.push_back(
-        WmWindow::Get(title_area_window)->ConvertRectToScreen(visible_bounds));
+    ::wm::ConvertRectToScreen(title_area_window, &visible_bounds);
+    result.push_back(visible_bounds);
     return result;
   }
 
@@ -137,7 +137,7 @@ class ImmersiveFullscreenControllerDelegateMus
         NonClientFrameController::GetPreferredClientAreaInsets().top());
     bounds.set_y(bounds.y() - bounds.height());
     title_area_renderer_ =
-        base::MakeUnique<DetachedTitleAreaRendererForInternal>(frame_);
+        std::make_unique<DetachedTitleAreaRendererForInternal>(frame_);
     title_area_renderer_->widget()->SetBounds(bounds);
     title_area_renderer_->widget()->ShowInactive();
   }
@@ -191,7 +191,7 @@ class WmNativeWidgetAura : public views::NativeWidgetAura {
 
   // views::NativeWidgetAura:
   views::NonClientFrameView* CreateNonClientFrameView() override {
-    move_event_handler_ = base::MakeUnique<MoveEventHandler>(
+    move_event_handler_ = std::make_unique<MoveEventHandler>(
         window_manager_client_, GetNativeView());
     // TODO(sky): investigate why we have this. Seems this should be the same
     // as not specifying client area insets.
@@ -202,7 +202,7 @@ class WmNativeWidgetAura : public views::NativeWidgetAura {
         ui::mojom::WindowType::PANEL)
       return new PanelFrameView(GetWidget(), PanelFrameView::FRAME_ASH);
     immersive_delegate_ =
-        base::MakeUnique<ImmersiveFullscreenControllerDelegateMus>(GetWidget(),
+        std::make_unique<ImmersiveFullscreenControllerDelegateMus>(GetWidget(),
                                                                    window);
     // See description for details on ownership.
     custom_frame_view_ =
@@ -212,7 +212,7 @@ class WmNativeWidgetAura : public views::NativeWidgetAura {
     // marked as transparent content (see below in NonClientFrameController()
     // ctor). So, it is necessary to provide a texture-layer for the header
     // view.
-    views::View* header_view = custom_frame_view_->header_view();
+    views::View* header_view = custom_frame_view_->GetHeaderView();
     header_view->SetPaintToLayer(ui::LAYER_TEXTURED);
     header_view->layer()->SetFillsBoundsOpaquely(false);
 
@@ -261,13 +261,6 @@ class ClientViewMus : public views::ClientView {
 
   DISALLOW_COPY_AND_ASSIGN(ClientViewMus);
 };
-
-// Returns the frame insets to use when ShouldUseExtendedHitRegion() returns
-// true.
-gfx::Insets GetExtendedHitRegion() {
-  return gfx::Insets(kResizeOutsideBoundsSize, kResizeOutsideBoundsSize,
-                     kResizeOutsideBoundsSize, kResizeOutsideBoundsSize);
-}
 
 }  // namespace
 
@@ -332,12 +325,6 @@ NonClientFrameController::NonClientFrameController(
   layer->SetColor(SK_ColorTRANSPARENT);
   layer->SetFillsBoundsOpaquely(true);
 
-  WmWindow* wm_window = WmWindow::Get(window_);
-  const gfx::Insets extended_hit_region =
-      wm_window->ShouldUseExtendedHitRegion() ? GetExtendedHitRegion()
-                                              : gfx::Insets();
-  window_manager_client_->SetExtendedHitArea(window_, extended_hit_region);
-
   aura::client::GetTransientWindowClient()->AddObserver(this);
 }
 
@@ -387,15 +374,18 @@ base::string16 NonClientFrameController::GetWindowTitle() const {
 }
 
 bool NonClientFrameController::CanResize() const {
-  return window_ && WmWindow::Get(window_)->CanResize();
+  return window_ && (window_->GetProperty(aura::client::kResizeBehaviorKey) &
+                     ui::mojom::kResizeBehaviorCanResize) != 0;
 }
 
 bool NonClientFrameController::CanMaximize() const {
-  return window_ && WmWindow::Get(window_)->CanMaximize();
+  return window_ && (window_->GetProperty(aura::client::kResizeBehaviorKey) &
+                     ui::mojom::kResizeBehaviorCanMaximize) != 0;
 }
 
 bool NonClientFrameController::CanMinimize() const {
-  return window_ && WmWindow::Get(window_)->CanMinimize();
+  return window_ && (window_->GetProperty(aura::client::kResizeBehaviorKey) &
+                     ui::mojom::kResizeBehaviorCanMinimize) != 0;
 }
 
 bool NonClientFrameController::ShouldShowWindowTitle() const {
@@ -460,14 +450,6 @@ void NonClientFrameController::OnTransientChildWindowRemoved(
   if (renderer)
     renderer->Detach();
 }
-
-void NonClientFrameController::OnWillRestackTransientChildAbove(
-    aura::Window* parent,
-    aura::Window* transient_child) {}
-
-void NonClientFrameController::OnDidRestackTransientChildAbove(
-    aura::Window* parent,
-    aura::Window* transient_child) {}
 
 }  // namespace mus
 }  // namespace ash

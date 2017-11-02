@@ -5,12 +5,12 @@
 #ifndef REMOTING_SIGNALING_LOG_TO_SERVER_H_
 #define REMOTING_SIGNALING_LOG_TO_SERVER_H_
 
-#include <deque>
 #include <map>
 #include <string>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "remoting/signaling/server_log_entry.h"
 #include "remoting/signaling/signal_strategy.h"
 
@@ -25,8 +25,7 @@ class IqSender;
 // LogToServer sends log entries to a server.
 // The contents of the log entries are described in server_log_entry.cc.
 // They do not contain any personally identifiable information.
-class LogToServer : public base::NonThreadSafe,
-                    public SignalStrategy::Listener {
+class LogToServer : public SignalStrategy::Listener {
  public:
   LogToServer(ServerLogEntry::Mode mode,
               SignalStrategy* signal_strategy,
@@ -49,7 +48,9 @@ class LogToServer : public base::NonThreadSafe,
   std::unique_ptr<IqSender> iq_sender_;
   std::string directory_bot_jid_;
 
-  std::deque<ServerLogEntry> pending_entries_;
+  base::circular_deque<ServerLogEntry> pending_entries_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(LogToServer);
 };

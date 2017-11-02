@@ -34,7 +34,6 @@ namespace blink {
 
 class CSSProperty;
 class CSSValue;
-class StylePropertyShorthand;
 
 // Inputs: PropertyID, isImportant bool, CSSParserTokenRange.
 // Outputs: Vector of CSSProperties
@@ -64,61 +63,9 @@ class CSSPropertyParser {
   // TODO(timloh): Rename once the CSSParserValue-based parseValue is removed
   bool ParseValueStart(CSSPropertyID unresolved_property, bool important);
   bool ConsumeCSSWideKeyword(CSSPropertyID unresolved_property, bool important);
-  const CSSValue* ParseSingleValue(CSSPropertyID,
-                                   CSSPropertyID = CSSPropertyInvalid);
-
-  bool InQuirksMode() const { return IsQuirksModeBehavior(context_->Mode()); }
 
   bool ParseViewportDescriptor(CSSPropertyID prop_id, bool important);
   bool ParseFontFaceDescriptor(CSSPropertyID);
-
-  void AddProperty(CSSPropertyID,
-                   CSSPropertyID,
-                   const CSSValue&,
-                   bool important,
-                   bool implicit = false);
-  void AddExpandedPropertyForValue(CSSPropertyID prop_id,
-                                   const CSSValue&,
-                                   bool);
-
-  bool ConsumeBorder(bool important);
-
-  bool ParseShorthand(CSSPropertyID, bool important);
-  bool ConsumeShorthandGreedily(const StylePropertyShorthand&, bool important);
-  bool Consume4Values(const StylePropertyShorthand&, bool important);
-
-  // Legacy parsing allows <string>s for animation-name
-  bool ConsumeAnimationShorthand(const StylePropertyShorthand&,
-                                 bool use_legacy_parsing,
-                                 bool important);
-  bool ConsumeBackgroundShorthand(const StylePropertyShorthand&,
-                                  bool important);
-  bool ConsumeOffsetShorthand(bool important);
-
-  bool ConsumeColumns(bool important);
-
-  bool ConsumeGridItemPositionShorthand(CSSPropertyID, bool important);
-  bool ConsumeGridTemplateRowsAndAreasAndColumns(CSSPropertyID, bool important);
-  bool ConsumeGridTemplateShorthand(CSSPropertyID, bool important);
-  bool ConsumeGridShorthand(bool important);
-  bool ConsumeGridAreaShorthand(bool important);
-
-  bool ConsumePlaceContentShorthand(bool important);
-  bool ConsumePlaceItemsShorthand(bool important);
-  bool ConsumePlaceSelfShorthand(bool important);
-
-  bool ConsumeFont(bool important);
-  bool ConsumeFontVariantShorthand(bool important);
-  bool ConsumeSystemFont(bool important);
-
-  bool ConsumeBorderSpacing(bool important);
-
-  // CSS3 Parsing Routines (for properties specific to CSS3)
-  bool ConsumeBorderImage(CSSPropertyID, bool important);
-
-  bool ConsumeFlex(bool important);
-
-  bool ConsumeLegacyBreakProperty(CSSPropertyID, bool important);
 
  private:
   // Inputs:

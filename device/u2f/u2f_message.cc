@@ -13,12 +13,12 @@ namespace device {
 // static
 std::unique_ptr<U2fMessage> U2fMessage::Create(
     uint32_t channel_id,
-    Type type,
+    U2fCommandType type,
     const std::vector<uint8_t>& data) {
   if (data.size() > kMaxMessageSize)
     return nullptr;
 
-  return base::MakeUnique<U2fMessage>(channel_id, type, data);
+  return std::make_unique<U2fMessage>(channel_id, type, data);
 }
 
 // static
@@ -33,7 +33,7 @@ std::unique_ptr<U2fMessage> U2fMessage::CreateFromSerializedData(
   if (init_packet == nullptr)
     return nullptr;
 
-  return base::MakeUnique<U2fMessage>(std::move(init_packet), remaining_size);
+  return std::make_unique<U2fMessage>(std::move(init_packet), remaining_size);
 }
 
 U2fMessage::U2fMessage(std::unique_ptr<U2fInitPacket> init_packet,
@@ -44,7 +44,7 @@ U2fMessage::U2fMessage(std::unique_ptr<U2fInitPacket> init_packet,
 }
 
 U2fMessage::U2fMessage(uint32_t channel_id,
-                       Type type,
+                       U2fCommandType type,
                        const std::vector<uint8_t>& data)
     : packets_(), remaining_size_(), channel_id_(channel_id) {
   size_t remaining_bytes = data.size();
@@ -61,7 +61,7 @@ U2fMessage::U2fMessage(uint32_t channel_id,
     remaining_bytes = 0;
   }
 
-  packets_.push_back(base::MakeUnique<U2fInitPacket>(
+  packets_.push_back(std::make_unique<U2fInitPacket>(
       channel_id, static_cast<uint8_t>(type), std::vector<uint8_t>(first, last),
       data.size()));
 
@@ -75,7 +75,7 @@ U2fMessage::U2fMessage(uint32_t channel_id,
       remaining_bytes = 0;
     }
 
-    packets_.push_back(base::MakeUnique<U2fContinuationPacket>(
+    packets_.push_back(std::make_unique<U2fContinuationPacket>(
         channel_id, sequence, std::vector<uint8_t>(first, last)));
     sequence++;
   }

@@ -28,16 +28,15 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/CSSPropertyNames.h"
 #include "core/CSSValueKeywords.h"
-#include "core/HTMLNames.h"
 #include "core/css/CSSIdentifierValue.h"
 #include "core/css/CSSImageValue.h"
 #include "core/css/CSSInheritedValue.h"
+#include "core/css/StyleChangeReason.h"
 #include "core/css/StylePropertySet.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/NodeListsNodeData.h"
-#include "core/dom/StyleChangeReason.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLTableCaptionElement.h"
 #include "core/html/HTMLTableCellElement.h"
@@ -45,6 +44,7 @@
 #include "core/html/HTMLTableRowsCollection.h"
 #include "core/html/HTMLTableSectionElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
 #include "platform/weborigin/Referrer.h"
 #include "platform/wtf/StdLibExtras.h"
 
@@ -76,7 +76,8 @@ HTMLTableCaptionElement* HTMLTableElement::caption() const {
 void HTMLTableElement::setCaption(HTMLTableCaptionElement* new_caption,
                                   ExceptionState& exception_state) {
   deleteCaption();
-  InsertBefore(new_caption, FirstChild(), exception_state);
+  if (new_caption)
+    InsertBefore(new_caption, firstChild(), exception_state);
 }
 
 HTMLTableSectionElement* HTMLTableElement::tHead() const {
@@ -87,6 +88,8 @@ HTMLTableSectionElement* HTMLTableElement::tHead() const {
 void HTMLTableElement::setTHead(HTMLTableSectionElement* new_head,
                                 ExceptionState& exception_state) {
   deleteTHead();
+  if (!new_head)
+    return;
 
   HTMLElement* child;
   for (child = Traversal<HTMLElement>::FirstChild(*this); child;
@@ -319,7 +322,7 @@ void HTMLTableElement::CollectStyleForPresentationAttribute(
     if (!url.IsEmpty()) {
       UseCounter::Count(
           GetDocument(),
-          UseCounter::kHTMLTableElementPresentationAttributeBackground);
+          WebFeature::kHTMLTableElementPresentationAttributeBackground);
       CSSImageValue* image_value =
           CSSImageValue::Create(url, GetDocument().CompleteURL(url),
                                 Referrer(GetDocument().OutgoingReferrer(),

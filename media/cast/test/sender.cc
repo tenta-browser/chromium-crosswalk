@@ -8,7 +8,6 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 #include <utility>
 
 #include "base/at_exit.h"
@@ -18,6 +17,7 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -79,7 +79,7 @@ void UpdateCastTransportStatus(
 void QuitLoopOnInitializationResult(media::cast::OperationalStatus result) {
   CHECK(result == media::cast::STATUS_INITIALIZED)
       << "Cast sender uninitialized";
-  base::MessageLoop::current()->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 net::IPEndPoint CreateUDPAddress(const std::string& ip_str, uint16_t port) {

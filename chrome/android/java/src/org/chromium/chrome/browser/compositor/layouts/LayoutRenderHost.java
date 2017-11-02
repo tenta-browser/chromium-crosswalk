@@ -36,7 +36,7 @@ public interface LayoutRenderHost {
     /**
      * Indicates that the rendering surface has been resized.
      */
-    void onPhysicalBackingSizeChanged(int width, int height);
+    void onSurfaceResized(int width, int height);
 
     /**
      * Pushes a debug rectangle that will be drawn.
@@ -60,11 +60,6 @@ public interface LayoutRenderHost {
      * @return The alpha value of the textbox in the toolbar.
      */
     float getBrowserControlsUrlBarAlpha();
-
-    /**
-     * @return Whether or not the toolbar is currently being faked.
-     */
-    boolean areBrowserControlsPermanentlyHidden();
 
     /**
      * @return The {@link ResourceManager}.

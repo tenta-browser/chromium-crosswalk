@@ -13,6 +13,8 @@
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "tools/gn/filesystem_utils.h"
+#include "tools/gn/source_file.h"
+#include "tools/gn/source_file_type.h"
 
 // Helper methods -------------------------------------------------------------
 
@@ -153,9 +155,10 @@ bool HasExplicitFileType(const base::StringPiece& ext) {
   return ext == "dart";
 }
 
-bool IsSourceFileForIndexing(const base::StringPiece& ext) {
-  return ext == "c" || ext == "cc" || ext == "cpp" || ext == "cxx" ||
-         ext == "m" || ext == "mm";
+bool IsSourceFileForIndexing(const SourceFile& src) {
+  const SourceFileType type = GetSourceFileType(src);
+  return type == SOURCE_C || type == SOURCE_CPP || type == SOURCE_M ||
+         type == SOURCE_MM;
 }
 
 void PrintValue(std::ostream& out, IndentRules rules, unsigned value) {
@@ -560,8 +563,8 @@ PBXFileReference* PBXGroup::AddSourceFile(const std::string& navigator_path,
   }
 
   if (!group) {
-    children_.push_back(base::WrapUnique(
-        new PBXGroup(component.as_string(), component.as_string())));
+    children_.push_back(base::MakeUnique<PBXGroup>(component.as_string(),
+                                                   component.as_string()));
     group = static_cast<PBXGroup*>(children_.back().get());
   }
 
@@ -617,11 +620,11 @@ PBXNativeTarget::PBXNativeTarget(const std::string& name,
       product_type_(product_type),
       product_name_(product_name) {
   DCHECK(product_reference_);
-  build_phases_.push_back(base::WrapUnique(new PBXSourcesBuildPhase));
+  build_phases_.push_back(base::MakeUnique<PBXSourcesBuildPhase>());
   source_build_phase_ =
       static_cast<PBXSourcesBuildPhase*>(build_phases_.back().get());
 
-  build_phases_.push_back(base::WrapUnique(new PBXFrameworksBuildPhase));
+  build_phases_.push_back(base::MakeUnique<PBXFrameworksBuildPhase>());
 }
 
 PBXNativeTarget::~PBXNativeTarget() {}
@@ -692,8 +695,7 @@ void PBXProject::AddSourceFile(const std::string& navigator_path,
                                PBXNativeTarget* target) {
   PBXFileReference* file_reference =
       sources_->AddSourceFile(navigator_path, source_path);
-  base::StringPiece ext = FindExtension(&source_path);
-  if (!IsSourceFileForIndexing(ext))
+  if (!IsSourceFileForIndexing(SourceFile(source_path)))
     return;
 
   DCHECK(target);

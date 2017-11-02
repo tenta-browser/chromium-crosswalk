@@ -94,12 +94,8 @@ static void CleanupNetworkThreadOnNetworkThread() {
 void CleanupNetworkThread(JNIEnv* env,
                           const JavaParamRef<jclass>& jcaller,
                           jlong jcontext_adapter) {
-  TestUtil::GetTaskRunner(jcontext_adapter)
-      ->PostTask(FROM_HERE, base::Bind(&CleanupNetworkThreadOnNetworkThread));
-}
-
-bool TestUtil::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+  TestUtil::RunAfterContextInit(
+      jcontext_adapter, base::Bind(&CleanupNetworkThreadOnNetworkThread));
 }
 
 }  // namespace cronet

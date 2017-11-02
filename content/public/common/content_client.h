@@ -34,6 +34,7 @@ struct GPUInfo;
 }
 
 namespace media {
+struct CdmHostFilePath;
 class MediaDrmBridgeClient;
 }
 
@@ -45,7 +46,7 @@ class ContentGpuClient;
 class ContentRendererClient;
 class ContentUtilityClient;
 class OriginTrialPolicy;
-struct CdmHostFilePath;
+class ServiceManagerConnection;
 struct CdmInfo;
 struct PepperPluginInfo;
 
@@ -94,7 +95,7 @@ class CONTENT_EXPORT ContentClient {
   // is not needed.
   virtual void AddContentDecryptionModules(
       std::vector<content::CdmInfo>* cdms,
-      std::vector<content::CdmHostFilePath>* cdm_host_file_paths) {}
+      std::vector<media::CdmHostFilePath>* cdm_host_file_paths) {}
 
   // Gives the embedder a chance to register its own schemes early in the
   // startup sequence.
@@ -159,19 +160,6 @@ class CONTENT_EXPORT ContentClient {
   // doesn't know about because they're from the embedder.
   virtual std::string GetProcessTypeNameInEnglish(int type);
 
-#if defined(OS_MACOSX)
-  // Allows the embedder to define a new |sandbox_type| by mapping it to the
-  // resource ID corresponding to the sandbox profile to use. The legal values
-  // for |sandbox_type| are defined by the embedder and should start with
-  // SandboxType::SANDBOX_TYPE_AFTER_LAST_TYPE. Returns false if no sandbox
-  // profile for the given |sandbox_type| exists. Otherwise,
-  // |sandbox_profile_resource_id| is set to the resource ID corresponding to
-  // the sandbox profile to use and true is returned.
-  virtual bool GetSandboxProfileForSandboxType(
-      int sandbox_type,
-      int* sandbox_profile_resource_id) const;
-#endif
-
   // Returns whether or not V8 script extensions should be allowed for a
   // service worker.
   virtual bool AllowScriptExtensionForServiceWorker(const GURL& script_url);
@@ -196,6 +184,8 @@ class CONTENT_EXPORT ContentClient {
   // Returns the MediaDrmBridgeClient to be used by media code on Android.
   virtual media::MediaDrmBridgeClient* GetMediaDrmBridgeClient();
 #endif  // OS_ANDROID
+
+  virtual void OnServiceManagerConnected(ServiceManagerConnection* connection);
 
  private:
   friend class ContentClientInitializer;  // To set these pointers.

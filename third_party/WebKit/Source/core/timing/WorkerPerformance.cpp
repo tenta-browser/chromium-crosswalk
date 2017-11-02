@@ -30,20 +30,21 @@
 
 #include "core/timing/WorkerPerformance.h"
 
+#include "core/dom/TaskRunnerHelper.h"
 #include "core/timing/MemoryInfo.h"
 #include "core/workers/DedicatedWorkerGlobalScope.h"
 #include "core/workers/WorkerGlobalScope.h"
+#include "platform/scheduler/child/web_scheduler.h"
+#include "platform/wtf/CurrentTime.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
-#include "wtf/CurrentTime.h"
 
 namespace blink {
 
 WorkerPerformance::WorkerPerformance(WorkerGlobalScope* context)
     : PerformanceBase(
           context->TimeOrigin(),
-          Platform::Current()->CurrentThread()->Scheduler()->TimerTaskRunner()),
+          TaskRunnerHelper::Get(TaskType::kPerformanceTimeline, context)),
       execution_context_(context) {}
 
 DEFINE_TRACE(WorkerPerformance) {

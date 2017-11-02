@@ -5,9 +5,9 @@
 #include "platform/heap/HeapCompact.h"
 
 #include "platform/Histogram.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/heap/Heap.h"
 #include "platform/heap/SparseHeapBitmap.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/CurrentTime.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/HashSet.h"
@@ -41,7 +41,7 @@ class HeapCompact::MovableObjectFixups final {
   }
 
   void AddInteriorFixup(MovableReference* slot) {
-    auto it = interior_fixups_.Find(slot);
+    auto it = interior_fixups_.find(slot);
     // Ephemeron fixpoint iterations may cause repeated registrations.
     if (UNLIKELY(it != interior_fixups_.end())) {
       DCHECK(!it->value);
@@ -66,7 +66,7 @@ class HeapCompact::MovableObjectFixups final {
 
 #if DCHECK_IS_ON()
     DCHECK(HeapCompact::IsCompactableArena(ref_page->Arena()->ArenaIndex()));
-    auto it = fixups_.Find(reference);
+    auto it = fixups_.find(reference);
     DCHECK(it == fixups_.end() || it->value == slot);
 #endif
 
@@ -127,7 +127,7 @@ class HeapCompact::MovableObjectFixups final {
         continue;
       MovableReference* slot =
           reinterpret_cast<MovableReference*>(from + offset);
-      auto it = interior_fixups_.Find(slot);
+      auto it = interior_fixups_.find(slot);
       if (it == interior_fixups_.end())
         continue;
 
@@ -152,21 +152,21 @@ class HeapCompact::MovableObjectFixups final {
   }
 
   void Relocate(Address from, Address to) {
-    auto it = fixups_.Find(from);
+    auto it = fixups_.find(from);
     DCHECK(it != fixups_.end());
 #if DCHECK_IS_ON()
     BasePage* from_page = PageFromObject(from);
     DCHECK(relocatable_pages_.Contains(from_page));
 #endif
     MovableReference* slot = reinterpret_cast<MovableReference*>(it->value);
-    auto interior = interior_fixups_.Find(slot);
+    auto interior = interior_fixups_.find(slot);
     if (interior != interior_fixups_.end()) {
       MovableReference* slot_location =
           reinterpret_cast<MovableReference*>(interior->value);
       if (!slot_location) {
         interior_fixups_.Set(slot, to);
       } else {
-        LOG_HEAP_COMPACTION("Redirected slot: %p => %p\n", slot, slotLocation);
+        LOG_HEAP_COMPACTION("Redirected slot: %p => %p\n", slot, slot_location);
         slot = slot_location;
       }
     }
@@ -201,7 +201,7 @@ class HeapCompact::MovableObjectFixups final {
     *slot = to;
 
     size_t size = 0;
-    auto callback = fixup_callbacks_.Find(from);
+    auto callback = fixup_callbacks_.find(from);
     if (UNLIKELY(callback != fixup_callbacks_.end())) {
       size = HeapObjectHeader::FromPayload(to)->PayloadSize();
       callback->value.second(callback->value.first, from, to, size);
@@ -220,9 +220,8 @@ class HeapCompact::MovableObjectFixups final {
     LOG_HEAP_COMPACTION(
         "Fixups: pages=%u objects=%u callbacks=%u interior-size=%zu"
         " interiors-f=%u\n",
-        m_relocatablePages.size(), m_fixups.size(), m_fixupCallbacks.size(),
-        m_interiors ? m_interiors->intervalCount() : 0,
-        m_interiorFixups.size());
+        relocatable_pages_.size(), fixups_.size(), fixup_callbacks_.size(),
+        interiors_ ? interiors_->IntervalCount() : 0, interior_fixups_.size());
   }
 #endif
 
@@ -286,17 +285,18 @@ HeapCompact::MovableObjectFixups& HeapCompact::Fixups() {
 }
 
 bool HeapCompact::ShouldCompact(ThreadState* state,
+                                BlinkGC::StackState stack_state,
                                 BlinkGC::GCType gc_type,
                                 BlinkGC::GCReason reason) {
 #if !ENABLE_HEAP_COMPACTION
   return false;
 #else
-  if (!RuntimeEnabledFeatures::heapCompactionEnabled())
+  if (!RuntimeEnabledFeatures::HeapCompactionEnabled())
     return false;
 
   LOG_HEAP_COMPACTION("shouldCompact(): gc=%s count=%zu free=%zu\n",
-                      ThreadState::gcReasonString(reason),
-                      m_gcCountSinceLastCompaction, m_freeListSize);
+                      ThreadState::GcReasonString(reason),
+                      gc_count_since_last_compaction_, free_list_size_);
   gc_count_since_last_compaction_++;
   // It is only safe to compact during non-conservative GCs.
   // TODO: for the main thread, limit this further to only idle GCs.
@@ -308,7 +308,7 @@ bool HeapCompact::ShouldCompact(ThreadState* state,
   // Why? Should the stack contain an iterator pointing into its
   // associated backing store, its references wouldn't be
   // correctly relocated.
-  if (state->GetStackState() == BlinkGC::kHeapPointersOnStack)
+  if (stack_state == BlinkGC::kHeapPointersOnStack)
     return false;
 
   // Compaction enable rules:
@@ -337,8 +337,8 @@ bool HeapCompact::ShouldCompact(ThreadState* state,
 }
 
 void HeapCompact::Initialize(ThreadState* state) {
-  DCHECK(RuntimeEnabledFeatures::heapCompactionEnabled());
-  LOG_HEAP_COMPACTION("Compacting: free=%zu\n", m_freeListSize);
+  DCHECK(RuntimeEnabledFeatures::HeapCompactionEnabled());
+  LOG_HEAP_COMPACTION("Compacting: free=%zu\n", free_list_size_);
   do_compact_ = true;
   freed_pages_ = 0;
   freed_size_ = 0;
@@ -379,16 +379,16 @@ void HeapCompact::UpdateHeapResidency(ThreadState* thread_state) {
     size_t free_list_size = arena->FreeListSize();
     total_arena_size += arena_size;
     total_free_list_size += free_list_size;
-    LOG_HEAP_FREELIST("%d: [%zu, %zu], ", i, arenaSize, freeListSize);
+    LOG_HEAP_FREELIST("%d: [%zu, %zu], ", i, arena_size, free_list_size);
     // TODO: be more discriminating and consider arena
     // load factor, effectiveness of past compactions etc.
     if (!arena_size)
       continue;
     // Mark the arena as compactable.
-    compactable_arenas_ |= (0x1u << (BlinkGC::kVector1ArenaIndex + i));
+    compactable_arenas_ |= 0x1u << i;
   }
-  LOG_HEAP_FREELIST("}\nTotal = %zu, Free = %zu\n", totalArenaSize,
-                    totalFreeListSize);
+  LOG_HEAP_FREELIST("}\nTotal = %zu, Free = %zu\n", total_arena_size,
+                    total_free_list_size);
 
   // TODO(sof): consider smoothing the reported sizes.
   free_list_size_ = total_free_list_size;
@@ -414,7 +414,7 @@ void HeapCompact::StartThreadCompaction() {
     return;
 
   if (!start_compaction_time_ms_)
-    start_compaction_time_ms_ = WTF::CurrentTimeMS();
+    start_compaction_time_ms_ = WTF::MonotonicallyIncreasingTimeMS();
 }
 
 void HeapCompact::FinishThreadCompaction() {
@@ -422,34 +422,32 @@ void HeapCompact::FinishThreadCompaction() {
     return;
 
 #if DEBUG_HEAP_COMPACTION
-  if (m_fixups)
-    m_fixups->dumpDebugStats();
+  if (fixups_)
+    fixups_->dumpDebugStats();
 #endif
   fixups_.reset();
   do_compact_ = false;
 
   double time_for_heap_compaction =
-      WTF::CurrentTimeMS() - start_compaction_time_ms_;
+      WTF::MonotonicallyIncreasingTimeMS() - start_compaction_time_ms_;
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       CustomCountHistogram, time_for_heap_compaction_histogram,
-      new CustomCountHistogram("BlinkGC.TimeForHeapCompaction", 1, 10 * 1000,
-                               50));
+      ("BlinkGC.TimeForHeapCompaction", 1, 10 * 1000, 50));
   time_for_heap_compaction_histogram.Count(time_for_heap_compaction);
   start_compaction_time_ms_ = 0;
 
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       CustomCountHistogram, object_size_freed_by_heap_compaction,
-      new CustomCountHistogram("BlinkGC.ObjectSizeFreedByHeapCompaction", 1,
-                               4 * 1024 * 1024, 50));
+      ("BlinkGC.ObjectSizeFreedByHeapCompaction", 1, 4 * 1024 * 1024, 50));
   object_size_freed_by_heap_compaction.Count(freed_size_ / 1024);
 
 #if DEBUG_LOG_HEAP_COMPACTION_RUNNING_TIME
   LOG_HEAP_COMPACTION_INTERNAL(
       "Compaction stats: time=%gms, pages freed=%zu, size=%zu\n",
-      timeForHeapCompaction, m_freedPages, m_freedSize);
+      time_for_heap_compaction, freed_pages_, freed_size_);
 #else
   LOG_HEAP_COMPACTION("Compaction stats: freed pages=%zu size=%zu\n",
-                      m_freedPages, m_freedSize);
+                      freed_pages_, freed_size_);
 #endif
 }
 

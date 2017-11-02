@@ -51,15 +51,15 @@
 #include "net/cert/multi_log_ct_verifier.h"
 #include "net/http/transport_security_state.h"
 #include "net/quic/chromium/crypto/proof_verifier_chromium.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_server_id.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_socket_address.h"
 #include "net/quic/platform/api/quic_str_cat.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/quic/platform/api/quic_url.h"
-#include "net/spdy/spdy_header_block.h"
+#include "net/spdy/core/spdy_header_block.h"
 #include "net/tools/epoll_server/epoll_server.h"
 #include "net/tools/quic/quic_client.h"
 #include "net/tools/quic/synchronous_host_resolver.h"
@@ -111,7 +111,7 @@ class FakeProofVerifier : public ProofVerifier {
       const string& /*hostname*/,
       const uint16_t /*port*/,
       const string& /*server_config*/,
-      net::QuicVersion /*quic_version*/,
+      net::QuicTransportVersion /*quic_version*/,
       QuicStringPiece /*chlo_hash*/,
       const std::vector<string>& /*certs*/,
       const string& /*cert_sct*/,
@@ -253,10 +253,12 @@ int main(int argc, char* argv[]) {
   net::EpollServer epoll_server;
   net::QuicServerId server_id(url.host(), url.port(),
                               net::PRIVACY_MODE_DISABLED);
-  net::QuicVersionVector versions = net::AllSupportedVersions();
+  net::QuicTransportVersionVector versions =
+      net::AllSupportedTransportVersions();
   if (FLAGS_quic_version != -1) {
     versions.clear();
-    versions.push_back(static_cast<net::QuicVersion>(FLAGS_quic_version));
+    versions.push_back(
+        static_cast<net::QuicTransportVersion>(FLAGS_quic_version));
   }
   // For secure QUIC we need to verify the cert chain.
   std::unique_ptr<CertVerifier> cert_verifier(CertVerifier::CreateDefault());
@@ -285,7 +287,8 @@ int main(int argc, char* argv[]) {
     net::QuicErrorCode error = client.session()->error();
     if (FLAGS_version_mismatch_ok && error == net::QUIC_INVALID_VERSION) {
       cout << "Server talks QUIC, but none of the versions supported by "
-           << "this client: " << QuicVersionVectorToString(versions) << endl;
+           << "this client: " << QuicTransportVersionVectorToString(versions)
+           << endl;
       // Version mismatch is not deemed a failure.
       return 0;
     }

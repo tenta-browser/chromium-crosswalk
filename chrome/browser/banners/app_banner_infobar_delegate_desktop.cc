@@ -26,28 +26,27 @@ infobars::InfoBar* AppBannerInfoBarDelegateDesktop::Create(
     content::WebContents* web_contents,
     base::WeakPtr<AppBannerManager> weak_manager,
     extensions::BookmarkAppHelper* bookmark_app_helper,
-    const content::Manifest& manifest,
-    int event_request_id) {
+    const GURL& manifest_url,
+    const content::Manifest& manifest) {
   InfoBarService* infobar_service =
       InfoBarService::FromWebContents(web_contents);
   return infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
       std::unique_ptr<ConfirmInfoBarDelegate>(
           new AppBannerInfoBarDelegateDesktop(weak_manager, bookmark_app_helper,
-                                              manifest, event_request_id))));
+                                              manifest_url, manifest))));
 }
 
 AppBannerInfoBarDelegateDesktop::AppBannerInfoBarDelegateDesktop(
     base::WeakPtr<AppBannerManager> weak_manager,
     extensions::BookmarkAppHelper* bookmark_app_helper,
-    const content::Manifest& manifest,
-    int event_request_id)
+    const GURL& manifest_url,
+    const content::Manifest& manifest)
     : ConfirmInfoBarDelegate(),
       weak_manager_(weak_manager),
       bookmark_app_helper_(bookmark_app_helper),
+      manifest_url_(manifest_url),
       manifest_(manifest),
-      event_request_id_(event_request_id),
-      has_user_interaction_(false) {
-}
+      has_user_interaction_(false) {}
 
 AppBannerInfoBarDelegateDesktop::~AppBannerInfoBarDelegateDesktop() {
   if (!has_user_interaction_)
@@ -76,7 +75,7 @@ void AppBannerInfoBarDelegateDesktop::InfoBarDismissed() {
       InfoBarService::WebContentsFromInfoBar(infobar());
   if (web_contents) {
     if (weak_manager_)
-      weak_manager_->SendBannerDismissed(event_request_id_);
+      weak_manager_->SendBannerDismissed();
 
     AppBannerSettingsHelper::RecordBannerDismissEvent(
         web_contents, manifest_.start_url.spec(), AppBannerSettingsHelper::WEB);
@@ -103,7 +102,7 @@ bool AppBannerInfoBarDelegateDesktop::Accept() {
   bookmark_app_helper_->CreateFromAppBanner(
       base::Bind(&AppBannerManager::DidFinishCreatingBookmarkApp,
                  weak_manager_),
-      manifest_);
+      manifest_url_, manifest_);
   return true;
 }
 

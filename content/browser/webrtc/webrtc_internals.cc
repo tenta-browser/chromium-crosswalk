@@ -9,6 +9,7 @@
 #include <memory>
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
@@ -17,10 +18,14 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/web_contents.h"
-#include "device/power_save_blocker/power_save_blocker.h"
+#include "content/public/common/service_manager_connection.h"
 #include "ipc/ipc_platform_file.h"
 #include "media/audio/audio_manager.h"
 #include "media/media_features.h"
+#include "services/device/public/interfaces/constants.mojom.h"
+#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "ui/shell_dialogs/select_file_policy.h"
 
 #if defined(OS_WIN)
 #define IntToStringType base::IntToString16
@@ -41,10 +46,8 @@ base::LazyInstance<WebRTCInternals>::Leaky g_webrtc_internals =
 // Makes sure that |dict| has a ListValue under path "log".
 base::ListValue* EnsureLogList(base::DictionaryValue* dict) {
   base::ListValue* log = NULL;
-  if (!dict->GetList("log", &log)) {
-    log = new base::ListValue();
-    dict->Set("log", log);
-  }
+  if (!dict->GetList("log", &log))
+    log = dict->SetList("log", base::MakeUnique<base::ListValue>());
   return log;
 }
 
@@ -146,7 +149,7 @@ void WebRTCInternals::OnAddPeerConnection(int render_process_id,
 
   peer_connection_data_.Append(std::move(dict));
   ++num_open_connections_;
-  CreateOrReleasePowerSaveBlocker();
+  UpdateWakeLock();
 
   if (render_process_id_set_.insert(render_process_id).second) {
     RenderProcessHost* host = RenderProcessHost::FromID(render_process_id);
@@ -188,7 +191,7 @@ void WebRTCInternals::OnUpdatePeerConnection(
   if (!observers_.might_have_observers())
     return;
 
-  std::unique_ptr<base::DictionaryValue> log_entry(new base::DictionaryValue());
+  auto log_entry = base::MakeUnique<base::DictionaryValue>();
 
   double epoch_time = base::Time::Now().ToJsTime();
   string time = base::DoubleToString(epoch_time);
@@ -196,7 +199,7 @@ void WebRTCInternals::OnUpdatePeerConnection(
   log_entry->SetString("type", type);
   log_entry->SetString("value", value);
 
-  std::unique_ptr<base::DictionaryValue> update(new base::DictionaryValue());
+  auto update = base::MakeUnique<base::DictionaryValue>();
   update->SetInteger("pid", static_cast<int>(pid));
   update->SetInteger("lid", lid);
   update->MergeDictionary(log_entry.get());
@@ -212,11 +215,11 @@ void WebRTCInternals::OnAddStats(base::ProcessId pid, int lid,
   if (!observers_.might_have_observers())
     return;
 
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  auto dict = base::MakeUnique<base::DictionaryValue>();
   dict->SetInteger("pid", static_cast<int>(pid));
   dict->SetInteger("lid", lid);
 
-  dict->Set("reports", value.CreateDeepCopy());
+  dict->SetKey("reports", value.Clone());
 
   SendUpdate("addStats", std::move(dict));
 }
@@ -230,7 +233,7 @@ void WebRTCInternals::OnGetUserMedia(int rid,
                                      const std::string& video_constraints) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  auto dict = base::MakeUnique<base::DictionaryValue>();
   dict->SetInteger("rid", rid);
   dict->SetInteger("pid", static_cast<int>(pid));
   dict->SetString("origin", origin);
@@ -291,16 +294,11 @@ void WebRTCInternals::EnableAudioDebugRecordings(
 #else
   selecting_event_log_ = false;
   DCHECK(!select_file_dialog_);
-  select_file_dialog_ = ui::SelectFileDialog::Create(this, NULL);
+  select_file_dialog_ = ui::SelectFileDialog::Create(this, nullptr);
   select_file_dialog_->SelectFile(
-      ui::SelectFileDialog::SELECT_SAVEAS_FILE,
-      base::string16(),
-      audio_debug_recordings_file_path_,
-      NULL,
-      0,
-      FILE_PATH_LITERAL(""),
-      web_contents->GetTopLevelNativeWindow(),
-      NULL);
+      ui::SelectFileDialog::SELECT_SAVEAS_FILE, base::string16(),
+      audio_debug_recordings_file_path_, NULL, 0, base::FilePath::StringType(),
+      web_contents->GetTopLevelNativeWindow(), NULL);
 #endif
 #endif
 }
@@ -329,8 +327,9 @@ void WebRTCInternals::DisableAudioDebugRecordings() {
   // this object, so it's safe to post unretained to the audio thread.
   media::AudioManager* audio_manager = media::AudioManager::Get();
   audio_manager->GetTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&media::AudioManager::DisableOutputDebugRecording,
-                            base::Unretained(audio_manager)));
+      FROM_HERE,
+      base::BindOnce(&media::AudioManager::DisableOutputDebugRecording,
+                     base::Unretained(audio_manager)));
 #endif
 }
 
@@ -394,10 +393,11 @@ void WebRTCInternals::SendUpdate(const char* command,
   pending_updates_.push(PendingUpdate(command, std::move(value)));
 
   if (queue_was_empty) {
-    BrowserThread::PostDelayedTask(BrowserThread::UI, FROM_HERE,
-        base::Bind(&WebRTCInternals::ProcessPendingUpdates,
-                   weak_factory_.GetWeakPtr()),
-                   base::TimeDelta::FromMilliseconds(aggregate_updates_ms_));
+    BrowserThread::PostDelayedTask(
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&WebRTCInternals::ProcessPendingUpdates,
+                       weak_factory_.GetWeakPtr()),
+        base::TimeDelta::FromMilliseconds(aggregate_updates_ms_));
   }
 }
 
@@ -464,7 +464,7 @@ void WebRTCInternals::OnRendererExit(int render_process_id) {
       peer_connection_data_.Remove(i, NULL);
     }
   }
-  CreateOrReleasePowerSaveBlocker();
+  UpdateWakeLock();
 
   bool found_any = false;
   // Iterates from the end of the list to remove the getUserMedia requests
@@ -508,9 +508,10 @@ void WebRTCInternals::EnableAudioDebugRecordingsOnAllRenderProcessHosts() {
   // this object, so it's safe to post unretained to the audio thread.
   media::AudioManager* audio_manager = media::AudioManager::Get();
   audio_manager->GetTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&media::AudioManager::EnableOutputDebugRecording,
-                            base::Unretained(audio_manager),
-                            audio_debug_recordings_file_path_));
+      FROM_HERE,
+      base::BindOnce(&media::AudioManager::EnableOutputDebugRecording,
+                     base::Unretained(audio_manager),
+                     audio_debug_recordings_file_path_));
 }
 
 void WebRTCInternals::EnableEventLogRecordingsOnAllRenderProcessHosts() {
@@ -534,28 +535,46 @@ void WebRTCInternals::MaybeClosePeerConnection(base::DictionaryValue* record) {
   record->SetBoolean("isOpen", false);
   --num_open_connections_;
   DCHECK_GE(num_open_connections_, 0);
-  CreateOrReleasePowerSaveBlocker();
+  UpdateWakeLock();
 }
 
-void WebRTCInternals::CreateOrReleasePowerSaveBlocker() {
+void WebRTCInternals::UpdateWakeLock() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!should_block_power_saving_)
     return;
 
-  if (num_open_connections_ == 0 && power_save_blocker_) {
-    DVLOG(1) << ("Releasing the block on application suspension since no "
-                 "PeerConnections are active anymore.");
-    power_save_blocker_.reset();
-  } else if (num_open_connections_ != 0 && !power_save_blocker_) {
+  if (num_open_connections_ == 0) {
+    DVLOG(1)
+        << ("Cancel the wake lock on application suspension since no "
+            "PeerConnections are active anymore.");
+    GetWakeLock()->CancelWakeLock();
+  } else if (num_open_connections_ != 0) {
     DVLOG(1) << ("Preventing the application from being suspended while one or "
                  "more PeerConnections are active.");
-    power_save_blocker_.reset(new device::PowerSaveBlocker(
-        device::PowerSaveBlocker::kPowerSaveBlockPreventAppSuspension,
-        device::PowerSaveBlocker::kReasonOther,
-        "WebRTC has active PeerConnections",
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE)));
+    GetWakeLock()->RequestWakeLock();
   }
+}
+
+device::mojom::WakeLock* WebRTCInternals::GetWakeLock() {
+  // Here is a lazy binding, and will not reconnect after connection error.
+  if (!wake_lock_) {
+    device::mojom::WakeLockRequest request = mojo::MakeRequest(&wake_lock_);
+    // In some testing contexts, the service manager connection isn't
+    // initialized.
+    if (ServiceManagerConnection::GetForProcess()) {
+      service_manager::Connector* connector =
+          ServiceManagerConnection::GetForProcess()->GetConnector();
+      DCHECK(connector);
+      device::mojom::WakeLockProviderPtr wake_lock_provider;
+      connector->BindInterface(device::mojom::kServiceName,
+                               mojo::MakeRequest(&wake_lock_provider));
+      wake_lock_provider->GetWakeLockWithoutContext(
+          device::mojom::WakeLockType::PreventAppSuspension,
+          device::mojom::WakeLockReason::ReasonOther,
+          "WebRTC has active PeerConnections", std::move(request));
+    }
+  }
+  return wake_lock_.get();
 }
 
 void WebRTCInternals::ProcessPendingUpdates() {

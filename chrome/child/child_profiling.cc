@@ -6,6 +6,7 @@
 
 #include "base/debug/profiler.h"
 #include "base/logging.h"
+#include "chrome/common/chrome_features.h"
 #include "gin/public/debug.h"
 #include "v8/include/v8.h"
 

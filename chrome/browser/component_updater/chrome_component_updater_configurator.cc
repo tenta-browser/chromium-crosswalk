@@ -4,11 +4,12 @@
 
 #include "chrome/browser/component_updater/chrome_component_updater_configurator.h"
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -21,6 +22,7 @@
 #include "components/component_updater/configurator_impl.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/update_client/activity_data_service.h"
 #include "components/update_client/update_query_params.h"
 
 #if defined(OS_WIN)
@@ -60,10 +62,10 @@ class ChromeConfigurator : public update_client::Configurator {
   bool EnabledComponentUpdates() const override;
   bool EnabledBackgroundDownloader() const override;
   bool EnabledCupSigning() const override;
-  scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner()
-      const override;
   PrefService* GetPrefService() const override;
+  update_client::ActivityDataService* GetActivityDataService() const override;
   bool IsPerUserInstall() const override;
+  std::vector<uint8_t> GetRunActionKeyHash() const override;
 
  private:
   friend class base::RefCountedThreadSafe<ChromeConfigurator>;
@@ -159,7 +161,7 @@ net::URLRequestContextGetter* ChromeConfigurator::RequestContext() const {
 
 scoped_refptr<update_client::OutOfProcessPatcher>
 ChromeConfigurator::CreateOutOfProcessPatcher() const {
-  return make_scoped_refptr(new ChromeOutOfProcessPatcher);
+  return base::MakeRefCounted<ChromeOutOfProcessPatcher>();
 }
 
 bool ChromeConfigurator::EnabledDeltas() const {
@@ -178,27 +180,21 @@ bool ChromeConfigurator::EnabledCupSigning() const {
   return configurator_impl_.EnabledCupSigning();
 }
 
-// Returns a task runner to run blocking tasks. The task runner continues to run
-// after the browser shuts down, until the OS terminates the process. This
-// imposes certain requirements for the code using the task runner, such as
-// not accessing any global browser state while the code is running.
-scoped_refptr<base::SequencedTaskRunner>
-ChromeConfigurator::GetSequencedTaskRunner() const {
-  return base::CreateSequencedTaskRunnerWithTraits(
-      base::TaskTraits()
-          .MayBlock()
-          .WithPriority(base::TaskPriority::BACKGROUND)
-          .WithShutdownBehavior(
-              base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN));
+PrefService* ChromeConfigurator::GetPrefService() const {
+  return pref_service_;
 }
 
-PrefService* ChromeConfigurator::GetPrefService() const {
-  DCHECK(pref_service_);
-  return pref_service_;
+update_client::ActivityDataService* ChromeConfigurator::GetActivityDataService()
+    const {
+  return nullptr;
 }
 
 bool ChromeConfigurator::IsPerUserInstall() const {
   return component_updater::IsPerUserInstall();
+}
+
+std::vector<uint8_t> ChromeConfigurator::GetRunActionKeyHash() const {
+  return configurator_impl_.GetRunActionKeyHash();
 }
 
 }  // namespace
@@ -214,7 +210,8 @@ MakeChromeComponentUpdaterConfigurator(
     const base::CommandLine* cmdline,
     net::URLRequestContextGetter* context_getter,
     PrefService* pref_service) {
-  return new ChromeConfigurator(cmdline, context_getter, pref_service);
+  return base::MakeRefCounted<ChromeConfigurator>(cmdline, context_getter,
+                                                  pref_service);
 }
 
 }  // namespace component_updater

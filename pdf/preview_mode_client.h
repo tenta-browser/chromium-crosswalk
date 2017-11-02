@@ -30,8 +30,8 @@ class PreviewModeClient : public PDFEngine::Client {
   void DocumentSizeUpdated(const pp::Size& size) override;
   void Invalidate(const pp::Rect& rect) override;
   void Scroll(const pp::Point& point) override;
-  void ScrollToX(int position) override;
-  void ScrollToY(int position) override;
+  void ScrollToX(int x_in_screen_coords) override;
+  void ScrollToY(int y_in_screen_coords, bool compensate_for_toolbar) override;
   void ScrollToPage(int page) override;
   void NavigateTo(const std::string& url,
                   WindowOpenDisposition disposition) override;
@@ -58,6 +58,7 @@ class PreviewModeClient : public PDFEngine::Client {
   std::string ShowFileSelectionDialog() override;
   pp::URLLoader CreateURLLoader() override;
   void ScheduleCallback(int id, int delay_in_ms) override;
+  void ScheduleTouchTimerCallback(int id, int delay_in_ms) override;
   void SearchString(const base::char16* string,
                     const base::char16* term,
                     bool case_sensitive,
@@ -71,6 +72,7 @@ class PreviewModeClient : public PDFEngine::Client {
   void DocumentLoadProgress(uint32_t available, uint32_t doc_size) override;
   void FormTextFieldFocusChange(bool in_focus) override;
   bool IsPrintPreview() override;
+  void CancelBrowserDownload() override;
   uint32_t GetBackgroundColor() override;
 
  private:

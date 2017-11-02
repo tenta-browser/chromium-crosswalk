@@ -14,9 +14,9 @@
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/platform/api/quic_logging.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/quic_config_peer.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
 namespace test {
@@ -58,7 +58,7 @@ class TcpCubicSenderPacketsPeer : public TcpCubicSenderPackets {
   QuicConnectionStats stats_;
 };
 
-class TcpCubicSenderPacketsTest : public ::testing::Test {
+class TcpCubicSenderPacketsTest : public QuicTest {
  protected:
   TcpCubicSenderPacketsTest()
       : one_ms_(QuicTime::Delta::FromMilliseconds(1)),
@@ -74,17 +74,15 @@ class TcpCubicSenderPacketsTest : public ::testing::Test {
   }
 
   int SendAvailableSendWindow(QuicPacketLength packet_length) {
-    // Send as long as TimeUntilSend returns Zero.
+    // Send as long as CanSend returns Zero.
     int packets_sent = 0;
-    bool can_send =
-        sender_->TimeUntilSend(clock_.Now(), bytes_in_flight_).IsZero();
+    bool can_send = sender_->CanSend(bytes_in_flight_);
     while (can_send) {
       sender_->OnPacketSent(clock_.Now(), bytes_in_flight_, packet_number_++,
                             kDefaultTCPMSS, HAS_RETRANSMITTABLE_DATA);
       ++packets_sent;
       bytes_in_flight_ += kDefaultTCPMSS;
-      can_send =
-          sender_->TimeUntilSend(clock_.Now(), bytes_in_flight_).IsZero();
+      can_send = sender_->CanSend(bytes_in_flight_);
     }
     return packets_sent;
   }
@@ -93,12 +91,12 @@ class TcpCubicSenderPacketsTest : public ::testing::Test {
   void AckNPackets(int n) {
     sender_->rtt_stats_.UpdateRtt(QuicTime::Delta::FromMilliseconds(60),
                                   QuicTime::Delta::Zero(), clock_.Now());
-    SendAlgorithmInterface::CongestionVector acked_packets;
-    SendAlgorithmInterface::CongestionVector lost_packets;
+    AckedPacketVector acked_packets;
+    LostPacketVector lost_packets;
     for (int i = 0; i < n; ++i) {
       ++acked_packet_number_;
       acked_packets.push_back(
-          std::make_pair(acked_packet_number_, kDefaultTCPMSS));
+          AckedPacket(acked_packet_number_, kDefaultTCPMSS, QuicTime::Zero()));
     }
     sender_->OnCongestionEvent(true, bytes_in_flight_, clock_.Now(),
                                acked_packets, lost_packets);
@@ -109,12 +107,11 @@ class TcpCubicSenderPacketsTest : public ::testing::Test {
   void LoseNPackets(int n) { LoseNPackets(n, kDefaultTCPMSS); }
 
   void LoseNPackets(int n, QuicPacketLength packet_length) {
-    SendAlgorithmInterface::CongestionVector acked_packets;
-    SendAlgorithmInterface::CongestionVector lost_packets;
+    AckedPacketVector acked_packets;
+    LostPacketVector lost_packets;
     for (int i = 0; i < n; ++i) {
       ++acked_packet_number_;
-      lost_packets.push_back(
-          std::make_pair(acked_packet_number_, packet_length));
+      lost_packets.push_back(LostPacket(acked_packet_number_, packet_length));
     }
     sender_->OnCongestionEvent(false, bytes_in_flight_, clock_.Now(),
                                acked_packets, lost_packets);
@@ -123,9 +120,9 @@ class TcpCubicSenderPacketsTest : public ::testing::Test {
 
   // Does not increment acked_packet_number_.
   void LosePacket(QuicPacketNumber packet_number) {
-    SendAlgorithmInterface::CongestionVector acked_packets;
-    SendAlgorithmInterface::CongestionVector lost_packets;
-    lost_packets.push_back(std::make_pair(packet_number, kDefaultTCPMSS));
+    AckedPacketVector acked_packets;
+    LostPacketVector lost_packets;
+    lost_packets.push_back(LostPacket(packet_number, kDefaultTCPMSS));
     sender_->OnCongestionEvent(false, bytes_in_flight_, clock_.Now(),
                                acked_packets, lost_packets);
     bytes_in_flight_ -= kDefaultTCPMSS;
@@ -143,26 +140,24 @@ TEST_F(TcpCubicSenderPacketsTest, SimpleSender) {
   // At startup make sure we are at the default.
   EXPECT_EQ(kDefaultWindowTCP, sender_->GetCongestionWindow());
   // At startup make sure we can send.
-  EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(), 0).IsZero());
+  EXPECT_TRUE(sender_->CanSend(0));
   // Make sure we can send.
-  EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(), 0).IsZero());
+  EXPECT_TRUE(sender_->CanSend(0));
   // And that window is un-affected.
   EXPECT_EQ(kDefaultWindowTCP, sender_->GetCongestionWindow());
 
   // Fill the send window with data, then verify that we can't send.
   SendAvailableSendWindow();
-  EXPECT_FALSE(
-      sender_->TimeUntilSend(clock_.Now(), sender_->GetCongestionWindow())
-          .IsZero());
+  EXPECT_FALSE(sender_->CanSend(sender_->GetCongestionWindow()));
 }
 
 TEST_F(TcpCubicSenderPacketsTest, ApplicationLimitedSlowStart) {
   // Send exactly 10 packets and ensure the CWND ends at 14 packets.
   const int kNumberOfAcks = 5;
   // At startup make sure we can send.
-  EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(), 0).IsZero());
+  EXPECT_TRUE(sender_->CanSend(0));
   // Make sure we can send.
-  EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(), 0).IsZero());
+  EXPECT_TRUE(sender_->CanSend(0));
 
   SendAvailableSendWindow();
   for (int i = 0; i < kNumberOfAcks; ++i) {
@@ -177,10 +172,10 @@ TEST_F(TcpCubicSenderPacketsTest, ApplicationLimitedSlowStart) {
 TEST_F(TcpCubicSenderPacketsTest, ExponentialSlowStart) {
   const int kNumberOfAcks = 20;
   // At startup make sure we can send.
-  EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(), 0).IsZero());
+  EXPECT_TRUE(sender_->CanSend(0));
   EXPECT_EQ(QuicBandwidth::Zero(), sender_->BandwidthEstimate());
   // Make sure we can send.
-  EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(), 0).IsZero());
+  EXPECT_TRUE(sender_->CanSend(0));
 
   for (int i = 0; i < kNumberOfAcks; ++i) {
     // Send our full send window.
@@ -376,7 +371,7 @@ TEST_F(TcpCubicSenderPacketsTest, NoPRRWhenLessThanOnePacketInFlight) {
   // Simulate abandoning all packets by supplying a bytes_in_flight of 0.
   // PRR should now allow a packet to be sent, even though prr's state
   // variables believe it has sent enough packets.
-  EXPECT_EQ(QuicTime::Delta::Zero(), sender_->TimeUntilSend(clock_.Now(), 0));
+  EXPECT_TRUE(sender_->CanSend(0));
 }
 
 TEST_F(TcpCubicSenderPacketsTest, SlowStartPacketLossPRR) {
@@ -453,7 +448,7 @@ TEST_F(TcpCubicSenderPacketsTest, SlowStartBurstPacketLossPRR) {
   LoseNPackets(num_packets_to_lose);
   // Immediately after the loss, ensure at least one packet can be sent.
   // Losses without subsequent acks can occur with timer based loss detection.
-  EXPECT_TRUE(sender_->TimeUntilSend(clock_.Now(), bytes_in_flight_).IsZero());
+  EXPECT_TRUE(sender_->CanSend(bytes_in_flight_));
   AckNPackets(1);
 
   // We should now have fallen out of slow start with a reduced window.
@@ -621,18 +616,6 @@ TEST_F(TcpCubicSenderPacketsTest, MultipleLossesInOneWindow) {
   EXPECT_GT(post_loss_window, sender_->GetCongestionWindow());
 }
 
-TEST_F(TcpCubicSenderPacketsTest, DontTrackAckPackets) {
-  // Send a packet with no retransmittable data, and ensure it's not tracked.
-  EXPECT_FALSE(sender_->OnPacketSent(clock_.Now(), bytes_in_flight_,
-                                     packet_number_++, kDefaultTCPMSS,
-                                     NO_RETRANSMITTABLE_DATA));
-
-  // Send a data packet with retransmittable data, and ensure it is tracked.
-  EXPECT_TRUE(sender_->OnPacketSent(clock_.Now(), bytes_in_flight_,
-                                    packet_number_++, kDefaultTCPMSS,
-                                    HAS_RETRANSMITTABLE_DATA));
-}
-
 TEST_F(TcpCubicSenderPacketsTest, ConfigureInitialWindow) {
   QuicConfig config;
 
@@ -783,37 +766,24 @@ TEST_F(TcpCubicSenderPacketsTest, BandwidthResumption) {
   // initial CWND appropriately.
 
   // Set some common values.
-  CachedNetworkParameters cached_network_params;
   const QuicPacketCount kNumberOfPackets = 123;
-  const int kBandwidthEstimateBytesPerSecond =
-      kNumberOfPackets * kDefaultTCPMSS;
-  cached_network_params.set_bandwidth_estimate_bytes_per_second(
-      kBandwidthEstimateBytesPerSecond);
-  cached_network_params.set_min_rtt_ms(1000);
+  const QuicBandwidth kBandwidthEstimate =
+      QuicBandwidth::FromBytesPerSecond(kNumberOfPackets * kDefaultTCPMSS);
+  const QuicTime::Delta kRttEstimate = QuicTime::Delta::FromSeconds(1);
+  sender_->AdjustNetworkParameters(kBandwidthEstimate, kRttEstimate);
+  EXPECT_EQ(kNumberOfPackets, sender_->congestion_window());
 
-  // Make sure that a bandwidth estimate results in a changed CWND.
-  cached_network_params.set_timestamp(clock_.WallNow().ToUNIXSeconds() -
-                                      (kNumSecondsPerHour - 1));
-  sender_->ResumeConnectionState(cached_network_params, false);
+  // Resume with an illegal value of 0 and verify the server ignores it.
+  sender_->AdjustNetworkParameters(QuicBandwidth::Zero(), kRttEstimate);
   EXPECT_EQ(kNumberOfPackets, sender_->congestion_window());
 
   // Resumed CWND is limited to be in a sensible range.
-  cached_network_params.set_bandwidth_estimate_bytes_per_second(
-      (kMaxCongestionWindowPackets + 1) * kDefaultTCPMSS);
-  sender_->ResumeConnectionState(cached_network_params, false);
+  const QuicBandwidth kUnreasonableBandwidth =
+      QuicBandwidth::FromBytesPerSecond((kMaxCongestionWindowPackets + 1) *
+                                        kDefaultTCPMSS);
+  sender_->AdjustNetworkParameters(kUnreasonableBandwidth,
+                                   QuicTime::Delta::FromSeconds(1));
   EXPECT_EQ(kMaxCongestionWindowPackets, sender_->congestion_window());
-
-  // Resume with an illegal value of 0 and verify the server uses 1 instead.
-  cached_network_params.set_bandwidth_estimate_bytes_per_second(0);
-  sender_->ResumeConnectionState(cached_network_params, false);
-  EXPECT_EQ(sender_->min_congestion_window(), sender_->congestion_window());
-
-  // Resume to the max value.
-  cached_network_params.set_max_bandwidth_estimate_bytes_per_second(
-      kMaxCongestionWindowPackets * kDefaultTCPMSS);
-  sender_->ResumeConnectionState(cached_network_params, true);
-  EXPECT_EQ(kMaxCongestionWindowPackets * kDefaultTCPMSS,
-            sender_->GetCongestionWindow());
 }
 
 TEST_F(TcpCubicSenderPacketsTest, PaceBelowCWND) {
@@ -827,14 +797,10 @@ TEST_F(TcpCubicSenderPacketsTest, PaceBelowCWND) {
   sender_->SetFromConfig(config, Perspective::IS_SERVER);
   sender_->OnRetransmissionTimeout(true);
   EXPECT_EQ(1u, sender_->congestion_window());
-  EXPECT_TRUE(
-      sender_->TimeUntilSend(QuicTime::Zero(), kDefaultTCPMSS).IsZero());
-  EXPECT_TRUE(
-      sender_->TimeUntilSend(QuicTime::Zero(), 2 * kDefaultTCPMSS).IsZero());
-  EXPECT_TRUE(
-      sender_->TimeUntilSend(QuicTime::Zero(), 3 * kDefaultTCPMSS).IsZero());
-  EXPECT_FALSE(
-      sender_->TimeUntilSend(QuicTime::Zero(), 4 * kDefaultTCPMSS).IsZero());
+  EXPECT_TRUE(sender_->CanSend(kDefaultTCPMSS));
+  EXPECT_TRUE(sender_->CanSend(2 * kDefaultTCPMSS));
+  EXPECT_TRUE(sender_->CanSend(3 * kDefaultTCPMSS));
+  EXPECT_FALSE(sender_->CanSend(4 * kDefaultTCPMSS));
 }
 
 TEST_F(TcpCubicSenderPacketsTest, NoPRR) {
@@ -865,38 +831,6 @@ TEST_F(TcpCubicSenderPacketsTest, NoPRR) {
             static_cast<uint64_t>(SendAvailableSendWindow()));
   EXPECT_EQ(expected_pacing_rate,
             sender_->PacingRate(kRenoBeta * kDefaultWindowTCP));
-}
-
-TEST_F(TcpCubicSenderPacketsTest, PaceSlowerAboveCwnd) {
-  QuicTime::Delta rtt(QuicTime::Delta::FromMilliseconds(60));
-  sender_->rtt_stats_.UpdateRtt(rtt, QuicTime::Delta::Zero(), clock_.Now());
-
-  QuicConfig config;
-  QuicTagVector options;
-  options.push_back(kRATE);
-  QuicConfigPeer::SetReceivedConnectionOptions(&config, options);
-  sender_->SetFromConfig(config, Perspective::IS_SERVER);
-  EXPECT_EQ(10u, sender_->congestion_window());
-  sender_->SetNumEmulatedConnections(1);
-  // Lose a packet to exit slow start.
-  LoseNPackets(1);
-  const QuicPacketCount cwnd = 7;
-  EXPECT_EQ(cwnd * kDefaultTCPMSS, sender_->GetCongestionWindow());
-
-  EXPECT_TRUE(
-      sender_->TimeUntilSend(QuicTime::Zero(), kDefaultTCPMSS).IsZero());
-  EXPECT_EQ(
-      sender_->PacingRate(kDefaultTCPMSS),
-      QuicBandwidth::FromBytesAndTimeDelta(7 * kDefaultTCPMSS, rtt) * 1.25);
-  for (QuicPacketCount i = cwnd + 1; i < 1.5 * cwnd; ++i) {
-    EXPECT_TRUE(
-        sender_->TimeUntilSend(QuicTime::Zero(), i * kDefaultTCPMSS).IsZero());
-    EXPECT_EQ(sender_->PacingRate(i * kDefaultTCPMSS),
-              QuicBandwidth::FromBytesAndTimeDelta(cwnd * kDefaultTCPMSS, rtt) *
-                  0.75);
-  }
-  EXPECT_FALSE(
-      sender_->TimeUntilSend(QuicTime::Zero(), 11 * kDefaultTCPMSS).IsZero());
 }
 
 TEST_F(TcpCubicSenderPacketsTest, ResetAfterConnectionMigration) {
@@ -940,11 +874,11 @@ TEST_F(TcpCubicSenderPacketsTest, DefaultMaxCwnd) {
       &clock_, &rtt_stats, /*unacked_packets=*/nullptr, kCubic,
       QuicRandom::GetInstance(), &stats, kInitialCongestionWindow));
 
-  SendAlgorithmInterface::CongestionVector acked_packets;
-  SendAlgorithmInterface::CongestionVector missing_packets;
+  AckedPacketVector acked_packets;
+  LostPacketVector missing_packets;
   for (uint64_t i = 1; i < kDefaultMaxCongestionWindowPackets; ++i) {
     acked_packets.clear();
-    acked_packets.push_back(std::make_pair(i, 1350));
+    acked_packets.push_back(AckedPacket(i, 1350, QuicTime::Zero()));
     sender->OnCongestionEvent(true, sender->GetCongestionWindow(), clock_.Now(),
                               acked_packets, missing_packets);
   }

@@ -21,15 +21,16 @@
 #import "ios/chrome/app/application_delegate/tab_switching.h"
 #import "ios/chrome/app/application_delegate/user_activity_handler.h"
 #import "ios/chrome/app/main_application_delegate.h"
-#import "ios/chrome/app/safe_mode/safe_mode_coordinator.h"
-#import "ios/chrome/app/safe_mode_crashing_modules_config.h"
+#import "ios/chrome/app/startup/content_suggestions_scheduler_notifications.h"
 #import "ios/chrome/browser/app_startup_parameters.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #import "ios/chrome/browser/device_sharing/device_sharing_manager.h"
 #import "ios/chrome/browser/geolocation/omnibox_geolocation_config.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/browser_view_controller.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/main/browser_view_information.h"
+#import "ios/chrome/browser/ui/safe_mode/safe_mode_coordinator.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #import "ios/chrome/test/base/scoped_block_swizzler.h"
 #include "ios/chrome/test/ios_chrome_scoped_testing_chrome_browser_provider.h"
@@ -448,8 +449,10 @@ TEST_F(AppStateTest, requiresHandlingAfterLaunchWithOptionsForeground) {
   EXPECT_OCMOCK_VERIFY(browserLauncherMock);
 }
 
+using AppStateNoFixtureTest = PlatformTest;
+
 // Test that -willResignActive set cold start to NO and launch record.
-TEST(AppStateNoFixtureTest, willResignActive) {
+TEST_F(AppStateNoFixtureTest, willResignActive) {
   // Setup.
   id tabModel = [OCMockObject mockForClass:[TabModel class]];
   [[tabModel expect] recordSessionMetrics];
@@ -581,6 +584,9 @@ TEST_F(AppStateTest, resumeSessionWithStartupParameters) {
   id mainTabModel = [OCMockObject mockForClass:[TabModel class]];
   [[mainTabModel expect] resetSessionMetrics];
   [[[browserViewInformation stub] andReturn:mainTabModel] mainTabModel];
+  id mainBVC = [OCMockObject mockForClass:[BrowserViewController class]];
+  stubNullBrowserState(mainBVC);
+  [[[browserViewInformation stub] andReturn:mainBVC] mainBVC];
 
   // Swizzle Startup Parameters.
   swizzleHandleStartupParameters(tabOpener, browserViewInformation);
@@ -627,6 +633,10 @@ TEST_F(AppStateTest, resumeSessionShouldOpenNTPTabSwitcher) {
   id tabSwitcher = [OCMockObject mockForProtocol:@protocol(TabSwitching)];
   [[[tabSwitcher stub] andReturnValue:@YES] openNewTabFromTabSwitcher];
 
+  id mainBVC = [OCMockObject mockForClass:[BrowserViewController class]];
+  stubNullBrowserState(mainBVC);
+  [[[browserViewInformation stub] andReturn:mainBVC] mainBVC];
+
   UIWindow* window = [[UIWindow alloc] init];
   AppState* appState = getAppStateWithOpenNTPAndIncognitoBlock(YES, window);
 
@@ -663,16 +673,24 @@ TEST_F(AppStateTest, resumeSessionShouldOpenNTPNoTabSwitcher) {
   id mainTabModel = [OCMockObject mockForClass:[TabModel class]];
   [[mainTabModel expect] resetSessionMetrics];
 
+  id dispatcher = [OCMockObject mockForProtocol:@protocol(BrowserCommands)];
+  [[dispatcher expect] openNewTab:[OCMArg any]];
+
   id currentBVC = [OCMockObject mockForClass:[BrowserViewController class]];
-  [[currentBVC expect] newTab:nil];
   stubNullBrowserState(currentBVC);
+  [[[currentBVC stub] andReturn:dispatcher] dispatcher];
 
   [[[browserViewInformation stub] andReturn:mainTabModel] mainTabModel];
   [[[browserViewInformation stub] andReturn:currentBVC] currentBVC];
+  [[[browserViewInformation stub] andReturn:nil] otrBVC];
 
   // TabSwitcher.
   id tabSwitcher = [OCMockObject mockForProtocol:@protocol(TabSwitching)];
   [[[tabSwitcher stub] andReturnValue:@NO] openNewTabFromTabSwitcher];
+
+  id mainBVC = [OCMockObject mockForClass:[BrowserViewController class]];
+  stubNullBrowserState(mainBVC);
+  [[[browserViewInformation stub] andReturn:mainBVC] mainBVC];
 
   UIWindow* window = [[UIWindow alloc] init];
   AppState* appState = getAppStateWithOpenNTPAndIncognitoBlock(YES, window);
@@ -708,11 +726,18 @@ TEST_F(AppStateTest, applicationWillEnterForeground) {
   [[[getBrowserLauncherMock() stub] andReturn:browserViewInformation]
       browserViewInformation];
   [[[browserViewInformation stub] andReturn:tabModel] currentTabModel];
+  id mainBVC = [OCMockObject mockForClass:[BrowserViewController class]];
+  stubNullBrowserState(mainBVC);
+  [[[browserViewInformation stub] andReturn:mainBVC] mainBVC];
   [[metricsMediator expect] updateMetricsStateBasedOnPrefsUserTriggered:NO];
   [[memoryHelper expect] resetForegroundMemoryWarningCount];
   [[[memoryHelper stub] andReturnValue:@0] foregroundMemoryWarningCount];
   [[[tabOpener stub] andReturnValue:@YES]
       shouldOpenNTPTabOnActivationOfTabModel:tabModel];
+
+  id contentSuggestionsNotifier =
+      OCMClassMock([ContentSuggestionsSchedulerNotifications class]);
+  OCMExpect([contentSuggestionsNotifier notifyForeground:nullptr]);
 
   stubNullCurrentBrowserState(browserViewInformation);
 
@@ -738,6 +763,7 @@ TEST_F(AppStateTest, applicationWillEnterForeground) {
       static_cast<FakeUserFeedbackProvider*>(
           ios::GetChromeBrowserProvider()->GetUserFeedbackProvider());
   EXPECT_TRUE(user_feedback_provider->synchronize_called());
+  EXPECT_OCMOCK_VERIFY(contentSuggestionsNotifier);
 }
 
 // Tests that -applicationWillEnterForeground starts the browser if the

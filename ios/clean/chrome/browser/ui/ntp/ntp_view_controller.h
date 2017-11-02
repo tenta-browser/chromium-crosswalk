@@ -7,6 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/clean/chrome/browser/ui/ntp/ntp_consumer.h"
 
 @protocol NTPCommands;
@@ -16,6 +17,9 @@
 
 // The dispatcher for this view controller
 @property(nonatomic, weak) id<NTPCommands> dispatcher;
+
+// Setting this property adds an Incognito panel.
+@property(nonatomic, strong) UIViewController* incognitoViewController;
 
 // Setting this property adds a Chrome Home panel.
 @property(nonatomic, strong) UIViewController* homeViewController;
@@ -27,6 +31,10 @@
 // Setting this property adds a recent tabs panel on iPad or present a bookmarks
 // panel on iPhone.
 @property(nonatomic, strong) UIViewController* recentTabsViewController;
+
+// The panel currently selected.
+@property(nonatomic, assign) ntp_home::PanelIdentifier selectedNTPPanel;
+
 @end
 
 #endif  // IOS_CLEAN_CHROME_BROWSER_UI_NTP_NTP_VIEW_CONTROLLER_H_

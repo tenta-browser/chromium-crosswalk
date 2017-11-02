@@ -96,10 +96,10 @@ static const gchar* browser_accessibility_get_name(AtkAction* atk_action,
     return nullptr;
 
   int action;
-  if (!obj->GetIntAttribute(ui::AX_ATTR_ACTION, &action))
+  if (!obj->GetIntAttribute(ui::AX_ATTR_DEFAULT_ACTION_VERB, &action))
     return nullptr;
-  base::string16 action_verb =
-      ui::ActionToUnlocalizedString(static_cast<ui::AXSupportedAction>(action));
+  base::string16 action_verb = ui::ActionVerbToUnlocalizedString(
+      static_cast<ui::AXDefaultActionVerb>(action));
   return base::UTF16ToUTF8(action_verb).c_str();
 }
 
@@ -471,6 +471,10 @@ static const gchar* browser_accessibility_get_name(AtkObject* atk_object) {
   if (!obj)
     return NULL;
 
+  if (obj->GetStringAttribute(ui::AX_ATTR_NAME).empty() &&
+      !obj->HasExplicitlyEmptyName())
+    return NULL;
+
   return obj->GetStringAttribute(ui::AX_ATTR_NAME).c_str();
 }
 
@@ -557,8 +561,24 @@ static AtkStateSet* browser_accessibility_ref_state_set(AtkObject* atk_object) {
     atk_state_set_add_state(state_set, ATK_STATE_FOCUSABLE);
   if (obj->manager()->GetFocus() == obj)
     atk_state_set_add_state(state_set, ATK_STATE_FOCUSED);
-  if (!(state & (1 << ui::AX_STATE_DISABLED)))
-    atk_state_set_add_state(state_set, ATK_STATE_ENABLED);
+
+  switch (obj->GetIntAttribute(ui::AX_ATTR_RESTRICTION)) {
+    case ui::AX_RESTRICTION_DISABLED:
+      break;
+    case ui::AX_RESTRICTION_READ_ONLY:
+// The following would require ATK 2.16 or later, which many
+// systems do not have. Since we aren't officially supporting ATK
+// it's best to leave this out rather than break people's builds:
+#if defined(ATK_CHECK_VERSION)
+#if ATK_CHECK_VERSION(2, 16, 0)
+      atk_state_set_add_state(state_set, ATK_STATE_READ_ONLY);
+#endif
+#endif
+      break;
+    default:
+      atk_state_set_add_state(state_set, ATK_STATE_ENABLED);
+      break;
+  }
 
   return state_set;
 }
@@ -850,7 +870,7 @@ void BrowserAccessibilityAuraLinux::InitRoleAndState() {
     case ui::AX_ROLE_DIALOG:
       atk_role_ = ATK_ROLE_DIALOG;
       break;
-    case ui::AX_ROLE_DIV:
+    case ui::AX_ROLE_GENERIC_CONTAINER:
     case ui::AX_ROLE_GROUP:
       atk_role_ = ATK_ROLE_SECTION;
       break;
@@ -949,6 +969,9 @@ void BrowserAccessibilityAuraLinux::InitRoleAndState() {
       break;
     case ui::AX_ROLE_TREE_ITEM:
       atk_role_ = ATK_ROLE_TREE_ITEM;
+      break;
+    case ui::AX_ROLE_TREE_GRID:
+      atk_role_ = ATK_ROLE_TREE_TABLE;
       break;
     case ui::AX_ROLE_VIDEO:
 #if defined(ATK_CHECK_VERSION)

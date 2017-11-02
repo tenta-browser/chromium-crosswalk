@@ -51,11 +51,10 @@ class CanvasCaptureHandlerTest
   CanvasCaptureHandlerTest() {}
 
   void SetUp() override {
-    canvas_capture_handler_.reset(
-        CanvasCaptureHandler::CreateCanvasCaptureHandler(
-            blink::WebSize(kTestCanvasCaptureWidth, kTestCanvasCaptureHeight),
-            kTestCanvasCaptureFramesPerSecond, message_loop_.task_runner(),
-            &track_));
+    canvas_capture_handler_ = CanvasCaptureHandler::CreateCanvasCaptureHandler(
+        blink::WebSize(kTestCanvasCaptureWidth, kTestCanvasCaptureHeight),
+        kTestCanvasCaptureFramesPerSecond, message_loop_.task_runner(),
+        &track_);
   }
 
   void TearDown() override {
@@ -73,12 +72,6 @@ class CanvasCaptureHandlerTest
   void OnDeliverFrame(const scoped_refptr<media::VideoFrame>& video_frame,
                       base::TimeTicks estimated_capture_time) {
     DoOnDeliverFrame(video_frame, estimated_capture_time);
-  }
-
-  MOCK_METHOD1(DoOnVideoCaptureDeviceFormats,
-               void(const media::VideoCaptureFormats&));
-  void OnVideoCaptureDeviceFormats(const media::VideoCaptureFormats& formats) {
-    DoOnVideoCaptureDeviceFormats(formats);
   }
 
   MOCK_METHOD1(DoOnRunning, void(bool));
@@ -175,16 +168,7 @@ TEST_P(CanvasCaptureHandlerTest, GetFormatsStartAndStop) {
   media::VideoCapturerSource* source = GetVideoCapturerSource(ms_source);
   EXPECT_TRUE(source != nullptr);
 
-  media::VideoCaptureFormats formats;
-  EXPECT_CALL(*this, DoOnVideoCaptureDeviceFormats(_))
-      .Times(1)
-      .WillOnce(SaveArg<0>(&formats));
-  source->GetCurrentSupportedFormats(
-      media::limits::kMaxCanvas /* max_requesteed_width */,
-      media::limits::kMaxCanvas /* max_requesteed_height */,
-      media::limits::kMaxFramesPerSecond /* max_requested_frame_rate */,
-      base::Bind(&CanvasCaptureHandlerTest::OnVideoCaptureDeviceFormats,
-                 base::Unretained(this)));
+  media::VideoCaptureFormats formats = source->GetPreferredFormats();
   ASSERT_EQ(2u, formats.size());
   EXPECT_EQ(kTestCanvasCaptureWidth, formats[0].frame_size.width());
   EXPECT_EQ(kTestCanvasCaptureHeight, formats[0].frame_size.height());

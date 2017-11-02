@@ -32,6 +32,7 @@
 #define Heap_h
 
 #include <memory>
+#include "build/build_config.h"
 #include "platform/PlatformExport.h"
 #include "platform/heap/GCInfo.h"
 #include "platform/heap/HeapPage.h"
@@ -111,7 +112,7 @@ class ObjectAliveTrait<T, true> {
   NO_SANITIZE_ADDRESS
   static bool IsHeapObjectAlive(const T* object) {
     static_assert(sizeof(T), "T must be fully defined");
-    return object->IsHeapObjectAlive();
+    return object->GetHeapObjectHeader()->IsMarked();
   }
 };
 
@@ -167,38 +168,30 @@ class ThreadHeapStats {
  public:
   ThreadHeapStats();
   void SetMarkedObjectSizeAtLastCompleteSweep(size_t size) {
-    ReleaseStore(&marked_object_size_at_last_complete_sweep_, size);
+    marked_object_size_at_last_complete_sweep_ = size;
   }
   size_t MarkedObjectSizeAtLastCompleteSweep() {
-    return AcquireLoad(&marked_object_size_at_last_complete_sweep_);
+    return marked_object_size_at_last_complete_sweep_;
   }
   void IncreaseAllocatedObjectSize(size_t delta);
   void DecreaseAllocatedObjectSize(size_t delta);
-  size_t AllocatedObjectSize() { return AcquireLoad(&allocated_object_size_); }
+  size_t AllocatedObjectSize() { return allocated_object_size_; }
   void IncreaseMarkedObjectSize(size_t delta);
-  size_t MarkedObjectSize() { return AcquireLoad(&marked_object_size_); }
+  size_t MarkedObjectSize() { return marked_object_size_; }
   void IncreaseAllocatedSpace(size_t delta);
   void DecreaseAllocatedSpace(size_t delta);
-  size_t AllocatedSpace() { return AcquireLoad(&allocated_space_); }
-  size_t ObjectSizeAtLastGC() { return AcquireLoad(&object_size_at_last_gc_); }
-  void IncreaseWrapperCount(size_t delta) {
-    AtomicAdd(&wrapper_count_, static_cast<long>(delta));
-  }
-  void DecreaseWrapperCount(size_t delta) {
-    AtomicSubtract(&wrapper_count_, static_cast<long>(delta));
-  }
+  size_t AllocatedSpace() { return allocated_space_; }
+  size_t ObjectSizeAtLastGC() { return object_size_at_last_gc_; }
+  void IncreaseWrapperCount(size_t delta) { wrapper_count_ += delta; }
+  void DecreaseWrapperCount(size_t delta) { wrapper_count_ -= delta; }
   size_t WrapperCount() { return AcquireLoad(&wrapper_count_); }
-  size_t WrapperCountAtLastGC() {
-    return AcquireLoad(&wrapper_count_at_last_gc_);
-  }
+  size_t WrapperCountAtLastGC() { return wrapper_count_at_last_gc_; }
   void IncreaseCollectedWrapperCount(size_t delta) {
-    AtomicAdd(&collected_wrapper_count_, static_cast<long>(delta));
+    collected_wrapper_count_ += delta;
   }
-  size_t CollectedWrapperCount() {
-    return AcquireLoad(&collected_wrapper_count_);
-  }
+  size_t CollectedWrapperCount() { return collected_wrapper_count_; }
   size_t PartitionAllocSizeAtLastGC() {
-    return AcquireLoad(&partition_alloc_size_at_last_gc_);
+    return partition_alloc_size_at_last_gc_;
   }
   void SetEstimatedMarkingTimePerByte(double estimated_marking_time_per_byte) {
     estimated_marking_time_per_byte_ = estimated_marking_time_per_byte;
@@ -301,7 +294,7 @@ class PLATFORM_EXPORT ThreadHeap {
     // Page has been swept and it is still alive.
     if (page->HasBeenSwept())
       return false;
-    ASSERT(page->Arena()->GetThreadState()->IsSweepingInProgress());
+    DCHECK(page->Arena()->GetThreadState()->IsSweepingInProgress());
 
     // If marked and alive, the object hasn't yet been swept..and won't
     // be once its page is processed.
@@ -372,14 +365,13 @@ class PLATFORM_EXPORT ThreadHeap {
                                     MovingObjectCallback,
                                     void* callback_data);
 
-  BlinkGC::GCReason LastGCReason() { return last_gc_reason_; }
   RegionTree* GetRegionTree() { return region_tree_.get(); }
 
   static inline size_t AllocationSizeFromSize(size_t size) {
     // Add space for header.
     size_t allocation_size = size + sizeof(HeapObjectHeader);
     // The allocation size calculation can overflow for large sizes.
-    RELEASE_ASSERT(allocation_size > size);
+    CHECK_GT(allocation_size, size);
     // Align size with allocation granularity.
     allocation_size = (allocation_size + kAllocationMask) & ~kAllocationMask;
     return allocation_size;
@@ -397,6 +389,7 @@ class PLATFORM_EXPORT ThreadHeap {
   void ProcessMarkingStack(Visitor*);
   void PostMarkingProcessing(Visitor*);
   void WeakProcessing(Visitor*);
+  bool AdvanceMarkingStackProcessing(Visitor*, double deadline_seconds);
 
   // Conservatively checks whether an address is a pointer in any of the
   // thread heaps.  If so marks the object pointed to as live.
@@ -419,11 +412,11 @@ class PLATFORM_EXPORT ThreadHeap {
   BasePage* LookupPageForAddress(Address);
 
   static const GCInfo* GcInfo(size_t gc_info_index) {
-    ASSERT(gc_info_index >= 1);
-    ASSERT(gc_info_index < GCInfoTable::kMaxIndex);
-    ASSERT(g_gc_info_table);
+    DCHECK_GE(gc_info_index, 1u);
+    DCHECK(gc_info_index < GCInfoTable::kMaxIndex);
+    DCHECK(g_gc_info_table);
     const GCInfo* info = g_gc_info_table[gc_info_index];
-    ASSERT(info);
+    DCHECK(info);
     return info;
   }
 
@@ -451,7 +444,6 @@ class PLATFORM_EXPORT ThreadHeap {
   std::unique_ptr<CallbackStack> post_marking_callback_stack_;
   std::unique_ptr<CallbackStack> weak_callback_stack_;
   std::unique_ptr<CallbackStack> ephemeron_stack_;
-  BlinkGC::GCReason last_gc_reason_;
   StackFrameDepth stack_frame_depth_;
 
   std::unique_ptr<HeapCompact> compaction_;
@@ -488,12 +480,12 @@ class GarbageCollected {
   // For now direct allocation of arrays on the heap is not allowed.
   void* operator new[](size_t size);
 
-#if OS(WIN) && COMPILER(MSVC)
+#if defined(OS_WIN) && defined(COMPILER_MSVC)
   // Due to some quirkiness in the MSVC compiler we have to provide
   // the delete[] operator in the GarbageCollected subclasses as it
   // is called when a class is exported in a DLL.
  protected:
-  void operator delete[](void* p) { ASSERT_NOT_REACHED(); }
+  void operator delete[](void* p) { NOTREACHED(); }
 #else
   void operator delete[](void* p);
 #endif
@@ -509,7 +501,7 @@ class GarbageCollected {
     return ThreadHeap::Allocate<T>(size, eagerly_sweep);
   }
 
-  void operator delete(void* p) { ASSERT_NOT_REACHED(); }
+  void operator delete(void* p) { NOTREACHED(); }
 
  protected:
   GarbageCollected() {}
@@ -572,7 +564,7 @@ class VerifyEagerFinalization {
     // eagerly finalized. Declaring and defining an 'operator new'
     // for this class is what's required -- consider using
     // DECLARE_EAGER_FINALIZATION_OPERATOR_NEW().
-    ASSERT(IS_EAGERLY_FINALIZED());
+    DCHECK(IS_EAGERLY_FINALIZED());
   }
 };
 #define EAGERLY_FINALIZE()                            \
@@ -592,8 +584,8 @@ inline Address ThreadHeap::AllocateOnArenaIndex(ThreadState* state,
                                                 int arena_index,
                                                 size_t gc_info_index,
                                                 const char* type_name) {
-  ASSERT(state->IsAllocationAllowed());
-  ASSERT(arena_index != BlinkGC::kLargeObjectArenaIndex);
+  DCHECK(state->IsAllocationAllowed());
+  DCHECK_NE(arena_index, BlinkGC::kLargeObjectArenaIndex);
   NormalPageArena* arena =
       static_cast<NormalPageArena*>(state->Arena(arena_index));
   Address address =
@@ -627,7 +619,7 @@ Address ThreadHeap::Reallocate(void* previous, size_t size) {
   ThreadState* state = ThreadStateFor<ThreadingTrait<T>::kAffinity>::GetState();
   HeapObjectHeader* previous_header = HeapObjectHeader::FromPayload(previous);
   BasePage* page = PageFromObject(previous_header);
-  ASSERT(page);
+  DCHECK(page);
 
   // Determine arena index of new allocation.
   int arena_index;
@@ -642,8 +634,8 @@ Address ThreadHeap::Reallocate(void* previous, size_t size) {
 
   size_t gc_info_index = GCInfoTrait<T>::Index();
   // TODO(haraken): We don't support reallocate() for finalizable objects.
-  ASSERT(!ThreadHeap::GcInfo(previous_header->GcInfoIndex())->HasFinalizer());
-  ASSERT(previous_header->GcInfoIndex() == gc_info_index);
+  DCHECK(!ThreadHeap::GcInfo(previous_header->GcInfoIndex())->HasFinalizer());
+  DCHECK_EQ(previous_header->GcInfoIndex(), gc_info_index);
   HeapAllocHooks::FreeHookIfEnabled(static_cast<Address>(previous));
   Address address;
   if (arena_index == BlinkGC::kLargeObjectArenaIndex) {

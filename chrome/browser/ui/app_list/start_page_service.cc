@@ -169,7 +169,7 @@ class StartPageService::StartPageWebContentsDelegate
                       ? disposition
                       : WindowOpenDisposition::NEW_FOREGROUND_TAB;
     chrome::AddWebContents(displayer.browser(), nullptr, new_contents,
-                           disposition, initial_pos, user_gesture, was_blocked);
+                           disposition, initial_pos, user_gesture);
   }
 
   content::WebContents* OpenURLFromTab(
@@ -195,9 +195,7 @@ class StartPageService::StartPageWebContentsDelegate
   bool PreHandleGestureEvent(content::WebContents* /*source*/,
                              const blink::WebGestureEvent& event) override {
     // Disable pinch zooming on the start page web contents.
-    return event.GetType() == blink::WebGestureEvent::kGesturePinchBegin ||
-           event.GetType() == blink::WebGestureEvent::kGesturePinchUpdate ||
-           event.GetType() == blink::WebGestureEvent::kGesturePinchEnd;
+    return blink::WebInputEvent::IsPinchGestureEventType(event.GetType());
   }
 
 

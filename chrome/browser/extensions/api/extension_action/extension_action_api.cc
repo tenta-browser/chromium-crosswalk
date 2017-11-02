@@ -91,7 +91,7 @@ ExtensionActionAPI::Observer::~Observer() {
 //
 
 static base::LazyInstance<BrowserContextKeyedAPIFactory<ExtensionActionAPI>>::
-    DestructorAtExit g_factory = LAZY_INSTANCE_INITIALIZER;
+    DestructorAtExit g_extension_action_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 ExtensionActionAPI::ExtensionActionAPI(content::BrowserContext* context)
     : browser_context_(context),
@@ -129,7 +129,7 @@ ExtensionActionAPI::~ExtensionActionAPI() {
 // static
 BrowserContextKeyedAPIFactory<ExtensionActionAPI>*
 ExtensionActionAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_extension_action_api_factory.Pointer();
 }
 
 // static
@@ -205,7 +205,8 @@ void ExtensionActionAPI::NotifyChange(ExtensionAction* extension_action,
 
 void ExtensionActionAPI::DispatchExtensionActionClicked(
     const ExtensionAction& extension_action,
-    WebContents* web_contents) {
+    WebContents* web_contents,
+    const Extension* extension) {
   events::HistogramValue histogram_value = events::UNKNOWN;
   const char* event_name = NULL;
   switch (extension_action.action_type()) {
@@ -225,7 +226,8 @@ void ExtensionActionAPI::DispatchExtensionActionClicked(
 
   if (event_name) {
     std::unique_ptr<base::ListValue> args(new base::ListValue());
-    args->Append(ExtensionTabUtil::CreateTabObject(web_contents)->ToValue());
+    args->Append(
+        ExtensionTabUtil::CreateTabObject(web_contents, extension)->ToValue());
 
     DispatchEventToExtension(web_contents->GetBrowserContext(),
                              extension_action.extension_id(), histogram_value,
@@ -272,9 +274,8 @@ void ExtensionActionAPI::DispatchEventToExtension(
   if (!EventRouter::Get(context))
     return;
 
-  std::unique_ptr<Event> event(
-      new Event(histogram_value, event_name, std::move(event_args)));
-  event->restrict_to_browser_context = context;
+  auto event = base::MakeUnique<Event>(histogram_value, event_name,
+                                       std::move(event_args), context);
   event->user_gesture = EventRouter::USER_GESTURE_ENABLED;
   EventRouter::Get(context)
       ->DispatchEventToExtension(extension_id, std::move(event));
@@ -357,7 +358,7 @@ bool ExtensionActionFunction::ExtractDataFromArguments() {
   if (!args_->Get(0, &first_arg))
     return true;
 
-  switch (first_arg->GetType()) {
+  switch (first_arg->type()) {
     case base::Value::Type::INTEGER:
       CHECK(first_arg->GetAsInteger(&tab_id_));
       break;
@@ -368,7 +369,7 @@ bool ExtensionActionFunction::ExtractDataFromArguments() {
       // Still need to check for the tabId within details.
       base::Value* tab_id_value = NULL;
       if (details_->Get("tabId", &tab_id_value)) {
-        switch (tab_id_value->GetType()) {
+        switch (tab_id_value->type()) {
           case base::Value::Type::NONE:
             // OK; tabId is optional, leave it default.
             return true;
@@ -586,7 +587,7 @@ bool BrowserActionOpenPopupFunction::RunAsync() {
   // instance around until a notification is observed.
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
-      base::Bind(&BrowserActionOpenPopupFunction::OpenPopupTimedOut, this),
+      base::BindOnce(&BrowserActionOpenPopupFunction::OpenPopupTimedOut, this),
       base::TimeDelta::FromSeconds(10));
   return true;
 }

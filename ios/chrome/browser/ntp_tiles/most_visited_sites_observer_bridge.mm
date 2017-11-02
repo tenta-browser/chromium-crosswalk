@@ -4,17 +4,22 @@
 
 #import "ios/chrome/browser/ntp_tiles/most_visited_sites_observer_bridge.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace ntp_tiles {
 
 MostVisitedSitesObserverBridge::MostVisitedSitesObserverBridge(
     id<MostVisitedSitesObserving> observer) {
-  observer_.reset(observer);
+  observer_ = observer;
 }
 
 MostVisitedSitesObserverBridge::~MostVisitedSitesObserverBridge() {}
 
-void MostVisitedSitesObserverBridge::OnMostVisitedURLsAvailable(
-    const NTPTilesVector& most_visited) {
+void MostVisitedSitesObserverBridge::OnURLsAvailable(
+    const std::map<SectionType, NTPTilesVector>& sections) {
+  const NTPTilesVector& most_visited = sections.at(SectionType::PERSONALIZED);
   [observer_ onMostVisitedURLsAvailable:most_visited];
 }
 

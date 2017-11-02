@@ -32,7 +32,7 @@
 #define InspectorFrontendClient_h
 
 #include "platform/heap/Handle.h"
-#include "wtf/Forward.h"
+#include "platform/wtf/Forward.h"
 
 namespace blink {
 
@@ -51,9 +51,6 @@ class InspectorFrontendClient {
                                float x,
                                float y,
                                ContextMenuProvider*) = 0;
-
-  virtual void SetInjectedScriptForOrigin(const String& origin,
-                                          const String& source) = 0;
 };
 
 }  // namespace blink

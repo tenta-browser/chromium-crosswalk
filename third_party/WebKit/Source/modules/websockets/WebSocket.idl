@@ -40,7 +40,7 @@ enum BinaryType { "blob", "arraybuffer" };
     DependentLifetime,
     Exposed=(Window,Worker),
     ImplementedAs=DOMWebSocket,
-    RaisesException=Constructor,
+    RaisesException=Constructor
 ] interface WebSocket : EventTarget {
     readonly attribute DOMString url;
 
@@ -58,7 +58,7 @@ enum BinaryType { "blob", "arraybuffer" };
     attribute EventHandler onclose;
     readonly attribute DOMString extensions;
     readonly attribute DOMString protocol;
-    [RaisesException] void close([Clamp] optional unsigned short code, optional USVString reason);
+    [RaisesException] void close(optional [Clamp] unsigned short code, optional USVString reason);
 
     // messaging
     attribute EventHandler onmessage;

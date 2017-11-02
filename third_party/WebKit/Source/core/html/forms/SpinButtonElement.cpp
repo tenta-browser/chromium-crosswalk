@@ -26,12 +26,13 @@
 
 #include "core/html/forms/SpinButtonElement.h"
 
-#include "core/HTMLNames.h"
+#include "build/build_config.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/events/MouseEvent.h"
 #include "core/events/WheelEvent.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/shadow/ShadowElementNames.h"
+#include "core/html_names.h"
 #include "core/input/EventHandler.h"
 #include "core/layout/LayoutBox.h"
 #include "core/page/ChromeClient.h"
@@ -224,7 +225,7 @@ void SpinButtonElement::Step(int amount) {
 // On Mac OS, NSStepper updates the value for the button under the mouse
 // cursor regardless of the button pressed at the beginning. So the
 // following check is not needed for Mac OS.
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   if (up_down_state_ != press_starting_state_)
     return;
 #endif

@@ -14,6 +14,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
@@ -42,9 +43,6 @@ class CONTENT_EXPORT BrowserGpuChannelHostFactory
   // Closes the channel to the GPU process. This should be called before the IO
   // thread stops.
   void CloseChannel();
-
-  // Used to skip GpuChannelHost tests when there can be no GPU process.
-  static bool CanUseForTesting();
 
   // Overridden from gpu::GpuChannelEstablishFactory:
   // The factory will return a null GpuChannelHost in the callback during

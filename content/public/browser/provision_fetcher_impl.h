@@ -23,7 +23,7 @@ namespace content {
 // A media::mojom::ProvisionFetcher implementation based on
 // media::ProvisionFetcher.
 class CONTENT_EXPORT ProvisionFetcherImpl
-    : NON_EXPORTED_BASE(public media::mojom::ProvisionFetcher) {
+    : public media::mojom::ProvisionFetcher {
  public:
   static void Create(net::URLRequestContextGetter* context_getter,
                      media::mojom::ProvisionFetcherRequest request);
@@ -35,11 +35,11 @@ class CONTENT_EXPORT ProvisionFetcherImpl
   // media::mojom::ProvisionFetcher implementation.
   void Retrieve(const std::string& default_url,
                 const std::string& request_data,
-                const RetrieveCallback& callback) final;
+                RetrieveCallback callback) final;
 
  private:
   // Callback for media::ProvisionFetcher::Retrieve().
-  void OnResponse(const RetrieveCallback& callback,
+  void OnResponse(RetrieveCallback callback,
                   bool success,
                   const std::string& response);
 

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ScriptRunIterator.h"
+#include "platform/fonts/ScriptRunIterator.h"
 
 #include <algorithm>
 #include "platform/text/ICUError.h"
@@ -21,7 +21,7 @@ void ICUScriptData::GetScripts(UChar32 ch, Vector<UScriptCode>& dst) const {
   // Leave room to insert primary script. It's not strictly necessary but
   // it ensures that the result won't ever be greater than kMaxScriptCount,
   // which some client someday might expect.
-  dst.Resize(kMaxScriptCount - 1);
+  dst.resize(kMaxScriptCount - 1);
   // Note, ICU convention is to return the number of available items
   // regardless of the capacity passed to the call. So count can be greater
   // than dst->size(), if a later version of the unicode data has more
@@ -39,11 +39,11 @@ void ICUScriptData::GetScripts(UChar32 ch, Vector<UScriptCode>& dst) const {
   if (U_FAILURE(status)) {
     DLOG(ERROR) << "Could not get icu script data: " << status << " for 0x"
                 << std::hex << ch;
-    dst.Clear();
+    dst.clear();
     return;
   }
 
-  dst.Resize(count);
+  dst.resize(count);
 
   if (primary_script == dst.at(0)) {
     // Only one script (might be common or inherited -- these are never in
@@ -109,7 +109,7 @@ PairedBracketType ICUScriptData::GetPairedBracketType(UChar32 ch) const {
 
 const ICUScriptData* ICUScriptData::Instance() {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(const ICUScriptData, icu_script_data_instance,
-                                  (new ICUScriptData()));
+                                  ());
   return &icu_script_data_instance;
 }
 
@@ -128,7 +128,7 @@ ScriptRunIterator::ScriptRunIterator(const UChar* text,
   DCHECK(data);
 
   if (ahead_pos_ < length_) {
-    current_set_.Clear();
+    current_set_.clear();
     // Priming the m_currentSet with USCRIPT_COMMON here so that the first
     // resolution between m_currentSet and m_nextSet in mergeSets() leads to
     // chosing the script of the first consumed character.
@@ -171,7 +171,7 @@ bool ScriptRunIterator::Consume(unsigned& limit, UScriptCode& script) {
 
   limit = length_;
   script = ResolveCurrentScript();
-  current_set_.Clear();
+  current_set_.clear();
   return true;
 }
 
@@ -193,7 +193,7 @@ void ScriptRunIterator::CloseBracket(UChar32 ch) {
       if (it->ch == target) {
         // Have a match, use open paren's resolved script.
         UScriptCode script = it->script;
-        next_set_.Clear();
+        next_set_.clear();
         next_set_.push_back(script);
 
         // And pop stack to this point.
@@ -290,7 +290,7 @@ bool ScriptRunIterator::MergeSets() {
   // Only change current if the run continues.
   int written = std::distance(current_set_.begin(), current_write_it);
   if (written > 0) {
-    current_set_.Resize(written);
+    current_set_.resize(written);
     return true;
   }
   return false;
@@ -326,7 +326,7 @@ bool ScriptRunIterator::Fetch(size_t* pos, UChar32* ch) {
   *pos = ahead_pos_ - (ahead_character_ >= 0x10000 ? 2 : 1);
   *ch = ahead_character_;
 
-  next_set_.Swap(ahead_set_);
+  next_set_.swap(ahead_set_);
   if (ahead_pos_ == length_) {
     // No more data to fetch, but last character still needs to be
     // processed. Advance m_aheadPos so that next time we will know
@@ -346,12 +346,12 @@ bool ScriptRunIterator::Fetch(size_t* pos, UChar32* ch) {
     if (next_set_[0] == USCRIPT_COMMON) {
       // Overwrite the next set with the non-inherited portion of the set.
       next_set_ = ahead_set_;
-      next_set_.erase(0);
+      next_set_.EraseAt(0);
       // Discard the remaining values, we'll inherit.
-      ahead_set_.Resize(1);
+      ahead_set_.resize(1);
     } else {
       // Else, this applies to anything.
-      ahead_set_.Resize(1);
+      ahead_set_.resize(1);
     }
   }
   return true;

@@ -2,91 +2,110 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/**
- * @constructor
- * @implements {settings.AppearanceBrowserProxy}
- * @extends {settings.TestBrowserProxy}
- */
-var TestAppearanceBrowserProxy = function() {
-  settings.TestBrowserProxy.call(this, [
-    'getDefaultZoom',
-    'getThemeInfo',
-    'isSupervised',
-    'openWallpaperManager',
-    'useDefaultTheme',
-    'useSystemTheme',
-    'validateStartupPage',
-  ]);
+/** @implements {settings.AppearanceBrowserProxy} */
+class TestAppearanceBrowserProxy extends TestBrowserProxy {
+  constructor() {
+    super([
+      'getDefaultZoom',
+      'getThemeInfo',
+      'isSupervised',
+      'isWallpaperSettingVisible',
+      'isWallpaperPolicyControlled',
+      'openWallpaperManager',
+      'useDefaultTheme',
+      'useSystemTheme',
+      'validateStartupPage',
+    ]);
 
-  /** @private */
-  this.defaultZoom_ = 1;
+    /** @private */
+    this.defaultZoom_ = 1;
 
-  /** @private */
-  this.isSupervised_ = false;
+    /** @private */
+    this.isSupervised_ = false;
 
-  /** @private */
-  this.isHomeUrlValid_ = true;
-};
+    /** @private */
+    this.isHomeUrlValid_ = true;
 
-TestAppearanceBrowserProxy.prototype = {
-  __proto__: settings.TestBrowserProxy.prototype,
+    /** @private */
+    this.isWallpaperSettingVisible_ = true;
+
+    /** @private */
+    this.isWallpaperPolicyControlled_ = false;
+  }
 
   /** @override */
-  getDefaultZoom: function() {
+  getDefaultZoom() {
     this.methodCalled('getDefaultZoom');
     return Promise.resolve(this.defaultZoom_);
-  },
+  }
 
   /** @override */
-  getThemeInfo: function(themeId) {
+  getThemeInfo(themeId) {
     this.methodCalled('getThemeInfo', themeId);
     return Promise.resolve({name: 'Sports car red'});
-  },
+  }
 
   /** @override */
-  isSupervised: function() {
+  isSupervised() {
     this.methodCalled('isSupervised');
     return this.isSupervised_;
-  },
+  }
 
   /** @override */
-  openWallpaperManager: function() {
+  isWallpaperSettingVisible() {
+    this.methodCalled('isWallpaperSettingVisible');
+    return Promise.resolve(this.isWallpaperSettingVisible_);
+  }
+
+  /** @override */
+  isWallpaperPolicyControlled() {
+    this.methodCalled('isWallpaperPolicyControlled');
+    return Promise.resolve(this.isWallpaperPolicyControlled_);
+  }
+
+  /** @override */
+  openWallpaperManager() {
     this.methodCalled('openWallpaperManager');
-  },
+  }
 
   /** @override */
-  useDefaultTheme: function() {
+  useDefaultTheme() {
     this.methodCalled('useDefaultTheme');
-  },
+  }
 
   /** @override */
-  useSystemTheme: function() {
+  useSystemTheme() {
     this.methodCalled('useSystemTheme');
-  },
+  }
 
   /** @param {number} defaultZoom */
-  setDefaultZoom: function(defaultZoom) {
+  setDefaultZoom(defaultZoom) {
     this.defaultZoom_ = defaultZoom;
-  },
+  }
 
   /** @param {boolean} Whether the user is supervised */
-  setIsSupervised: function(isSupervised) {
+  setIsSupervised(isSupervised) {
     this.isSupervised_ = isSupervised;
-  },
+  }
 
   /** @override */
-  validateStartupPage: function(url) {
+  validateStartupPage(url) {
     this.methodCalled('validateStartupPage', url);
     return Promise.resolve(this.isHomeUrlValid_);
-  },
+  }
 
   /**
    * @param {boolean} isValid
    */
-   setValidStartupPageResponse: function(isValid) {
-     this.isHomeUrlValid_ = isValid;
-   }
-};
+  setValidStartupPageResponse(isValid) {
+    this.isHomeUrlValid_ = isValid;
+  }
+
+  /** @param {boolean} Whether the wallpaper is policy controlled. */
+  setIsWallpaperPolicyControlled(isPolicyControlled) {
+    this.isWallpaperPolicyControlled_ = isPolicyControlled;
+  }
+}
 
 var appearancePage = null;
 
@@ -111,6 +130,10 @@ function createAppearancePage() {
     },
   });
 
+  appearancePage.set('pageVisibility', {
+    setWallpaper: true,
+  });
+
   document.body.appendChild(appearancePage);
   Polymer.dom.flush();
 }
@@ -126,10 +149,40 @@ suite('AppearanceHandler', function() {
 
   if (cr.isChromeOS) {
     test('wallpaperManager', function() {
-      var button = appearancePage.$.wallpaperButton;
-      assertTrue(!!button);
-      MockInteractions.tap(button);
-      return appearanceBrowserProxy.whenCalled('openWallpaperManager');
+      appearanceBrowserProxy.setIsWallpaperPolicyControlled(false);
+      // TODO(dschuyler): This should notice the policy change without needing
+      // the page to be recreated.
+      createAppearancePage();
+      return appearanceBrowserProxy.whenCalled('isWallpaperPolicyControlled')
+          .then(() => {
+            var button = appearancePage.$.wallpaperButton;
+            assertTrue(!!button);
+            assertFalse(button.disabled);
+            MockInteractions.tap(button);
+            return appearanceBrowserProxy.whenCalled('openWallpaperManager');
+          });
+    });
+
+    test('wallpaperSettingVisible', function() {
+      appearancePage.set("pageVisibility.setWallpaper", false);
+      return appearanceBrowserProxy.whenCalled('isWallpaperSettingVisible')
+          .then(function() {
+            Polymer.dom.flush();
+            assertTrue(appearancePage.$$('#wallpaperButton').hidden);
+          });
+    });
+
+    test('wallpaperPolicyControlled', function() {
+      // Should show the wallpaper policy indicator and disable the toggle
+      // button if the wallpaper is policy controlled.
+      appearanceBrowserProxy.setIsWallpaperPolicyControlled(true);
+      createAppearancePage();
+      return appearanceBrowserProxy.whenCalled('isWallpaperPolicyControlled')
+          .then(function() {
+            Polymer.dom.flush();
+            assertFalse(appearancePage.$$('#wallpaperPolicyIndicator').hidden);
+            assertTrue(appearancePage.$$('#wallpaperButton').disabled);
+          });
     });
   } else {
     test('noWallpaperManager', function() {
@@ -181,14 +234,14 @@ suite('AppearanceHandler', function() {
       assertFalse(!!appearancePage.$$('#useDefault'));
       assertFalse(!!appearancePage.$$('#useSystem'));
       // If there's no "USE" buttons, the container should be hidden.
-      assertTrue(appearancePage.$$('.secondary-action').hidden);
+      assertTrue(appearancePage.$$('#themesSecondaryActions').hidden);
 
       appearanceBrowserProxy.setIsSupervised(false);
       appearancePage.set(THEME_ID_PREF, 'fake theme id');
       Polymer.dom.flush();
       // If there's "USE" buttons again, the container should be visible.
       assertTrue(!!appearancePage.$$('#useDefault'));
-      assertFalse(appearancePage.$$('.secondary-action').hidden);
+      assertFalse(appearancePage.$$('#themesSecondaryActions').hidden);
 
       var button = appearancePage.$$('#useSystem');
       assertTrue(!!button);

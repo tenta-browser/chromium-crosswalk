@@ -1,7 +1,6 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
-<link rel="import" href="chrome://resources/cr_elements/icons.html">
+
 <link rel="import" href="chrome://resources/html/icon.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/iron-icon/iron-icon.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="chrome://bookmarks/actions.html">
 <link rel="import" href="chrome://bookmarks/shared_style.html">
@@ -12,21 +11,22 @@
     <style include="shared-style">
       :host {
         -webkit-padding-start: 20px;
-        -webkit-user-select: none;
         align-items: center;
-        cursor: pointer;
+        color: inherit;
         display: flex;
         flex-direction: row;
         height: 40px;
         position: relative;
+        text-decoration: none;
+        user-select: none;
       }
 
       :host([is-selected-item_]) {
-        background-color: rgb(225, 235, 253);
+        background-color: var(--highlight-color);
       }
 
       #website-title {
-        color: var(--primary-text-color);
+        -webkit-margin-start: 20px;
         flex: 1;
         overflow: hidden;
         text-decoration: none;
@@ -35,38 +35,26 @@
       }
 
       #icon {
-        background-repeat: no-repeat;
-        height: 16px;
-        margin: 2px;
-      }
-
-      #icon-wrapper {
-        -webkit-margin-end: 20px;
-        height: 20px;
-        width: 20px;
-      }
-
-      .more-vert-button {
-        -webkit-margin-end: 12px;
-      }
-
-      iron-icon {
-        --iron-icon-height: 20px;
-        --iron-icon-width: 20px;
         color: var(--secondary-text-color);
       }
-      </style>
-    <div id="icon-wrapper">
-      <iron-icon id="folder-icon" icon="cr:folder"
-          hidden$="[[!isFolder_]]">
-      </iron-icon>
-      <div id="icon" hidden$="[[isFolder_]]"></div>
-    </div>
+
+      button.more-vert-button {
+        -webkit-margin-end: 12px;
+      }
+    </style>
+    <div id="icon"></div>
     <div id="website-title">
       [[item_.title]]
     </div>
-    <button is="paper-icon-button-light" class="more-vert-button"
-        on-click="onMenuButtonClick_" on-dblclick="onMenuButtonDblClick_">
+    <button id="menuButton"
+        is="paper-icon-button-light"
+        class="more-vert-button"
+        tabindex$="[[ironListTabIndex]]"
+        title="$i18n{moreActionsButtonTitle}"
+        aria-label$="[[getButtonAriaLabel_(item_)]]"
+        on-click="onMenuButtonClick_"
+        on-dblclick="onMenuButtonDblClick_"
+        aria-haspopup="menu">
       <div></div>
       <div></div>
       <div></div>

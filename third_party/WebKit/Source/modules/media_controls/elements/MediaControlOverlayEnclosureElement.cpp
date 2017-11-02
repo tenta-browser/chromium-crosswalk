@@ -4,7 +4,7 @@
 
 #include "modules/media_controls/elements/MediaControlOverlayEnclosureElement.h"
 
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "modules/media_controls/MediaControlsImpl.h"
 
 namespace blink {
@@ -25,8 +25,7 @@ MediaControlOverlayEnclosureElement::PreDispatchEventHandler(Event* event) {
   // can prevent their translation to click events.
   if (event && (event->type() == EventTypeNames::click ||
                 event->type() == EventTypeNames::touchstart)) {
-    static_cast<MediaControlsImpl&>(GetMediaControls())
-        .ShowOverlayCastButtonIfNeeded();
+    GetMediaControls().ShowOverlayCastButtonIfNeeded();
   }
   return MediaControlDivElement::PreDispatchEventHandler(event);
 }

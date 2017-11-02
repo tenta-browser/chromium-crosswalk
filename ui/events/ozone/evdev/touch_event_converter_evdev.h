@@ -11,6 +11,13 @@
 #include <bitset>
 #include <memory>
 
+#include <linux/input.h>
+// See if we compile against new enough headers and add missing definition
+// if the headers are too old.
+#ifndef MT_TOOL_PALM
+#define MT_TOOL_PALM 2
+#endif
+
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
@@ -85,6 +92,7 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
   void ReleaseTouches();
   void ReleaseButtons();
   void CancelAllTouches();
+  bool IsPalm(const InProgressTouchEvdev& touch);
   // Normalize pressure value to [0, 1].
   float ScalePressure(int32_t value);
 
@@ -125,6 +133,12 @@ class EVENTS_OZONE_EVDEV_EXPORT TouchEventConverterEvdev
   // Input range for y-axis.
   float y_min_tuxels_;
   float y_num_tuxels_;
+
+  // The resolution of ABS_MT_TOUCH_MAJOR/MINOR might be different from the
+  // resolution of ABS_MT_POSITION_X/Y. As we use the (position range, display
+  // pixels) to resize touch event radius, we have to scale major/minor.
+  float touch_major_scale_ = 1.0f;
+  float touch_minor_scale_ = 1.0f;
 
   // Number of touch points reported by driver
   int touch_points_ = 0;

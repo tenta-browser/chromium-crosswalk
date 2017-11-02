@@ -4,12 +4,22 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 100, 100, 50],
+          "reason": "geometry"
+        },
         {
           "object": "LayoutSVGViewportContainer svg id='mover'",
           "rect": [0, 100, 100, 50],
           "reason": "full"
+        },
+        {
+          "object": "LayoutSVGRect rect",
+          "rect": [0, 50, 100, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutSVGViewportContainer svg id='mover'",
@@ -26,7 +36,7 @@
     },
     {
       "object": "LayoutSVGRect rect",
-      "reason": "bounds change"
+      "reason": "geometry"
     }
   ]
 }

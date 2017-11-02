@@ -13,9 +13,7 @@
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_metrics.h"
 
-// SigninManager to use for testing. Tests should use the type
-// SigninManagerForTesting to ensure that the right type for their platform is
-// used.
+// SigninManager to use for testing.
 
 class FakeSigninManagerBase : public SigninManagerBase {
  public:
@@ -44,7 +42,7 @@ class FakeSigninManager : public SigninManager {
 
   void set_password(const std::string& password) { password_ = password; }
 
-  void SignIn(const std::string& account_id,
+  void SignIn(const std::string& gaia_id,
               const std::string& username,
               const std::string& password);
 
@@ -59,13 +57,17 @@ class FakeSigninManager : public SigninManager {
       const std::string& password,
       const OAuthTokenFetchedCallback& oauth_fetched_callback) override;
 
-  void SignOut(signin_metrics::ProfileSignout signout_source_metric,
-               signin_metrics::SignoutDelete signout_delete_metric) override;
-
   void CompletePendingSignin() override;
+
+ protected:
+  void DoSignOut(signin_metrics::ProfileSignout signout_source_metric,
+                 signin_metrics::SignoutDelete signout_delete_metric,
+                 bool remove_all_accounts) override;
 
   // Username specified in StartSignInWithRefreshToken() call.
   std::string username_;
+
+  ProfileOAuth2TokenService* token_service_;
 };
 
 #endif  // !defined (OS_CHROMEOS)

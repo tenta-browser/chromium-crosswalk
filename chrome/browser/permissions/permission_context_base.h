@@ -16,10 +16,8 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "third_party/WebKit/public/platform/WebFeaturePolicyFeature.h"
 
-#if defined(OS_ANDROID)
-class PermissionQueueController;
-#endif
 class GURL;
 class PermissionRequestID;
 class Profile;
@@ -58,7 +56,8 @@ using BrowserPermissionCallback = base::Callback<void(ContentSetting)>;
 class PermissionContextBase : public KeyedService {
  public:
   PermissionContextBase(Profile* profile,
-                        const ContentSettingsType content_settings_type);
+                        ContentSettingsType content_settings_type,
+                        blink::WebFeaturePolicyFeature feature_policy_feature);
   ~PermissionContextBase() override;
 
   // A field trial used to enable the global permissions kill switch.
@@ -150,11 +149,6 @@ class PermissionContextBase : public KeyedService {
                                 const GURL& requesting_origin,
                                 bool allowed) {}
 
-#if defined(OS_ANDROID)
-  // Return an instance of the infobar queue controller, creating it if needed.
-  PermissionQueueController* GetQueueController();
-#endif
-
   // Returns the profile associated with this permission context.
   Profile* profile() const;
 
@@ -172,13 +166,12 @@ class PermissionContextBase : public KeyedService {
     return content_settings_type_;
   }
 
-  // TODO(timloh): The CONTENT_SETTINGS_TYPE_NOTIFICATIONS type is used to
-  // store both push messaging and notifications permissions. Remove this
-  // once we've unified these types (crbug.com/563297).
   ContentSettingsType content_settings_storage_type() const;
 
  private:
   friend class PermissionContextBaseTests;
+
+  bool PermissionAllowedByFeaturePolicy(content::RenderFrameHost* rfh) const;
 
   // Called when a request is no longer used so it can be cleaned up.
   void CleanUpRequest(const PermissionRequestID& id);
@@ -204,9 +197,7 @@ class PermissionContextBase : public KeyedService {
 
   Profile* profile_;
   const ContentSettingsType content_settings_type_;
-#if defined(OS_ANDROID)
-  std::unique_ptr<PermissionQueueController> permission_queue_controller_;
-#endif
+  const blink::WebFeaturePolicyFeature feature_policy_feature_;
   std::unordered_map<std::string, std::unique_ptr<PermissionRequest>>
       pending_requests_;
 

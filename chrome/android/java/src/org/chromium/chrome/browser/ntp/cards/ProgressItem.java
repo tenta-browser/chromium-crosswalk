@@ -20,7 +20,15 @@ class ProgressItem extends OptionalLeaf {
 
     @Override
     protected void onBindViewHolder(NewTabPageViewHolder holder) {
-        assert holder instanceof ProgressViewHolder;
         ((ProgressViewHolder) holder).onBindViewHolder(this);
+    }
+
+    @Override
+    protected void visitOptionalItem(NodeVisitor visitor) {
+        visitor.visitProgressItem();
+    }
+
+    public void setVisible(boolean visible) {
+        setVisibilityInternal(visible);
     }
 }

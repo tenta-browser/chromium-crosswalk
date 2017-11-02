@@ -75,8 +75,7 @@ class PrintJobWorker {
   bool IsRunning() const;
 
   // Posts the given task to be run.
-  bool PostTask(const tracked_objects::Location& from_here,
-                const base::Closure& task);
+  bool PostTask(const base::Location& from_here, const base::Closure& task);
 
   // Signals the thread to exit in the near future.
   void StopSoon();
@@ -137,6 +136,8 @@ class PrintJobWorker {
   // The printed document. Only has read-only access.
   scoped_refptr<PrintedDocument> document_;
 
+  int render_process_id_;
+  int render_frame_id_;
   // The print job owning this worker thread. It is guaranteed to outlive this
   // object.
   PrintJobWorkerOwner* owner_;

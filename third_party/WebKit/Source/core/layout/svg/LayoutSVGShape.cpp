@@ -31,6 +31,7 @@
 #include "core/layout/LayoutAnalyzer.h"
 #include "core/layout/PointerEventsHitRules.h"
 #include "core/layout/svg/LayoutSVGResourcePaintServer.h"
+#include "core/layout/svg/LayoutSVGRoot.h"
 #include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/layout/svg/SVGResources.h"
 #include "core/layout/svg/SVGResourcesCache.h"
@@ -44,19 +45,6 @@
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
-
-bool LayoutSVGShape::AdjustVisualRectForRasterEffects(
-    LayoutRect& visual_rect) const {
-  // Account for raster expansions due to SVG stroke hairline raster effects.
-  if (!visual_rect.IsEmpty() && StyleRef().SvgStyle().HasVisibleStroke()) {
-    LayoutUnit pad(0.5f);
-    if (StyleRef().SvgStyle().CapStyle() != kButtCap)
-      pad += 0.5f;
-    visual_rect.Inflate(pad);
-    return true;
-  }
-  return false;
-}
 
 LayoutSVGShape::LayoutSVGShape(SVGGeometryElement* node)
     : LayoutSVGModelObject(node),
@@ -227,9 +215,15 @@ Path* LayoutSVGShape::NonScalingStrokePath(
 }
 
 AffineTransform LayoutSVGShape::NonScalingStrokeTransform() const {
-  AffineTransform t =
-      ToSVGGraphicsElement(GetElement())
-          ->GetScreenCTM(SVGGraphicsElement::kDisallowStyleUpdate);
+  // Compute the CTM to the SVG root. This should probably be the CTM all the
+  // way to the "canvas" of the page ("host" coordinate system), but with our
+  // current approach of applying/painting non-scaling-stroke, that can break in
+  // unpleasant ways (see crbug.com/747708 for an example.) Maybe it would be
+  // better to apply this effect during rasterization?
+  const LayoutSVGRoot* svg_root = SVGLayoutSupport::FindTreeRootObject(this);
+  AffineTransform t;
+  t.Scale(1 / StyleRef().EffectiveZoom())
+      .Multiply(LocalToAncestorTransform(svg_root).ToAffineTransform());
   // Width of non-scaling stroke is independent of translation, so zero it out
   // here.
   t.SetE(0);
@@ -300,7 +294,7 @@ bool LayoutSVGShape::NodeAtFloatPointInternal(const HitTestRequest& request,
 }
 
 FloatRect LayoutSVGShape::CalculateObjectBoundingBox() const {
-  return GetPath().BoundingRect();
+  return GetPath().BoundingRect(Path::BoundsType::kExact);
 }
 
 FloatRect LayoutSVGShape::CalculateStrokeBoundingBox() const {
@@ -339,6 +333,17 @@ LayoutSVGShapeRareData& LayoutSVGShape::EnsureRareData() const {
   if (!rare_data_)
     rare_data_ = WTF::MakeUnique<LayoutSVGShapeRareData>();
   return *rare_data_.get();
+}
+
+LayoutUnit LayoutSVGShape::VisualRectOutsetForRasterEffects() const {
+  // Account for raster expansions due to SVG stroke hairline raster effects.
+  if (StyleRef().SvgStyle().HasVisibleStroke()) {
+    LayoutUnit outset(0.5f);
+    if (StyleRef().SvgStyle().CapStyle() != kButtCap)
+      outset += 0.5f;
+    return outset;
+  }
+  return LayoutUnit();
 }
 
 }  // namespace blink

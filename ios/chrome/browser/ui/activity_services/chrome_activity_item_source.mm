@@ -14,56 +14,6 @@
 #error "This file requires ARC support."
 #endif
 
-#pragma mark - UIActivityTextSource
-
-@interface UIActivityTextSource () {
-  // The shared text.
-  NSString* _text;
-}
-
-@end
-
-@implementation UIActivityTextSource
-
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
-- (instancetype)initWithText:(NSString*)text {
-  DCHECK(text);
-  self = [super init];
-  if (self) {
-    _text = [text copy];
-  }
-  return self;
-}
-
-#pragma mark - UIActivityItemSource
-
-- (id)activityViewController:(UIActivityViewController*)activityViewController
-         itemForActivityType:(NSString*)activityType {
-  // The UIActivityTypeMail is excluded because it obtains the text through the
-  // UIActivityURLSource's |...subjectForActivityType:| method.
-  // The UIActivityTypeCopyToPasteboard and UIActivityTypeMessage are excluded
-  // because the pasteboard and message should only contain the URL, to match
-  // Safari's behavior.
-  NSSet* excludedActivityTypes = [NSSet setWithArray:@[
-    UIActivityTypeCopyToPasteboard, UIActivityTypeMail, UIActivityTypeMessage
-  ]];
-  if ([excludedActivityTypes containsObject:activityType]) {
-    return nil;
-  }
-  return _text;
-}
-
-- (id)activityViewControllerPlaceholderItem:
-    (UIActivityViewController*)activityViewController {
-  return _text;
-}
-
-@end
-
 #pragma mark - UIActivityImageSource
 
 @interface UIActivityImageSource () {
@@ -150,14 +100,14 @@
 
 - (id)activityViewController:(UIActivityViewController*)activityViewController
          itemForActivityType:(NSString*)activityType {
-  NSNumber* versionNumber =
-      activity_type_util::PasswordAppExActivityVersion(activityType);
-  if (!versionNumber)
+  if (activity_type_util::TypeFromString(activityType) !=
+      activity_type_util::APPEX_PASSWORD_MANAGEMENT)
     return _url;
 
   // Constructs an NSExtensionItem object from the URL being "shared".
   NSDictionary* appExItems = @{
-    activity_services::kPasswordAppExVersionNumberKey : versionNumber,
+    activity_services::kPasswordAppExVersionNumberKey :
+        activity_services::kPasswordAppExVersionNumber,
     activity_services::kPasswordAppExURLStringKey : [_url absoluteString]
   };
   NSItemProvider* itemProvider = [[NSItemProvider alloc]
@@ -188,10 +138,9 @@
   // after user made a choice of which AppEx to run, this method may be called
   // with |activityType| equals to the bundle ID of the AppEx selected.
   // Default action is to return @"public.url" UTType.
-  if (!activityType ||
-      activity_type_util::PasswordAppExActivityVersion(activityType)) {
+  if (!activityType || activity_type_util::TypeFromString(activityType) ==
+                           activity_type_util::APPEX_PASSWORD_MANAGEMENT)
     return findLoginType;
-  }
   return (NSString*)kUTTypeURL;
 }
 

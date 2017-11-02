@@ -43,7 +43,7 @@ class FakeTransformTransition : public TransformAnimationCurve {
   ~FakeTransformTransition() override;
 
   base::TimeDelta Duration() const override;
-  gfx::Transform GetValue(base::TimeDelta time) const override;
+  TransformOperations GetValue(base::TimeDelta time) const override;
   bool AnimatedBoundsForBox(const gfx::BoxF& box,
                             gfx::BoxF* bounds) const override;
   bool IsTranslation() const override;
@@ -110,17 +110,17 @@ int AddOpacityStepsToPlayer(AnimationPlayer* player,
 void AddAnimationToElementWithPlayer(ElementId element_id,
                                      scoped_refptr<AnimationTimeline> timeline,
                                      std::unique_ptr<Animation> animation);
-void AddAnimationToElementWithExistingPlayer(
+void AddAnimationToElementWithExistingTicker(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     std::unique_ptr<Animation> animation);
 
-void RemoveAnimationFromElementWithExistingPlayer(
+void RemoveAnimationFromElementWithExistingTicker(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     int animation_id);
 
-Animation* GetAnimationFromElementWithExistingPlayer(
+Animation* GetAnimationFromElementWithExistingTicker(
     ElementId element_id,
     scoped_refptr<AnimationTimeline> timeline,
     int animation_id);

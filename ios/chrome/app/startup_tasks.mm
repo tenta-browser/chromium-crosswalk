@@ -6,7 +6,6 @@
 
 #import <MediaPlayer/MediaPlayer.h>
 
-#import "base/ios/weak_nsobject.h"
 #import "base/mac/bind_objc_block.h"
 #include "components/bookmarks/browser/startup_task_runner_service.h"
 #import "ios/chrome/app/deferred_initialization_runner.h"
@@ -21,6 +20,10 @@
 #import "ios/chrome/browser/ui/main/browser_view_information.h"
 #import "ios/chrome/browser/upgrade/upgrade_center.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 // Constants for deferred initilization of the profile start-up task runners.
 NSString* const kStartProfileStartupTaskRunners =
@@ -31,7 +34,7 @@ NSString* const kStartProfileStartupTaskRunners =
 
 // Performs browser state initialization tasks that don't need to happen
 // synchronously at startup.
-- (void)performDeferredInitializationForBrowserState:
++ (void)performDeferredInitializationForBrowserState:
     (ios::ChromeBrowserState*)browserState;
 // Called when UIApplicationWillResignActiveNotification is received.
 - (void)applicationWillResignActiveNotification:(NSNotification*)notification;
@@ -42,7 +45,7 @@ NSString* const kStartProfileStartupTaskRunners =
 
 #pragma mark - Public methods.
 
-- (void)scheduleDeferredBrowserStateInitialization:
++ (void)scheduleDeferredBrowserStateInitialization:
     (ios::ChromeBrowserState*)browserState {
   DCHECK(browserState);
   // Schedule the start of the profile deferred task runners.
@@ -63,7 +66,7 @@ NSString* const kStartProfileStartupTaskRunners =
       GetApplicationContext()
           ->GetIOSChromeIOThread()
           ->system_url_request_context_getter(),
-      base::BindBlock(^(const UpgradeRecommendedDetails& details) {
+      base::BindBlockArc(^(const UpgradeRecommendedDetails& details) {
         [[UpgradeCenter sharedInstance] upgradeNotificationDidOccur:details];
       }));
 #endif  // defined(GOOGLE_CHROME_BUILD)
@@ -79,7 +82,7 @@ NSString* const kStartProfileStartupTaskRunners =
 
 #pragma mark - Private methods.
 
-- (void)performDeferredInitializationForBrowserState:
++ (void)performDeferredInitializationForBrowserState:
     (ios::ChromeBrowserState*)browserState {
   ios::StartupTaskRunnerServiceFactory::GetForBrowserState(browserState)
       ->StartDeferredTaskRunners();

@@ -8,16 +8,17 @@
 #include <map>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/extensions/tab_helper.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper.h"
 #include "chrome/browser/ui/tab_contents/core_tab_helper_delegate.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
@@ -25,10 +26,18 @@
 #include "chrome/browser/ui/tabs/tab_utils.h"
 #include "chrome/browser/ui/web_contents_sizer.h"
 #include "chrome/common/url_constants.h"
+#include "components/feature_engagement/features.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+
+#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+#include "chrome/browser/feature_engagement/new_tab/new_tab_tracker.h"
+#include "chrome/browser/feature_engagement/new_tab/new_tab_tracker_factory.h"
+#endif
+
 using base::UserMetricsAction;
 using content::WebContents;
 
@@ -430,16 +439,14 @@ void TabStripModel::MoveWebContentsAt(int index,
                                       int to_position,
                                       bool select_after_move) {
   DCHECK(ContainsIndex(index));
+
+  // Ensure pinned and non-pinned tabs do not mix.
+  const int first_non_pinned_tab = IndexOfFirstNonPinnedTab();
+  to_position = IsTabPinned(index)
+                    ? std::min(first_non_pinned_tab - 1, to_position)
+                    : std::max(first_non_pinned_tab, to_position);
   if (index == to_position)
     return;
-
-  int first_non_pinned_tab = IndexOfFirstNonPinnedTab();
-  if ((index < first_non_pinned_tab && to_position >= first_non_pinned_tab) ||
-      (to_position < first_non_pinned_tab && index >= first_non_pinned_tab)) {
-    // This would result in pinned tabs mixed with non-pinned tabs. We don't
-    // allow that.
-    return;
-  }
 
   MoveWebContentsAtImpl(index, to_position, select_after_move);
 }
@@ -503,6 +510,16 @@ void TabStripModel::UpdateWebContentsStateAt(int index,
     observer.TabChangedAt(GetWebContentsAtImpl(index), index, change_type);
 }
 
+void TabStripModel::TabNeedsAttentionAt(int index) {
+  DCHECK(ContainsIndex(index));
+
+  if (index == active_index())
+    return;
+
+  for (auto& observer : observers_)
+    observer.TabNeedsAttentionAt(index);
+}
+
 void TabStripModel::CloseAllTabs() {
   // Set state so that observers can adjust their behavior to suit this
   // specific condition when CloseWebContentsAt causes a flurry of
@@ -538,16 +555,11 @@ WebContents* TabStripModel::GetOpenerOfWebContentsAt(int index) {
 void TabStripModel::SetOpenerOfWebContentsAt(int index,
                                              WebContents* opener) {
   DCHECK(ContainsIndex(index));
-  if (opener) {
-    // The TabStripModel only maintains the references to openers that it itself
-    // owns; trying to set an opener to an external WebContents can result in
-    // the opener being used after its freed. See crbug.com/698681.
-    // TODO(devlin): This is a CHECK right now to track down any other cases
-    // where this can happen. If there aren't any, we might be able to downgrade
-    // this to a DCHECK.
-    CHECK_NE(kNoTab, GetIndexOfWebContents(opener))
-        << "Cannot set opener to a web contents not owned by this tab strip.";
-  }
+  // The TabStripModel only maintains the references to openers that it itself
+  // owns; trying to set an opener to an external WebContents can result in
+  // the opener being used after its freed. See crbug.com/698681.
+  DCHECK(!opener || GetIndexOfWebContents(opener) != kNoTab)
+      << "Cannot set opener to a web contents not owned by this tab strip.";
   contents_data_[index]->set_opener(opener);
 }
 
@@ -873,7 +885,8 @@ bool TabStripModel::IsContextMenuCommandEnabled(
       return delegate_->GetRestoreTabType() !=
           TabStripModelDelegate::RESTORE_NONE;
 
-    case CommandToggleTabAudioMuted: {
+    case CommandToggleTabAudioMuted:
+    case CommandToggleSiteMuted: {
       std::vector<int> indices = GetIndicesForCommand(context_index);
       for (size_t i = 0; i < indices.size(); ++i) {
         if (!chrome::CanToggleAudioMute(GetWebContentsAt(indices[i])))
@@ -901,13 +914,21 @@ void TabStripModel::ExecuteContextMenuCommand(
     int context_index, ContextMenuCommand command_id) {
   DCHECK(command_id > CommandFirst && command_id < CommandLast);
   switch (command_id) {
-    case CommandNewTab:
+    case CommandNewTab: {
       base::RecordAction(UserMetricsAction("TabContextMenu_NewTab"));
       UMA_HISTOGRAM_ENUMERATION("Tab.NewTab",
                                 TabStripModel::NEW_TAB_CONTEXT_MENU,
                                 TabStripModel::NEW_TAB_ENUM_COUNT);
       delegate()->AddTabAt(GURL(), context_index + 1, true);
+#if BUILDFLAG(ENABLE_DESKTOP_IN_PRODUCT_HELP)
+      auto* new_tab_tracker =
+          feature_engagement::NewTabTrackerFactory::GetInstance()
+              ->GetForProfile(profile_);
+      new_tab_tracker->OnNewTabOpened();
+      new_tab_tracker->CloseBubble();
+#endif
       break;
+    }
 
     case CommandReload: {
       base::RecordAction(UserMetricsAction("TabContextMenu_Reload"));
@@ -985,7 +1006,7 @@ void TabStripModel::ExecuteContextMenuCommand(
 
     case CommandToggleTabAudioMuted: {
       const std::vector<int>& indices = GetIndicesForCommand(context_index);
-      const bool mute = !chrome::AreAllTabsMuted(*this, indices);
+      const bool mute = WillContextMenuMute(context_index);
       if (mute)
         base::RecordAction(UserMetricsAction("TabContextMenu_MuteTabs"));
       else
@@ -995,6 +1016,13 @@ void TabStripModel::ExecuteContextMenuCommand(
         chrome::SetTabAudioMuted(GetWebContentsAt(*i), mute,
                                  TabMutedReason::CONTEXT_MENU, std::string());
       }
+      break;
+    }
+
+    case CommandToggleSiteMuted: {
+      const std::vector<int>& indices = GetIndicesForCommand(context_index);
+      const bool mute = WillContextMenuMuteSites(context_index);
+      chrome::SetSitesMuted(*this, indices, mute);
       break;
     }
 
@@ -1044,6 +1072,15 @@ std::vector<int> TabStripModel::GetIndicesClosedByCommand(
       indices.push_back(i);
   }
   return indices;
+}
+
+bool TabStripModel::WillContextMenuMute(int index) {
+  std::vector<int> indices = GetIndicesForCommand(index);
+  return !chrome::AreAllTabsMuted(*this, indices);
+}
+
+bool TabStripModel::WillContextMenuMuteSites(int index) {
+  return !chrome::AreAllSitesMuted(*this, GetIndicesForCommand(index));
 }
 
 bool TabStripModel::WillContextMenuPin(int index) {
@@ -1170,14 +1207,14 @@ bool TabStripModel::InternalCloseTabs(const std::vector<int>& indices,
       if (delegate_->ShouldRunUnloadListenerBeforeClosing(closing_contents))
         continue;
       content::RenderProcessHost* process =
-          closing_contents->GetRenderProcessHost();
+          closing_contents->GetMainFrame()->GetProcess();
       ++processes[process];
     }
 
     // Try to fast shutdown the tabs that can close.
     for (std::map<content::RenderProcessHost*, size_t>::iterator iter =
          processes.begin(); iter != processes.end(); ++iter) {
-      iter->first->FastShutdownForPageCount(iter->second);
+      iter->first->FastShutdownIfPossible(iter->second, false);
     }
   }
 
@@ -1312,7 +1349,7 @@ void TabStripModel::MoveWebContentsAtImpl(int index,
   contents_data_.insert(contents_data_.begin() + to_position,
                         std::move(moved_data));
 
-  selection_model_.Move(index, to_position);
+  selection_model_.Move(index, to_position, 1);
   if (!selection_model_.IsSelected(to_position) && select_after_move) {
     // TODO(sky): why doesn't this code notify observers?
     selection_model_.SetSelectedIndex(to_position);

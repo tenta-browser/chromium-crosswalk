@@ -54,8 +54,8 @@ REPOSITORY_ROOT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), '..', '..', '..', '..', '..'))
 
 sys.path.append(os.path.join(REPOSITORY_ROOT, 'tools', 'perf'))
-from chrome_telemetry_build import chromium_config
-sys.path.append(chromium_config.GetTelemetryDir())
+from core import path_util
+sys.path.append(path_util.GetTelemetryDir())
 sys.path.append(os.path.join(REPOSITORY_ROOT, 'build', 'android'))
 sys.path.append(os.path.join(
     REPOSITORY_ROOT, 'third_party', 'catapult', 'devil'))
@@ -206,10 +206,10 @@ class CronetPerfTestMeasurement(
           'ms', jsonResults[test]))
 
 
-@benchmark.Enabled('android')
 class CronetPerfTestBenchmark(benchmark.Benchmark):
   # Benchmark implementation spawning off Cronet perf test measurement and
   # StorySet.
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_ANDROID]
 
   def __init__(self, max_failures=None):
     super(CronetPerfTestBenchmark, self).__init__(max_failures)
@@ -220,6 +220,12 @@ class CronetPerfTestBenchmark(benchmark.Benchmark):
 
   def CreateStorySet(self, options):
     return CronetPerfTestStorySet(self._device)
+
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass # Nothing disabled.
+    return StoryExpectations()
 
 
 class QuicServer(object):

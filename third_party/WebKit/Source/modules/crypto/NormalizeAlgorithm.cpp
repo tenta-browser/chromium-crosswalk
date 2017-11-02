@@ -32,13 +32,14 @@
 
 #include <algorithm>
 #include <memory>
-#include "bindings/core/v8/ArrayBufferOrArrayBufferView.h"
 #include "bindings/core/v8/Dictionary.h"
 #include "bindings/core/v8/V8ArrayBuffer.h"
 #include "bindings/core/v8/V8ArrayBufferView.h"
+#include "bindings/core/v8/array_buffer_or_array_buffer_view.h"
 #include "bindings/modules/v8/V8CryptoKey.h"
-#include "core/dom/DOMArrayPiece.h"
-#include "core/dom/DOMTypedArray.h"
+#include "core/typed_arrays/DOMArrayPiece.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "modules/crypto/CryptoUtilities.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/Vector.h"
@@ -49,8 +50,6 @@
 namespace blink {
 
 namespace {
-
-typedef ArrayBufferOrArrayBufferView BufferSource;
 
 struct AlgorithmNameMapping {
   // Must be an upper case ASCII string.
@@ -140,7 +139,7 @@ bool VerifyAlgorithmNameMappings(const AlgorithmNameMapping* begin,
     String str(it->algorithm_name, it->algorithm_name_length);
     if (!str.ContainsOnlyASCII())
       return false;
-    if (str.DeprecatedUpper() != str)
+    if (str.UpperASCII() != str)
       return false;
   }
 
@@ -180,7 +179,9 @@ bool LookupAlgorithmIdByName(const String& algorithm_name,
   const AlgorithmNameMapping* end =
       kAlgorithmNameMappings + WTF_ARRAY_LENGTH(kAlgorithmNameMappings);
 
-  ASSERT(VerifyAlgorithmNameMappings(begin, end));
+#if DCHECK_IS_ON()
+  DCHECK(VerifyAlgorithmNameMappings(begin, end));
+#endif
 
   const AlgorithmNameMapping* it;
   if (algorithm_name.Impl()->Is8Bit())
@@ -262,11 +263,6 @@ class ErrorContext {
   Vector<const char*, 10> messages_;
 };
 
-static WebVector<uint8_t> CopyBytes(const DOMArrayPiece& source) {
-  return WebVector<uint8_t>(static_cast<const uint8_t*>(source.Data()),
-                            source.ByteLength());
-}
-
 // Defined by the WebCrypto spec as:
 //
 //     typedef (ArrayBuffer or ArrayBufferView) BufferSource;
@@ -285,13 +281,13 @@ bool GetOptionalBufferSource(const Dictionary& raw,
 
   if (v8_value->IsArrayBufferView()) {
     bytes = CopyBytes(
-        V8ArrayBufferView::toImpl(v8::Local<v8::Object>::Cast(v8_value)));
+        V8ArrayBufferView::ToImpl(v8::Local<v8::Object>::Cast(v8_value)));
     return true;
   }
 
   if (v8_value->IsArrayBuffer()) {
     bytes =
-        CopyBytes(V8ArrayBuffer::toImpl(v8::Local<v8::Object>::Cast(v8_value)));
+        CopyBytes(V8ArrayBuffer::ToImpl(v8::Local<v8::Object>::Cast(v8_value)));
     return true;
   }
 
@@ -485,7 +481,7 @@ bool GetAlgorithmIdentifier(const Dictionary& raw,
   Dictionary dictionary;
   if (DictionaryHelper::Get(raw, property_name, dictionary) &&
       !dictionary.IsUndefinedOrNull()) {
-    value.setDictionary(dictionary);
+    value.SetDictionary(dictionary);
     return true;
   }
 
@@ -497,7 +493,7 @@ bool GetAlgorithmIdentifier(const Dictionary& raw,
     return false;
   }
 
-  value.setString(algorithm_name);
+  value.SetString(algorithm_name);
   return true;
 }
 
@@ -847,7 +843,7 @@ bool ParseEcdhKeyDeriveParams(const Dictionary& raw,
   }
 
   CryptoKey* crypto_key =
-      V8CryptoKey::toImplWithTypeCheck(raw.GetIsolate(), v8_value);
+      V8CryptoKey::ToImplWithTypeCheck(raw.GetIsolate(), v8_value);
   if (!crypto_key) {
     SetTypeError(context.ToString("public", "Must be a CryptoKey"), error);
     return false;
@@ -987,7 +983,7 @@ bool ParseAlgorithmParams(const Dictionary& raw,
       context.Add("Pbkdf2Params");
       return ParsePbkdf2Params(raw, params, context, error);
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return false;
 }
 
@@ -1067,12 +1063,12 @@ bool ParseAlgorithmIdentifier(const AlgorithmIdentifier& raw,
 
   // If the AlgorithmIdentifier is a String, treat it the same as a Dictionary
   // with a "name" attribute and nothing else.
-  if (raw.isString()) {
-    return ParseAlgorithmDictionary(raw.getAsString(), Dictionary(), op,
+  if (raw.IsString()) {
+    return ParseAlgorithmDictionary(raw.GetAsString(), Dictionary(), op,
                                     algorithm, context, error);
   }
 
-  Dictionary params = raw.getAsDictionary();
+  Dictionary params = raw.GetAsDictionary();
 
   // Get the name of the algorithm from the AlgorithmIdentifier.
   if (!params.IsObject()) {

@@ -5,6 +5,7 @@
 #include "platform/scheduler/base/work_queue.h"
 
 #include "platform/scheduler/base/work_queue_sets.h"
+#include "platform/wtf/debug/CrashLogging.h"
 
 namespace blink {
 namespace scheduler {
@@ -20,9 +21,10 @@ WorkQueue::WorkQueue(TaskQueueImpl* task_queue,
       fence_(0),
       queue_type_(queue_type) {}
 
-void WorkQueue::AsValueInto(base::trace_event::TracedValue* state) const {
+void WorkQueue::AsValueInto(base::TimeTicks now,
+                            base::trace_event::TracedValue* state) const {
   for (const TaskQueueImpl::Task& task : work_queue_) {
-    TaskQueueImpl::TaskAsValueInto(task, state);
+    TaskQueueImpl::TaskAsValueInto(task, now, state);
   }
 }
 
@@ -50,7 +52,7 @@ bool WorkQueue::BlockedByFence() const {
   // If the queue is empty then any future tasks will have a higher enqueue
   // order and will be blocked. The queue is also blocked if the head is past
   // the fence.
-  return work_queue_.empty() || work_queue_.front().enqueue_order() > fence_;
+  return work_queue_.empty() || work_queue_.front().enqueue_order() >= fence_;
 }
 
 bool WorkQueue::GetFrontTaskEnqueueOrder(EnqueueOrder* enqueue_order) const {
@@ -70,6 +72,10 @@ void WorkQueue::Push(TaskQueueImpl::Task task) {
 #ifndef NDEBUG
   DCHECK(task.enqueue_order_set());
 #endif
+
+  // Temporary check for crbug.com/752914.
+  // TODO(skyostil): Remove this.
+  CHECK(task.task);
 
   // Amoritized O(1).
   work_queue_.push_back(std::move(task));
@@ -104,10 +110,29 @@ TaskQueueImpl::Task WorkQueue::TakeTaskFromWorkQueue() {
   DCHECK(work_queue_sets_);
   DCHECK(!work_queue_.empty());
 
+  static const char kBlinkSchedulerTaskFunctionNameKey[] =
+      "blink_scheduler_task_function_name";
+  static const char kBlinkSchedulerTaskFileNameKey[] =
+      "blink_scheduler_task_file_name";
+
   // Skip over canceled tasks, except for the last one since we always return
   // something.
-  while (work_queue_.size() > 1u && work_queue_.front().task.IsCancelled()) {
-    work_queue_.pop_front();
+  while (work_queue_.size() > 1u) {
+    if (!work_queue_.front().task) {
+      base::debug::SetCrashKeyValue(
+          kBlinkSchedulerTaskFunctionNameKey,
+          work_queue_.front().posted_from.function_name());
+      base::debug::SetCrashKeyValue(
+          kBlinkSchedulerTaskFileNameKey,
+          work_queue_.front().posted_from.file_name());
+    }
+    CHECK(work_queue_.front().task);
+
+    if (work_queue_.front().task.IsCancelled()) {
+      work_queue_.pop_front();
+    } else {
+      break;
+    }
   }
 
   TaskQueueImpl::Task pending_task = work_queue_.TakeFirst();

@@ -3,13 +3,10 @@
 // found in the LICENSE file.
 
 cr.define('extensions', function() {
-  var ItemList = Polymer({
+  const ItemList = Polymer({
     is: 'extensions-item-list',
 
-    behaviors: [
-      Polymer.NeonAnimatableBehavior,
-      Polymer.IronResizableBehavior
-    ],
+    behaviors: [CrContainerShadowBehavior],
 
     properties: {
       /** @type {Array<!chrome.developerPrivate.ExtensionInfo>} */
@@ -23,45 +20,15 @@ cr.define('extensions', function() {
         value: false,
       },
 
+      isGuest: Boolean,
+
       filter: String,
-    },
 
-    listeners: {
-      'list.extension-item-size-changed': 'itemSizeChanged_',
-    },
-
-    ready: function() {
-      /** @type {extensions.AnimationHelper} */
-      this.animationHelper = new extensions.AnimationHelper(this, this.$.list);
-      this.animationHelper.setEntryAnimations([extensions.Animation.FADE_IN]);
-      this.animationHelper.setExitAnimations([extensions.Animation.HERO]);
-    },
-
-    /**
-     * Called when a subpage for a given item is about to be shown.
-     * @param {string} id
-     */
-    willShowItemSubpage: function(id) {
-      this.sharedElements = {hero: this.$$('#' + id)};
-    },
-
-    /**
-     * Updates the size for a given item.
-     * @param {CustomEvent} e
-     * @private
-     * @suppress {checkTypes} Closure doesn't know $.list is an IronList.
-     */
-    itemSizeChanged_: function(e) {
-      this.$.list.updateSizeForItem(e.detail.item);
-    },
-
-    /**
-     * Called right before an item enters the detailed view.
-     * @param {CustomEvent} e
-     * @private
-     */
-    showItemDetails_: function(e) {
-      this.sharedElements = {hero: e.detail.element};
+      /** @private {Array<!chrome.developerPrivate.ExtensionInfo>} */
+      shownItems_: {
+        type: Array,
+        computed: 'computeShownItems_(items.*, filter)',
+      }
     },
 
     /**
@@ -72,9 +39,20 @@ cr.define('extensions', function() {
      * @private
      */
     computeShownItems_: function(changeRecord, filter) {
-      return this.items.filter(function(item) {
-        return item.name.toLowerCase().includes(this.filter.toLowerCase());
-      }, this);
+      const formattedFilter = this.filter.trim().toLowerCase();
+      return this.items.filter(
+          item => item.name.toLowerCase().includes(formattedFilter));
+    },
+
+    /** @private */
+    shouldShowEmptyItemsMessage_: function() {
+      return !this.isGuest && this.items.length === 0;
+    },
+
+    /** @private */
+    shouldShowEmptySearchMessage_: function() {
+      return !this.isGuest && !this.shouldShowEmptyItemsMessage_() &&
+          this.shownItems_.length === 0;
     },
   });
 

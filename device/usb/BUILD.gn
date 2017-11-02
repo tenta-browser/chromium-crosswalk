@@ -16,8 +16,6 @@ generated_ids = "$target_gen_dir/usb_ids_gen.cc"
 
 static_library("usb") {
   sources = [
-    "android/usb_jni_registrar.cc",
-    "android/usb_jni_registrar.h",
     "usb_configuration_android.cc",
     "usb_configuration_android.h",
     "usb_descriptors.cc",
@@ -26,8 +24,6 @@ static_library("usb") {
     "usb_device.h",
     "usb_device_android.cc",
     "usb_device_android.h",
-    "usb_device_filter.cc",
-    "usb_device_filter.h",
     "usb_device_handle.cc",
     "usb_device_handle.h",
     "usb_device_handle_android.cc",
@@ -57,11 +53,16 @@ static_library("usb") {
 
   deps = [
     ":usb_device_ids",
-    "//base",
     "//base/third_party/dynamic_annotations",
     "//components/device_event_log",
     "//device/base",
+    "//device/usb/public/interfaces",
     "//net",
+  ]
+
+  public_deps = [
+    "//base",
+    "//url",
   ]
 
   if (use_udev) {

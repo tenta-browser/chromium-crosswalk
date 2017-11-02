@@ -7,7 +7,6 @@
 #import <Foundation/Foundation.h>
 
 #import "base/mac/foundation_util.h"
-#import "base/mac/scoped_nsobject.h"
 #import "ios/chrome/app/main_controller_private.h"
 #import "ios/chrome/browser/autofill/form_input_accessory_view_controller.h"
 #include "ios/chrome/browser/experimental_flags.h"
@@ -16,11 +15,15 @@
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/tabs/tab_private.h"
 #import "ios/chrome/browser/ui/browser_view_controller.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
-#import "ios/chrome/browser/ui/tabs/tab_strip_controller_private.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
+#import "ios/chrome/browser/ui/commands/open_new_tab_command.h"
+#include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #import "ios/testing/wait_util.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace chrome_test_util {
 
@@ -46,17 +49,15 @@ BOOL IsIncognitoMode() {
 
 void OpenNewTab() {
   @autoreleasepool {  // Make sure that all internals are deallocated.
-    base::scoped_nsobject<GenericChromeCommand> command(
-        [[GenericChromeCommand alloc] initWithTag:IDC_NEW_TAB]);
-    chrome_test_util::RunCommandWithActiveViewController(command);
+    OpenNewTabCommand* command = [OpenNewTabCommand command];
+    [chrome_test_util::DispatcherForActiveViewController() openNewTab:command];
   }
 }
 
 void OpenNewIncognitoTab() {
   @autoreleasepool {  // Make sure that all internals are deallocated.
-    base::scoped_nsobject<GenericChromeCommand> command(
-        [[GenericChromeCommand alloc] initWithTag:IDC_NEW_INCOGNITO_TAB]);
-    chrome_test_util::RunCommandWithActiveViewController(command);
+    OpenNewTabCommand* command = [OpenNewTabCommand incognitoTabCommand];
+    [chrome_test_util::DispatcherForActiveViewController() openNewTab:command];
   }
 }
 
@@ -127,11 +128,12 @@ BOOL SetCurrentTabsToBeColdStartTabs() {
   if (!GetCurrentTabModel().tabUsageRecorder)
     return NO;
   TabModel* tab_model = GetCurrentTabModel();
-  NSMutableArray* tabs = [NSMutableArray array];
+  std::vector<web::WebState*> web_states;
   for (Tab* tab in tab_model) {
-    [tabs addObject:tab];
+    web_states.push_back(tab.webState);
   }
-  tab_model.tabUsageRecorder->InitialRestoredTabs(tab_model.currentTab, tabs);
+  tab_model.tabUsageRecorder->InitialRestoredTabs(tab_model.currentTab.webState,
+                                                  web_states);
   return YES;
 }
 
@@ -147,11 +149,9 @@ void EvictOtherTabModelTabs() {
       IsIncognitoMode()
           ? [GetMainController().browserViewInformation mainTabModel]
           : [GetMainController().browserViewInformation otrTabModel];
-  NSUInteger count = otherTabModel.count;
-  for (NSUInteger i = 0; i < count; i++) {
-    Tab* tab = [otherTabModel tabAtIndex:i];
-    [tab.webController handleLowMemory];
-  }
+  // Disabling and enabling web usage will evict all web views.
+  otherTabModel.webUsageEnabled = NO;
+  otherTabModel.webUsageEnabled = YES;
 }
 
 void CloseAllIncognitoTabs() {
@@ -169,25 +169,12 @@ void CloseAllIncognitoTabs() {
   }
 }
 
-TabView* GetTabViewForTab(Tab* tab) {
-  MainController* main_controller = GetMainController();
-  BrowserViewController* current_bvc =
-      [[main_controller browserViewInformation] currentBVC];
-  TabStripController* tabStrip = [current_bvc tabStripController];
-  return [tabStrip existingTabViewForTab:tab];
-}
-
 NSUInteger GetEvictedMainTabCount() {
   if (![[GetMainController() browserViewInformation] mainTabModel]
            .tabUsageRecorder)
     return 0;
   return [[GetMainController() browserViewInformation] mainTabModel]
       .tabUsageRecorder->EvictedTabsMapSize();
-}
-
-FormInputAccessoryViewController* GetInputAccessoryViewController() {
-  Tab* current_tab = GetCurrentTab();
-  return [current_tab inputAccessoryViewController];
 }
 
 }  // namespace chrome_test_util

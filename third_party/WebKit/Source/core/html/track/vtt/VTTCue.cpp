@@ -29,14 +29,14 @@
 
 #include "core/html/track/vtt/VTTCue.h"
 
-#include "bindings/core/v8/DoubleOrAutoKeyword.h"
 #include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/double_or_auto_keyword.h"
 #include "core/CSSPropertyNames.h"
 #include "core/CSSValueKeywords.h"
 #include "core/dom/DocumentFragment.h"
 #include "core/dom/NodeTraversal.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLDivElement.h"
@@ -47,7 +47,7 @@
 #include "core/html/track/vtt/VTTRegion.h"
 #include "core/html/track/vtt/VTTScanner.h"
 #include "core/layout/LayoutVTTCue.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/text/BidiResolver.h"
 #include "platform/text/TextRunIterator.h"
 #include "platform/wtf/MathExtras.h"
@@ -244,7 +244,7 @@ VTTCue::VTTCue(Document& document,
       cue_background_box_(HTMLDivElement::Create(document)),
       snap_to_lines_(true),
       display_tree_should_change_(true) {
-  UseCounter::Count(document, UseCounter::kVTTCue);
+  UseCounter::Count(document, WebFeature::kVTTCue);
   cue_background_box_->SetShadowPseudoId(CueShadowPseudoId());
 }
 
@@ -253,8 +253,8 @@ VTTCue::~VTTCue() {}
 #ifndef NDEBUG
 String VTTCue::ToString() const {
   return String::Format("%p id=%s interval=%f-->%f cue=%s)", this,
-                        id().Utf8().Data(), startTime(), endTime(),
-                        text().Utf8().Data());
+                        id().Utf8().data(), startTime(), endTime(),
+                        text().Utf8().data());
 }
 #endif
 
@@ -311,9 +311,9 @@ bool VTTCue::LineIsAuto() const {
 
 void VTTCue::line(DoubleOrAutoKeyword& result) const {
   if (LineIsAuto())
-    result.setAutoKeyword(AutoKeyword());
+    result.SetAutoKeyword(AutoKeyword());
   else
-    result.setDouble(line_position_);
+    result.SetDouble(line_position_);
 }
 
 void VTTCue::setLine(const DoubleOrAutoKeyword& position) {
@@ -322,13 +322,13 @@ void VTTCue::setLine(const DoubleOrAutoKeyword& position) {
   // value is the string "auto", then it must be interpreted as the special
   // value auto.  ("auto" is translated to NaN.)
   float float_position;
-  if (position.isAutoKeyword()) {
+  if (position.IsAutoKeyword()) {
     if (LineIsAuto())
       return;
     float_position = std::numeric_limits<float>::quiet_NaN();
   } else {
-    DCHECK(position.isDouble());
-    float_position = clampTo<float>(position.getAsDouble());
+    DCHECK(position.IsDouble());
+    float_position = clampTo<float>(position.GetAsDouble());
     if (line_position_ == float_position)
       return;
   }
@@ -344,9 +344,9 @@ bool VTTCue::TextPositionIsAuto() const {
 
 void VTTCue::position(DoubleOrAutoKeyword& result) const {
   if (TextPositionIsAuto())
-    result.setAutoKeyword(AutoKeyword());
+    result.SetAutoKeyword(AutoKeyword());
   else
-    result.setDouble(text_position_);
+    result.SetDouble(text_position_);
 }
 
 void VTTCue::setPosition(const DoubleOrAutoKeyword& position,
@@ -357,15 +357,15 @@ void VTTCue::setPosition(const DoubleOrAutoKeyword& position,
   // position must be set to the new value; if the new value is the string
   // "auto", then it must be interpreted as the special value auto.
   float float_position;
-  if (position.isAutoKeyword()) {
+  if (position.IsAutoKeyword()) {
     if (TextPositionIsAuto())
       return;
     float_position = std::numeric_limits<float>::quiet_NaN();
   } else {
-    DCHECK(position.isDouble());
-    if (IsInvalidPercentage(position.getAsDouble(), exception_state))
+    DCHECK(position.IsDouble());
+    if (IsInvalidPercentage(position.GetAsDouble(), exception_state))
       return;
-    float_position = clampTo<float>(position.getAsDouble());
+    float_position = clampTo<float>(position.GetAsDouble());
     if (text_position_ == float_position)
       return;
   }
@@ -453,7 +453,7 @@ void VTTCue::CreateVTTNodeTree() {
 
 void VTTCue::CopyVTTNodeToDOMTree(ContainerNode* vtt_node,
                                   ContainerNode* parent) {
-  for (Node* node = vtt_node->FirstChild(); node; node = node->nextSibling()) {
+  for (Node* node = vtt_node->firstChild(); node; node = node->nextSibling()) {
     Node* cloned_node;
     if (node->IsVTTElement())
       cloned_node =
@@ -578,7 +578,7 @@ static CSSValueID DetermineTextDirection(DocumentFragment* vtt_root) {
 
     node = NodeTraversal::Next(*node);
   }
-  return IsLeftToRightDirection(text_direction) ? CSSValueLtr : CSSValueRtl;
+  return IsLtr(text_direction) ? CSSValueLtr : CSSValueRtl;
 }
 
 float VTTCue::CalculateComputedTextPosition() const {
@@ -636,7 +636,7 @@ VTTDisplayParameters VTTCue::CalculateDisplayParameters() const {
   display_parameters.direction = DetermineTextDirection(vtt_node_tree_.Get());
 
   if (display_parameters.direction == CSSValueRtl)
-    UseCounter::Count(GetDocument(), UseCounter::kVTTCueRenderRtl);
+    UseCounter::Count(GetDocument(), WebFeature::kVTTCueRenderRtl);
 
   // Note: The 'text-align' property is also determined here so that
   // VTTCueBox::applyCSSProperties need not have access to a VTTCue.
@@ -797,7 +797,7 @@ VTTCueBox* VTTCue::GetDisplayTree() {
     display_tree_->AppendChild(cue_background_box_);
   }
 
-  DCHECK_EQ(display_tree_->FirstChild(), cue_background_box_);
+  DCHECK_EQ(display_tree_->firstChild(), cue_background_box_);
 
   if (!display_tree_should_change_) {
     // Apply updated user style overrides for text tracks when display tree
@@ -830,37 +830,38 @@ VTTCueBox* VTTCue::GetDisplayTree() {
 }
 
 void VTTCue::RemoveDisplayTree(RemovalNotification removal_notification) {
-  if (region() && removal_notification == kNotifyRegion) {
+  if (!display_tree_)
+    return;
+  if (removal_notification == kNotifyRegion) {
     // The region needs to be informed about the cue removal.
-    region()->WillRemoveVTTCueBox(display_tree_);
+    if (region())
+      region()->WillRemoveVTTCueBox(display_tree_);
   }
-
-  if (display_tree_)
-    display_tree_->remove(ASSERT_NO_EXCEPTION);
+  display_tree_->remove(ASSERT_NO_EXCEPTION);
 }
 
 void VTTCue::UpdateDisplay(HTMLDivElement& container) {
   DCHECK(track() && track()->IsRendered() && IsActive());
 
-  UseCounter::Count(GetDocument(), UseCounter::kVTTCueRender);
+  UseCounter::Count(GetDocument(), WebFeature::kVTTCueRender);
 
   if (writing_direction_ != kHorizontal)
-    UseCounter::Count(GetDocument(), UseCounter::kVTTCueRenderVertical);
+    UseCounter::Count(GetDocument(), WebFeature::kVTTCueRenderVertical);
 
   if (!snap_to_lines_)
-    UseCounter::Count(GetDocument(), UseCounter::kVTTCueRenderSnapToLinesFalse);
+    UseCounter::Count(GetDocument(), WebFeature::kVTTCueRenderSnapToLinesFalse);
 
   if (!LineIsAuto())
-    UseCounter::Count(GetDocument(), UseCounter::kVTTCueRenderLineNotAuto);
+    UseCounter::Count(GetDocument(), WebFeature::kVTTCueRenderLineNotAuto);
 
   if (TextPositionIsAuto())
-    UseCounter::Count(GetDocument(), UseCounter::kVTTCueRenderPositionNot50);
+    UseCounter::Count(GetDocument(), WebFeature::kVTTCueRenderPositionNot50);
 
   if (cue_size_ != 100)
-    UseCounter::Count(GetDocument(), UseCounter::kVTTCueRenderSizeNot100);
+    UseCounter::Count(GetDocument(), WebFeature::kVTTCueRenderSizeNot100);
 
   if (cue_alignment_ != kCenter)
-    UseCounter::Count(GetDocument(), UseCounter::kVTTCueRenderAlignNotCenter);
+    UseCounter::Count(GetDocument(), WebFeature::kVTTCueRenderAlignNotCenter);
 
   VTTCueBox* display_box = GetDisplayTree();
   if (!region()) {
@@ -892,7 +893,7 @@ VTTCue::CueSetting VTTCue::SettingName(VTTScanner& input) const {
     parsed_setting = kSize;
   else if (input.Scan("align"))
     parsed_setting = kAlign;
-  else if (RuntimeEnabledFeatures::webVTTRegionsEnabled() &&
+  else if (RuntimeEnabledFeatures::WebVTTRegionsEnabled() &&
            input.Scan("region"))
     parsed_setting = kRegionId;
   // Verify that a ':' follows.

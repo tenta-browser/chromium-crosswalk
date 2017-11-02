@@ -8,6 +8,8 @@ blink_core_sources("input") {
   sources = [
     "BoundaryEventDispatcher.cpp",
     "BoundaryEventDispatcher.h",
+    "ContextMenuAllowedScope.cpp",
+    "ContextMenuAllowedScope.h",
     "EventHandler.cpp",
     "EventHandler.h",
     "EventHandlingUtil.cpp",
@@ -20,14 +22,20 @@ blink_core_sources("input") {
     "KeyboardEventManager.h",
     "MouseEventManager.cpp",
     "MouseEventManager.h",
+    "MouseWheelEventManager.cpp",
+    "MouseWheelEventManager.h",
     "PointerEventManager.cpp",
     "PointerEventManager.h",
     "ScrollManager.cpp",
     "ScrollManager.h",
+    "Touch.cpp",
+    "Touch.h",
     "TouchActionUtil.cpp",
     "TouchActionUtil.h",
     "TouchEventManager.cpp",
     "TouchEventManager.h",
+    "TouchList.cpp",
+    "TouchList.h",
   ]
 
   configs += [

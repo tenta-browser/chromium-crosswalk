@@ -48,14 +48,12 @@ namespace content {
 AudioSyncReader::AudioSyncReader(
     const media::AudioParameters& params,
     std::unique_ptr<base::SharedMemory> shared_memory,
-    std::unique_ptr<base::CancelableSyncSocket> socket,
-    std::unique_ptr<base::CancelableSyncSocket> foreign_socket)
+    std::unique_ptr<base::CancelableSyncSocket> socket)
     : shared_memory_(std::move(shared_memory)),
       mute_audio_(base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kMuteAudio)),
+      had_socket_error_(false),
       socket_(std::move(socket)),
-      foreign_socket_(std::move(foreign_socket)),
-      packet_size_(shared_memory_->requested_size()),
       renderer_callback_count_(0),
       renderer_missed_callback_count_(0),
       trailing_renderer_missed_callback_count_(0),
@@ -66,13 +64,13 @@ AudioSyncReader::AudioSyncReader(
       maximum_wait_time_(base::TimeDelta::FromMilliseconds(20)),
 #endif
       buffer_index_(0) {
-  DCHECK_EQ(static_cast<size_t>(packet_size_),
-            sizeof(media::AudioOutputBufferParameters) +
-                AudioBus::CalculateMemorySize(params));
+  DCHECK_EQ(base::checked_cast<uint32_t>(shared_memory_->requested_size()),
+            media::ComputeAudioOutputBufferSize(params));
   AudioOutputBuffer* buffer =
       reinterpret_cast<AudioOutputBuffer*>(shared_memory_->memory());
   output_bus_ = AudioBus::WrapMemory(params, buffer->audio);
   output_bus_->Zero();
+  output_bus_->set_is_bitstream_format(params.IsBitstreamFormat());
 }
 
 AudioSyncReader::~AudioSyncReader() {
@@ -119,32 +117,22 @@ AudioSyncReader::~AudioSyncReader() {
 
 // static
 std::unique_ptr<AudioSyncReader> AudioSyncReader::Create(
-    const media::AudioParameters& params) {
+    const media::AudioParameters& params,
+    base::CancelableSyncSocket* foreign_socket) {
   base::CheckedNumeric<size_t> memory_size =
-      sizeof(media::AudioOutputBufferParameters);
-  memory_size += AudioBus::CalculateMemorySize(params);
+      media::ComputeAudioOutputBufferSizeChecked(params);
 
   std::unique_ptr<base::SharedMemory> shared_memory(new base::SharedMemory());
   std::unique_ptr<base::CancelableSyncSocket> socket(
       new base::CancelableSyncSocket());
-  std::unique_ptr<base::CancelableSyncSocket> foreign_socket(
-      new base::CancelableSyncSocket());
 
   if (!memory_size.IsValid() ||
       !shared_memory->CreateAndMapAnonymous(memory_size.ValueOrDie()) ||
-      !base::CancelableSyncSocket::CreatePair(socket.get(),
-                                              foreign_socket.get())) {
+      !base::CancelableSyncSocket::CreatePair(socket.get(), foreign_socket)) {
     return nullptr;
   }
-  return base::WrapUnique(new AudioSyncReader(params, std::move(shared_memory),
-                                              std::move(socket),
-                                              std::move(foreign_socket)));
-}
-
-std::unique_ptr<base::CancelableSyncSocket>
-AudioSyncReader::TakeForeignSocket() {
-  DCHECK(foreign_socket_);
-  return std::move(foreign_socket_);
+  return base::MakeUnique<AudioSyncReader>(params, std::move(shared_memory),
+                                           std::move(socket));
 }
 
 // media::AudioOutputController::SyncReader implementations.
@@ -176,12 +164,18 @@ void AudioSyncReader::RequestMoreData(base::TimeDelta delay,
 
   size_t sent_bytes = socket_->Send(&control_signal, sizeof(control_signal));
   if (sent_bytes != sizeof(control_signal)) {
-    const std::string error_message = "ASR: No room in socket buffer.";
-    LOG(WARNING) << error_message;
-    MediaStreamManager::SendMessageToNativeLog(error_message);
-    TRACE_EVENT_INSTANT0("audio",
-                         "AudioSyncReader: No room in socket buffer",
-                         TRACE_EVENT_SCOPE_THREAD);
+    // Ensure we don't log consecutive errors as this can lead to a large
+    // amount of logs.
+    if (!had_socket_error_) {
+      had_socket_error_ = true;
+      const std::string error_message = "ASR: No room in socket buffer.";
+      PLOG(WARNING) << error_message;
+      MediaStreamManager::SendMessageToNativeLog(error_message);
+      TRACE_EVENT_INSTANT0("audio", "AudioSyncReader: No room in socket buffer",
+                           TRACE_EVENT_SCOPE_THREAD);
+    }
+  } else {
+    had_socket_error_ = false;
   }
   ++buffer_index_;
 }
@@ -203,10 +197,21 @@ void AudioSyncReader::Read(AudioBus* dest) {
 
   trailing_renderer_missed_callback_count_ = 0;
 
-  if (mute_audio_)
+  // Zeroed buffers may be discarded immediately when outputing compressed
+  // bitstream.
+  if (mute_audio_ && !output_bus_->is_bitstream_format()) {
     dest->Zero();
-  else
-    output_bus_->CopyTo(dest);
+    return;
+  }
+
+  if (output_bus_->is_bitstream_format()) {
+    // For bitstream formats, we need the real data size and PCM frame count.
+    AudioOutputBuffer* buffer =
+        reinterpret_cast<AudioOutputBuffer*>(shared_memory_->memory());
+    output_bus_->SetBitstreamDataSize(buffer->params.bitstream_data_size);
+    output_bus_->SetBitstreamFrames(buffer->params.bitstream_frames);
+  }
+  output_bus_->CopyTo(dest);
 }
 
 void AudioSyncReader::Close() {

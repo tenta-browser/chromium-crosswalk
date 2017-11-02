@@ -7,6 +7,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "url/gurl.h"
@@ -18,18 +19,14 @@ BlockedWindowParams::BlockedWindowParams(
     WindowOpenDisposition disposition,
     const blink::mojom::WindowFeatures& features,
     bool user_gesture,
-    bool opener_suppressed,
-    int render_process_id,
-    int opener_render_frame_id)
+    bool opener_suppressed)
     : target_url_(target_url),
       referrer_(referrer),
       frame_name_(frame_name),
       disposition_(disposition),
       features_(features),
       user_gesture_(user_gesture),
-      opener_suppressed_(opener_suppressed),
-      render_process_id_(render_process_id),
-      opener_render_frame_id_(opener_render_frame_id) {}
+      opener_suppressed_(opener_suppressed) {}
 
 BlockedWindowParams::BlockedWindowParams(const BlockedWindowParams& other) =
     default;
@@ -39,7 +36,7 @@ BlockedWindowParams::~BlockedWindowParams() = default;
 chrome::NavigateParams BlockedWindowParams::CreateNavigateParams(
     content::WebContents* web_contents) const {
   GURL popup_url(target_url_);
-  web_contents->GetRenderProcessHost()->FilterURL(false, &popup_url);
+  web_contents->GetMainFrame()->GetProcess()->FilterURL(false, &popup_url);
   chrome::NavigateParams nav_params(
       Profile::FromBrowserContext(web_contents->GetBrowserContext()),
       popup_url,

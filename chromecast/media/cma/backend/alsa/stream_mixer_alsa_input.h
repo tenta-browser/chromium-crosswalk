@@ -52,6 +52,7 @@ class StreamMixerAlsaInput {
   // exist.
   StreamMixerAlsaInput(Delegate* delegate,
                        int samples_per_second,
+                       int playout_channel,
                        bool primary,
                        const std::string& device_id,
                        AudioContentType content_type);
@@ -70,8 +71,10 @@ class StreamMixerAlsaInput {
   // will continue to play sound while this input is paused.
   void SetPaused(bool paused);
 
-  // Sets the volume multiplier for this input. If |multiplier| is outside the
-  // range [0.0, 1.0], it is clamped to that range.
+  // Sets the volume multiplier for this input. If |multiplier| is less than 0,
+  // it is clamped to 0. Volume multipliers greater than 1.0 are allowed, but
+  // the total volume for the stream (including stream type volume) is clamped
+  // to 1.0.
   void SetVolumeMultiplier(float multiplier);
 
  private:

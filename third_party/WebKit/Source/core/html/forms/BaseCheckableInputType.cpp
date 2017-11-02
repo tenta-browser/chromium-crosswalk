@@ -31,11 +31,12 @@
 
 #include "core/html/forms/BaseCheckableInputType.h"
 
-#include "core/HTMLNames.h"
 #include "core/events/KeyboardEvent.h"
-#include "core/html/FormData.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/forms/FormController.h"
+#include "core/html/forms/FormData.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/html_names.h"
 
 namespace blink {
 
@@ -110,9 +111,10 @@ void BaseCheckableInputType::SetValue(const String& sanitized_value,
 }
 
 void BaseCheckableInputType::ReadingChecked() const {
-  if (is_in_click_handler_)
+  if (is_in_click_handler_) {
     UseCounter::Count(GetElement().GetDocument(),
-                      UseCounter::kReadingCheckedInClickHandler);
+                      WebFeature::kReadingCheckedInClickHandler);
+  }
 }
 
 bool BaseCheckableInputType::IsCheckable() {

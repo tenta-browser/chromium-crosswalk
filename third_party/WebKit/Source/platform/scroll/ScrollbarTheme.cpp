@@ -25,7 +25,7 @@
 
 #include "platform/scroll/ScrollbarTheme.h"
 
-#include "platform/RuntimeEnabledFeatures.h"
+#include "build/build_config.h"
 #include "platform/graphics/Color.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsContextStateSaver.h"
@@ -34,6 +34,7 @@
 #include "platform/graphics/paint/DrawingDisplayItem.h"
 #include "platform/graphics/paint/DrawingRecorder.h"
 #include "platform/graphics/paint/PaintController.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/scroll/Scrollbar.h"
 #include "platform/scroll/ScrollbarThemeMock.h"
 #include "platform/scroll/ScrollbarThemeOverlayMock.h"
@@ -44,7 +45,7 @@
 #include "public/platform/WebRect.h"
 #include "public/platform/WebScrollbarBehavior.h"
 
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
 #include "public/platform/WebThemeEngine.h"
 #endif
 
@@ -212,7 +213,7 @@ void ScrollbarTheme::PaintScrollCorner(
 
   DrawingRecorder recorder(context, display_item_client,
                            DisplayItem::kScrollbarCorner, corner_rect);
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   context.FillRect(corner_rect, Color::kWhite);
 #else
   Platform::Current()->ThemeEngine()->Paint(
@@ -232,7 +233,7 @@ void ScrollbarTheme::PaintTickmarks(GraphicsContext& context,
                                     const Scrollbar& scrollbar,
                                     const IntRect& rect) {
 // Android paints tickmarks in the browser at FindResultBar.java.
-#if !OS(ANDROID)
+#if !defined(OS_ANDROID)
   if (scrollbar.Orientation() != kVerticalScrollbar)
     return;
 
@@ -395,7 +396,7 @@ void ScrollbarTheme::SplitTrack(const ScrollbarThemeClient& scrollbar,
 
 ScrollbarTheme& ScrollbarTheme::GetTheme() {
   if (ScrollbarTheme::MockScrollbarsEnabled()) {
-    if (RuntimeEnabledFeatures::overlayScrollbarsEnabled()) {
+    if (RuntimeEnabledFeatures::OverlayScrollbarsEnabled()) {
       DEFINE_STATIC_LOCAL(ScrollbarThemeOverlayMock, overlay_mock_theme, ());
       return overlay_mock_theme;
     }
@@ -426,7 +427,7 @@ DisplayItem::Type ScrollbarTheme::ButtonPartToDisplayItemType(
     case kForwardButtonEndPart:
       return DisplayItem::kScrollbarForwardButtonEnd;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return DisplayItem::kScrollbarBackButtonStart;
   }
 }
@@ -439,7 +440,7 @@ DisplayItem::Type ScrollbarTheme::TrackPiecePartToDisplayItemType(
     case kForwardTrackPart:
       return DisplayItem::kScrollbarForwardTrack;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return DisplayItem::kScrollbarBackTrack;
   }
 }

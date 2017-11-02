@@ -3,17 +3,16 @@
 # found in the LICENSE file.
 
 source_set("ocmock") {
+  configs += [ "//build/config/compiler:enable_arc" ]
   testonly = true
   sources = [
     "OCMockObject+BreakpadControllerTesting.h",
     "OCMockObject+BreakpadControllerTesting.mm",
-    "scoped_mock_object.h",
-    "scoped_verifying_mock_object.h",
   ]
   deps = [
     "//base",
-    "//breakpad:client",
     "//testing/gtest",
+    "//third_party/breakpad:client",
     "//third_party/ocmock",
   ]
 }

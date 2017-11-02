@@ -7,7 +7,6 @@
 #include "core/animation/CSSPositionAxisListInterpolationType.h"
 #include "core/animation/LengthInterpolationFunctions.h"
 #include "core/css/CSSBasicShapeValues.h"
-#include "core/css/resolver/StyleResolverState.h"
 #include "core/style/BasicShapes.h"
 #include <memory>
 
@@ -15,12 +14,12 @@ namespace blink {
 
 class BasicShapeNonInterpolableValue : public NonInterpolableValue {
  public:
-  static PassRefPtr<NonInterpolableValue> Create(BasicShape::ShapeType type) {
-    return AdoptRef(new BasicShapeNonInterpolableValue(type));
+  static RefPtr<NonInterpolableValue> Create(BasicShape::ShapeType type) {
+    return WTF::AdoptRef(new BasicShapeNonInterpolableValue(type));
   }
-  static PassRefPtr<NonInterpolableValue> CreatePolygon(WindRule wind_rule,
-                                                        size_t size) {
-    return AdoptRef(new BasicShapeNonInterpolableValue(wind_rule, size));
+  static RefPtr<NonInterpolableValue> CreatePolygon(WindRule wind_rule,
+                                                    size_t size) {
+    return WTF::AdoptRef(new BasicShapeNonInterpolableValue(wind_rule, size));
   }
 
   BasicShape::ShapeType GetShapeType() const { return type_; }
@@ -215,7 +214,7 @@ std::unique_ptr<InterpolableValue> CreateNeutralValue() {
   return std::move(list);
 }
 
-PassRefPtr<BasicShape> CreateBasicShape(
+RefPtr<BasicShape> CreateBasicShape(
     const InterpolableValue& interpolable_value,
     const CSSToLengthConversionData& conversion_data) {
   RefPtr<BasicShapeCircle> circle = BasicShapeCircle::Create();
@@ -226,7 +225,7 @@ PassRefPtr<BasicShape> CreateBasicShape(
       CreateCoordinate(*list.Get(kCircleCenterYIndex), conversion_data));
   circle->SetRadius(
       CreateRadius(*list.Get(kCircleRadiusIndex), conversion_data));
-  return circle.Release();
+  return circle;
 }
 
 }  // namespace CircleFunctions
@@ -290,7 +289,7 @@ std::unique_ptr<InterpolableValue> CreateNeutralValue() {
   return std::move(list);
 }
 
-PassRefPtr<BasicShape> CreateBasicShape(
+RefPtr<BasicShape> CreateBasicShape(
     const InterpolableValue& interpolable_value,
     const CSSToLengthConversionData& conversion_data) {
   RefPtr<BasicShapeEllipse> ellipse = BasicShapeEllipse::Create();
@@ -303,7 +302,7 @@ PassRefPtr<BasicShape> CreateBasicShape(
       CreateRadius(*list.Get(kEllipseRadiusXIndex), conversion_data));
   ellipse->SetRadiusY(
       CreateRadius(*list.Get(kEllipseRadiusYIndex), conversion_data));
-  return ellipse.Release();
+  return ellipse;
 }
 
 }  // namespace EllipseFunctions
@@ -416,7 +415,7 @@ std::unique_ptr<InterpolableValue> CreateNeutralValue() {
   return std::move(list);
 }
 
-PassRefPtr<BasicShape> CreateBasicShape(
+RefPtr<BasicShape> CreateBasicShape(
     const InterpolableValue& interpolable_value,
     const CSSToLengthConversionData& conversion_data) {
   RefPtr<BasicShapeInset> inset = BasicShapeInset::Create();
@@ -442,7 +441,7 @@ PassRefPtr<BasicShape> CreateBasicShape(
   inset->SetBottomLeftRadius(CreateBorderRadius(
       *list.Get(kInsetBorderBottomLeftWidthIndex),
       *list.Get(kInsetBorderBottomLeftHeightIndex), conversion_data));
-  return inset.Release();
+  return inset;
 }
 
 }  // namespace InsetFunctions
@@ -480,7 +479,7 @@ std::unique_ptr<InterpolableValue> CreateNeutralValue(
   return std::move(list);
 }
 
-PassRefPtr<BasicShape> CreateBasicShape(
+RefPtr<BasicShape> CreateBasicShape(
     const InterpolableValue& interpolable_value,
     const BasicShapeNonInterpolableValue& non_interpolable_value,
     const CSSToLengthConversionData& conversion_data) {
@@ -497,7 +496,7 @@ PassRefPtr<BasicShape> CreateBasicShape(
         LengthInterpolationFunctions::CreateLength(
             *list.Get(i + 1), nullptr, conversion_data, kValueRangeAll));
   }
-  return polygon.Release();
+  return polygon;
 }
 
 }  // namespace PolygonFunctions
@@ -569,7 +568,7 @@ bool BasicShapeInterpolationFunctions::ShapesAreCompatible(
       ToBasicShapeNonInterpolableValue(b));
 }
 
-PassRefPtr<BasicShape> BasicShapeInterpolationFunctions::CreateBasicShape(
+RefPtr<BasicShape> BasicShapeInterpolationFunctions::CreateBasicShape(
     const InterpolableValue& interpolable_value,
     const NonInterpolableValue& untyped_non_interpolable_value,
     const CSSToLengthConversionData& conversion_data) {

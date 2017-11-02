@@ -6,6 +6,7 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "net/http/http_status_code.h"
@@ -61,7 +62,8 @@ class FakeUrlRequestFactory : public UrlRequestFactory {
   // request_factory_ override.
   std::unique_ptr<UrlRequest> CreateUrlRequest(
       UrlRequest::Type type,
-      const std::string& url) override {
+      const std::string& url,
+      const net::NetworkTrafficAnnotationTag& traffic_annotation) override {
     EXPECT_FALSE(expected_requests_.empty());
     if (expected_requests_.empty()) {
       return std::unique_ptr<UrlRequest>(nullptr);
@@ -73,7 +75,7 @@ class FakeUrlRequestFactory : public UrlRequestFactory {
   }
 
  private:
-  std::deque<std::unique_ptr<UrlRequest>> expected_requests_;
+  base::circular_deque<std::unique_ptr<UrlRequest>> expected_requests_;
 };
 
 class TelemetryLogWriterTest : public testing::Test {

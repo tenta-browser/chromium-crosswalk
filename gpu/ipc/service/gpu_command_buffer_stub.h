@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,6 +21,7 @@
 #include "gpu/command_buffer/common/gpu_memory_allocation.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
 #include "gpu/command_buffer/service/context_group.h"
+#include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "gpu/command_buffer/service/sequence_id.h"
 #include "gpu/gpu_export.h"
 #include "gpu/ipc/common/surface_handle.h"
@@ -48,13 +48,14 @@ namespace gpu {
 struct Mailbox;
 struct SyncToken;
 struct WaitForCommandState;
-class CommandExecutor;
 class GpuChannel;
 class SyncPointClientState;
 
 class GPU_EXPORT GpuCommandBufferStub
     : public IPC::Listener,
       public IPC::Sender,
+      public CommandBufferServiceClient,
+      public gles2::GLES2DecoderClient,
       public ImageTransportSurfaceDelegate,
       public base::SupportsWeakPtr<GpuCommandBufferStub> {
  public:
@@ -70,6 +71,9 @@ class GPU_EXPORT GpuCommandBufferStub
   typedef base::Callback<void(const std::vector<ui::LatencyInfo>&)>
       LatencyInfoCallback;
 
+  // This must leave the GL context associated with the newly-created
+  // GpuCommandBufferStub current, so the GpuChannel can initialize
+  // the gpu::Capabilities.
   static std::unique_ptr<GpuCommandBufferStub> Create(
       GpuChannel* channel,
       GpuCommandBufferStub* share_group,
@@ -88,6 +92,18 @@ class GPU_EXPORT GpuCommandBufferStub
   // IPC::Sender implementation:
   bool Send(IPC::Message* msg) override;
 
+  // CommandBufferServiceClient implementation:
+  CommandBatchProcessedResult OnCommandBatchProcessed() override;
+  void OnParseError() override;
+
+  // GLES2DecoderClient implementation:
+  void OnConsoleMessage(int32_t id, const std::string& message) override;
+  void CacheShader(const std::string& key, const std::string& shader) override;
+  void OnFenceSyncRelease(uint64_t release) override;
+  bool OnWaitSyncToken(const SyncToken& sync_token) override;
+  void OnDescheduleUntilFinished() override;
+  void OnRescheduleAfterFinished() override;
+
 // ImageTransportSurfaceDelegate implementation:
 #if defined(OS_WIN)
   void DidCreateAcceleratedSurfaceChildWindow(
@@ -96,6 +112,7 @@ class GPU_EXPORT GpuCommandBufferStub
 #endif
   void DidSwapBuffersComplete(SwapBuffersCompleteParams params) override;
   const gles2::FeatureInfo* GetFeatureInfo() const override;
+  const GpuPreferences& GetGpuPreferences() const override;
   void SetLatencyInfoCallback(const LatencyInfoCallback& callback) override;
   void UpdateVSyncParameters(base::TimeTicks timebase,
                              base::TimeDelta interval) override;
@@ -112,7 +129,6 @@ class GPU_EXPORT GpuCommandBufferStub
   bool HasUnprocessedCommands();
 
   gles2::GLES2Decoder* decoder() const { return decoder_.get(); }
-  CommandExecutor* scheduler() const { return executor_.get(); }
   GpuChannel* channel() const { return channel_; }
 
   // Unique command buffer ID for this command buffer stub.
@@ -121,11 +137,6 @@ class GPU_EXPORT GpuCommandBufferStub
   SequenceId sequence_id() const { return sequence_id_; }
 
   int32_t stream_id() const { return stream_id_; }
-
-  // Sends a message to the console.
-  void SendConsoleMessage(int32_t id, const std::string& message);
-
-  void SendCachedShader(const std::string& key, const std::string& shader);
 
   gl::GLSurface* surface() const { return surface_.get(); }
 
@@ -153,26 +164,25 @@ class GPU_EXPORT GpuCommandBufferStub
   bool MakeCurrent();
 
   // Message handlers:
-  void OnSetGetBuffer(int32_t shm_id, IPC::Message* reply_message);
+  void OnSetGetBuffer(int32_t shm_id);
   void OnTakeFrontBuffer(const Mailbox& mailbox);
   void OnReturnFrontBuffer(const Mailbox& mailbox, bool is_lost);
   void OnGetState(IPC::Message* reply_message);
   void OnWaitForTokenInRange(int32_t start,
                              int32_t end,
                              IPC::Message* reply_message);
-  void OnWaitForGetOffsetInRange(int32_t start,
+  void OnWaitForGetOffsetInRange(uint32_t set_get_buffer_count,
+                                 int32_t start,
                                  int32_t end,
                                  IPC::Message* reply_message);
   void OnAsyncFlush(int32_t put_offset,
-                    uint32_t flush_count,
-                    const std::vector<ui::LatencyInfo>& latency_info,
-                    const std::vector<SyncToken>& sync_token_fences);
+                    uint32_t flush_id,
+                    const std::vector<ui::LatencyInfo>& latency_info);
   void OnRegisterTransferBuffer(int32_t id,
                                 base::SharedMemoryHandle transfer_buffer,
                                 uint32_t size);
   void OnDestroyTransferBuffer(int32_t id);
   void OnGetTransferBuffer(int32_t id, IPC::Message* reply_message);
-  bool OnWaitSyncToken(const SyncToken& sync_token);
 
   void OnEnsureBackbuffer();
 
@@ -180,24 +190,15 @@ class GPU_EXPORT GpuCommandBufferStub
   void OnSignalAck(uint32_t id);
   void OnSignalQuery(uint32_t query, uint32_t id);
 
-  void OnFenceSyncRelease(uint64_t release);
   void OnWaitSyncTokenCompleted(const SyncToken& sync_token);
-
-  void OnDescheduleUntilFinished();
-  void OnRescheduleAfterFinished();
 
   void OnCreateImage(const GpuCommandBufferMsg_CreateImage_Params& params);
   void OnDestroyImage(int32_t id);
   void OnCreateStreamTexture(uint32_t texture_id,
                              int32_t stream_id,
                              bool* succeeded);
-  void OnCommandProcessed();
-  void OnParseError();
 
   void ReportState();
-
-  // Wrapper for CommandExecutor::PutChanged that sets the crash report URL.
-  void PutChanged();
 
   // Poll the command buffer to execute work.
   void PollWork();
@@ -211,6 +212,10 @@ class GPU_EXPORT GpuCommandBufferStub
 
   bool CheckContextLost();
   void CheckCompleteWaits();
+
+  // Set driver bug workarounds and disabled GL extensions to the context.
+  static void SetContextGpuFeatureInfo(gl::GLContext* context,
+                                       const GpuFeatureInfo& gpu_feature_info);
 
   // The lifetime of objects of this class is managed by a GpuChannel. The
   // GpuChannels destroy all the GpuCommandBufferStubs that they own when they
@@ -227,11 +232,10 @@ class GPU_EXPORT GpuCommandBufferStub
   const SequenceId sequence_id_;
   const int32_t stream_id_;
   const int32_t route_id_;
-  uint32_t last_flush_count_;
+  uint32_t last_flush_id_;
 
   std::unique_ptr<CommandBufferService> command_buffer_;
   std::unique_ptr<gles2::GLES2Decoder> decoder_;
-  std::unique_ptr<CommandExecutor> executor_;
   scoped_refptr<SyncPointClientState> sync_point_client_state_;
   scoped_refptr<gl::GLSurface> surface_;
   scoped_refptr<gl::GLShareGroup> share_group_;
@@ -251,6 +255,7 @@ class GPU_EXPORT GpuCommandBufferStub
 
   std::unique_ptr<WaitForCommandState> wait_for_token_;
   std::unique_ptr<WaitForCommandState> wait_for_get_offset_;
+  uint32_t wait_set_get_buffer_count_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuCommandBufferStub);
 };

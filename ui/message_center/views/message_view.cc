@@ -14,9 +14,8 @@
 #include "ui/gfx/shadow_util.h"
 #include "ui/gfx/shadow_value.h"
 #include "ui/message_center/message_center.h"
-#include "ui/message_center/message_center_style.h"
+#include "ui/message_center/public/cpp/message_center_constants.h"
 #include "ui/message_center/views/message_center_controller.h"
-#include "ui/resources/grit/ui_resources.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -65,7 +64,6 @@ MessageView::MessageView(MessageCenterController* controller,
                          const Notification& notification)
     : controller_(controller),
       notification_id_(notification.id()),
-      notifier_id_(notification.notifier_id()),
       slide_out_controller_(this, this) {
   SetFocusBehavior(FocusBehavior::ALWAYS);
 
@@ -75,8 +73,8 @@ MessageView::MessageView(MessageCenterController* controller,
 
   // Create the opaque background that's above the view's shadow.
   background_view_ = new views::View();
-  background_view_->set_background(
-      views::Background::CreateSolidBackground(kNotificationBackgroundColor));
+  background_view_->SetBackground(
+      views::CreateSolidBackground(kNotificationBackgroundColor));
   AddChildView(background_view_);
 
   focus_painter_ = views::Painter::CreateSolidFocusPainter(
@@ -89,9 +87,9 @@ MessageView::~MessageView() {
 }
 
 void MessageView::UpdateWithNotification(const Notification& notification) {
-  display_source_ = notification.display_source();
+  pinned_ = notification.pinned();
   accessible_name_ = CreateAccessibleName(notification);
-  slide_out_controller_.set_enabled(!notification.pinned());
+  slide_out_controller_.set_enabled(!GetPinned());
 }
 
 // static
@@ -113,8 +111,21 @@ void MessageView::SetIsNested() {
       -gfx::ShadowValue::GetMargin(shadow.values)));
 }
 
+void MessageView::SetExpanded(bool expanded) {
+  // Not implemented by default.
+}
+
+bool MessageView::IsExpanded() const {
+  // Not implemented by default.
+  return false;
+}
+
 void MessageView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   node_data->role = ui::AX_ROLE_BUTTON;
+  node_data->AddStringAttribute(
+      ui::AX_ATTR_ROLE_DESCRIPTION,
+      l10n_util::GetStringUTF8(
+          IDS_MESSAGE_NOTIFICATION_SETTINGS_BUTTON_ACCESSIBLE_NAME));
   node_data->SetName(accessible_name_);
 }
 
@@ -144,7 +155,7 @@ bool MessageView::OnKeyPressed(const ui::KeyEvent& event) {
 
 bool MessageView::OnKeyReleased(const ui::KeyEvent& event) {
   // Space key handling is triggerred at key-release timing. See
-  // ui/views/controls/buttons/custom_button.cc for why.
+  // ui/views/controls/buttons/button.cc for why.
   if (event.flags() != ui::EF_NONE || event.key_code() != ui::VKEY_SPACE)
     return false;
 
@@ -170,6 +181,8 @@ void MessageView::OnBlur() {
 }
 
 void MessageView::Layout() {
+  views::View::Layout();
+
   gfx::Rect content_bounds = GetContentsBounds();
 
   // Background.
@@ -225,8 +238,16 @@ void MessageView::OnSlideOut() {
   controller_->RemoveNotification(notification_id_, true);  // By user.
 }
 
+bool MessageView::GetPinned() const {
+  return pinned_ && !force_disable_pinned_;
+}
+
 void MessageView::OnCloseButtonPressed() {
   controller_->RemoveNotification(notification_id_, true);  // By user.
+}
+
+void MessageView::OnSettingsButtonPressed() {
+  controller_->ClickOnSettingsButton(notification_id_);
 }
 
 void MessageView::SetDrawBackgroundAsActive(bool active) {

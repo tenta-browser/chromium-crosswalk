@@ -2,18 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/**
- * The different pages that can be shown at a time.
- * Note: This must remain in sync with the order in manager.html!
- * @enum {string}
- */
-var Page = {
-  ITEM_LIST: '0',
-  DETAIL_VIEW: '1',
-  KEYBOARD_SHORTCUTS: '2',
-  ERROR_PAGE: '3',
-};
-
 cr.define('extensions', function() {
   'use strict';
 
@@ -23,7 +11,7 @@ cr.define('extensions', function() {
    * @param {chrome.developerPrivate.ExtensionInfo} b
    * @return {number}
    */
-  var compareExtensions = function(a, b) {
+  const compareExtensions = function(a, b) {
     function compare(x, y) {
       return x < y ? -1 : (x > y ? 1 : 0);
     }
@@ -37,24 +25,29 @@ cr.define('extensions', function() {
       return 0;
     }
     return compareLocation(a, b) ||
-           compare(a.name.toLowerCase(), b.name.toLowerCase()) ||
-           compare(a.id, b.id);
+        compare(a.name.toLowerCase(), b.name.toLowerCase()) ||
+        compare(a.id, b.id);
   };
 
-  var Manager = Polymer({
+  const Manager = Polymer({
     is: 'extensions-manager',
 
     behaviors: [I18nBehavior],
 
     properties: {
-      /** @type {extensions.Sidebar} */
-      sidebar: Object,
-
       /** @type {extensions.Toolbar} */
       toolbar: Object,
 
-      /** @type {extensions.ItemDelegate} */
-      itemDelegate: Object,
+      // This is not typed because it implements multiple interfaces, and is
+      // passed to different elements as different types.
+      delegate: Object,
+
+      isGuest_: {
+        type: Boolean,
+        value: function() {
+          return loadTimeData.getBoolean('isGuest');
+        },
+      },
 
       inDevMode: {
         type: Boolean,
@@ -86,34 +79,96 @@ cr.define('extensions', function() {
       /** @type {!Array<!chrome.developerPrivate.ExtensionInfo>} */
       extensions: {
         type: Array,
-        value: function() { return []; },
+        value: function() {
+          return [];
+        },
       },
 
       /** @type {!Array<!chrome.developerPrivate.ExtensionInfo>} */
       apps: {
         type: Array,
-        value: function() { return []; },
+        value: function() {
+          return [];
+        },
       },
+
+      /** @private {extensions.ShowingType} */
+      listType_: Number,
+
+      itemsList_: {
+        type: Array,
+        computed: 'computeList_(listType_)',
+      },
+
+      /**
+       * Prevents page content from showing before data is first loaded.
+       * @private
+       */
+      didInitPage_: {
+        type: Boolean,
+        value: false,
+      },
+
+      // <if expr="chromeos">
+      /** @private */
+      kioskEnabled_: {
+        type: Boolean,
+        value: false,
+      },
+
+      /** @private */
+      showKioskDialog_: {
+        type: Boolean,
+        value: false,
+      },
+      // </if>
     },
 
-    listeners: {
-      'items-list.extension-item-show-details': 'onShouldShowItemDetails_',
-      'items-list.extension-item-show-errors': 'onShouldShowItemErrors_',
-    },
+    /**
+     * The current page being shown. Default to null, and initPage will figure
+     * out the initial page based on url.
+     * @private {?PageState}
+     */
+    currentPage_: null,
 
+    /**
+     * The ID of the listner on |extensions.navigation|. Stored so that the
+     * listener can be removed when this element is detached (happens in tests).
+     * @private {?number}
+     */
+    navigationListener_: null,
+
+    /** @override */
     created: function() {
       this.readyPromiseResolver = new PromiseResolver();
     },
 
+    /** @override */
     ready: function() {
-      /** @type {extensions.Sidebar} */
-      this.sidebar =
-          /** @type {extensions.Sidebar} */(this.$$('extensions-sidebar'));
       this.toolbar =
-          /** @type {extensions.Toolbar} */(this.$$('extensions-toolbar'));
-      this.listHelper_ = new ListHelper(this);
-      this.sidebar.setListDelegate(this.listHelper_);
+          /** @type {extensions.Toolbar} */ (this.$$('extensions-toolbar'));
       this.readyPromiseResolver.resolve();
+
+      // <if expr="chromeos">
+      extensions.KioskBrowserProxyImpl.getInstance()
+          .initializeKioskAppSettings()
+          .then(params => {
+            this.kioskEnabled_ = params.kioskEnabled;
+          });
+      // </if>
+    },
+
+    /** @override */
+    attached: function() {
+      this.navigationListener_ = extensions.navigation.addListener(newPage => {
+        this.changePage_(newPage);
+      });
+    },
+
+    /** @override */
+    detached: function() {
+      assert(extensions.navigation.removeListener(this.navigationListener_));
+      this.navigationListener_ = null;
     },
 
     get keyboardShortcuts() {
@@ -137,13 +192,12 @@ cr.define('extensions', function() {
     },
 
     /**
-     * Shows the details view for a given item.
-     * @param {!chrome.developerPrivate.ExtensionInfo} data
+     * Initializes the page to reflect what's specified in the url so that if
+     * the user visits chrome://extensions/?id=..., we land on the proper page.
      */
-    showItemDetails: function(data) {
-      this.$['items-list'].willShowItemSubpage(data.id);
-      this.detailViewItem_ = data;
-      this.changePage(Page.DETAIL_VIEW);
+    initPage: function() {
+      this.didInitPage_ = true;
+      this.changePage_(extensions.navigation.getCurrentPage());
     },
 
     /**
@@ -154,35 +208,36 @@ cr.define('extensions', function() {
       this.filter = /** @type {string} */ (event.detail);
     },
 
+    /** @private */
     onMenuButtonTap_: function() {
-      this.$.drawer.toggle();
+      this.$.drawer.openDrawer();
+
+      // Sidebar needs manager to inform it of what to highlight since it
+      // has no access to item-specific page.
+      let page = extensions.navigation.getCurrentPage();
+      if (page.extensionId) {
+        // Find out what type of item we're looking at, and replace page info
+        // with that list type.
+        const data = assert(this.getData_(page.extensionId));
+        page = {page: Page.LIST, type: extensions.getItemListType(data)};
+      }
+
+      this.$.sidebar.updateSelected(page);
     },
 
     /**
-     * @param {chrome.developerPrivate.ExtensionType} type The type of item.
+     * @param {chrome.developerPrivate.ExtensionInfo} item
      * @return {string} The ID of the list that the item belongs in.
      * @private
      */
-    getListId_: function(type) {
-      var listId;
-      var ExtensionType = chrome.developerPrivate.ExtensionType;
-      switch (type) {
-        case ExtensionType.HOSTED_APP:
-        case ExtensionType.LEGACY_PACKAGED_APP:
-        case ExtensionType.PLATFORM_APP:
-          listId = 'apps';
-          break;
-        case ExtensionType.EXTENSION:
-        case ExtensionType.SHARED_MODULE:
-          listId = 'extensions';
-          break;
-        case ExtensionType.THEME:
-          assertNotReached(
-              'Don\'t send themes to the chrome://extensions page');
-          break;
-      }
-      assert(listId);
-      return listId;
+    getListId_: function(item) {
+      const type = extensions.getItemListType(item);
+      if (type == extensions.ShowingType.APPS)
+        return 'apps';
+      else if (type == extensions.ShowingType.EXTENSIONS)
+        return 'extensions';
+
+      assertNotReached();
     },
 
     /**
@@ -198,11 +253,12 @@ cr.define('extensions', function() {
     },
 
     /**
-     * @return {boolean} Whether the list should be visible.
+     * @return {?chrome.developerPrivate.ExtensionInfo}
      * @private
      */
-    computeListHidden_: function() {
-      return this.$['items-list'].items.length == 0;
+    getData_: function(id) {
+      return this.extensions[this.getIndexInList_('extensions', id)] ||
+          this.apps[this.getIndexInList_('apps', id)];
     },
 
     /**
@@ -212,10 +268,10 @@ cr.define('extensions', function() {
      *     the new element is representing.
      */
     addItem: function(item) {
-      var listId = this.getListId_(item.type);
+      const listId = this.getListId_(item);
       // We should never try and add an existing item.
       assert(this.getIndexInList_(listId, item.id) == -1);
-      var insertBeforeChild = this[listId].findIndex(function(listEl) {
+      let insertBeforeChild = this[listId].findIndex(function(listEl) {
         return compareExtensions(listEl, item) > 0;
       });
       if (insertBeforeChild == -1)
@@ -228,8 +284,8 @@ cr.define('extensions', function() {
      *     item to update.
      */
     updateItem: function(item) {
-      var listId = this.getListId_(item.type);
-      var index = this.getIndexInList_(listId, item.id);
+      const listId = this.getListId_(item);
+      const index = this.getIndexInList_(listId, item.id);
       // We should never try and update a non-existent item.
       assert(index >= 0);
       this.set([listId, index], item);
@@ -240,10 +296,11 @@ cr.define('extensions', function() {
       // that the DOM will have stale data, but there's no point in causing the
       // extra work.
       if (this.detailViewItem_ && this.detailViewItem_.id == item.id &&
-          this.$.pages.selected == Page.DETAIL_VIEW) {
+          this.currentPage_.page == Page.DETAILS) {
         this.detailViewItem_ = item;
-      } else if (this.errorPageItem_ && this.errorPageItem_.id == item.id &&
-                 this.$.pages.selected == Page.ERROR_PAGE) {
+      } else if (
+          this.errorPageItem_ && this.errorPageItem_.id == item.id &&
+          this.currentPage_.page == Page.ERRORS) {
         this.errorPageItem_ = item;
       }
     },
@@ -253,8 +310,8 @@ cr.define('extensions', function() {
      *     item to remove.
      */
     removeItem: function(item) {
-      var listId = this.getListId_(item.type);
-      var index = this.getIndexInList_(listId, item.id);
+      const listId = this.getListId_(item);
+      const index = this.getIndexInList_(listId, item.id);
       // We should never try and remove a non-existent item.
       assert(index >= 0);
       this.splice(listId, index, 1);
@@ -269,13 +326,13 @@ cr.define('extensions', function() {
      */
     getPage_: function(page) {
       switch (page) {
-        case Page.ITEM_LIST:
+        case Page.LIST:
           return this.$['items-list'];
-        case Page.DETAIL_VIEW:
+        case Page.DETAILS:
           return this.$['details-view'];
-        case Page.KEYBOARD_SHORTCUTS:
+        case Page.SHORTCUTS:
           return this.$['keyboard-shortcuts'];
-        case Page.ERROR_PAGE:
+        case Page.ERRORS:
           return this.$['error-page'];
       }
       assertNotReached();
@@ -283,107 +340,79 @@ cr.define('extensions', function() {
 
     /**
      * Changes the active page selection.
-     * @param {Page} toPage
+     * @param {PageState} newPage
+     * @private
      */
-    changePage: function(toPage) {
+    changePage_: function(newPage) {
       this.$.drawer.closeDrawer();
-      var fromPage = this.$.pages.selected;
-      if (fromPage == toPage)
-        return;
-      var entry;
-      var exit;
-      if (fromPage == Page.ITEM_LIST && (toPage == Page.DETAIL_VIEW ||
-                                         toPage == Page.ERROR_PAGE)) {
-        entry = [extensions.Animation.HERO];
-        // The item grid can be larger than the detail view that we're
-        // hero'ing into, so we want to also fade out to avoid any jarring.
-        exit = [extensions.Animation.HERO, extensions.Animation.FADE_OUT];
-      } else if (toPage == Page.ITEM_LIST) {
-        entry = [extensions.Animation.FADE_IN];
-        exit = [extensions.Animation.SCALE_DOWN];
+      if (this.optionsDialog && this.optionsDialog.open)
+        this.optionsDialog.close();
+
+      const fromPage = this.currentPage_ ? this.currentPage_.page : null;
+      const toPage = newPage.page;
+      let data;
+      if (newPage.extensionId)
+        data = assert(this.getData_(newPage.extensionId));
+
+      if (newPage.hasOwnProperty('type'))
+        this.listType_ = /** @type {extensions.ShowingType} */ (newPage.type);
+
+      if (toPage == Page.DETAILS)
+        this.detailViewItem_ = assert(data);
+      else if (toPage == Page.ERRORS)
+        this.errorPageItem_ = assert(data);
+
+      if (fromPage != toPage) {
+        /** @type {extensions.ViewManager} */ (this.$.viewManager)
+            .switchView(toPage);
       } else {
-        assert(toPage == Page.DETAIL_VIEW ||
-               toPage == Page.KEYBOARD_SHORTCUTS);
-        entry = [extensions.Animation.FADE_IN];
-        exit = [extensions.Animation.FADE_OUT];
+        /** @type {extensions.ViewManager} */ (this.$.viewManager)
+            .animateCurrentView('fade-in');
       }
-      this.getPage_(fromPage).animationHelper.setExitAnimations(exit);
-      this.getPage_(toPage).animationHelper.setEntryAnimations(entry);
-      this.$.pages.selected = toPage;
-    },
 
-    /**
-     * Handles the event for the user clicking on a details button.
-     * @param {!CustomEvent} e
-     * @private
-     */
-    onShouldShowItemDetails_: function(e) {
-      this.showItemDetails(e.detail.data);
-    },
+      if (newPage.subpage) {
+        assert(newPage.subpage == Dialog.OPTIONS);
+        assert(newPage.extensionId);
+        this.optionsDialog.show(data);
+      }
 
-    /**
-     * Handles the event for the user clicking on the errors button.
-     * @param {!CustomEvent} e
-     * @private
-     */
-    onShouldShowItemErrors_: function(e) {
-      var data = e.detail.data;
-      this.$['items-list'].willShowItemSubpage(data.id);
-      this.errorPageItem_ = data;
-      this.changePage(Page.ERROR_PAGE);
-    },
-
-    /** @private */
-    onDetailsViewClose_: function() {
-      // Note: we don't reset detailViewItem_ here because doing so just causes
-      // extra work for the data-bound details view.
-      this.changePage(Page.ITEM_LIST);
-    },
-
-    /** @private */
-    onErrorPageClose_: function() {
-      // Note: we don't reset errorPageItem_ here because doing so just causes
-      // extra work for the data-bound error page.
-      this.changePage(Page.ITEM_LIST);
+      this.currentPage_ = newPage;
     },
 
     /** @private */
     onPackTap_: function() {
       this.$['pack-dialog'].show();
+    },
+
+    // <if expr="chromeos">
+    /** @private */
+    onKioskTap_: function() {
+      this.showKioskDialog_ = true;
+    },
+
+    onKioskDialogClose_: function() {
+      this.showKioskDialog_ = false;
+    },
+    // </if>
+
+    /**
+     * @param {!extensions.ShowingType} listType
+     * @private
+     */
+    computeList_: function(listType) {
+      // TODO(scottchen): the .slice is required to trigger the binding
+      // correctly, otherwise the list won't rerender. Should investigate
+      // the performance implication, or find better ways to trigger change.
+      switch (listType) {
+        case extensions.ShowingType.EXTENSIONS:
+          this.linkPaths('itemsList_', 'extensions');
+          return this.extensions;
+        case extensions.ShowingType.APPS:
+          this.linkPaths('itemsList_', 'apps');
+          return this.apps;
+      }
     }
   });
-
-  /**
-   * @param {extensions.Manager} manager
-   * @constructor
-   * @implements {extensions.SidebarListDelegate}
-   */
-  function ListHelper(manager) {
-    this.manager_ = manager;
-  }
-
-  ListHelper.prototype = {
-    /** @override */
-    showType: function(type) {
-      var items;
-      switch (type) {
-        case extensions.ShowingType.EXTENSIONS:
-          items = this.manager_.extensions;
-          break;
-        case extensions.ShowingType.APPS:
-          items = this.manager_.apps;
-          break;
-      }
-
-      this.manager_.$/* hack */ ['items-list'].set('items', assert(items));
-      this.manager_.changePage(Page.ITEM_LIST);
-    },
-
-    /** @override */
-    showKeyboardShortcuts: function() {
-      this.manager_.changePage(Page.KEYBOARD_SHORTCUTS);
-    },
-  };
 
   return {Manager: Manager};
 });

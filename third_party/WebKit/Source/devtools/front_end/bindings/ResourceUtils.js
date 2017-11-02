@@ -84,3 +84,44 @@ Bindings.displayNameForURL = function(url) {
   var displayName = url.trimURL(parsedURL.host);
   return displayName === '/' ? parsedURL.host + '/' : displayName;
 };
+
+/**
+ * @param {!SDK.Target} target
+ * @param {string} frameId
+ * @param {string} url
+ * @return {?Workspace.UISourceCodeMetadata}
+ */
+Bindings.metadataForURL = function(target, frameId, url) {
+  var resourceTreeModel = target.model(SDK.ResourceTreeModel);
+  if (!resourceTreeModel)
+    return null;
+  var frame = resourceTreeModel.frameForId(frameId);
+  if (!frame)
+    return null;
+  return Bindings.resourceMetadata(frame.resourceForURL(url));
+};
+
+/**
+ * @param {?SDK.Resource} resource
+ * @return {?Workspace.UISourceCodeMetadata}
+ */
+Bindings.resourceMetadata = function(resource) {
+  if (!resource || (typeof resource.contentSize() !== 'number' && !resource.lastModified()))
+    return null;
+  return new Workspace.UISourceCodeMetadata(resource.lastModified(), resource.contentSize());
+};
+
+/**
+ * @param {!SDK.Script} script
+ * @return {string}
+ */
+Bindings.frameIdForScript = function(script) {
+  var executionContext = script.executionContext();
+  if (executionContext)
+    return executionContext.frameId || '';
+  // This is to overcome compilation cache which doesn't get reset.
+  var resourceTreeModel = script.debuggerModel.target().model(SDK.ResourceTreeModel);
+  if (!resourceTreeModel || !resourceTreeModel.mainFrame)
+    return '';
+  return resourceTreeModel.mainFrame.id;
+};

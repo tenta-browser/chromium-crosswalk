@@ -15,7 +15,8 @@ cr.define('settings_people_page_quick_unlock', function() {
   function isVisible(element) {
     while (element) {
       if (element.offsetWidth <= 0 || element.offsetHeight <= 0 ||
-          element.hidden) {
+          element.hidden ||
+          window.getComputedStyle(element).visibility == 'hidden') {
         return false;
       }
 
@@ -179,7 +180,7 @@ cr.define('settings_people_page_quick_unlock', function() {
 
       /**
        * Changes the lock screen pref value using the settings API; this is like
-       * the pref got changed from an unkown source such as another tab.
+       * the pref got changed from an unknown source such as another tab.
        * @param {boolean} value
        */
       function setLockScreenPref(value) {
@@ -305,8 +306,9 @@ cr.define('settings_people_page_quick_unlock', function() {
 
         Polymer.dom.flush();
         MockInteractions.tap(getFromElement('#setupPinButton'));
+        Polymer.dom.flush();
         var setupPinDialog = getFromElement('#setupPin');
-        assertTrue(setupPinDialog.$.dialog.open);
+        assertTrue(setupPinDialog.$$('#dialog').open);
         assertEquals(1, fakeUma.getHistogramValue(
             LockScreenProgress.CHOOSE_PIN_OR_PASSWORD));
       });
@@ -337,9 +339,7 @@ cr.define('settings_people_page_quick_unlock', function() {
         document.body.appendChild(element);
         Polymer.dom.flush();
 
-        element.open();
-
-        titleDiv = getFromElement('div[class="title"]');
+        titleDiv = getFromElement('div[slot=title]');
         problemDiv = getFromElement('#problemDiv');
         pinKeyboard = getFromElement('pin-keyboard');
         backButton = getFromElement('paper-button[class="cancel-button"]');
@@ -390,11 +390,24 @@ cr.define('settings_people_page_quick_unlock', function() {
         assertTrue(isVisible(problemDiv));
       });
 
-      // If the PIN is too short an error problem is shown.
+      // If the PIN is too short a problem is shown.
       test('WarningShownForShortPins', function() {
-        pinKeyboard.value = '11';
-
+        // Verify initially when the PIN is less than 4 digits, the problem will
+        // be a warning.
+        pinKeyboard.value = '';
         assertTrue(isVisible(problemDiv));
+        assertHasClass(problemDiv, 'warning');
+        assertTrue(continueButton.disabled);
+
+        // Verify that once the PIN is 4 digits (do not use 1111 since that will
+        // bring up a easy to guess warning) the warning disappears.
+        pinKeyboard.value = '1321';
+        assertFalse(isVisible(problemDiv));
+        assertFalse(continueButton.disabled);
+
+        // Verify that after we pass 4 digits once, but delete some digits, the
+        // problem will be an error.
+        pinKeyboard.value = '11';
         assertHasClass(problemDiv, 'error');
         assertTrue(continueButton.disabled);
       });
@@ -424,31 +437,30 @@ cr.define('settings_people_page_quick_unlock', function() {
         assertHasClass(problemDiv, 'warning');
       });
 
-      // If the confirm PIN does not match the initial PIN a warning is shown.
-      // If the user tries to submit the PIN, the warning changes to an error.
+      // Show a error if the user tries to submit a PIN that does not match the
+      // initial PIN. The error disappears once the user edits the wrong PIN.
       test('WarningThenErrorShownForMismatchedPins', function() {
         pinKeyboard.value = '1118';
         MockInteractions.tap(continueButton);
 
         // Entering a mismatched PIN shows a warning.
         pinKeyboard.value = '1119';
-        assertTrue(isVisible(problemDiv));
-        assertHasClass(problemDiv, 'warning');
+        assertFalse(isVisible(problemDiv));
 
-        // Submitting a mistmatched PIN shows an error. Directly call the button
+        // Submitting a mismatched PIN shows an error. Directly call the button
         // event since a tap on the disabled button does nothing.
         element.onPinSubmit_();
         assertHasClass(problemDiv, 'error');
 
         // Changing the PIN changes the error to a warning.
         pinKeyboard.value = '111';
-        assertHasClass(problemDiv, 'warning');
+        assertFalse(isVisible(problemDiv));
       });
 
       // Hitting cancel at the setup step dismisses the dialog.
       test('HittingBackButtonResetsState', function() {
         MockInteractions.tap(backButton);
-        assertFalse(element.$.dialog.open);
+        assertFalse(element.$$('#dialog').open);
       });
 
       // Hitting cancel at the confirm step dismisses the dialog.
@@ -456,7 +468,7 @@ cr.define('settings_people_page_quick_unlock', function() {
         pinKeyboard.value = '1111';
         MockInteractions.tap(continueButton);
         MockInteractions.tap(backButton);
-        assertFalse(element.$.dialog.open);
+        assertFalse(element.$$('#dialog').open);
       });
 
       // User has to re-enter PIN for confirm step.
@@ -487,6 +499,28 @@ cr.define('settings_people_page_quick_unlock', function() {
             LockScreenProgress.CONFIRM_PIN));
         assertDeepEquals(['PIN'], quickUnlockPrivateApi.activeModes);
         assertDeepEquals(['1111'], quickUnlockPrivateApi.credentials);
+      });
+
+      test('TestContinueButtonState', function() {
+        pinKeyboard.value = '1111';
+        MockInteractions.tap(continueButton);
+
+        // Verify the button is disabled when we first enter the confirm step,
+        // since the PIN value is empty.
+        assertEquals('', pinKeyboard.value);
+        assertTrue(continueButton.disabled);
+
+        // Verify the button is enabled after we enter one digit.
+        pinKeyboard.value = '1';
+        assertFalse(continueButton.disabled);
+
+        // Verify the button is disabled after we try to submit a wrong PIN.
+        MockInteractions.tap(continueButton);
+        assertTrue(continueButton.disabled);
+
+        // Verify the button is enabled after we enter one digit again.
+        pinKeyboard.value = '11';
+        assertFalse(continueButton.disabled);
       });
     });
   }

@@ -28,7 +28,7 @@
 
 #include "modules/webaudio/AudioNode.h"
 #include "modules/webaudio/AudioParam.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Threading.h"
 
 namespace blink {
@@ -42,9 +42,9 @@ class GainOptions;
 
 class GainHandler final : public AudioHandler {
  public:
-  static PassRefPtr<GainHandler> Create(AudioNode&,
-                                        float sample_rate,
-                                        AudioParamHandler& gain);
+  static RefPtr<GainHandler> Create(AudioNode&,
+                                    float sample_rate,
+                                    AudioParamHandler& gain);
 
   // AudioHandler
   void Process(size_t frames_to_process) override;
@@ -53,6 +53,10 @@ class GainHandler final : public AudioHandler {
   // Called in the main thread when the number of channels for the input may
   // have changed.
   void CheckNumberOfChannelsForInput(AudioNodeInput*) override;
+
+  // AudioNode
+  double TailTime() const override { return 0; }
+  double LatencyTime() const override { return 0; }
 
  private:
   GainHandler(AudioNode&, float sample_rate, AudioParamHandler& gain);

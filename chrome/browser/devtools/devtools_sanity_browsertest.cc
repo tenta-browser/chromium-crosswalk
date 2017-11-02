@@ -16,13 +16,15 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_timeouts.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -48,6 +50,10 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/app_modal/javascript_app_modal_dialog.h"
 #include "components/app_modal/native_app_modal_dialog.h"
+#include "components/autofill/content/browser/content_autofill_driver.h"
+#include "components/autofill/content/browser/content_autofill_driver_factory.h"
+#include "components/autofill/core/browser/autofill_manager.h"
+#include "components/autofill/core/browser/autofill_manager_test_delegate.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/content_browser_client.h"
@@ -78,6 +84,7 @@
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "net/url_request/url_request_context.h"
+#include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_filter.h"
 #include "net/url_request/url_request_http_job.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
@@ -85,7 +92,6 @@
 #include "ui/gl/gl_switches.h"
 #include "url/gurl.h"
 
-using app_modal::AppModalDialog;
 using app_modal::JavaScriptAppModalDialog;
 using app_modal::NativeAppModalDialog;
 using content::BrowserThread;
@@ -128,6 +134,9 @@ const char kReloadSharedWorkerTestWorker[] =
     "files/workers/debug_shared_worker_initialization.js";
 const char kEmulateNetworkConditionsPage[] =
     "files/devtools/emulate_network_conditions.html";
+const char kDispatchKeyEventShowsAutoFill[] =
+    "files/devtools/dispatch_key_event_shows_auto_fill.html";
+const char kDOMWarningsTestPage[] = "files/devtools/dom_warnings_page.html";
 
 template <typename... T>
 void DispatchOnTestSuiteSkipCheck(DevToolsWindow* window,
@@ -194,12 +203,7 @@ class PushTimesMockURLRequestJob : public net::URLRequestMockHTTPJob {
   PushTimesMockURLRequestJob(net::URLRequest* request,
                              net::NetworkDelegate* network_delegate,
                              base::FilePath file_path)
-      : net::URLRequestMockHTTPJob(
-            request,
-            network_delegate,
-            file_path,
-            BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-                base::SequencedWorkerPool::SKIP_ON_SHUTDOWN)) {}
+      : net::URLRequestMockHTTPJob(request, network_delegate, file_path) {}
 
   void Start() override {
     load_timing_info_.socket_reused = true;
@@ -386,9 +390,7 @@ class DevToolsBeforeUnloadTest: public DevToolsSanityTest {
     ASSERT_TRUE(content::ExecuteScript(web_contents->GetRenderViewHost(),
         "window.addEventListener('beforeunload',"
         "function(event) { event.returnValue = 'Foo'; });"));
-    // Disable the hang monitor, otherwise there will be a race between the
-    // beforeunload dialog and the beforeunload hang timer.
-    web_contents->GetMainFrame()->DisableBeforeUnloadHangMonitorForTesting();
+    content::PrepContentsForBeforeUnloadTest(web_contents);
   }
 
   void RunBeforeUnloadSanityTest(bool is_docked,
@@ -451,11 +453,8 @@ class DevToolsBeforeUnloadTest: public DevToolsSanityTest {
   }
 
   NativeAppModalDialog* GetDialog() {
-    AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
-    EXPECT_TRUE(dialog->IsJavaScriptModalDialog());
-    JavaScriptAppModalDialog* js_dialog =
-        static_cast<JavaScriptAppModalDialog*>(dialog);
-    NativeAppModalDialog* native_dialog = js_dialog->native_dialog();
+    JavaScriptAppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
+    NativeAppModalDialog* native_dialog = dialog->native_dialog();
     EXPECT_TRUE(native_dialog);
     return native_dialog;
   }
@@ -463,7 +462,7 @@ class DevToolsBeforeUnloadTest: public DevToolsSanityTest {
 
 void TimeoutCallback(const std::string& timeout_message) {
   ADD_FAILURE() << timeout_message;
-  base::MessageLoop::current()->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 // Base class for DevTools tests that test devtools functionality for
@@ -593,6 +592,7 @@ class DevToolsExtensionTest : public DevToolsSanityTest,
   const Extension* GetExtensionByPath(
       const extensions::ExtensionSet& extensions,
       const base::FilePath& path) {
+    base::ThreadRestrictions::ScopedAllowIO allow_io;
     base::FilePath extension_path = base::MakeAbsoluteFilePath(path);
     EXPECT_TRUE(!extension_path.empty());
     for (const scoped_refptr<const Extension>& extension : extensions) {
@@ -638,7 +638,7 @@ class DevToolsExtensionTest : public DevToolsSanityTest,
                const content::NotificationDetails& details) override {
     DCHECK_EQ(extensions::NOTIFICATION_EXTENSION_HOST_DID_STOP_FIRST_LOAD,
               type);
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   std::vector<std::unique_ptr<extensions::TestExtensionDir>>
@@ -680,7 +680,7 @@ class WorkerDevToolsSanityTest : public InProcessBrowserTest {
     ~WorkerCreationObserver() override {}
 
     void WorkerCreated(const GURL& url,
-                       const base::string16& name,
+                       const std::string& name,
                        int process_id,
                        int route_id) override {
       if (url.path().rfind(path_) == std::string::npos)
@@ -730,24 +730,20 @@ class WorkerDevToolsSanityTest : public InProcessBrowserTest {
     CloseDevToolsWindow();
   }
 
-  static void TerminateWorkerOnIOThread(scoped_refptr<WorkerData> worker_data) {
+  static void TerminateWorker(scoped_refptr<WorkerData> worker_data) {
     if (!WorkerService::GetInstance()->TerminateWorker(
         worker_data->worker_process_id, worker_data->worker_route_id))
       FAIL() << "Failed to terminate worker.\n";
+
     WorkerService::GetInstance()->AddObserver(
         new WorkerTerminationObserver(worker_data.get()));
-  }
 
-  static void TerminateWorker(scoped_refptr<WorkerData> worker_data) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::Bind(&TerminateWorkerOnIOThread, worker_data));
     content::RunMessageLoop();
   }
 
-  static void WaitForFirstSharedWorkerOnIOThread(
-      const std::string& path,
-      scoped_refptr<WorkerData> worker_data) {
+  static scoped_refptr<WorkerData> WaitForFirstSharedWorker(const char* path) {
+    scoped_refptr<WorkerData> worker_data(new WorkerData());
+
     std::vector<WorkerService::WorkerInfo> worker_info =
         WorkerService::GetInstance()->GetWorkers();
     for (size_t i = 0; i < worker_info.size(); i++) {
@@ -755,21 +751,12 @@ class WorkerDevToolsSanityTest : public InProcessBrowserTest {
         continue;
       worker_data->worker_process_id = worker_info[0].process_id;
       worker_data->worker_route_id = worker_info[0].route_id;
-      BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                              base::MessageLoop::QuitWhenIdleClosure());
-      return;
+      return worker_data;
     }
 
     WorkerService::GetInstance()->AddObserver(
         new WorkerCreationObserver(path, worker_data.get()));
-  }
 
-  static scoped_refptr<WorkerData> WaitForFirstSharedWorker(const char* path) {
-    scoped_refptr<WorkerData> worker_data(new WorkerData());
-    BrowserThread::PostTask(
-        BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(&WaitForFirstSharedWorkerOnIOThread, path, worker_data));
     content::RunMessageLoop();
     return worker_data;
   }
@@ -1047,17 +1034,25 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
 
   content::SiteInstance* devtools_instance =
       main_devtools_rfh->GetSiteInstance();
+  content::SiteInstance* extensions_instance =
+      devtools_extension_devtools_page_rfh->GetSiteInstance();
+
   EXPECT_TRUE(
       devtools_instance->GetSiteURL().SchemeIs(content::kChromeDevToolsScheme));
-  EXPECT_EQ(devtools_instance,
-            devtools_extension_devtools_page_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance, devtools_extension_panel_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance, panel_frame_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance, about_blank_frame_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance, data_frame_rfh->GetSiteInstance());
+  EXPECT_TRUE(
+      extensions_instance->GetSiteURL().SchemeIs(extensions::kExtensionScheme));
+
+  EXPECT_NE(devtools_instance, extensions_instance);
+  EXPECT_EQ(extensions_instance,
+            devtools_extension_panel_rfh->GetSiteInstance());
+  EXPECT_EQ(extensions_instance, panel_frame_rfh->GetSiteInstance());
+  EXPECT_EQ(extensions_instance, about_blank_frame_rfh->GetSiteInstance());
+  EXPECT_EQ(extensions_instance, data_frame_rfh->GetSiteInstance());
+
   EXPECT_EQ(web_url.host(),
             web_frame_rfh->GetSiteInstance()->GetSiteURL().host());
   EXPECT_NE(devtools_instance, web_frame_rfh->GetSiteInstance());
+  EXPECT_NE(extensions_instance, web_frame_rfh->GetSiteInstance());
 
   // Check that if the web iframe navigates itself to about:blank, it stays in
   // the web SiteInstance.
@@ -1074,6 +1069,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
   EXPECT_EQ(web_url.host(),
             web_frame_rfh->GetSiteInstance()->GetSiteURL().host());
   EXPECT_NE(devtools_instance, web_frame_rfh->GetSiteInstance());
+  EXPECT_NE(extensions_instance, web_frame_rfh->GetSiteInstance());
 
   // Check that if the web IFrame is navigated back to a devtools extension
   // page, it gets put back in the devtools process.
@@ -1096,7 +1092,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
 
   EXPECT_EQ(extension_simple_url,
             extension_simple_frame_rfh->GetLastCommittedURL());
-  EXPECT_EQ(devtools_instance, extension_simple_frame_rfh->GetSiteInstance());
+  EXPECT_EQ(extensions_instance, extension_simple_frame_rfh->GetSiteInstance());
 }
 
 // Tests that http Iframes within the sidebar pane page for the devtools
@@ -1151,22 +1147,24 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
 
   content::SiteInstance* devtools_instance =
       main_devtools_rfh->GetSiteInstance();
+  content::SiteInstance* extensions_instance =
+      devtools_extension_devtools_page_rfh->GetSiteInstance();
   EXPECT_TRUE(
       devtools_instance->GetSiteURL().SchemeIs(content::kChromeDevToolsScheme));
-  EXPECT_EQ(devtools_instance,
+  EXPECT_NE(devtools_instance, extensions_instance);
+  EXPECT_EQ(extensions_instance,
             devtools_extension_devtools_page_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance,
+  EXPECT_EQ(extensions_instance,
             devtools_sidebar_pane_extension_rfh->GetSiteInstance());
   EXPECT_EQ(web_url.host(),
             http_iframe_rfh->GetSiteInstance()->GetSiteURL().host());
   EXPECT_NE(devtools_instance, http_iframe_rfh->GetSiteInstance());
+  EXPECT_NE(extensions_instance, http_iframe_rfh->GetSiteInstance());
 }
 
 // Tests that http Iframes within the devtools background page, which is
 // different from the extension's background page, are rendered in their own
-// processes and not in the devtools process or the extension's process.  This
-// is tested because this is one of the extension pages with devtools access
-// (https://developer.chrome.com/extensions/devtools).  http://crbug.com/570483
+// processes and not in the devtools process or the extension's process.
 IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
                        HttpIframeInDevToolsExtensionDevtools) {
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -1208,13 +1206,16 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
 
   content::SiteInstance* devtools_instance =
       main_devtools_rfh->GetSiteInstance();
+  content::SiteInstance* extensions_instance =
+      devtools_extension_devtools_page_rfh->GetSiteInstance();
+
   EXPECT_TRUE(
       devtools_instance->GetSiteURL().SchemeIs(content::kChromeDevToolsScheme));
-  EXPECT_EQ(devtools_instance,
-            devtools_extension_devtools_page_rfh->GetSiteInstance());
+  EXPECT_NE(devtools_instance, extensions_instance);
   EXPECT_EQ(web_url.host(),
             http_iframe_rfh->GetSiteInstance()->GetSiteURL().host());
   EXPECT_NE(devtools_instance, http_iframe_rfh->GetSiteInstance());
+  EXPECT_NE(extensions_instance, http_iframe_rfh->GetSiteInstance());
 }
 
 // Tests that iframes to a non-devtools extension embedded in a devtools
@@ -1275,14 +1276,17 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
   // process, not in devtools or |devtools_extension|'s process.
   content::SiteInstance* devtools_instance =
       main_devtools_rfh->GetSiteInstance();
+  content::SiteInstance* extensions_instance =
+      devtools_extension_devtools_page_rfh->GetSiteInstance();
   EXPECT_TRUE(
       devtools_instance->GetSiteURL().SchemeIs(content::kChromeDevToolsScheme));
-  EXPECT_EQ(devtools_instance,
-            devtools_extension_devtools_page_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance, devtools_extension_panel_rfh->GetSiteInstance());
+  EXPECT_NE(devtools_instance, extensions_instance);
+  EXPECT_EQ(extensions_instance,
+            devtools_extension_panel_rfh->GetSiteInstance());
   EXPECT_EQ(non_dt_extension_test_url.GetOrigin(),
             non_devtools_extension_rfh->GetSiteInstance()->GetSiteURL());
   EXPECT_NE(devtools_instance, non_devtools_extension_rfh->GetSiteInstance());
+  EXPECT_NE(extensions_instance, non_devtools_extension_rfh->GetSiteInstance());
 }
 
 // Tests that if a devtools extension's devtools panel page has a subframe to a
@@ -1354,24 +1358,29 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
   EXPECT_EQ(extension_b_page_url,
             devtools_extension_b_frame_rfh->GetLastCommittedURL());
 
-  // All frames should be in the devtools process.
+  // Main extension frame should be loaded in the extensions process. Nested
+  // iframes should be loaded consistently with any other extensions iframes
+  // (in or out of process).
   content::SiteInstance* devtools_instance =
       main_devtools_rfh->GetSiteInstance();
+  content::SiteInstance* extension_a_instance =
+      devtools_extension_a_devtools_rfh->GetSiteInstance();
+  content::SiteInstance* extension_b_instance =
+      devtools_extension_b_devtools_rfh->GetSiteInstance();
   EXPECT_TRUE(
       devtools_instance->GetSiteURL().SchemeIs(content::kChromeDevToolsScheme));
-  EXPECT_EQ(devtools_instance,
-            devtools_extension_a_devtools_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance,
-            devtools_extension_b_devtools_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance,
+  EXPECT_NE(devtools_instance, extension_a_instance);
+  EXPECT_NE(devtools_instance, extension_b_instance);
+  EXPECT_NE(extension_a_instance, extension_b_instance);
+  EXPECT_EQ(extension_a_instance,
             devtools_extension_a_panel_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance,
+  EXPECT_EQ(extension_b_instance,
             devtools_extension_b_frame_rfh->GetSiteInstance());
 }
 
 // Tests that a devtools extension can still have subframes to itself in a
-// "devtools page" and that they will be rendered within the devtools process as
-// well, not in the extension process.  http://crbug.com/570483
+// "devtools page" and that they will be rendered within the extension process
+// as well, not in some other process.
 IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest, DevToolsExtensionInItself) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -1405,7 +1414,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest, DevToolsExtensionInItself) {
   RenderFrameHost* devtools_extension_panel_frame_rfh =
       ChildFrameAt(devtools_extension_panel_rfh, 0);
 
-  // All frames should be in the devtools process, including
+  // Extension frames should be in the extensions process, including
   // simple_test_page.html
   EXPECT_TRUE(main_devtools_rfh->GetLastCommittedURL().SchemeIs(
       content::kChromeDevToolsScheme));
@@ -1418,12 +1427,13 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest, DevToolsExtensionInItself) {
 
   content::SiteInstance* devtools_instance =
       main_devtools_rfh->GetSiteInstance();
+  content::SiteInstance* extensions_instance =
+      devtools_extension_devtools_page_rfh->GetSiteInstance();
   EXPECT_TRUE(
       devtools_instance->GetSiteURL().SchemeIs(content::kChromeDevToolsScheme));
-  EXPECT_EQ(devtools_instance,
-            devtools_extension_devtools_page_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance, devtools_extension_panel_rfh->GetSiteInstance());
-  EXPECT_EQ(devtools_instance,
+  EXPECT_EQ(extensions_instance,
+            devtools_extension_panel_rfh->GetSiteInstance());
+  EXPECT_EQ(extensions_instance,
             devtools_extension_panel_frame_rfh->GetSiteInstance());
 }
 
@@ -1484,8 +1494,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
                          // Whitelist the script we stuff into the 'blob:' URL:
                          .Set("content_security_policy",
                               "script-src 'self' "
-                              "'sha256-95xJWHeV+"
-                              "1zjAKQufDVW0misgmR4gCjgpipP2LJ5iis='; "
+                              "'sha256-uv9gxBEOFchPzak3TK6O39RdKxJeZvfha9zOHGam"
+                              "TB4='; "
                               "object-src 'none'")
                          .Set("manifest_version", 2)
                          .Set("devtools_page", "devtools.html")
@@ -1518,7 +1528,6 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
       "var xhr = new XMLHttpRequest();\n"
       "xhr.open('GET', blob_url, true);\n"
       "xhr.onload = function (e) {\n"
-      "    domAutomationController.setAutomationId(0);\n"
       "    domAutomationController.send(xhr.response);\n"
       "};\n"
       "xhr.send(null);\n");
@@ -1527,7 +1536,6 @@ IN_PROC_BROWSER_TEST_F(DevToolsExtensionTest,
       "var payload = `"
       "<html><body>iframe blob contents"
       "<script>"
-      "    domAutomationController.setAutomationId(0);"
       "    domAutomationController.send(document.body.innerText);\n"
       "</script></body></html>"
       "`;"
@@ -1625,22 +1633,6 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
   RunTest("testPauseWhenScriptIsRunning", kPauseWhenScriptIsRunning);
 }
 
-IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestTempFileIncognito) {
-  GURL url("about:blank");
-  ui_test_utils::BrowserAddedObserver window_observer;
-  chrome::NewEmptyWindow(browser()->profile()->GetOffTheRecordProfile());
-  Browser* new_browser = window_observer.WaitForSingleNewBrowser();
-  ui_test_utils::NavigateToURL(new_browser, url);
-  DevToolsWindow* window = DevToolsWindowTesting::OpenDevToolsWindowSync(
-      new_browser->tab_strip_model()->GetWebContentsAt(0), false);
-  RunTestFunction(window, "testTempFile");
-  DevToolsWindowTesting::CloseDevToolsWindowSync(window);
-}
-
-IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestTempFile) {
-  RunTest("testTempFile", kDebuggerTestPage);
-}
-
 // Tests network timing.
 IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestNetworkTiming) {
   RunTest("testNetworkTiming", kSlowTestPage);
@@ -1669,14 +1661,19 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestNetworkPushTime) {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&TestInterceptor::Register, push_url, file_path));
+      base::BindOnce(&TestInterceptor::Register, push_url, file_path));
 
   DispatchOnTestSuite(window_, "testPushTimes", push_url.spec().c_str());
 
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(&TestInterceptor::Unregister, push_url));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&TestInterceptor::Unregister, push_url));
 
   CloseDevToolsWindow();
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestDOMWarnings) {
+  RunTest("testDOMWarnings", kDOMWarningsTestPage);
 }
 
 // Tests that console messages are not duplicated on navigation back.
@@ -1696,6 +1693,47 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestDeviceEmulation) {
 
 IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestDispatchKeyEventDoesNotCrash) {
   RunTest("testDispatchKeyEventDoesNotCrash", "about:blank");
+}
+
+class AutofillManagerTestDelegateDevtoolsImpl
+    : public autofill::AutofillManagerTestDelegate {
+ public:
+  explicit AutofillManagerTestDelegateDevtoolsImpl(
+      WebContents* inspectedContents)
+      : inspected_contents_(inspectedContents) {}
+  ~AutofillManagerTestDelegateDevtoolsImpl() override {}
+
+  void DidPreviewFormData() override {}
+
+  void DidFillFormData() override {}
+
+  void DidShowSuggestions() override {
+    ASSERT_TRUE(content::ExecuteScript(inspected_contents_,
+                                       "console.log('didShowSuggestions');"));
+  }
+
+  void OnTextFieldChanged() override {}
+
+ private:
+  WebContents* inspected_contents_;
+
+  DISALLOW_COPY_AND_ASSIGN(AutofillManagerTestDelegateDevtoolsImpl);
+};
+
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestDispatchKeyEventShowsAutoFill) {
+  OpenDevToolsWindow(kDispatchKeyEventShowsAutoFill, false);
+
+  autofill::ContentAutofillDriver* autofill_driver =
+      autofill::ContentAutofillDriverFactory::FromWebContents(GetInspectedTab())
+          ->DriverForFrame(GetInspectedTab()->GetMainFrame());
+  autofill::AutofillManager* autofill_manager =
+      autofill_driver->autofill_manager();
+  AutofillManagerTestDelegateDevtoolsImpl autoFillTestDelegate(
+      GetInspectedTab());
+  autofill_manager->SetTestDelegate(&autoFillTestDelegate);
+
+  RunTestFunction(window_, "testDispatchKeyEventShowsAutoFill");
+  CloseDevToolsWindow();
 }
 
 // Tests that settings are stored in profile correctly.
@@ -1724,13 +1762,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestDevToolsExternalNavigation) {
 }
 
 // Tests that toolbox window is loaded when DevTools window is undocked.
-// Crashes on Linux only.  https://crbug.com/702641
-#if defined(OS_LINUX)
-#define MAYBE_TestToolboxLoadedUndocked DISABLED_TestToolboxLoadedUndocked
-#else
-#define MAYBE_TestToolboxLoadedUndocked TestToolboxLoadedUndocked
-#endif
-IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, MAYBE_TestToolboxLoadedUndocked) {
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestToolboxLoadedUndocked) {
   OpenDevToolsWindow(kDebuggerTestPage, false);
   ASSERT_TRUE(toolbox_web_contents());
   DevToolsWindow* on_self =
@@ -1950,14 +1982,9 @@ class DevToolsPixelOutputTests : public DevToolsSanityTest {
 
 // This test enables switches::kUseGpuInTests which causes false positives
 // with MemorySanitizer. This is also flakey on many configurations.
-#if defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER) || \
-    defined(OS_WIN)|| (defined(OS_CHROMEOS) && defined(OFFICIAL_BUILD))
-#define MAYBE_TestScreenshotRecording DISABLED_TestScreenshotRecording
-#else
-#define MAYBE_TestScreenshotRecording TestScreenshotRecording
-#endif
+// See https://crbug.com/510291
 IN_PROC_BROWSER_TEST_F(DevToolsPixelOutputTests,
-                       MAYBE_TestScreenshotRecording) {
+                       DISABLED_TestScreenshotRecording) {
   RunTest("testScreenshotRecording", std::string());
 }
 
@@ -1982,7 +2009,8 @@ IN_PROC_BROWSER_TEST_F(DevToolsPixelOutputTests,
   DispatchInPageAndWait("waitForEvent", "click");
 
   SimulateMouseWheelEvent(web_contents, gfx::Point(300, 100),
-                          gfx::Vector2d(0, 120));
+                          gfx::Vector2d(0, 120),
+                          blink::WebMouseWheelEvent::kPhaseBegan);
   DispatchInPageAndWait("waitForEvent", "wheel");
 
   SimulateTapAt(web_contents, gfx::Point(30, 60));
@@ -1998,7 +2026,7 @@ IN_PROC_BROWSER_TEST_F(DevToolsPixelOutputTests,
 class DevToolsNetInfoTest : public DevToolsSanityTest {
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(switches::kEnableNetworkInformation);
+    command_line->AppendSwitch(switches::kEnableNetworkInformationDownlinkMax);
     command_line->AppendSwitch(
         switches::kEnableExperimentalWebPlatformFeatures);
   }
@@ -2006,6 +2034,10 @@ class DevToolsNetInfoTest : public DevToolsSanityTest {
 
 IN_PROC_BROWSER_TEST_F(DevToolsNetInfoTest, EmulateNetworkConditions) {
   RunTest("testEmulateNetworkConditions", kEmulateNetworkConditionsPage);
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsNetInfoTest, OfflineNetworkConditions) {
+  RunTest("testOfflineNetworkConditions", kEmulateNetworkConditionsPage);
 }
 
 class StaticURLDataSource : public content::URLDataSource {
@@ -2080,7 +2112,39 @@ IN_PROC_BROWSER_TEST_F(DevToolsSanityTest,
   content::WebUIControllerFactory::UnregisterFactoryForTesting(&test_factory);
 }
 
-// Tests scripts panel showing.
-IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestDevToolsSharedWorker) {
-  RunTest("testDevToolsSharedWorker", url::kAboutBlankURL);
+void AddHSTSHost(scoped_refptr<net::URLRequestContextGetter> context,
+                 std::string host) {
+  net::TransportSecurityState* transport_security_state =
+      context->GetURLRequestContext()->transport_security_state();
+  base::Time expiry = base::Time::Now() + base::TimeDelta::FromDays(1000);
+  bool include_subdomains = false;
+  transport_security_state->AddHSTS(host, expiry, include_subdomains);
+}
+
+IN_PROC_BROWSER_TEST_F(DevToolsSanityTest, TestRawHeadersWithRedirectAndHSTS) {
+  net::EmbeddedTestServer https_test_server(
+      net::EmbeddedTestServer::TYPE_HTTPS);
+  https_test_server.SetSSLConfig(
+      net::EmbeddedTestServer::CERT_COMMON_NAME_IS_DOMAIN);
+  https_test_server.ServeFilesFromSourceDirectory("chrome/test/data");
+  ASSERT_TRUE(https_test_server.Start());
+  GURL https_url = https_test_server.GetURL("localhost", "/devtools/image.png");
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(
+          AddHSTSHost,
+          base::RetainedRef(browser()->profile()->GetRequestContext()),
+          https_url.host()));
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  OpenDevToolsWindow(std::string(), false);
+  GURL::Replacements replace_scheme;
+  replace_scheme.SetSchemeStr("http");
+  GURL http_url = https_url.ReplaceComponents(replace_scheme);
+  GURL redirect_url =
+      embedded_test_server()->GetURL("/server-redirect?" + http_url.spec());
+
+  DispatchOnTestSuite(window_, "testRawHeadersWithHSTS",
+                      redirect_url.spec().c_str());
+  CloseDevToolsWindow();
 }

@@ -23,6 +23,7 @@ class GURL;
 
 namespace content {
 
+class GinJavaBridgeDispatcherHost;
 class WebContentsImpl;
 
 // Android wrapper around WebContents that provides safer passage from java and
@@ -31,8 +32,6 @@ class WebContentsImpl;
 class CONTENT_EXPORT WebContentsAndroid
     : public base::SupportsUserData::Data {
  public:
-  static bool Register(JNIEnv* env);
-
   explicit WebContentsAndroid(WebContentsImpl* web_contents);
   ~WebContentsAndroid() override;
 
@@ -64,6 +63,8 @@ class CONTENT_EXPORT WebContentsAndroid
   void Cut(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   void Copy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   void Paste(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void PasteAsPlainText(JNIEnv* env,
+                        const base::android::JavaParamRef<jobject>& obj);
   void Replace(JNIEnv* env,
                const base::android::JavaParamRef<jobject>& obj,
                const base::android::JavaParamRef<jstring>& jstr);
@@ -72,9 +73,6 @@ class CONTENT_EXPORT WebContentsAndroid
                          const base::android::JavaParamRef<jobject>& obj);
   jint GetBackgroundColor(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj);
-  base::android::ScopedJavaLocalRef<jstring> GetURL(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&) const;
   base::android::ScopedJavaLocalRef<jstring> GetLastCommittedURL(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&) const;
@@ -87,6 +85,9 @@ class CONTENT_EXPORT WebContentsAndroid
 
   void OnHide(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   void OnShow(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void SetImportance(JNIEnv* env,
+                     const base::android::JavaParamRef<jobject>& obj,
+                     jint importance);
   void SuspendAllMediaPlayers(JNIEnv* env,
                               const base::android::JavaParamRef<jobject>& jobj);
   void SetAudioMuted(JNIEnv* env,
@@ -123,7 +124,8 @@ class CONTENT_EXPORT WebContentsAndroid
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jint start_adjust,
-      jint end_adjust);
+      jint end_adjust,
+      jboolean show_selection_menu);
   void EvaluateJavaScript(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj,
                           const base::android::JavaParamRef<jstring>& script,
@@ -198,20 +200,50 @@ class CONTENT_EXPORT WebContentsAndroid
                     const base::android::JavaParamRef<jobject>& jcallback);
   void DismissTextHandles(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj);
-  void ShowContextMenuAtPoint(JNIEnv* env,
-                              const base::android::JavaParamRef<jobject>& obj,
-                              int x,
-                              int y);
+  void ShowContextMenuAtTouchHandle(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      int x,
+      int y);
   void SetHasPersistentVideo(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& obj,
                              jboolean value);
   bool HasActiveEffectivelyFullscreenVideo(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+  base::android::ScopedJavaLocalRef<jobject> GetFullscreenVideoSize(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
+  void SetSize(JNIEnv* env,
+               const base::android::JavaParamRef<jobject>& obj,
+               jint width,
+               jint height);
 
   base::android::ScopedJavaLocalRef<jobject> GetOrCreateEventForwarder(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+
+  void CreateJavaBridgeDispatcherHost(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& retained_javascript_objects);
+
+  void SetAllowJavascriptInterfacesInspection(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jboolean allow);
+
+  void AddJavascriptInterface(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& /* obj */,
+      const base::android::JavaParamRef<jobject>& object,
+      const base::android::JavaParamRef<jstring>& name,
+      const base::android::JavaParamRef<jclass>& safe_annotation_clazz);
+
+  void RemoveJavascriptInterface(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& /* obj */,
+      const base::android::JavaParamRef<jstring>& name);
 
   void SetMediaSession(
       const base::android::ScopedJavaLocalRef<jobject>& j_media_session);
@@ -235,6 +267,9 @@ class CONTENT_EXPORT WebContentsAndroid
   WebContentsImpl* web_contents_;
   NavigationControllerAndroid navigation_controller_;
   base::android::ScopedJavaGlobalRef<jobject> obj_;
+
+  // Manages injecting Java objects.
+  scoped_refptr<GinJavaBridgeDispatcherHost> java_bridge_dispatcher_host_;
 
   base::WeakPtrFactory<WebContentsAndroid> weak_factory_;
 

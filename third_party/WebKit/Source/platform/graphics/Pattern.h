@@ -36,8 +36,8 @@
 #include "third_party/skia/include/core/SkRefCnt.h"
 
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefCounted.h"
+#include "platform/wtf/RefPtr.h"
 
 class SkMatrix;
 
@@ -55,10 +55,11 @@ class PLATFORM_EXPORT Pattern : public RefCounted<Pattern> {
     kRepeatModeXY = kRepeatModeX | kRepeatModeY
   };
 
-  static PassRefPtr<Pattern> CreateImagePattern(PassRefPtr<Image>,
-                                                RepeatMode = kRepeatModeXY);
-  static PassRefPtr<Pattern> CreatePaintRecordPattern(
+  static RefPtr<Pattern> CreateImagePattern(RefPtr<Image>,
+                                            RepeatMode = kRepeatModeXY);
+  static RefPtr<Pattern> CreatePaintRecordPattern(
       sk_sp<PaintRecord>,
+      const FloatRect& record_bounds,
       RepeatMode = kRepeatModeXY);
   virtual ~Pattern();
 
@@ -74,15 +75,10 @@ class PLATFORM_EXPORT Pattern : public RefCounted<Pattern> {
   virtual sk_sp<PaintShader> CreateShader(const SkMatrix&) = 0;
   virtual bool IsLocalMatrixChanged(const SkMatrix&) const;
 
-  void AdjustExternalMemoryAllocated(int64_t delta);
-
   RepeatMode repeat_mode_;
 
-  Pattern(RepeatMode, int64_t external_memory_allocated = 0);
+  Pattern(RepeatMode);
   mutable sk_sp<PaintShader> cached_shader_;
-
- private:
-  int64_t external_memory_allocated_;
 };
 
 }  // namespace blink

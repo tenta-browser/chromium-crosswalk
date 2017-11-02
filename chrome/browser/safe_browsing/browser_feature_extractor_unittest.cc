@@ -24,9 +24,9 @@
 #include "chrome/test/base/testing_profile.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_service.h"
-#include "components/safe_browsing/csd.pb.h"
-#include "components/safe_browsing_db/database_manager.h"
-#include "components/safe_browsing_db/test_database_manager.h"
+#include "components/safe_browsing/db/database_manager.h"
+#include "components/safe_browsing/db/test_database_manager.h"
+#include "components/safe_browsing/proto/csd.pb.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -134,8 +134,7 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
     int pending_id =
         web_contents()->GetController().GetPendingEntry()->GetUniqueID();
 
-    content::RenderFrameHost* rfh =
-        WebContentsTester::For(web_contents())->GetPendingMainFrame();
+    content::RenderFrameHost* rfh = pending_main_rfh();
     if (!rfh) {
       rfh = web_contents()->GetMainFrame();
     }
@@ -222,7 +221,7 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
     // the test case which passed it to ExtractFeatures above.
     success_[request.release()] = success;
     if (--num_pending_ == 0) {
-      base::MessageLoop::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
     }
   }
 
@@ -235,7 +234,7 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
     // the test case which passed it to ExtractMalwareFeatures above.
     success_[request.release()] = success;
     if (--num_pending_ == 0) {
-      base::MessageLoopForUI::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
     }
   }
 };

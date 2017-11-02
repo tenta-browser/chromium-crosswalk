@@ -4,18 +4,20 @@
 
 #import "ios/chrome/browser/ui/side_swipe/side_swipe_navigation_view.h"
 
-#include <cmath>
-
 #include "base/logging.h"
-#include "base/mac/objc_property_releaser.h"
-#include "base/mac/scoped_nsobject.h"
+
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/numerics/math_constants.h"
 #import "ios/chrome/browser/ui/side_swipe/side_swipe_util.h"
 #import "ios/chrome/browser/ui/side_swipe_gesture_recognizer.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/chrome/common/material_timing.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -71,7 +73,7 @@ const CGFloat kSelectionAnimationDuration = 0.5;
   BOOL thresholdTriggered_;
 
   // The back or forward sprite image.
-  base::scoped_nsobject<UIImageView> arrowView_;
+  UIImageView* arrowView_;
 
   // The selection bubble.
   CAShapeLayer* selectionCircleLayer_;
@@ -83,8 +85,6 @@ const CGFloat kSelectionAnimationDuration = 0.5;
   // If |YES| arrowView_ is directionnal and must be rotated 180 degreed for the
   // forward panes.
   BOOL rotateForward_;
-
-  base::mac::ObjCPropertyReleaser _propertyReleaser_SideSwipeNavigationView;
 }
 // Returns a newly allocated and configured selection circle shape.
 - (CAShapeLayer*)newSelectionCircleLayer;
@@ -104,8 +104,6 @@ const CGFloat kSelectionAnimationDuration = 0.5;
                 rotateForward:(BOOL)rotateForward {
   self = [super initWithFrame:frame];
   if (self) {
-    _propertyReleaser_SideSwipeNavigationView.Init(
-        self, [SideSwipeNavigationView class]);
     self.backgroundColor = [UIColor colorWithWhite:90.0 / 256 alpha:1.0];
 
     canNavigate_ = canNavigate;
@@ -113,7 +111,7 @@ const CGFloat kSelectionAnimationDuration = 0.5;
     if (canNavigate) {
       image = [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
       const CGRect imageSize = CGRectMake(0, 0, 24, 24);
-      arrowView_.reset([[UIImageView alloc] initWithImage:image]);
+      arrowView_ = [[UIImageView alloc] initWithImage:image];
       [arrowView_ setTintColor:[UIColor whiteColor]];
       selectionCircleLayer_ = [self newSelectionCircleLayer];
       [arrowView_ setFrame:imageSize];
@@ -123,8 +121,7 @@ const CGFloat kSelectionAnimationDuration = 0.5;
         [UIImage imageNamed:@"side_swipe_navigation_content_shadow"];
     CGRect borderFrame =
         CGRectMake(0, 0, shadowImage.size.width, self.frame.size.height);
-    base::scoped_nsobject<UIImageView> border(
-        [[UIImageView alloc] initWithFrame:borderFrame]);
+    UIImageView* border = [[UIImageView alloc] initWithFrame:borderFrame];
     [border setImage:shadowImage];
     [self addSubview:border];
     if (direction == UISwipeGestureRecognizerDirectionRight) {
@@ -132,7 +129,8 @@ const CGFloat kSelectionAnimationDuration = 0.5;
       [border setFrame:borderFrame];
       [border setAutoresizingMask:UIViewAutoresizingFlexibleLeftMargin];
     } else {
-      [border setTransform:CGAffineTransformMakeRotation(M_PI)];
+      [border
+          setTransform:CGAffineTransformMakeRotation(CGFloat(base::kPiDouble))];
       [border setAutoresizingMask:UIViewAutoresizingFlexibleRightMargin];
     }
 
@@ -187,14 +185,14 @@ const CGFloat kSelectionAnimationDuration = 0.5;
   [selectionCircleLayer_ setPosition:center];
   [CATransaction commit];
 
-  CGFloat rotationStart = -M_PI_2;
+  CGFloat rotationStart = -CGFloat(base::kPiDouble) / 2;
   CGFloat rotationEnd = 0;
   if (gesture.direction == UISwipeGestureRecognizerDirectionLeft) {
     if (rotateForward_) {
-      rotationStart = M_PI * 1.5;
-      rotationEnd = M_PI;
+      rotationStart = CGFloat(base::kPiDouble) * 1.5;
+      rotationEnd = CGFloat(base::kPiDouble);
     } else {
-      rotationStart = M_PI * 0.5;
+      rotationStart = CGFloat(base::kPiDouble) / 2;
       rotationEnd = 0;
     }
   }

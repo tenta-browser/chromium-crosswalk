@@ -244,6 +244,12 @@ struct StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
     return input.supports_overlays;
   }
 
+  static bool hdr(const gpu::GPUInfo& input) { return input.hdr; }
+
+  static bool can_support_threaded_texture_mailbox(const gpu::GPUInfo& input) {
+    return input.can_support_threaded_texture_mailbox;
+  }
+
   static gpu::CollectInfoResult basic_info_state(const gpu::GPUInfo& input) {
     return input.basic_info_state;
   }
@@ -287,14 +293,14 @@ struct StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo> {
   }
 
   static uint64_t system_visual(const gpu::GPUInfo& input) {
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
     return input.system_visual;
 #endif
     return 0;
   }
 
   static uint64_t rgba_visual(const gpu::GPUInfo& input) {
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
     return input.rgba_visual;
 #endif
     return 0;

@@ -63,7 +63,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
 @implementation BandwidthManagementCollectionViewController
 
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState {
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     self.title = l10n_util::GetNSString(IDS_IOS_BANDWIDTH_MANAGEMENT_SETTINGS);
     self.collectionViewAccessibilityIdentifier = @"Bandwidth Management";
@@ -80,6 +82,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
         prefs::kNetworkPredictionWifiOnly,
         &_prefChangeRegistrarApplicationContext);
 
+    // TODO(crbug.com/764578): -loadModel should not be called from
+    // initializer. A possible fix is to move this call to -viewDidLoad.
     [self loadModel];
   }
   return self;
@@ -214,8 +218,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
     _preloadWebpagesDetailItem.detailText = detailText;
 
-    [self reconfigureCellsForItems:@[ _preloadWebpagesDetailItem ]
-           inSectionWithIdentifier:SectionIdentifierActions];
+    [self reconfigureCellsForItems:@[ _preloadWebpagesDetailItem ]];
   }
 }
 

@@ -27,53 +27,48 @@ class QuicPacketWriterWrapper;
 
 namespace test {
 
+class MockableQuicClientEpollNetworkHelper;
+
 // A quic client which allows mocking out reads and writes.
 class MockableQuicClient : public QuicClient {
  public:
   MockableQuicClient(QuicSocketAddress server_address,
                      const QuicServerId& server_id,
-                     const QuicVersionVector& supported_versions,
+                     const QuicTransportVersionVector& supported_versions,
                      EpollServer* epoll_server);
 
   MockableQuicClient(QuicSocketAddress server_address,
                      const QuicServerId& server_id,
                      const QuicConfig& config,
-                     const QuicVersionVector& supported_versions,
+                     const QuicTransportVersionVector& supported_versions,
                      EpollServer* epoll_server);
 
   MockableQuicClient(QuicSocketAddress server_address,
                      const QuicServerId& server_id,
                      const QuicConfig& config,
-                     const QuicVersionVector& supported_versions,
+                     const QuicTransportVersionVector& supported_versions,
                      EpollServer* epoll_server,
                      std::unique_ptr<ProofVerifier> proof_verifier);
 
   ~MockableQuicClient() override;
 
-  void ProcessPacket(const QuicSocketAddress& self_address,
-                     const QuicSocketAddress& peer_address,
-                     const QuicReceivedPacket& packet) override;
-
-  QuicPacketWriter* CreateQuicPacketWriter() override;
   QuicConnectionId GenerateNewConnectionId() override;
-  void UseWriter(QuicPacketWriterWrapper* writer);
   void UseConnectionId(QuicConnectionId connection_id);
-  const QuicReceivedPacket* last_incoming_packet() {
-    return last_incoming_packet_.get();
-  }
-  void set_track_last_incoming_packet(bool track) {
-    track_last_incoming_packet_ = track;
-  }
+
+  void UseWriter(QuicPacketWriterWrapper* writer);
   void set_peer_address(const QuicSocketAddress& address);
+  // The last incoming packet, iff |track_last_incoming_packet| is true.
+  const QuicReceivedPacket* last_incoming_packet();
+  // If true, copy each packet from ProcessPacket into |last_incoming_packet|
+  void set_track_last_incoming_packet(bool track);
+
+  // Casts the network helper to a MockableQuicClientEpollNetworkHelper.
+  MockableQuicClientEpollNetworkHelper* mockable_network_helper();
+  const MockableQuicClientEpollNetworkHelper* mockable_network_helper() const;
 
  private:
   QuicConnectionId override_connection_id_;  // ConnectionId to use, if nonzero
-  QuicPacketWriterWrapper* test_writer_;
   CachedNetworkParameters cached_network_paramaters_;
-  // The last incoming packet, iff |track_last_incoming_packet_| is true.
-  std::unique_ptr<QuicReceivedPacket> last_incoming_packet_;
-  // If true, copy each packet from ProcessPacket into |last_incoming_packet_|
-  bool track_last_incoming_packet_;
 
   DISALLOW_COPY_AND_ASSIGN(MockableQuicClient);
 };
@@ -84,15 +79,15 @@ class QuicTestClient : public QuicSpdyStream::Visitor,
  public:
   QuicTestClient(QuicSocketAddress server_address,
                  const std::string& server_hostname,
-                 const QuicVersionVector& supported_versions);
+                 const QuicTransportVersionVector& supported_versions);
   QuicTestClient(QuicSocketAddress server_address,
                  const std::string& server_hostname,
                  const QuicConfig& config,
-                 const QuicVersionVector& supported_versions);
+                 const QuicTransportVersionVector& supported_versions);
   QuicTestClient(QuicSocketAddress server_address,
                  const std::string& server_hostname,
                  const QuicConfig& config,
-                 const QuicVersionVector& supported_versions,
+                 const QuicTransportVersionVector& supported_versions,
                  std::unique_ptr<ProofVerifier> proof_verifier);
 
   ~QuicTestClient() override;
@@ -245,10 +240,6 @@ class QuicTestClient : public QuicSpdyStream::Visitor,
 
   EpollServer* epoll_server() { return &epoll_server_; }
 
-  void set_allow_bidirectional_data(bool value) {
-    allow_bidirectional_data_ = value;
-  }
-
   size_t num_requests() const { return num_requests_; }
 
   size_t num_responses() const { return num_responses_; }
@@ -373,9 +364,6 @@ class QuicTestClient : public QuicSpdyStream::Visitor,
   bool auto_reconnect_;
   // Should we buffer the response body? Defaults to true.
   bool buffer_body_;
-  // When true allows the sending of a request to continue while the response is
-  // arriving.
-  bool allow_bidirectional_data_;
   // For async push promise rendezvous, validation may fail in which
   // case the request should be retried.
   std::unique_ptr<TestClientDataToResend> push_promise_data_to_resend_;

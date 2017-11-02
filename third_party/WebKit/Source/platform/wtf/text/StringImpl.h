@@ -24,6 +24,9 @@
 #ifndef StringImpl_h
 #define StringImpl_h
 
+#include <limits.h>
+#include <string.h>
+#include "build/build_config.h"
 #include "platform/wtf/ASCIICType.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/HashMap.h"
@@ -31,15 +34,14 @@
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/WTFExport.h"
 #include "platform/wtf/text/ASCIIFastPath.h"
+#include "platform/wtf/text/NumberParsingOptions.h"
 #include "platform/wtf/text/Unicode.h"
-#include <limits.h>
-#include <string.h>
 
 #if DCHECK_IS_ON()
 #include "platform/wtf/ThreadRestrictionVerifier.h"
 #endif
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
 typedef const struct __CFString* CFStringRef;
 #endif
 
@@ -68,55 +70,6 @@ enum StripBehavior { kStripExtraWhiteSpace, kDoNotStripWhiteSpace };
 typedef bool (*CharacterMatchFunctionPtr)(UChar);
 typedef bool (*IsWhiteSpaceFunctionPtr)(UChar);
 typedef HashMap<unsigned, StringImpl*, AlreadyHashed> StaticStringsTable;
-
-// Define STRING_STATS to turn on run time statistics of string sizes and memory
-// usage
-#undef STRING_STATS
-
-#ifdef STRING_STATS
-struct StringStats {
-  inline void add8BitString(unsigned length) {
-    ++m_totalNumberStrings;
-    ++m_number8BitStrings;
-    m_total8BitData += length;
-  }
-
-  inline void add16BitString(unsigned length) {
-    ++m_totalNumberStrings;
-    ++m_number16BitStrings;
-    m_total16BitData += length;
-  }
-
-  void removeString(StringImpl*);
-  void printStats();
-
-  static const unsigned s_printStringStatsFrequency = 5000;
-  static unsigned s_stringRemovesTillPrintStats;
-
-  unsigned m_totalNumberStrings;
-  unsigned m_number8BitStrings;
-  unsigned m_number16BitStrings;
-  unsigned long long m_total8BitData;
-  unsigned long long m_total16BitData;
-};
-
-void addStringForStats(StringImpl*);
-void removeStringForStats(StringImpl*);
-
-#define STRING_STATS_ADD_8BIT_STRING(length)       \
-  StringImpl::stringStats().add8BitString(length); \
-  addStringForStats(this)
-#define STRING_STATS_ADD_16BIT_STRING(length)       \
-  StringImpl::stringStats().add16BitString(length); \
-  addStringForStats(this)
-#define STRING_STATS_REMOVE_STRING(string)        \
-  StringImpl::stringStats().removeString(string); \
-  removeStringForStats(this)
-#else
-#define STRING_STATS_ADD_8BIT_STRING(length) ((void)0)
-#define STRING_STATS_ADD_16BIT_STRING(length) ((void)0)
-#define STRING_STATS_REMOVE_STRING(string) ((void)0)
-#endif
 
 // You can find documentation about this class in this doc:
 // https://docs.google.com/document/d/1kOCUlJdh2WJMJGDf-WoEQhmnjKLaOYRbiHz5TiGJl14/edit?usp=sharing
@@ -147,7 +100,6 @@ class WTF_EXPORT StringImpl {
     // existingHash() with impunity. The empty string is special because it
     // is never entered into AtomicString's HashKey, but still needs to
     // compare correctly.
-    STRING_STATS_ADD_8BIT_STRING(m_length);
     GetHash();
   }
 
@@ -161,7 +113,6 @@ class WTF_EXPORT StringImpl {
         is_atomic_(false),
         is8_bit_(false),
         is_static_(true) {
-    STRING_STATS_ADD_16BIT_STRING(m_length);
     GetHash();
   }
 
@@ -177,7 +128,6 @@ class WTF_EXPORT StringImpl {
         is8_bit_(true),
         is_static_(false) {
     DCHECK(length_);
-    STRING_STATS_ADD_8BIT_STRING(m_length);
   }
 
   StringImpl(unsigned length)
@@ -190,7 +140,6 @@ class WTF_EXPORT StringImpl {
         is8_bit_(false),
         is_static_(false) {
     DCHECK(length_);
-    STRING_STATS_ADD_16BIT_STRING(m_length);
   }
 
   enum StaticStringTag { kStaticString };
@@ -205,6 +154,7 @@ class WTF_EXPORT StringImpl {
         is_static_(true) {}
 
  public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
   static StringImpl* empty_;
   static StringImpl* empty16_bit_;
 
@@ -222,29 +172,26 @@ class WTF_EXPORT StringImpl {
     return highest_static_string_length_;
   }
 
-  static PassRefPtr<StringImpl> Create(const UChar*, unsigned length);
-  static PassRefPtr<StringImpl> Create(const LChar*, unsigned length);
-  static PassRefPtr<StringImpl> Create8BitIfPossible(const UChar*,
-                                                     unsigned length);
+  static RefPtr<StringImpl> Create(const UChar*, unsigned length);
+  static RefPtr<StringImpl> Create(const LChar*, unsigned length);
+  static RefPtr<StringImpl> Create8BitIfPossible(const UChar*, unsigned length);
   template <size_t inlineCapacity>
-  static PassRefPtr<StringImpl> Create8BitIfPossible(
+  static RefPtr<StringImpl> Create8BitIfPossible(
       const Vector<UChar, inlineCapacity>& vector) {
-    return Create8BitIfPossible(vector.Data(), vector.size());
+    return Create8BitIfPossible(vector.data(), vector.size());
   }
 
-  ALWAYS_INLINE static PassRefPtr<StringImpl> Create(const char* s,
-                                                     unsigned length) {
+  ALWAYS_INLINE static RefPtr<StringImpl> Create(const char* s,
+                                                 unsigned length) {
     return Create(reinterpret_cast<const LChar*>(s), length);
   }
-  static PassRefPtr<StringImpl> Create(const LChar*);
-  ALWAYS_INLINE static PassRefPtr<StringImpl> Create(const char* s) {
+  static RefPtr<StringImpl> Create(const LChar*);
+  ALWAYS_INLINE static RefPtr<StringImpl> Create(const char* s) {
     return Create(reinterpret_cast<const LChar*>(s));
   }
 
-  static PassRefPtr<StringImpl> CreateUninitialized(unsigned length,
-                                                    LChar*& data);
-  static PassRefPtr<StringImpl> CreateUninitialized(unsigned length,
-                                                    UChar*& data);
+  static RefPtr<StringImpl> CreateUninitialized(unsigned length, LChar*& data);
+  static RefPtr<StringImpl> CreateUninitialized(unsigned length, UChar*& data);
 
   unsigned length() const { return length_; }
   bool Is8Bit() const { return is8_bit_; }
@@ -313,14 +260,14 @@ class WTF_EXPORT StringImpl {
     return ref_count_ == 1;
   }
 
-  ALWAYS_INLINE void Ref() const {
+  ALWAYS_INLINE void AddRef() const {
 #if DCHECK_IS_ON()
     DCHECK(IsStatic() || verifier_.OnRef(ref_count_)) << AsciiForDebugging();
 #endif
     ++ref_count_;
   }
 
-  ALWAYS_INLINE void Deref() const {
+  ALWAYS_INLINE void Release() const {
 #if DCHECK_IS_ON()
     DCHECK(IsStatic() || verifier_.OnDeref(ref_count_))
         << AsciiForDebugging() << " " << CurrentThread();
@@ -328,6 +275,8 @@ class WTF_EXPORT StringImpl {
     if (!--ref_count_)
       DestroyIfNotStatic();
   }
+
+  ALWAYS_INLINE void Adopted() const {}
 
   // FIXME: Does this really belong in StringImpl?
   template <typename T>
@@ -347,9 +296,9 @@ class WTF_EXPORT StringImpl {
   // Some string features, like refcounting and the atomicity flag, are not
   // thread-safe. We achieve thread safety by isolation, giving each thread
   // its own copy of the string.
-  PassRefPtr<StringImpl> IsolatedCopy() const;
+  RefPtr<StringImpl> IsolatedCopy() const;
 
-  PassRefPtr<StringImpl> Substring(unsigned pos, unsigned len = UINT_MAX) const;
+  RefPtr<StringImpl> Substring(unsigned pos, unsigned len = UINT_MAX) const;
 
   UChar operator[](unsigned i) const {
     SECURITY_DCHECK(i < length_);
@@ -361,54 +310,48 @@ class WTF_EXPORT StringImpl {
 
   bool ContainsOnlyWhitespace();
 
-  int ToIntStrict(bool* ok = 0, int base = 10);
-  unsigned ToUIntStrict(bool* ok = 0, int base = 10);
-  int64_t ToInt64Strict(bool* ok = 0, int base = 10);
-  uint64_t ToUInt64Strict(bool* ok = 0, int base = 10);
+  int ToInt(NumberParsingOptions, bool* ok) const;
+  unsigned ToUInt(NumberParsingOptions, bool* ok) const;
+  int64_t ToInt64(NumberParsingOptions, bool* ok) const;
+  uint64_t ToUInt64(NumberParsingOptions, bool* ok) const;
 
-  int ToInt(bool* ok = 0);          // ignores trailing garbage
-  unsigned ToUInt(bool* ok = 0);    // ignores trailing garbage
-  int64_t ToInt64(bool* ok = 0);    // ignores trailing garbage
-  uint64_t ToUInt64(bool* ok = 0);  // ignores trailing garbage
+  unsigned HexToUIntStrict(bool* ok);
 
-  // FIXME: Like the strict functions above, these give false for "ok" when
-  // there is trailing garbage.  Like the non-strict functions above, these
-  // return the value when there is trailing garbage.  It would be better if
-  // these were more consistent with the above functions instead.
+  // FIXME: Like NumberParsingOptions::kStrict, these give false for "ok" when
+  // there is trailing garbage.  Like NumberParsingOptions::kLoose, these return
+  // the value when there is trailing garbage.  It would be better if these were
+  // more consistent with the above functions instead.
   double ToDouble(bool* ok = 0);
   float ToFloat(bool* ok = 0);
 
-  PassRefPtr<StringImpl> LowerUnicode();
-  PassRefPtr<StringImpl> LowerASCII();
-  PassRefPtr<StringImpl> UpperUnicode();
-  PassRefPtr<StringImpl> UpperASCII();
-  PassRefPtr<StringImpl> LowerUnicode(const AtomicString& locale_identifier);
-  PassRefPtr<StringImpl> UpperUnicode(const AtomicString& locale_identifier);
+  RefPtr<StringImpl> LowerUnicode();
+  RefPtr<StringImpl> LowerASCII();
+  RefPtr<StringImpl> UpperUnicode();
+  RefPtr<StringImpl> UpperASCII();
+  RefPtr<StringImpl> LowerUnicode(const AtomicString& locale_identifier);
+  RefPtr<StringImpl> UpperUnicode(const AtomicString& locale_identifier);
 
-  PassRefPtr<StringImpl> Fill(UChar);
+  RefPtr<StringImpl> Fill(UChar);
   // FIXME: Do we need fill(char) or can we just do the right thing if UChar is
   // ASCII?
-  PassRefPtr<StringImpl> FoldCase();
+  RefPtr<StringImpl> FoldCase();
 
-  PassRefPtr<StringImpl> Truncate(unsigned length);
+  RefPtr<StringImpl> Truncate(unsigned length);
 
-  PassRefPtr<StringImpl> StripWhiteSpace();
-  PassRefPtr<StringImpl> StripWhiteSpace(IsWhiteSpaceFunctionPtr);
-  PassRefPtr<StringImpl> SimplifyWhiteSpace(
-      StripBehavior = kStripExtraWhiteSpace);
-  PassRefPtr<StringImpl> SimplifyWhiteSpace(
-      IsWhiteSpaceFunctionPtr,
-      StripBehavior = kStripExtraWhiteSpace);
+  RefPtr<StringImpl> StripWhiteSpace();
+  RefPtr<StringImpl> StripWhiteSpace(IsWhiteSpaceFunctionPtr);
+  RefPtr<StringImpl> SimplifyWhiteSpace(StripBehavior = kStripExtraWhiteSpace);
+  RefPtr<StringImpl> SimplifyWhiteSpace(IsWhiteSpaceFunctionPtr,
+                                        StripBehavior = kStripExtraWhiteSpace);
 
-  PassRefPtr<StringImpl> RemoveCharacters(CharacterMatchFunctionPtr);
+  RefPtr<StringImpl> RemoveCharacters(CharacterMatchFunctionPtr);
   template <typename CharType>
-  ALWAYS_INLINE PassRefPtr<StringImpl> RemoveCharacters(
-      const CharType* characters,
-      CharacterMatchFunctionPtr);
+  ALWAYS_INLINE RefPtr<StringImpl> RemoveCharacters(const CharType* characters,
+                                                    CharacterMatchFunctionPtr);
 
   // Remove characters between [start, start+lengthToRemove). The range is
   // clamped to the size of the string. Does nothing if start >= length().
-  PassRefPtr<StringImpl> Remove(unsigned start, unsigned length_to_remove = 1);
+  RefPtr<StringImpl> Remove(unsigned start, unsigned length_to_remove = 1);
 
   // Find characters.
   size_t Find(LChar character, unsigned start = 0);
@@ -438,15 +381,15 @@ class WTF_EXPORT StringImpl {
   bool EndsWithIgnoringASCIICase(const StringView&) const;
 
   // Replace parts of the string.
-  PassRefPtr<StringImpl> Replace(UChar pattern, UChar replacement);
-  PassRefPtr<StringImpl> Replace(UChar pattern, const StringView& replacement);
-  PassRefPtr<StringImpl> Replace(const StringView& pattern,
-                                 const StringView& replacement);
-  PassRefPtr<StringImpl> Replace(unsigned index,
-                                 unsigned length_to_replace,
-                                 const StringView& replacement);
+  RefPtr<StringImpl> Replace(UChar pattern, UChar replacement);
+  RefPtr<StringImpl> Replace(UChar pattern, const StringView& replacement);
+  RefPtr<StringImpl> Replace(const StringView& pattern,
+                             const StringView& replacement);
+  RefPtr<StringImpl> Replace(unsigned index,
+                             unsigned length_to_replace,
+                             const StringView& replacement);
 
-  PassRefPtr<StringImpl> UpconvertedString();
+  RefPtr<StringImpl> UpconvertedString();
 
   // Copy characters from string starting at |start| up until |maxLength| or
   // the end of the string is reached. Returns the actual number of characters
@@ -473,39 +416,36 @@ class WTF_EXPORT StringImpl {
                  unsigned start = 0,
                  unsigned length = UINT_MAX) const;
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   RetainPtr<CFStringRef> CreateCFString();
 #endif
 #ifdef __OBJC__
   operator NSString*();
 #endif
 
-#ifdef STRING_STATS
-  ALWAYS_INLINE static StringStats& stringStats() { return m_stringStats; }
-#endif
   static const UChar kLatin1CaseFoldTable[256];
 
  private:
   template <typename CharType>
   static size_t AllocationSize(unsigned length) {
-    RELEASE_ASSERT(
-        length <= ((std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) /
-                   sizeof(CharType)));
+    CHECK_LE(length,
+             ((std::numeric_limits<unsigned>::max() - sizeof(StringImpl)) /
+              sizeof(CharType)));
     return sizeof(StringImpl) + length * sizeof(CharType);
   }
 
-  PassRefPtr<StringImpl> Replace(UChar pattern,
-                                 const LChar* replacement,
-                                 unsigned replacement_length);
-  PassRefPtr<StringImpl> Replace(UChar pattern,
-                                 const UChar* replacement,
-                                 unsigned replacement_length);
+  RefPtr<StringImpl> Replace(UChar pattern,
+                             const LChar* replacement,
+                             unsigned replacement_length);
+  RefPtr<StringImpl> Replace(UChar pattern,
+                             const UChar* replacement,
+                             unsigned replacement_length);
 
   template <class UCharPredicate>
-  PassRefPtr<StringImpl> StripMatchedCharacters(UCharPredicate);
+  RefPtr<StringImpl> StripMatchedCharacters(UCharPredicate);
   template <typename CharType, class UCharPredicate>
-  PassRefPtr<StringImpl> SimplifyMatchedCharactersToSpace(UCharPredicate,
-                                                          StripBehavior);
+  RefPtr<StringImpl> SimplifyMatchedCharactersToSpace(UCharPredicate,
+                                                      StripBehavior);
   NEVER_INLINE unsigned HashSlowCase() const;
 
   void DestroyIfNotStatic() const;
@@ -513,10 +453,6 @@ class WTF_EXPORT StringImpl {
 
 #if DCHECK_IS_ON()
   std::string AsciiForDebugging() const;
-#endif
-
-#ifdef STRING_STATS
-  static StringStats m_stringStats;
 #endif
 
   static unsigned highest_static_string_length_;
@@ -758,7 +694,7 @@ inline unsigned LengthOfNullTerminatedString(const UChar* string) {
   size_t length = 0;
   while (string[length] != UChar(0))
     ++length;
-  RELEASE_ASSERT(length <= std::numeric_limits<unsigned>::max());
+  CHECK_LE(length, std::numeric_limits<unsigned>::max());
   return static_cast<unsigned>(length);
 }
 
@@ -770,8 +706,8 @@ bool EqualIgnoringNullity(const Vector<UChar, inlineCapacity>& a,
   if (a.size() != b->length())
     return false;
   if (b->Is8Bit())
-    return Equal(a.Data(), b->Characters8(), b->length());
-  return Equal(a.Data(), b->Characters16(), b->length());
+    return Equal(a.data(), b->Characters8(), b->length());
+  return Equal(a.data(), b->Characters16(), b->length());
 }
 
 template <typename CharacterType1, typename CharacterType2>
@@ -842,7 +778,7 @@ static inline bool IsSpaceOrNewline(UChar c) {
              : WTF::Unicode::Direction(c) == WTF::Unicode::kWhiteSpaceNeutral;
 }
 
-inline PassRefPtr<StringImpl> StringImpl::IsolatedCopy() const {
+inline RefPtr<StringImpl> StringImpl::IsolatedCopy() const {
   if (Is8Bit())
     return Create(Characters8(), length_);
   return Create(Characters16(), length_);

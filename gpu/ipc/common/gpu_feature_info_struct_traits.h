@@ -19,6 +19,8 @@ struct EnumTraits<gpu::mojom::GpuFeatureStatus, gpu::GpuFeatureStatus> {
         return gpu::mojom::GpuFeatureStatus::Blacklisted;
       case gpu::kGpuFeatureStatusDisabled:
         return gpu::mojom::GpuFeatureStatus::Disabled;
+      case gpu::kGpuFeatureStatusSoftware:
+        return gpu::mojom::GpuFeatureStatus::Software;
       case gpu::kGpuFeatureStatusUndefined:
         return gpu::mojom::GpuFeatureStatus::Undefined;
       case gpu::kGpuFeatureStatusMax:
@@ -39,6 +41,9 @@ struct EnumTraits<gpu::mojom::GpuFeatureStatus, gpu::GpuFeatureStatus> {
         return true;
       case gpu::mojom::GpuFeatureStatus::Disabled:
         *out = gpu::kGpuFeatureStatusDisabled;
+        return true;
+      case gpu::mojom::GpuFeatureStatus::Software:
+        *out = gpu::kGpuFeatureStatusSoftware;
         return true;
       case gpu::mojom::GpuFeatureStatus::Undefined:
         *out = gpu::kGpuFeatureStatusUndefined;
@@ -61,13 +66,32 @@ struct StructTraits<gpu::mojom::GpuFeatureInfoDataView, gpu::GpuFeatureInfo> {
     if (info_status.size() != gpu::NUMBER_OF_GPU_FEATURE_TYPES)
       return false;
     std::copy(info_status.begin(), info_status.end(), out->status_values);
-    return true;
+    return data.ReadEnabledGpuDriverBugWorkarounds(
+               &out->enabled_gpu_driver_bug_workarounds) &&
+           data.ReadDisabledExtensions(&out->disabled_extensions) &&
+           data.ReadAppliedGpuDriverBugListEntries(
+               &out->applied_gpu_driver_bug_list_entries);
   }
 
   static std::vector<gpu::GpuFeatureStatus> status_values(
       const gpu::GpuFeatureInfo& info) {
     return std::vector<gpu::GpuFeatureStatus>(info.status_values,
                                               std::end(info.status_values));
+  }
+
+  static const std::vector<int32_t>& enabled_gpu_driver_bug_workarounds(
+      const gpu::GpuFeatureInfo& info) {
+    return info.enabled_gpu_driver_bug_workarounds;
+  }
+
+  static const std::string& disabled_extensions(
+      const gpu::GpuFeatureInfo& info) {
+    return info.disabled_extensions;
+  }
+
+  static const std::vector<uint32_t>& applied_gpu_driver_bug_list_entries(
+      const gpu::GpuFeatureInfo& info) {
+    return info.applied_gpu_driver_bug_list_entries;
   }
 };
 

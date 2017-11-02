@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/mach_logging.h"
@@ -44,6 +45,7 @@ int32_t BytesPerElement(gfx::BufferFormat format, int plane) {
       static int32_t bytes_per_element[] = {1, 2};
       DCHECK_LT(static_cast<size_t>(plane), arraysize(bytes_per_element));
       return bytes_per_element[plane];
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::UYVY_422:
       DCHECK_EQ(plane, 0);
@@ -79,6 +81,7 @@ int32_t PixelFormat(gfx::BufferFormat format) {
       return '420v';
     case gfx::BufferFormat::UYVY_422:
       return '2vuy';
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::ATC:
     case gfx::BufferFormat::ATCIA:
@@ -164,6 +167,11 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
   }
 
   IOSurfaceRef surface = IOSurfaceCreate(properties);
+  if (!surface) {
+    LOG(ERROR) << "Failed to allocate IOSurface of size " << size.ToString()
+               << ".";
+    return nullptr;
+  }
 
   // For unknown reasons, triggering this lock on OS X 10.9, on certain GPUs,
   // causes PDFs to render incorrectly. Hopefully this check can be removed once
@@ -182,16 +190,14 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
     DCHECK_EQ(kIOReturnSuccess, r);
   }
 
-  bool force_system_color_space = false;
+  bool force_color_space = false;
 
   // Displaying an IOSurface that does not have a color space using an
-  // AVSampleBufferDisplayLayer can result in a black screen. Specify the
-  // main display's color profile by default, which will result in no color
-  // correction being done for the main monitor (which is the behavior of not
-  // specifying a color space).
+  // AVSampleBufferDisplayLayer can result in a black screen. Ensure that
+  // a color space always be specified.
   // https://crbug.com/608879
   if (format == gfx::BufferFormat::YUV_420_BIPLANAR)
-    force_system_color_space = true;
+    force_color_space = true;
 
   // On Sierra, all IOSurfaces are color corrected as though they are in sRGB
   // color space by default. Prior to Sierra, IOSurfaces were not color
@@ -200,15 +206,13 @@ IOSurfaceRef CreateIOSurface(const gfx::Size& size, gfx::BufferFormat format) {
   // color space.
   // https://crbug.com/654488
   if (base::mac::IsAtLeastOS10_12())
-    force_system_color_space = true;
+    force_color_space = true;
 
-  if (force_system_color_space) {
-    CGColorSpaceRef color_space = base::mac::GetSystemColorSpace();
-    base::ScopedCFTypeRef<CFDataRef> color_space_icc(
-        CGColorSpaceCopyICCProfile(color_space));
-    // Note that nullptr is an acceptable input to IOSurfaceSetValue.
-    IOSurfaceSetValue(surface, CFSTR("IOSurfaceColorSpace"), color_space_icc);
-  }
+  // Ensure that all IOSurfaces start as sRGB.
+  CGColorSpaceRef color_space = base::mac::GetSRGBColorSpace();
+  base::ScopedCFTypeRef<CFDataRef> color_space_icc(
+      CGColorSpaceCopyICCProfile(color_space));
+  IOSurfaceSetValue(surface, CFSTR("IOSurfaceColorSpace"), color_space_icc);
 
   UMA_HISTOGRAM_TIMES("GPU.IOSurface.CreateTime",
                       base::TimeTicks::Now() - start_time);

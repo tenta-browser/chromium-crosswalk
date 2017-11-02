@@ -42,17 +42,21 @@ namespace {{variant}} {
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/optional.h"
+
+#include "mojo/public/cpp/bindings/mojo_features.h"
+#if BUILDFLAG(MOJO_TRACE_ENABLED)
+#include "base/trace_event/trace_event.h"
+#endif
 #include "mojo/public/cpp/bindings/associated_interface_ptr.h"
 #include "mojo/public/cpp/bindings/associated_interface_ptr_info.h"
 #include "mojo/public/cpp/bindings/associated_interface_request.h"
 #include "mojo/public/cpp/bindings/clone_traits.h"
+#include "mojo/public/cpp/bindings/equals_traits.h"
 #include "mojo/public/cpp/bindings/interface_ptr.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "mojo/public/cpp/bindings/lib/equals_traits.h"
 #include "mojo/public/cpp/bindings/lib/control_message_handler.h"
 #include "mojo/public/cpp/bindings/lib/control_message_proxy.h"
 #include "mojo/public/cpp/bindings/lib/serialization.h"
-#include "mojo/public/cpp/bindings/native_struct.h"
 #include "mojo/public/cpp/bindings/raw_ptr_impl_ref_traits.h"
 #include "mojo/public/cpp/bindings/struct_ptr.h"
 #include "mojo/public/cpp/bindings/struct_traits.h"
@@ -61,9 +65,9 @@ namespace {{variant}} {
 #include "{{module.path}}-shared.h"
 {%- for import in imports %}
 {%-   if variant %}
-#include "{{"%s-%s.h"|format(import.module.path, variant)}}"
+#include "{{"%s-%s.h"|format(import.path, variant)}}"
 {%-   else %}
-#include "{{import.module.path}}.h"
+#include "{{import.path}}.h"
 {%-   endif %}
 {%- endfor %}
 {%- if not for_blink %}
@@ -76,6 +80,10 @@ namespace {{variant}} {
 #include "third_party/WebKit/Source/platform/wtf/HashFunctions.h"
 #include "third_party/WebKit/Source/platform/wtf/Optional.h"
 #include "third_party/WebKit/Source/platform/wtf/text/WTFString.h"
+{%- endif %}
+
+{% if allow_native_structs %}
+#include "mojo/public/cpp/bindings/lib/native_struct_serialization.h"
 {%- endif %}
 
 {%- for header in extra_public_headers %}
@@ -131,8 +139,8 @@ using {{interface.name}}AssociatedRequest =
 {#--- Struct Forward Declarations -#}
 {%  for struct in structs %}
 {%-   if struct|is_native_only_kind %}
-using {{struct.name}} = mojo::NativeStruct;
-using {{struct.name}}Ptr = mojo::NativeStructPtr;
+using {{struct.name}} = mojo::native::NativeStruct;
+using {{struct.name}}Ptr = mojo::native::NativeStructPtr;
 {%-   else %}
 class {{struct.name}};
 {%-     if struct|should_inline %}

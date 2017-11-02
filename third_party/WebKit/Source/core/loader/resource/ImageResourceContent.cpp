@@ -11,7 +11,6 @@
 #include "core/loader/resource/ImageResourceObserver.h"
 #include "core/svg/graphics/SVGImage.h"
 #include "platform/Histogram.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/SharedBuffer.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/graphics/BitmapImage.h"
@@ -39,7 +38,6 @@ class NullImageResourceInfo final
   bool HasDevicePixelRatioHeaderValue() const override { return false; }
   float DevicePixelRatioHeaderValue() const override { return 1.0; }
   const ResourceResponse& GetResponse() const override { return response_; }
-  ResourceStatus GetStatus() const override { return ResourceStatus::kCached; }
   bool ShouldShowPlaceholder() const override { return false; }
   bool IsCacheValidator() const override { return false; }
   bool SchedulingReloadOrShouldReloadBrokenPlaceholder() const override {
@@ -68,11 +66,19 @@ class NullImageResourceInfo final
 
 }  // namespace
 
-ImageResourceContent::ImageResourceContent(PassRefPtr<blink::Image> image)
-    : image_(std::move(image)), is_refetchable_data_from_disk_cache_(true) {
+ImageResourceContent::ImageResourceContent(RefPtr<blink::Image> image)
+    : is_refetchable_data_from_disk_cache_(true), image_(std::move(image)) {
   DEFINE_STATIC_LOCAL(NullImageResourceInfo, null_info,
                       (new NullImageResourceInfo()));
   info_ = &null_info;
+}
+
+ImageResourceContent* ImageResourceContent::CreateLoaded(
+    RefPtr<blink::Image> image) {
+  DCHECK(image);
+  ImageResourceContent* content = new ImageResourceContent(std::move(image));
+  content->content_status_ = ResourceStatus::kCached;
+  return content;
 }
 
 ImageResourceContent* ImageResourceContent::Fetch(FetchParameters& params,
@@ -179,7 +185,7 @@ void ImageResourceContent::DoResetAnimation() {
     image_->ResetAnimation();
 }
 
-PassRefPtr<const SharedBuffer> ImageResourceContent::ResourceBuffer() const {
+RefPtr<const SharedBuffer> ImageResourceContent::ResourceBuffer() const {
   if (image_)
     return image_->Data();
   return nullptr;
@@ -217,7 +223,7 @@ blink::Image* ImageResourceContent::GetImage() {
   }
 
   if (image_)
-    return image_.Get();
+    return image_.get();
 
   return blink::Image::NullImage();
 }
@@ -247,7 +253,7 @@ LayoutSize ImageResourceContent::ImageSize(
 
   if (image_->IsBitmapImage() &&
       should_respect_image_orientation == kRespectImageOrientation) {
-    size = LayoutSize(ToBitmapImage(image_.Get())->SizeRespectingOrientation());
+    size = LayoutSize(ToBitmapImage(image_.get())->SizeRespectingOrientation());
   } else {
     size = LayoutSize(image_->Size());
   }
@@ -306,10 +312,10 @@ void ImageResourceContent::NotifyObservers(
   }
 }
 
-PassRefPtr<Image> ImageResourceContent::CreateImage() {
+RefPtr<Image> ImageResourceContent::CreateImage(bool is_multipart) {
   if (info_->GetResponse().MimeType() == "image/svg+xml")
-    return SVGImage::Create(this);
-  return BitmapImage::Create(this);
+    return SVGImage::Create(this, is_multipart);
+  return BitmapImage::Create(this, is_multipart);
 }
 
 void ImageResourceContent::ClearImage() {
@@ -321,20 +327,105 @@ void ImageResourceContent::ClearImage() {
   // If our Image has an observer, it's always us so we need to clear the back
   // pointer before dropping our reference.
   image_->ClearImageObserver();
-  image_.Clear();
+  image_ = nullptr;
   size_available_ = Image::kSizeUnavailable;
 }
 
+// |new_status| is the status of corresponding ImageResource.
+void ImageResourceContent::UpdateToLoadedContentStatus(
+    ResourceStatus new_status) {
+  // When |ShouldNotifyFinish|, we set content_status_
+  // to a loaded ResourceStatus.
+
+  // Checks |new_status| (i.e. Resource's current status).
+  switch (new_status) {
+    case ResourceStatus::kCached:
+    case ResourceStatus::kPending:
+      // In case of successful load, Resource's status can be
+      // kCached (e.g. for second part of multipart image) or
+      // still Pending (e.g. for a non-multipart image).
+      // Therefore we use kCached as the new state here.
+      new_status = ResourceStatus::kCached;
+      break;
+
+    case ResourceStatus::kLoadError:
+    case ResourceStatus::kDecodeError:
+      // In case of error, Resource's status is set to an error status
+      // before UpdateImage() and thus we use the error status as-is.
+      break;
+
+    case ResourceStatus::kNotStarted:
+      CHECK(false);
+      break;
+  }
+
+  // Checks ImageResourceContent's previous status.
+  switch (GetContentStatus()) {
+    case ResourceStatus::kPending:
+      // A non-multipart image or the first part of a multipart image.
+      break;
+
+    case ResourceStatus::kCached:
+    case ResourceStatus::kLoadError:
+    case ResourceStatus::kDecodeError:
+      // Second (or later) part of a multipart image.
+      // TODO(hiroshige): Assert that this is actually a multipart image.
+      break;
+
+    case ResourceStatus::kNotStarted:
+      // Should have updated to kPending via NotifyStartLoad().
+      CHECK(false);
+      break;
+  }
+
+  // Updates the status.
+  content_status_ = new_status;
+}
+
+void ImageResourceContent::NotifyStartLoad() {
+  // Checks ImageResourceContent's previous status.
+  switch (GetContentStatus()) {
+    case ResourceStatus::kPending:
+      CHECK(false);
+      break;
+
+    case ResourceStatus::kNotStarted:
+      // Normal load start.
+      break;
+
+    case ResourceStatus::kCached:
+    case ResourceStatus::kLoadError:
+    case ResourceStatus::kDecodeError:
+      // Load start due to revalidation/reload.
+      break;
+  }
+
+  content_status_ = ResourceStatus::kPending;
+}
+
+void ImageResourceContent::AsyncLoadCompleted(const blink::Image* image) {
+  if (image_ != image)
+    return;
+  CHECK_EQ(size_available_, Image::kSizeAvailableAndLoadingAsynchronously);
+  size_available_ = Image::kSizeAvailable;
+  UpdateToLoadedContentStatus(ResourceStatus::kCached);
+  NotifyObservers(kShouldNotifyFinish);
+}
+
 ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
-    PassRefPtr<SharedBuffer> data,
+    RefPtr<SharedBuffer> data,
+    ResourceStatus status,
     UpdateImageOption update_image_option,
-    bool all_data_received) {
+    bool all_data_received,
+    bool is_multipart) {
   TRACE_EVENT0("blink", "ImageResourceContent::updateImage");
 
 #if DCHECK_IS_ON()
   DCHECK(!is_update_image_being_called_);
   AutoReset<bool> scope(&is_update_image_being_called_, true);
 #endif
+
+  CHECK_NE(GetContentStatus(), ResourceStatus::kNotStarted);
 
   // Clears the existing image, if instructed by |updateImageOption|.
   switch (update_image_option) {
@@ -359,9 +450,12 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
       // or specific image frames).
       if (data) {
         if (!image_)
-          image_ = CreateImage();
+          image_ = CreateImage(is_multipart);
         DCHECK(image_);
         size_available_ = image_->SetData(std::move(data), all_data_received);
+        DCHECK(all_data_received ||
+               size_available_ !=
+                   Image::kSizeAvailableAndLoadingAsynchronously);
       }
 
       // Go ahead and tell our observers to try to draw if we have either
@@ -385,10 +479,24 @@ ImageResourceContent::UpdateImageResult ImageResourceContent::UpdateImage(
       break;
   }
 
+  DCHECK(all_data_received ||
+         size_available_ != Image::kSizeAvailableAndLoadingAsynchronously);
+
   // Notifies the observers.
   // It would be nice to only redraw the decoded band of the image, but with the
   // current design (decoding delayed until painting) that seems hard.
-  NotifyObservers(all_data_received ? kShouldNotifyFinish : kDoNotNotifyFinish);
+  //
+  // In the case of kSizeAvailableAndLoadingAsynchronously, we are waiting for
+  // SVG image completion, and thus we notify observers of kDoNotNotifyFinish
+  // here, and will notify observers of finish later in AsyncLoadCompleted().
+  if (all_data_received &&
+      size_available_ != Image::kSizeAvailableAndLoadingAsynchronously) {
+    UpdateToLoadedContentStatus(status);
+    NotifyObservers(kShouldNotifyFinish);
+  } else {
+    NotifyObservers(kDoNotNotifyFinish);
+  }
+
   return UpdateImageResult::kNoDecodeError;
 }
 
@@ -443,10 +551,7 @@ void ImageResourceContent::UpdateImageAnimationPolicy() {
     }
   }
 
-  if (image_->AnimationPolicy() != new_policy) {
-    image_->ResetAnimation();
-    image_->SetAnimationPolicy(new_policy);
-  }
+  image_->SetAnimationPolicy(new_policy);
 }
 
 void ImageResourceContent::ChangedInRect(const blink::Image* image,
@@ -470,29 +575,29 @@ void ImageResourceContent::EmulateLoadStartedForInspector(
   info_->EmulateLoadStartedForInspector(fetcher, url, initiator_name);
 }
 
-// TODO(hiroshige): Consider removing the following methods, or stoping
-// redirecting to ImageResource.
 bool ImageResourceContent::IsLoaded() const {
-  return GetStatus() > ResourceStatus::kPending;
+  return GetContentStatus() > ResourceStatus::kPending;
 }
 
 bool ImageResourceContent::IsLoading() const {
-  return GetStatus() == ResourceStatus::kPending;
+  return GetContentStatus() == ResourceStatus::kPending;
 }
 
 bool ImageResourceContent::ErrorOccurred() const {
-  return GetStatus() == ResourceStatus::kLoadError ||
-         GetStatus() == ResourceStatus::kDecodeError;
+  return GetContentStatus() == ResourceStatus::kLoadError ||
+         GetContentStatus() == ResourceStatus::kDecodeError;
 }
 
 bool ImageResourceContent::LoadFailedOrCanceled() const {
-  return GetStatus() == ResourceStatus::kLoadError;
+  return GetContentStatus() == ResourceStatus::kLoadError;
 }
 
-ResourceStatus ImageResourceContent::GetStatus() const {
-  return info_->GetStatus();
+ResourceStatus ImageResourceContent::GetContentStatus() const {
+  return content_status_;
 }
 
+// TODO(hiroshige): Consider removing the following methods, or stoping
+// redirecting to ImageResource.
 const KURL& ImageResourceContent::Url() const {
   return info_->Url();
 }

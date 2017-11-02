@@ -19,7 +19,6 @@
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/drag_controller.h"
-#include "ui/views/focus/view_storage.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/view_targeter.h"
 #include "ui/views/widget/root_view_targeter.h"
@@ -220,12 +219,10 @@ void RootView::ThemeChanged() {
   View::PropagateThemeChanged();
 }
 
-void RootView::LocaleChanged() {
-  View::PropagateLocaleChanged();
-}
-
-void RootView::DeviceScaleFactorChanged(float device_scale_factor) {
-  View::PropagateDeviceScaleFactorChanged(device_scale_factor);
+void RootView::DeviceScaleFactorChanged(float old_device_scale_factor,
+                                        float new_device_scale_factor) {
+  View::PropagateDeviceScaleFactorChanged(old_device_scale_factor,
+                                          new_device_scale_factor);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -245,6 +242,11 @@ View* RootView::GetFocusTraversableParentView() {
 
 ////////////////////////////////////////////////////////////////////////////////
 // RootView, ui::EventProcessor overrides:
+
+ui::EventTarget* RootView::GetInitialEventTarget(ui::Event* event) {
+  // Views has no special initial target.
+  return nullptr;
+}
 
 ui::EventTarget* RootView::GetRootForEvent(ui::Event* event) {
   return this;
@@ -645,12 +647,13 @@ void RootView::OnPaint(gfx::Canvas* canvas) {
   View::OnPaint(canvas);
 }
 
-gfx::Vector2d RootView::CalculateOffsetToAncestorWithLayer(
+View::LayerOffsetData RootView::CalculateOffsetToAncestorWithLayer(
     ui::Layer** layer_parent) {
-  gfx::Vector2d offset(View::CalculateOffsetToAncestorWithLayer(layer_parent));
-  if (!layer() && layer_parent)
+  if (layer() || !widget_->GetLayer())
+    return View::CalculateOffsetToAncestorWithLayer(layer_parent);
+  if (layer_parent)
     *layer_parent = widget_->GetLayer();
-  return offset;
+  return LayerOffsetData(widget_->GetLayer()->device_scale_factor());
 }
 
 View::DragInfo* RootView::GetDragInfo() {

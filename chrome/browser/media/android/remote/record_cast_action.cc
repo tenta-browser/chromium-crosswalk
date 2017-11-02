@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/media/android/remote/record_cast_action.h"
-
-#include <jni.h>
-
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "jni/RecordCastAction_jni.h"
@@ -45,8 +41,9 @@ namespace remote_media {
 static void RecordRemotePlaybackDeviceSelected(JNIEnv*,
                                                const JavaParamRef<jclass>&,
                                                jint device_type) {
-  UMA_HISTOGRAM_ENUMERATION(
-      "Cast.Sender.DeviceType", device_type, REMOTE_PLAYBACK_DEVICE_TYPE_COUNT);
+  UMA_HISTOGRAM_ENUMERATION("Cast.Sender.DeviceType",
+                            static_cast<RemotePlaybackDeviceType>(device_type),
+                            REMOTE_PLAYBACK_DEVICE_TYPE_COUNT);
 }
 
 static void RecordCastPlayRequested(JNIEnv*, const JavaParamRef<jclass>&) {
@@ -82,7 +79,9 @@ static void RecordCastYouTubePlayerResult(JNIEnv*,
 static void RecordCastMediaType(JNIEnv*,
                                 const JavaParamRef<jclass>&,
                                 jint media_type) {
-  UMA_HISTOGRAM_ENUMERATION("Cast.Sender.CastMediaType", media_type,
+  UMA_HISTOGRAM_ENUMERATION(
+      "Cast.Sender.CastMediaType",
+      static_cast<media::container_names::MediaContainerName>(media_type),
       media::container_names::CONTAINER_MAX);
 }
 
@@ -100,11 +99,6 @@ static void RecordCastEndedTimeRemaining(JNIEnv*,
 
   UMA_HISTOGRAM_ENUMERATION("Cast.Sender.CastTimeRemainingPercentage",
       percent_remaining, 101);
-}
-
-// Register native methods
-bool RegisterRecordCastAction(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace remote_media

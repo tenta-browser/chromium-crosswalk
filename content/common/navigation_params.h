@@ -17,11 +17,11 @@
 #include "content/common/content_export.h"
 #include "content/common/content_security_policy/csp_disposition_enum.h"
 #include "content/common/frame_message_enums.h"
-#include "content/common/resource_request_body_impl.h"
 #include "content/public/common/page_state.h"
 #include "content/public/common/previews_state.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/request_context_type.h"
+#include "content/public/common/resource_request_body.h"
 #include "content/public/common/resource_response.h"
 #include "net/url_request/redirect_info.h"
 #include "third_party/WebKit/public/platform/WebMixedContentContextType.h"
@@ -30,12 +30,6 @@
 #include "url/origin.h"
 
 namespace content {
-
-// PlzNavigate
-// Helper function to determine if the navigation to |url| should make a request
-// to the network stack. A request should not be sent for JavaScript URLs or
-// about:blank. In these cases, no request needs to be sent.
-bool CONTENT_EXPORT ShouldMakeNetworkRequestForURL(const GURL& url);
 
 // PlzNavigate
 // Struct keeping track of the Javascript SourceLocation that triggered the
@@ -61,23 +55,22 @@ struct CONTENT_EXPORT SourceLocation {
 // Used by all navigation IPCs.
 struct CONTENT_EXPORT CommonNavigationParams {
   CommonNavigationParams();
-  CommonNavigationParams(
-      const GURL& url,
-      const Referrer& referrer,
-      ui::PageTransition transition,
-      FrameMsg_Navigate_Type::Value navigation_type,
-      bool allow_download,
-      bool should_replace_current_entry,
-      base::TimeTicks ui_timestamp,
-      FrameMsg_UILoadMetricsReportType::Value report_type,
-      const GURL& base_url_for_data_url,
-      const GURL& history_url_for_data_url,
-      PreviewsState previews_state,
-      const base::TimeTicks& navigation_start,
-      std::string method,
-      const scoped_refptr<ResourceRequestBodyImpl>& post_data,
-      base::Optional<SourceLocation> source_location,
-      CSPDisposition should_check_main_world_csp);
+  CommonNavigationParams(const GURL& url,
+                         const Referrer& referrer,
+                         ui::PageTransition transition,
+                         FrameMsg_Navigate_Type::Value navigation_type,
+                         bool allow_download,
+                         bool should_replace_current_entry,
+                         base::TimeTicks ui_timestamp,
+                         FrameMsg_UILoadMetricsReportType::Value report_type,
+                         const GURL& base_url_for_data_url,
+                         const GURL& history_url_for_data_url,
+                         PreviewsState previews_state,
+                         const base::TimeTicks& navigation_start,
+                         std::string method,
+                         const scoped_refptr<ResourceRequestBody>& post_data,
+                         base::Optional<SourceLocation> source_location,
+                         CSPDisposition should_check_main_world_csp);
   CommonNavigationParams(const CommonNavigationParams& other);
   ~CommonNavigationParams();
 
@@ -137,7 +130,7 @@ struct CONTENT_EXPORT CommonNavigationParams {
   std::string method;
 
   // Body of HTTP POST request.
-  scoped_refptr<ResourceRequestBodyImpl> post_data;
+  scoped_refptr<ResourceRequestBody> post_data;
 
   // PlzNavigate
   // Information about the Javascript source for this navigation. Used for
@@ -299,6 +292,10 @@ struct CONTENT_EXPORT RequestNavigationParams {
   std::vector<net::RedirectInfo> redirect_infos;
 
   // PlzNavigate
+  // The content type from the request headers for POST requests.
+  std::string post_content_type;
+
+  // PlzNavigate
   // The original URL & method for this navigation.
   GURL original_url;
   std::string original_method;
@@ -313,7 +310,7 @@ struct CONTENT_EXPORT RequestNavigationParams {
   // For browser-initiated navigations, this is the unique id of the
   // NavigationEntry being navigated to. (For renderer-initiated navigations it
   // is 0.) If the load succeeds, then this nav_entry_id will be reflected in
-  // the resulting FrameHostMsg_DidCommitProvisionalLoad message.
+  // the resulting FrameHostMsg_DidCommitProvisionalLoad_Params.
   int nav_entry_id;
 
   // Whether this is a history navigation in a newly created child frame, in

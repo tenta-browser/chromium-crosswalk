@@ -20,7 +20,7 @@ void BeginFilterDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void BeginFilterDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendFilterItem(compositor_filter_operations_.AsCcFilterOperations(),
                          bounds_, origin_);
@@ -33,12 +33,9 @@ bool BeginFilterDisplayItem::DrawsContent() const {
 }
 
 #ifndef NDEBUG
-void BeginFilterDisplayItem::DumpPropertiesAsDebugString(
-    WTF::StringBuilder& string_builder) const {
-  DisplayItem::DumpPropertiesAsDebugString(string_builder);
-  string_builder.Append(WTF::String::Format(", filter bounds: [%f,%f,%f,%f]",
-                                            bounds_.X(), bounds_.Y(),
-                                            bounds_.Width(), bounds_.Height()));
+void BeginFilterDisplayItem::PropertiesAsJSON(JSONObject& json) const {
+  DisplayItem::PropertiesAsJSON(json);
+  json.SetString("filterBounds", bounds_.ToString());
 }
 #endif
 
@@ -48,7 +45,7 @@ void EndFilterDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void EndFilterDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendEndFilterItem();
 }

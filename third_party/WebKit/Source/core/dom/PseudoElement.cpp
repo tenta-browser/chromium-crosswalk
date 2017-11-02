@@ -31,6 +31,7 @@
 #include "core/layout/LayoutObject.h"
 #include "core/layout/LayoutQuote.h"
 #include "core/probe/CoreProbes.h"
+#include "core/style/ComputedStyle.h"
 #include "core/style/ContentData.h"
 
 namespace blink {
@@ -85,19 +86,20 @@ String PseudoElement::PseudoElementNameForEvents(PseudoId pseudo_id) {
 PseudoElement::PseudoElement(Element* parent, PseudoId pseudo_id)
     : Element(PseudoElementTagName(pseudo_id),
               &parent->GetDocument(),
-              kCreateElement),
+              kCreatePseudoElement),
       pseudo_id_(pseudo_id) {
   DCHECK_NE(pseudo_id, kPseudoIdNone);
   parent->GetTreeScope().AdoptIfNeeded(*this);
   SetParentOrShadowHostNode(parent);
   SetHasCustomStyleCallbacks();
   if ((pseudo_id == kPseudoIdBefore || pseudo_id == kPseudoIdAfter) &&
-      parent->HasTagName(HTMLNames::inputTag))
+      parent->HasTagName(HTMLNames::inputTag)) {
     UseCounter::Count(parent->GetDocument(),
-                      UseCounter::kPseudoBeforeAfterForInputElement);
+                      WebFeature::kPseudoBeforeAfterForInputElement);
+  }
 }
 
-PassRefPtr<ComputedStyle> PseudoElement::CustomStyleForLayoutObject() {
+RefPtr<ComputedStyle> PseudoElement::CustomStyleForLayoutObject() {
   return ParentOrShadowHostElement()->PseudoStyle(
       PseudoStyleRequest(pseudo_id_));
 }
@@ -117,12 +119,12 @@ void PseudoElement::Dispose() {
   RemovedFrom(parent);
 }
 
-void PseudoElement::AttachLayoutTree(const AttachContext& context) {
+void PseudoElement::AttachLayoutTree(AttachContext& context) {
   DCHECK(!GetLayoutObject());
 
   Element::AttachLayoutTree(context);
 
-  LayoutObject* layout_object = this->GetLayoutObject();
+  LayoutObject* layout_object = GetLayoutObject();
   if (!layout_object)
     return;
 
@@ -156,7 +158,7 @@ void PseudoElement::DidRecalcStyle() {
   // The layoutObjects inside pseudo elements are anonymous so they don't get
   // notified of recalcStyle and must have the style propagated downward
   // manually similar to LayoutObject::propagateStyleToAnonymousChildren.
-  LayoutObject* layout_object = this->GetLayoutObject();
+  LayoutObject* layout_object = GetLayoutObject();
   for (LayoutObject* child = layout_object->NextInPreOrder(layout_object);
        child; child = child->NextInPreOrder(layout_object)) {
     // We only manage the style for the generated content items.
@@ -195,6 +197,17 @@ Node* PseudoElement::FindAssociatedNode() const {
     ancestor = ancestor->Parent();
   }
   return ancestor->GetNode();
+}
+
+bool PseudoElementLayoutObjectIsNeeded(const ComputedStyle* style) {
+  if (!style)
+    return false;
+  if (style->Display() == EDisplay::kNone)
+    return false;
+  if (style->StyleType() == kPseudoIdFirstLetter ||
+      style->StyleType() == kPseudoIdBackdrop)
+    return true;
+  return style->GetContentData();
 }
 
 }  // namespace blink

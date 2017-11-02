@@ -45,35 +45,33 @@ inline EncodedFormData::EncodedFormData(const EncodedFormData& data)
 
 EncodedFormData::~EncodedFormData() {}
 
-PassRefPtr<EncodedFormData> EncodedFormData::Create() {
-  return AdoptRef(new EncodedFormData);
+RefPtr<EncodedFormData> EncodedFormData::Create() {
+  return WTF::AdoptRef(new EncodedFormData);
 }
 
-PassRefPtr<EncodedFormData> EncodedFormData::Create(const void* data,
-                                                    size_t size) {
+RefPtr<EncodedFormData> EncodedFormData::Create(const void* data, size_t size) {
   RefPtr<EncodedFormData> result = Create();
   result->AppendData(data, size);
-  return result.Release();
+  return result;
 }
 
-PassRefPtr<EncodedFormData> EncodedFormData::Create(const CString& string) {
+RefPtr<EncodedFormData> EncodedFormData::Create(const CString& string) {
   RefPtr<EncodedFormData> result = Create();
-  result->AppendData(string.Data(), string.length());
-  return result.Release();
+  result->AppendData(string.data(), string.length());
+  return result;
 }
 
-PassRefPtr<EncodedFormData> EncodedFormData::Create(
-    const Vector<char>& vector) {
+RefPtr<EncodedFormData> EncodedFormData::Create(const Vector<char>& vector) {
   RefPtr<EncodedFormData> result = Create();
-  result->AppendData(vector.Data(), vector.size());
-  return result.Release();
+  result->AppendData(vector.data(), vector.size());
+  return result;
 }
 
-PassRefPtr<EncodedFormData> EncodedFormData::Copy() const {
-  return AdoptRef(new EncodedFormData(*this));
+RefPtr<EncodedFormData> EncodedFormData::Copy() const {
+  return WTF::AdoptRef(new EncodedFormData(*this));
 }
 
-PassRefPtr<EncodedFormData> EncodedFormData::DeepCopy() const {
+RefPtr<EncodedFormData> EncodedFormData::DeepCopy() const {
   RefPtr<EncodedFormData> form_data(Create());
 
   form_data->identifier_ = identifier_;
@@ -104,7 +102,7 @@ PassRefPtr<EncodedFormData> EncodedFormData::DeepCopy() const {
         break;
     }
   }
-  return form_data.Release();
+  return form_data;
 }
 
 void EncodedFormData::AppendData(const void* data, size_t size) {
@@ -113,7 +111,7 @@ void EncodedFormData::AppendData(const void* data, size_t size) {
   FormDataElement& e = elements_.back();
   size_t old_size = e.data_.size();
   e.data_.Grow(old_size + size);
-  memcpy(e.data_.Data() + old_size, data, size);
+  memcpy(e.data_.data() + old_size, data, size);
 }
 
 void EncodedFormData::AppendFile(const String& filename) {
@@ -130,7 +128,7 @@ void EncodedFormData::AppendFileRange(const String& filename,
 }
 
 void EncodedFormData::AppendBlob(const String& uuid,
-                                 PassRefPtr<BlobDataHandle> optional_handle) {
+                                 RefPtr<BlobDataHandle> optional_handle) {
   elements_.push_back(FormDataElement(uuid, std::move(optional_handle)));
 }
 
@@ -150,19 +148,19 @@ void EncodedFormData::AppendFileSystemURLRange(
 
 void EncodedFormData::Flatten(Vector<char>& data) const {
   // Concatenate all the byte arrays, but omit any files.
-  data.Clear();
+  data.clear();
   size_t n = elements_.size();
   for (size_t i = 0; i < n; ++i) {
     const FormDataElement& e = elements_[i];
     if (e.type_ == FormDataElement::kData)
-      data.Append(e.data_.Data(), static_cast<size_t>(e.data_.size()));
+      data.Append(e.data_.data(), static_cast<size_t>(e.data_.size()));
   }
 }
 
 String EncodedFormData::FlattenToString() const {
   Vector<char> bytes;
   Flatten(bytes);
-  return Latin1Encoding().Decode(reinterpret_cast<const char*>(bytes.Data()),
+  return Latin1Encoding().Decode(reinterpret_cast<const char*>(bytes.data()),
                                  bytes.size());
 }
 

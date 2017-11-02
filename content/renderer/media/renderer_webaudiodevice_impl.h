@@ -28,12 +28,12 @@ class SilentSinkSuspender;
 
 namespace content {
 class CONTENT_EXPORT RendererWebAudioDeviceImpl
-    : NON_EXPORTED_BASE(public blink::WebAudioDevice),
-      NON_EXPORTED_BASE(public media::AudioRendererSink::RenderCallback) {
+    : public blink::WebAudioDevice,
+      public media::AudioRendererSink::RenderCallback {
  public:
   ~RendererWebAudioDeviceImpl() override;
 
-  static RendererWebAudioDeviceImpl* Create(
+  static std::unique_ptr<RendererWebAudioDeviceImpl> Create(
       media::ChannelLayout layout,
       int channels,
       const blink::WebAudioLatencyHint& latency_hint,

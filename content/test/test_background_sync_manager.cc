@@ -24,8 +24,7 @@ void TestBackgroundSyncManager::DoInit() {
 
 void TestBackgroundSyncManager::ResumeBackendOperation() {
   ASSERT_FALSE(continuation_.is_null());
-  continuation_.Run();
-  continuation_.Reset();
+  std::move(continuation_).Run();
 }
 
 void TestBackgroundSyncManager::ClearDelayedTask() {
@@ -41,10 +40,10 @@ void TestBackgroundSyncManager::StoreDataInBackend(
   EXPECT_TRUE(continuation_.is_null());
   if (corrupt_backend_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, SERVICE_WORKER_ERROR_FAILED));
+        FROM_HERE, base::BindOnce(callback, SERVICE_WORKER_ERROR_FAILED));
     return;
   }
-  continuation_ = base::Bind(
+  continuation_ = base::BindOnce(
       &TestBackgroundSyncManager::StoreDataInBackendContinue,
       base::Unretained(this), sw_registration_id, origin, key, data, callback);
   if (delay_backend_)
@@ -61,13 +60,13 @@ void TestBackgroundSyncManager::GetDataFromBackend(
   if (corrupt_backend_) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(callback, std::vector<std::pair<int64_t, std::string>>(),
-                   SERVICE_WORKER_ERROR_FAILED));
+        base::BindOnce(callback, std::vector<std::pair<int64_t, std::string>>(),
+                       SERVICE_WORKER_ERROR_FAILED));
     return;
   }
   continuation_ =
-      base::Bind(&TestBackgroundSyncManager::GetDataFromBackendContinue,
-                 base::Unretained(this), key, callback);
+      base::BindOnce(&TestBackgroundSyncManager::GetDataFromBackendContinue,
+                     base::Unretained(this), key, callback);
   if (delay_backend_)
     return;
 
@@ -78,23 +77,22 @@ void TestBackgroundSyncManager::DispatchSyncEvent(
     const std::string& tag,
     scoped_refptr<ServiceWorkerVersion> active_version,
     blink::mojom::BackgroundSyncEventLastChance last_chance,
-    const ServiceWorkerVersion::StatusCallback& callback) {
+    const ServiceWorkerVersion::LegacyStatusCallback& callback) {
   ASSERT_FALSE(dispatch_sync_callback_.is_null());
   last_chance_ = last_chance;
   dispatch_sync_callback_.Run(active_version, callback);
 }
 
-void TestBackgroundSyncManager::ScheduleDelayedTask(
-    const base::Closure& callback,
-    base::TimeDelta delay) {
-  delayed_task_ = callback;
+void TestBackgroundSyncManager::ScheduleDelayedTask(base::OnceClosure callback,
+                                                    base::TimeDelta delay) {
+  delayed_task_ = std::move(callback);
   delayed_task_delta_ = delay;
 }
 
 void TestBackgroundSyncManager::HasMainFrameProviderHost(
     const GURL& origin,
-    const BoolCallback& callback) {
-  callback.Run(has_main_frame_provider_host_);
+    BoolCallback callback) {
+  std::move(callback).Run(has_main_frame_provider_host_);
 }
 
 void TestBackgroundSyncManager::StoreDataInBackendContinue(

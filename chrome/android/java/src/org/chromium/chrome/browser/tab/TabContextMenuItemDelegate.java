@@ -15,6 +15,7 @@ import android.support.customtabs.CustomTabsIntent;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.DefaultBrowserInfo;
 import org.chromium.chrome.browser.IntentHandler;
+import org.chromium.chrome.browser.LaunchIntentDispatcher;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.contextmenu.ContextMenuItemDelegate;
 import org.chromium.chrome.browser.document.ChromeLauncherActivity;
@@ -37,9 +38,6 @@ import java.util.Locale;
  * A default {@link ContextMenuItemDelegate} that supports the context menu functionality in Tab.
  */
 public class TabContextMenuItemDelegate implements ContextMenuItemDelegate {
-    public static final String PAGESPEED_PASSTHROUGH_HEADERS =
-            "Chrome-Proxy: pass-through\nCache-Control: no-cache";
-
     private final Tab mTab;
     private boolean mLoadOriginalImageRequestedForPageLoad;
     private EmptyTabObserver mDataReductionProxyContextMenuTabObserver;
@@ -215,7 +213,10 @@ public class TabContextMenuItemDelegate implements ContextMenuItemDelegate {
     public void onOpenImageInNewTab(String url, Referrer referrer) {
         boolean useOriginal = isSpdyProxyEnabledForUrl(url);
         LoadUrlParams loadUrlParams = new LoadUrlParams(url);
-        loadUrlParams.setVerbatimHeaders(useOriginal ? PAGESPEED_PASSTHROUGH_HEADERS : null);
+        loadUrlParams.setVerbatimHeaders(useOriginal
+                        ? DataReductionProxySettings.getInstance()
+                                  .getDataReductionProxyPassThroughHeader()
+                        : null);
         loadUrlParams.setReferrer(referrer);
         mTab.getActivity().getTabModelSelector().openNewTab(loadUrlParams,
                 TabLaunchType.FROM_LONGPRESS_BACKGROUND, mTab, isIncognito());
@@ -226,6 +227,9 @@ public class TabContextMenuItemDelegate implements ContextMenuItemDelegate {
         Intent chromeIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(linkUrl));
         chromeIntent.setPackage(mTab.getApplicationContext().getPackageName());
         chromeIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        // For "Open in Chrome" from the context menu in FullscreenActivity we want to bypass
+        // CustomTab, and this flag ensures we open in TabbedChrome.
+        chromeIntent.putExtra(LaunchIntentDispatcher.EXTRA_IS_ALLOWED_TO_RETURN_TO_PARENT, false);
 
         boolean activityStarted = false;
         if (pageUrl != null) {
@@ -254,12 +258,13 @@ public class TabContextMenuItemDelegate implements ContextMenuItemDelegate {
         Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(linkUrl));
         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.setClass(mTab.getApplicationContext(), ChromeLauncherActivity.class);
-        intent.putExtra(ChromeLauncherActivity.EXTRA_IS_ALLOWED_TO_RETURN_TO_PARENT, false);
+        intent.putExtra(LaunchIntentDispatcher.EXTRA_IS_ALLOWED_TO_RETURN_TO_PARENT, false);
         if (isIncognito) {
             intent.putExtra(IntentHandler.EXTRA_OPEN_NEW_INCOGNITO_TAB, true);
             intent.putExtra(
                     Browser.EXTRA_APPLICATION_ID, mTab.getApplicationContext().getPackageName());
             IntentHandler.addTrustedIntentExtras(intent);
+            IntentHandler.setTabLaunchType(intent, TabLaunchType.FROM_EXTERNAL_APP);
         }
         IntentUtils.safeStartActivity(mTab.getActivity(), intent);
     }

@@ -26,6 +26,7 @@
 #include "modules/webaudio/AudioParam.h"
 
 #include "core/dom/ExceptionCode.h"
+#include "core/frame/Deprecation.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "modules/webaudio/AudioNode.h"
 #include "modules/webaudio/AudioNodeOutput.h"
@@ -51,7 +52,7 @@ AudioParamHandler::AudioParamHandler(BaseAudioContext& context,
       max_value_(max_value) {
   // The destination MUST exist because we need the destination handler for the
   // AudioParam.
-  RELEASE_ASSERT(context.destination());
+  CHECK(context.destination());
 
   destination_handler_ = &context.destination()->GetAudioDestinationHandler();
   timeline_.SetSmoothedValue(default_value);
@@ -137,6 +138,10 @@ String AudioParamHandler::GetParamName() const {
       return "AudioListener.upZ";
     case kParamTypeConstantSourceValue:
       return "ConstantSource.sourceValue";
+    // TODO(hongchan): We can try to return the actual parameter name here if
+    // possible.
+    case kParamTypeAudioWorklet:
+      return "AudioWorklet.customParameter";
   };
 
   NOTREACHED();
@@ -392,7 +397,66 @@ void AudioParam::WarnIfOutsideRange(const String& param_method, float value) {
   }
 }
 
+void AudioParam::setInitialValue(float value) {
+  WarnIfOutsideRange("value", value);
+  Handler().SetValue(value);
+}
+
 void AudioParam::setValue(float value) {
+  // These nodes have dezippering which is being removed.  Print a
+  // deprecation message.
+  // TODO(rtoy): Remove this when dezippering has been removed.
+  switch (GetParamType()) {
+    case kParamTypeBiquadFilterFrequency:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperBiquadFilterNodeFrequency);
+      break;
+    case kParamTypeBiquadFilterQ:
+    case kParamTypeBiquadFilterQLowpass:
+    case kParamTypeBiquadFilterQHighpass:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperBiquadFilterNodeQ);
+      break;
+    case kParamTypeBiquadFilterGain:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperBiquadFilterNodeGain);
+      break;
+    case kParamTypeBiquadFilterDetune:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperBiquadFilterNodeDetune);
+      break;
+    case kParamTypeDelayDelayTime:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperDelayNodeDelayTime);
+      break;
+    case kParamTypeGainGain:
+      Deprecation::CountDeprecation(Context()->GetExecutionContext(),
+                                    WebFeature::kWebAudioDezipperGainNodeGain);
+      break;
+    case kParamTypeOscillatorFrequency:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperOscillatorNodeFrequency);
+      break;
+    case kParamTypeOscillatorDetune:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperOscillatorNodeDetune);
+      break;
+    case kParamTypeStereoPannerPan:
+      Deprecation::CountDeprecation(
+          Context()->GetExecutionContext(),
+          WebFeature::kWebAudioDezipperStereoPannerNodePan);
+      break;
+    default:
+      break;
+  };
+
   WarnIfOutsideRange("value", value);
   Handler().SetValue(value);
 }

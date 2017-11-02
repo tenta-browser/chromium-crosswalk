@@ -9,7 +9,9 @@
 #include "core/dom/Text.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/PlainTextRange.h"
+#include "core/editing/SelectionTemplate.h"
 #include "core/editing/VisibleUnits.h"
 #include "core/editing/iterators/CharacterIterator.h"
 #include "core/editing/state_machines/ForwardCodePointStateMachine.h"
@@ -98,20 +100,18 @@ const String ComputeTextForInsertion(const String& new_text,
       new_text.length() - common_prefix_length - common_suffix_length);
 }
 
-VisibleSelection ComputeSelectionForInsertion(
+SelectionInDOMTree ComputeSelectionForInsertion(
     const EphemeralRange& selection_range,
     const int offset,
-    const int length,
-    const bool is_directional) {
-  CharacterIterator char_it(selection_range);
+    const int length) {
+  CharacterIterator char_it(
+      selection_range,
+      TextIteratorBehavior::EmitsObjectReplacementCharacterBehavior());
   const EphemeralRange& range_for_insertion =
       char_it.CalculateCharacterSubrange(offset, length);
-  const VisibleSelection& selection =
-      CreateVisibleSelection(SelectionInDOMTree::Builder()
-                                 .SetBaseAndExtent(range_for_insertion)
-                                 .SetIsDirectional(is_directional)
-                                 .Build());
-  return selection;
+  return SelectionInDOMTree::Builder()
+      .SetBaseAndExtent(range_for_insertion)
+      .Build();
 }
 
 }  // anonymous namespace
@@ -133,15 +133,19 @@ InsertIncrementalTextCommand::InsertIncrementalTextCommand(
     : InsertTextCommand(document, text, select_inserted_text, rebalance_type) {}
 
 void InsertIncrementalTextCommand::DoApply(EditingState* editing_state) {
-  const Element* element = EndingSelection().RootEditableElement();
+  DCHECK(!GetDocument().NeedsLayoutTreeUpdate());
+  const Element* element = RootEditableElementOf(EndingSelection().Base());
   DCHECK(element);
 
-  const EphemeralRange selection_range(EndingSelection().Start(),
-                                       EndingSelection().end());
-  const String old_text = PlainText(selection_range);
+  const VisibleSelection& visible_selection = EndingVisibleSelection();
+  const EphemeralRange selection_range(visible_selection.Start(),
+                                       visible_selection.End());
+  const String old_text = PlainText(
+      selection_range,
+      TextIteratorBehavior::EmitsObjectReplacementCharacterBehavior());
   const String& new_text = text_;
 
-  const Position& selection_start = EndingSelection().Start();
+  const Position& selection_start = visible_selection.Start();
   const size_t new_text_length = new_text.length();
   const size_t old_text_length = old_text.length();
   const size_t common_prefix_length = ComputeCommonGraphemeClusterPrefixLength(
@@ -158,12 +162,11 @@ void InsertIncrementalTextCommand::DoApply(EditingState* editing_state) {
   const int offset = static_cast<int>(common_prefix_length);
   const int length = static_cast<int>(old_text_length - common_prefix_length -
                                       common_suffix_length);
-  const VisibleSelection& selection_for_insertion =
-      ComputeSelectionForInsertion(selection_range, offset, length,
-                                   EndingSelection().IsDirectional());
+  const VisibleSelection& selection_for_insertion = CreateVisibleSelection(
+      ComputeSelectionForInsertion(selection_range, offset, length));
 
   SetEndingSelectionWithoutValidation(selection_for_insertion.Start(),
-                                      selection_for_insertion.end());
+                                      selection_for_insertion.End());
 
   InsertTextCommand::DoApply(editing_state);
 }

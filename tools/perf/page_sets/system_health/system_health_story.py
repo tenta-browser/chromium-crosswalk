@@ -5,7 +5,6 @@
 from page_sets.system_health import platforms
 from page_sets.system_health import story_tags
 
-from telemetry import decorators
 from telemetry.page import page
 from telemetry.page import shared_page_state
 
@@ -18,28 +17,14 @@ _WAIT_TIME_AFTER_LOAD = 10
 
 class _SystemHealthSharedState(shared_page_state.SharedPageState):
   """Shared state which enables disabling stories on individual platforms.
-
-  This class adds support for enabling/disabling individual stories on
-  individual platforms using the same approaches as for benchmarks:
-
-    1. Disabled/Enabled decorator:
-
-       @decorators.Disabled('win')
-       class Story(system_health_story.SystemHealthStory):
-         ...
-
-    2. ShouldDisable method:
-
-       class Story(system_health_story.SystemHealthStory):
-         ...
-
-         @classmethod
-         def ShouldDisable(cls, possible_browser):
-           return possible_browser.platform.GetOSName() == 'win'
+     This should be used only to disable the stories permanently. For
+     disabling stories temporarily use story expectations in ./expectations.py.
   """
 
-  def CanRunStory(self, story):
-    return story.CanRun(self.possible_browser)
+  def CanRunOnBrowser(self, browser_info, story):
+    if story.TAGS and story_tags.WEBGL in story.TAGS:
+      return browser_info.HasWebGLSupport()
+    return True
 
 
 class _MetaSystemHealthStory(type):
@@ -69,7 +54,8 @@ class SystemHealthStory(page.Page):
   TAGS = None
   PLATFORM_SPECIFIC = False
 
-  def __init__(self, story_set, take_memory_measurement):
+  def __init__(self, story_set, take_memory_measurement,
+      extra_browser_args=None):
     case, group, _ = self.NAME.split(':')
     tags = []
     if self.TAGS:
@@ -77,28 +63,28 @@ class SystemHealthStory(page.Page):
         assert t in story_tags.ALL_TAGS
         tags.append(t.name)
     super(SystemHealthStory, self).__init__(
-        shared_page_state_class=_SystemHealthSharedState, page_set=story_set,
-        name=self.NAME, url=self.URL, tags=tags,
+        shared_page_state_class=_SystemHealthSharedState,
+        page_set=story_set, name=self.NAME, url=self.URL, tags=tags,
         credentials_path='../data/credentials.json',
         grouping_keys={'case': case, 'group': group},
-        platform_specific=self.PLATFORM_SPECIFIC)
+        platform_specific=self.PLATFORM_SPECIFIC,
+        extra_browser_args=extra_browser_args)
     self._take_memory_measurement = take_memory_measurement
 
   @classmethod
-  def CanRun(cls, possible_browser):
-    if (decorators.ShouldSkip(cls, possible_browser)[0] or
-        cls.ShouldDisable(possible_browser)):
-      return False
-    return True
+  def GetStoryDescription(cls):
+    if cls.__doc__:
+      return cls.__doc__
+    return cls.GenerateStoryDescription()
 
   @classmethod
-  def ShouldDisable(cls, possible_browser):
-    """Override this method to disable a story under specific conditions.
-
-    This method is modelled after telemetry.benchmark.Benchmark.ShouldDisable().
+  def GenerateStoryDescription(cls):
+    """ Subclasses of SystemHealthStory can override this to auto generate
+    their story description.
+    However, it's recommended to use the Python docstring to describe the user
+    stories instead and this should only be used for very repetitive cases.
     """
-    del possible_browser
-    return False
+    return None
 
   def _Measure(self, action_runner):
     if self._take_memory_measurement:

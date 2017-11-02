@@ -4,8 +4,8 @@
 <script src="../../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
 'use strict';
-promise_test(() => {
-  return setBluetoothFakeAdapter('EmptyNameDeviceAdapter')
+bluetooth_test(() => {
+  return setUpPreconnectedDevice({name: ''})
     .then(() => requestDeviceWithKeyDown({acceptAllDevices: true}))
     .then(device => {
       assert_equals(device.name, '');

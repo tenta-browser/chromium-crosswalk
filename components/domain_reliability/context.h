@@ -7,10 +7,10 @@
 
 #include <stddef.h>
 
-#include <deque>
 #include <memory>
 #include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -41,6 +41,9 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
   // trigger a new upload.
   static const int kMaxUploadDepthToSchedule;
 
+  using UploadAllowedCallback =
+      base::Callback<void(const GURL&, base::OnceCallback<void(bool)>)>;
+
   class DOMAIN_RELIABILITY_EXPORT Factory {
    public:
     virtual ~Factory();
@@ -53,6 +56,7 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
       const DomainReliabilityScheduler::Params& scheduler_params,
       const std::string& upload_reporter_string,
       const base::TimeTicks* last_network_change_time,
+      const UploadAllowedCallback& upload_allowed_callback,
       DomainReliabilityDispatcher* dispatcher,
       DomainReliabilityUploader* uploader,
       std::unique_ptr<const DomainReliabilityConfig> config);
@@ -87,6 +91,8 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
 
  private:
   void ScheduleUpload(base::TimeDelta min_delay, base::TimeDelta max_delay);
+  void CallUploadAllowedCallback();
+  void OnUploadAllowedCallbackComplete(bool allowed);
   void StartUpload();
   void OnUploadComplete(const DomainReliabilityUploader::UploadResult& result);
 
@@ -119,13 +125,14 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityContext {
   DomainReliabilityDispatcher* dispatcher_;
   DomainReliabilityUploader* uploader_;
 
-  std::deque<std::unique_ptr<DomainReliabilityBeacon>> beacons_;
+  base::circular_deque<std::unique_ptr<DomainReliabilityBeacon>> beacons_;
   size_t uploading_beacons_size_;
   base::TimeTicks upload_time_;
   base::TimeTicks last_upload_time_;
   // The last network change time is not tracked per-context, so this is a
   // pointer to that value in a wider (e.g. per-Monitor or unittest) scope.
   const base::TimeTicks* last_network_change_time_;
+  const UploadAllowedCallback& upload_allowed_callback_;
 
   base::TimeTicks last_queued_beacon_time_;
 

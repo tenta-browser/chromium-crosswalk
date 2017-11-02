@@ -30,12 +30,13 @@
 */
 
 #include <memory>
-#include "bindings/core/v8/SharedPersistent.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8HTMLEmbedElement.h"
 #include "bindings/core/v8/V8HTMLObjectElement.h"
 #include "core/frame/Deprecation.h"
 #include "core/frame/UseCounter.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -46,23 +47,30 @@ template <typename ElementType>
 void GetScriptableObjectProperty(
     const AtomicString& name,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
-  HTMLPlugInElement* impl = ElementType::toImpl(info.Holder());
-  RefPtr<SharedPersistent<v8::Object>> wrapper = impl->PluginWrapper();
-  if (!wrapper)
+  ScriptState* state = ScriptState::Current(info.GetIsolate());
+  if (!state->World().IsMainWorld()) {
+    if (state->World().IsIsolatedWorld()) {
+      UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
+                        WebFeature::kPluginInstanceAccessFromIsolatedWorld);
+    }
+    // The plugin system cannot deal with multiple worlds, so block any
+    // non-main world access.
     return;
+  }
+  UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
+                    WebFeature::kPluginInstanceAccessFromMainWorld);
 
-  v8::Local<v8::Object> instance = wrapper->NewLocal(info.GetIsolate());
+  HTMLPlugInElement* impl = ElementType::ToImpl(info.Holder());
+  v8::Local<v8::Object> instance = impl->PluginWrapper();
   if (instance.IsEmpty())
     return;
 
   v8::Local<v8::String> v8_name = V8String(info.GetIsolate(), name);
-  if (!V8CallBoolean(instance->HasOwnProperty(
-          info.GetIsolate()->GetCurrentContext(), v8_name)))
+  if (!V8CallBoolean(instance->HasOwnProperty(state->GetContext(), v8_name)))
     return;
 
   v8::Local<v8::Value> value;
-  if (!instance->Get(info.GetIsolate()->GetCurrentContext(), v8_name)
-           .ToLocal(&value))
+  if (!instance->Get(state->GetContext(), v8_name).ToLocal(&value))
     return;
 
   V8SetReturnValue(info, value);
@@ -73,24 +81,23 @@ void SetScriptableObjectProperty(
     const AtomicString& name,
     v8::Local<v8::Value> value,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
-  ASSERT(!value.IsEmpty());
-
-  HTMLPlugInElement* impl = ElementType::toImpl(info.Holder());
-  RefPtr<SharedPersistent<v8::Object>> wrapper = impl->PluginWrapper();
-  if (!wrapper)
+  DCHECK(!value.IsEmpty());
+  ScriptState* state = ScriptState::Current(info.GetIsolate());
+  if (!state->World().IsMainWorld()) {
+    // The plugin system cannot deal with multiple worlds, so block any
+    // non-main world access.
     return;
+  }
 
-  v8::Local<v8::Object> instance = wrapper->NewLocal(info.GetIsolate());
-
+  HTMLPlugInElement* impl = ElementType::ToImpl(info.Holder());
+  v8::Local<v8::Object> instance = impl->PluginWrapper();
   if (instance.IsEmpty())
     return;
 
   // Don't intercept any of the properties of the HTMLPluginElement.
   v8::Local<v8::String> v8_name = V8String(info.GetIsolate(), name);
-  if (!V8CallBoolean(instance->HasOwnProperty(
-          info.GetIsolate()->GetCurrentContext(), v8_name)) &&
-      V8CallBoolean(info.Holder()->Has(info.GetIsolate()->GetCurrentContext(),
-                                       v8_name))) {
+  if (!V8CallBoolean(instance->HasOwnProperty(state->GetContext(), v8_name)) &&
+      V8CallBoolean(info.Holder()->Has(state->GetContext(), v8_name))) {
     return;
   }
 
@@ -103,8 +110,8 @@ void SetScriptableObjectProperty(
   // DOM element will also be set. For plugin's that don't intercept the call
   // (all except gTalk) this makes no difference at all. For gTalk the fact
   // that the property on the DOM element also gets set is inconsequential.
-  V8CallBoolean(instance->CreateDataProperty(
-      info.GetIsolate()->GetCurrentContext(), v8_name, value));
+  V8CallBoolean(
+      instance->CreateDataProperty(state->GetContext(), v8_name, value));
   V8SetReturnValue(info, value);
 }
 
@@ -114,7 +121,7 @@ void V8HTMLEmbedElement::namedPropertyGetterCustom(
     const AtomicString& name,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
   UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                    UseCounter::kHTMLEmbedElementGetter);
+                    WebFeature::kHTMLEmbedElementGetter);
   GetScriptableObjectProperty<V8HTMLEmbedElement>(name, info);
 }
 
@@ -122,7 +129,7 @@ void V8HTMLObjectElement::namedPropertyGetterCustom(
     const AtomicString& name,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
   UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                    UseCounter::kHTMLObjectElementGetter);
+                    WebFeature::kHTMLObjectElementGetter);
   GetScriptableObjectProperty<V8HTMLObjectElement>(name, info);
 }
 
@@ -131,7 +138,7 @@ void V8HTMLEmbedElement::namedPropertySetterCustom(
     v8::Local<v8::Value> value,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
   UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                    UseCounter::kHTMLEmbedElementSetter);
+                    WebFeature::kHTMLEmbedElementSetter);
   SetScriptableObjectProperty<V8HTMLEmbedElement>(name, value, info);
 }
 
@@ -140,7 +147,7 @@ void V8HTMLObjectElement::namedPropertySetterCustom(
     v8::Local<v8::Value> value,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
   UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                    UseCounter::kHTMLObjectElementSetter);
+                    WebFeature::kHTMLObjectElementSetter);
   SetScriptableObjectProperty<V8HTMLObjectElement>(name, value, info);
 }
 

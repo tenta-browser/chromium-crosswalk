@@ -7,12 +7,14 @@
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/location_bar/background_with_1_px_border.h"
+#include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/events/event.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/native_theme/native_theme.h"
+#include "ui/views/animation/flood_fill_ink_drop_ripple.h"
 #include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/bubble/bubble_dialog_delegate.h"
@@ -52,6 +54,12 @@ void BubbleIconView::SetTooltipText(const base::string16& tooltip) {
   image_->SetTooltipText(tooltip);
 }
 
+void BubbleIconView::OnBubbleCreated(LocationBarBubbleDelegateView* bubble) {
+  // This observer is removed when the bubble's widget is destroyed, by
+  // |OnWidgetDestroying|.
+  bubble->GetWidget()->AddObserver(this);
+}
+
 void BubbleIconView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   image_->GetAccessibleNodeData(node_data);
   node_data->role = ui::AX_ROLE_BUTTON;
@@ -62,7 +70,7 @@ bool BubbleIconView::GetTooltipText(const gfx::Point& p,
   return !IsBubbleShowing() && image_->GetTooltipText(p, tooltip);
 }
 
-gfx::Size BubbleIconView::GetPreferredSize() const {
+gfx::Size BubbleIconView::CalculatePreferredSize() const {
   gfx::Rect image_rect(image_->GetPreferredSize());
   image_rect.Inset(-gfx::Insets(LocationBarView::kIconInteriorPadding));
   DCHECK_EQ(image_rect.height(),
@@ -114,7 +122,7 @@ bool BubbleIconView::OnKeyPressed(const ui::KeyEvent& event) {
     return false;
 
   AnimateInkDrop(views::InkDropState::ACTIVATED, nullptr /* &event */);
-  // As with CustomButton, return activates on key down and space activates on
+  // As with Button, return activates on key down and space activates on
   // key up.
   if (event.key_code() == ui::VKEY_RETURN)
     ExecuteCommand(EXECUTE_SOURCE_KEYBOARD);
@@ -152,7 +160,8 @@ void BubbleIconView::RemoveInkDropLayer(ui::Layer* ink_drop_layer) {
 }
 
 std::unique_ptr<views::InkDrop> BubbleIconView::CreateInkDrop() {
-  std::unique_ptr<views::InkDropImpl> ink_drop = CreateDefaultInkDropImpl();
+  std::unique_ptr<views::InkDropImpl> ink_drop =
+      CreateDefaultFloodFillInkDropImpl();
   ink_drop->SetShowHighlightOnFocus(true);
   return std::move(ink_drop);
 }
@@ -160,6 +169,14 @@ std::unique_ptr<views::InkDrop> BubbleIconView::CreateInkDrop() {
 SkColor BubbleIconView::GetInkDropBaseColor() const {
   return color_utils::DeriveDefaultIconColor(GetNativeTheme()->GetSystemColor(
       ui::NativeTheme::kColorId_TextfieldDefaultColor));
+}
+
+std::unique_ptr<views::InkDropRipple> BubbleIconView::CreateInkDropRipple()
+    const {
+  return base::MakeUnique<views::FloodFillInkDropRipple>(
+      gfx::Size(kDefaultInkDropSize, kDefaultInkDropSize),
+      GetInkDropCenterBasedOnLastEvent(), GetInkDropBaseColor(),
+      ink_drop_visible_opacity());
 }
 
 void BubbleIconView::OnGestureEvent(ui::GestureEvent* event) {

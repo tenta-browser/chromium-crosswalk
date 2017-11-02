@@ -55,47 +55,91 @@ def _TestharnessBaselineFilesToCheck(input_api):
     return baseline_files
 
 
-def _CheckIdenticalFiles(input_api, output_api):
-    """Verifies that certain files are identical in various locations.
-
-    These files should always be updated together. If this list is modified,
-    consider also changing the list of files to copy from web-platform-tests
-    when importing in Tools/Scripts/webkitpy/deps_updater.py.
+def _CheckFilesUsingEventSender(input_api, output_api):
+    """Check if any new layout tests still use eventSender. If they do, we encourage replacing them with
+       chrome.gpuBenchmarking.pointerActionSequence.
     """
-    dirty_files = set(input_api.LocalPaths())
+    results = []
+    actions = ["eventSender.touch", "eventSender.mouse", "eventSender.gesture"]
+    for f in input_api.AffectedFiles():
+        if f.Action() == 'A':
+            for line_num, line in f.ChangedContents():
+                if any(action in line for action in actions):
+                    results.append(output_api.PresubmitPromptWarning(
+                        'eventSender is deprecated, please use chrome.gpuBenchmarking.pointerActionSequence instead ' +
+                        '(see https://crbug.com/711340 and http://goo.gl/BND75q).\n' +
+                        'Files: %s:%d %s ' % (f.LocalPath(), line_num, line)))
+    return results
 
-    groups = [
-        ('external/wpt/resources/idlharness.js', 'resources/idlharness.js'),
-        ('external/wpt/resources/testharness.js', 'resources/testharness.js'),
-    ]
 
-    def _absolute_path(s):
-        return input_api.os_path.join(input_api.PresubmitLocalPath(), *s.split('/'))
+def _CheckTestExpectations(input_api, output_api):
+    local_paths = [f.LocalPath() for f in input_api.AffectedFiles()]
+    if any('LayoutTests' in path for path in local_paths):
+        lint_path = input_api.os_path.join(input_api.PresubmitLocalPath(),
+            '..', 'Tools', 'Scripts', 'lint-test-expectations')
+        _, errs = input_api.subprocess.Popen(
+            [input_api.python_executable, lint_path],
+            stdout=input_api.subprocess.PIPE,
+            stderr=input_api.subprocess.PIPE).communicate()
+        if not errs:
+            return [output_api.PresubmitError(
+                "lint-test-expectations failed "
+                "to produce output; check by hand. ")]
+        if errs.strip() != 'Lint succeeded.':
+            return [output_api.PresubmitError(errs)]
+    return []
 
-    def _local_path(s):
-        return input_api.os_path.join('third_party', 'WebKit', 'LayoutTests', *s.split('/'))
 
-    errors = []
-    for group in groups:
-        if any(_local_path(p) in dirty_files for p in group):
-            a = group[0]
-            for b in group[1:]:
-                if not filecmp.cmp(_absolute_path(a), _absolute_path(b), shallow=False):
-                    errors.append(output_api.PresubmitError(
-                        'Files that should match differ: (see https://crbug.com/362788)\n' +
-                        '  %s <=> %s' % (_local_path(a), _local_path(b))))
-    return errors
+def _CheckForJSTest(input_api, output_api):
+    """'js-test.js' is the past, 'testharness.js' is our glorious future"""
+    jstest_re = input_api.re.compile(r'resources/js-test.js')
+
+    def source_file_filter(path):
+        return input_api.FilterSourceFile(path,
+                                          white_list=[r'third_party/WebKit/LayoutTests/.*\.(html|js|php|pl|svg)$'])
+
+    errors = input_api.canned_checks._FindNewViolationsOfRule(
+        lambda _, x: not jstest_re.search(x), input_api, source_file_filter)
+    errors = ['  * %s' % violation for violation in errors]
+    if errors:
+        return [output_api.PresubmitPromptOrNotify(
+            '"resources/js-test.js" is deprecated; please write new layout '
+            'tests using the assertions in "resources/testharness.js" '
+            'instead, as these can be more easily upstreamed to Web Platform '
+            'Tests for cross-vendor compatibility testing. If you\'re not '
+            'already familiar with this framework, a tutorial is available at '
+            'https://darobin.github.io/test-harness-tutorial/docs/using-testharness.html'
+            '\n\n%s' % '\n'.join(errors))]
+    return []
+
+
+def _CheckForInvalidPreferenceError(input_api, output_api):
+    pattern = input_api.re.compile('Invalid name for preference: (.+)')
+    results = []
+
+    for f in input_api.AffectedFiles():
+        if not f.LocalPath().endswith('-expected.txt'):
+            continue
+        for line_num, line in f.ChangedContents():
+            error = pattern.search(line)
+            if error:
+                results.append(output_api.PresubmitError('Found an invalid preference %s in expected result %s:%s' % (error.group(1), f, line_num)))
+    return results
 
 
 def CheckChangeOnUpload(input_api, output_api):
     results = []
     results.extend(_CheckTestharnessResults(input_api, output_api))
-    results.extend(_CheckIdenticalFiles(input_api, output_api))
+    results.extend(_CheckFilesUsingEventSender(input_api, output_api))
+    results.extend(_CheckTestExpectations(input_api, output_api))
+    results.extend(_CheckForJSTest(input_api, output_api))
+    results.extend(_CheckForInvalidPreferenceError(input_api, output_api))
     return results
 
 
 def CheckChangeOnCommit(input_api, output_api):
     results = []
     results.extend(_CheckTestharnessResults(input_api, output_api))
-    results.extend(_CheckIdenticalFiles(input_api, output_api))
+    results.extend(_CheckFilesUsingEventSender(input_api, output_api))
+    results.extend(_CheckTestExpectations(input_api, output_api))
     return results

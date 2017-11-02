@@ -13,6 +13,7 @@
 #include "base/compiler_specific.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/paint/paint_flags.h"
+#include "cc/paint/paint_image_builder.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
@@ -24,15 +25,15 @@ namespace cc {
 class FakeContentLayerClient : public ContentLayerClient {
  public:
   struct ImageData {
-    ImageData(sk_sp<const SkImage> image,
+    ImageData(PaintImage image,
               const gfx::Point& point,
               const PaintFlags& flags);
-    ImageData(sk_sp<const SkImage> image,
+    ImageData(PaintImage image,
               const gfx::Transform& transform,
               const PaintFlags& flags);
     ImageData(const ImageData& other);
     ~ImageData();
-    sk_sp<const SkImage> image;
+    PaintImage image;
     gfx::Point point;
     gfx::Transform transform;
     PaintFlags flags;
@@ -51,6 +52,10 @@ class FakeContentLayerClient : public ContentLayerClient {
     fill_with_nonsolid_color_ = nonsolid;
   }
 
+  void set_contains_slow_paths(bool contains_slow_paths) {
+    contains_slow_paths_ = contains_slow_paths;
+  }
+
   void add_draw_rect(const gfx::Rect& rect, const PaintFlags& flags) {
     draw_rects_.push_back(std::make_pair(gfx::RectF(rect), flags));
   }
@@ -59,14 +64,23 @@ class FakeContentLayerClient : public ContentLayerClient {
     draw_rects_.push_back(std::make_pair(rect, flags));
   }
 
-  void add_draw_image(sk_sp<const SkImage> image,
+  void add_draw_image(sk_sp<SkImage> image,
+                      const gfx::Point& point,
+                      const PaintFlags& flags) {
+    add_draw_image(PaintImageBuilder::WithDefault()
+                       .set_id(PaintImage::GetNextId())
+                       .set_image(std::move(image))
+                       .TakePaintImage(),
+                   point, flags);
+  }
+  void add_draw_image(PaintImage image,
                       const gfx::Point& point,
                       const PaintFlags& flags) {
     ImageData data(std::move(image), point, flags);
     draw_images_.push_back(data);
   }
 
-  void add_draw_image_with_transform(sk_sp<const SkImage> image,
+  void add_draw_image_with_transform(PaintImage image,
                                      const gfx::Transform& transform,
                                      const PaintFlags& flags) {
     ImageData data(std::move(image), transform, flags);
@@ -100,6 +114,7 @@ class FakeContentLayerClient : public ContentLayerClient {
   size_t reported_memory_usage_;
   gfx::Size bounds_;
   bool bounds_set_;
+  bool contains_slow_paths_;
 };
 
 }  // namespace cc

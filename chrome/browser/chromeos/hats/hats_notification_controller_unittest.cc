@@ -15,16 +15,15 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "chromeos/network/network_state.h"
+#include "chromeos/network/portal_detector/mock_network_portal_detector.h"
 #include "chromeos/network/portal_detector/network_portal_detector.h"
-#include "components/image_fetcher/core/image_fetcher.h"
-#include "components/image_fetcher/core/image_fetcher_delegate.h"
 #include "components/image_fetcher/core/request_metadata.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/gfx/image/image_unittest_util.h"
 #include "ui/message_center/fake_message_center_tray_delegate.h"
 #include "ui/message_center/message_center.h"
 
@@ -35,59 +34,7 @@ using testing::Return;
 using testing::SaveArg;
 using testing::StrictMock;
 
-using image_fetcher::ImageFetcher;
-using image_fetcher::ImageFetcherDelegate;
-
 namespace chromeos {
-
-namespace {
-
-class MockNetworkPortalDetector : public NetworkPortalDetector {
- public:
-  MockNetworkPortalDetector() {}
-  ~MockNetworkPortalDetector() override {}
-
-  MOCK_METHOD1(AddObserver,
-               void(chromeos::NetworkPortalDetector::Observer* observer));
-  MOCK_METHOD1(RemoveObserver,
-               void(chromeos::NetworkPortalDetector::Observer* observer));
-  MOCK_METHOD1(AddAndFireObserver,
-               void(chromeos::NetworkPortalDetector::Observer* observer));
-  MOCK_METHOD1(GetCaptivePortalState,
-               chromeos::NetworkPortalDetector::CaptivePortalState(
-                   const std::string& service_path));
-  MOCK_METHOD0(IsEnabled, bool());
-  MOCK_METHOD1(Enable, void(bool start_detection));
-  MOCK_METHOD0(StartDetectionIfIdle, bool());
-  MOCK_METHOD1(SetStrategy,
-               void(chromeos::PortalDetectorStrategy::StrategyId id));
-  MOCK_METHOD0(OnLockScreenRequest, void());
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockNetworkPortalDetector);
-};
-
-class MockImageFetcher : public image_fetcher::ImageFetcher {
- public:
-  MockImageFetcher() {}
-  ~MockImageFetcher() override {}
-
-  MOCK_METHOD3(StartOrQueueNetworkRequest,
-               void(const std::string&,
-                    const GURL&,
-                    const ImageFetcher::ImageFetcherCallback&));
-  MOCK_METHOD1(SetImageFetcherDelegate, void(ImageFetcherDelegate*));
-  MOCK_METHOD1(SetDataUseServiceName, void(DataUseServiceName));
-  MOCK_METHOD1(SetImageDownloadLimit,
-               void(base::Optional<int64_t> max_download_bytes));
-  MOCK_METHOD1(SetDesiredImageFrameSize, void(const gfx::Size&));
-  MOCK_METHOD0(GetImageDecoder, image_fetcher::ImageDecoder*());
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(MockImageFetcher);
-};
-
-}  // namespace
 
 class HatsNotificationControllerTest : public BrowserWithTestWindowTest {
  public:
@@ -123,14 +70,13 @@ class HatsNotificationControllerTest : public BrowserWithTestWindowTest {
   }
 
   scoped_refptr<HatsNotificationController> InstantiateHatsController() {
-    MockImageFetcher* mock_image_fetcher_ = new MockImageFetcher;
     // The initialization will fail since the function IsNewDevice() will return
     // true.
     scoped_refptr<HatsNotificationController> hats_notification_controller =
-        new HatsNotificationController(&profile_, mock_image_fetcher_);
+        new HatsNotificationController(&profile_);
 
     // HatsController::IsNewDevice() is run on a blocking thread.
-    content::RunAllBlockingPoolTasksUntilIdle();
+    content::RunAllTasksUntilIdle();
 
     // Send a callback to the observer to simulate internet connectivity is
     // present on device.
@@ -145,32 +91,6 @@ class HatsNotificationControllerTest : public BrowserWithTestWindowTest {
               hats_notification_controller->OnPortalDetectionCompleted(
                   &network_state, online_state);
             }));
-
-    // Run the image fetcher callback to simulate a successful 1x icon fetch.
-    ON_CALL(*mock_image_fetcher_,
-            StartOrQueueNetworkRequest(
-                HatsNotificationController::kImageFetcher1xId, _, _))
-        .WillByDefault(Invoke([&hats_notification_controller](
-                                  const std::string&, const GURL&,
-                                  const ImageFetcher::ImageFetcherCallback&) {
-          gfx::Image icon_1x(gfx::test::CreateImage());
-          hats_notification_controller->OnImageFetched(
-              HatsNotificationController::kImageFetcher1xId, icon_1x,
-              image_fetcher::RequestMetadata());
-        }));
-
-    // Run the image fetcher callback to simulate a successful 2x icon fetch.
-    ON_CALL(*mock_image_fetcher_,
-            StartOrQueueNetworkRequest(
-                HatsNotificationController::kImageFetcher2xId, _, _))
-        .WillByDefault(Invoke([&hats_notification_controller](
-                                  const std::string&, const GURL&,
-                                  ImageFetcher::ImageFetcherCallback) {
-          gfx::Image icon_1x(gfx::test::CreateImage());
-          hats_notification_controller->OnImageFetched(
-              HatsNotificationController::kImageFetcher2xId, icon_1x,
-              image_fetcher::RequestMetadata());
-        }));
 
     return hats_notification_controller;
   }
@@ -208,7 +128,7 @@ TEST_F(HatsNotificationControllerTest, NewDevice_ShouldNotShowNotification) {
 
   const Notification* notification =
       g_browser_process->notification_ui_manager()->FindById(
-          HatsNotificationController::kDelegateId, &profile_);
+          HatsNotificationController::kNotificationId, &profile_);
   EXPECT_FALSE(notification);
 }
 
@@ -231,7 +151,7 @@ TEST_F(HatsNotificationControllerTest, OldDevice_ShouldShowNotification) {
   // Finally check if notification was launched to confirm initialization.
   const Notification* notification =
       g_browser_process->notification_ui_manager()->FindById(
-          HatsNotificationController::kDelegateId, &profile_);
+          HatsNotificationController::kNotificationId, &profile_);
   EXPECT_TRUE(notification != nullptr);
 }
 
@@ -264,7 +184,7 @@ TEST_F(HatsNotificationControllerTest, NoInternet_DoNotShowNotification) {
 
   const Notification* notification =
       g_browser_process->notification_ui_manager()->FindById(
-          HatsNotificationController::kDelegateId, &profile_);
+          HatsNotificationController::kNotificationId, &profile_);
   EXPECT_FALSE(notification);
 }
 

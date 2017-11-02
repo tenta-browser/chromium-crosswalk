@@ -18,15 +18,21 @@
 #include "content/public/common/referrer.h"
 #include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
+#include "content/public/common/service_worker_modes.h"
+#include "services/network/public/interfaces/fetch_api.mojom.h"
 #include "third_party/WebKit/public/platform/WebPageVisibilityState.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerClientType.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerResponseError.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
-#include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerState.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_state.mojom.h"
 #include "url/gurl.h"
 
 // This file is to have common definitions that are to be shared by
 // browser and child process.
+
+namespace storage {
+class BlobHandle;
+}
 
 namespace content {
 
@@ -44,16 +50,14 @@ extern const char kFetchScriptError[];
 
 // Constants for invalid identifiers.
 static const int kInvalidServiceWorkerHandleId = -1;
-static const int kInvalidServiceWorkerRegistrationHandleId = -1;
-static const int kInvalidServiceWorkerProviderId = -1;
-static const int64_t kInvalidServiceWorkerRegistrationId = -1;
 static const int64_t kInvalidServiceWorkerVersionId = -1;
 static const int64_t kInvalidServiceWorkerResourceId = -1;
 static const int kInvalidEmbeddedWorkerThreadId = -1;
 
 // The HTTP cache is bypassed for Service Worker scripts if the last network
 // fetch occurred over 24 hours ago.
-static const int kServiceWorkerScriptMaxCacheAgeInHours = 24;
+static constexpr base::TimeDelta kServiceWorkerScriptMaxCacheAge =
+    base::TimeDelta::FromHours(24);
 
 // ServiceWorker provider type.
 enum ServiceWorkerProviderType {
@@ -71,47 +75,6 @@ enum ServiceWorkerProviderType {
       SERVICE_WORKER_PROVIDER_FOR_CONTROLLER
 };
 
-// The enum entries below are written to histograms and thus cannot be deleted
-// or reordered.
-// New entries must be added immediately before the end.
-enum FetchRequestMode {
-  FETCH_REQUEST_MODE_SAME_ORIGIN,
-  FETCH_REQUEST_MODE_NO_CORS,
-  FETCH_REQUEST_MODE_CORS,
-  FETCH_REQUEST_MODE_CORS_WITH_FORCED_PREFLIGHT,
-  FETCH_REQUEST_MODE_NAVIGATE,
-  FETCH_REQUEST_MODE_LAST = FETCH_REQUEST_MODE_NAVIGATE
-};
-
-enum FetchCredentialsMode {
-  FETCH_CREDENTIALS_MODE_OMIT,
-  FETCH_CREDENTIALS_MODE_SAME_ORIGIN,
-  FETCH_CREDENTIALS_MODE_INCLUDE,
-  FETCH_CREDENTIALS_MODE_PASSWORD,
-  FETCH_CREDENTIALS_MODE_LAST = FETCH_CREDENTIALS_MODE_PASSWORD
-};
-
-enum class FetchRedirectMode {
-  FOLLOW_MODE,
-  ERROR_MODE,
-  MANUAL_MODE,
-  LAST = MANUAL_MODE
-};
-
-// Indicates which service workers will receive fetch events for this request.
-enum class ServiceWorkerMode {
-  // Relevant local and foreign service workers will get a fetch or
-  // foreignfetch event for this request.
-  ALL,
-  // Only relevant foreign service workers will get a foreignfetch event for
-  // this request.
-  FOREIGN,
-  // Neither local nor foreign service workers will get events for this
-  // request.
-  NONE,
-  LAST = NONE
-};
-
 // Indicates how the service worker handled a fetch event.
 enum ServiceWorkerFetchEventResult {
   // Browser should fallback to native fetch.
@@ -119,12 +82,6 @@ enum ServiceWorkerFetchEventResult {
   // Service worker provided a ServiceWorkerResponse.
   SERVICE_WORKER_FETCH_EVENT_RESULT_RESPONSE,
   SERVICE_WORKER_FETCH_EVENT_LAST = SERVICE_WORKER_FETCH_EVENT_RESULT_RESPONSE
-};
-
-enum class ServiceWorkerFetchType {
-  FETCH,
-  FOREIGN_FETCH,
-  LAST = FOREIGN_FETCH
 };
 
 struct ServiceWorkerCaseInsensitiveCompare {
@@ -147,6 +104,7 @@ struct CONTENT_EXPORT ServiceWorkerFetchRequest {
                             const Referrer& referrer,
                             bool is_reload);
   ServiceWorkerFetchRequest(const ServiceWorkerFetchRequest& other);
+  ServiceWorkerFetchRequest& operator=(const ServiceWorkerFetchRequest& other);
   ~ServiceWorkerFetchRequest();
   size_t EstimatedStructSize();
 
@@ -160,9 +118,11 @@ struct CONTENT_EXPORT ServiceWorkerFetchRequest {
   ServiceWorkerHeaderMap headers;
   std::string blob_uuid;
   uint64_t blob_size;
+  scoped_refptr<storage::BlobHandle> blob;
   Referrer referrer;
   FetchCredentialsMode credentials_mode;
   FetchRedirectMode redirect_mode;
+  std::string integrity;
   std::string client_id;
   bool is_reload;
   ServiceWorkerFetchType fetch_type;
@@ -175,17 +135,18 @@ struct CONTENT_EXPORT ServiceWorkerResponse {
       std::unique_ptr<std::vector<GURL>> url_list,
       int status_code,
       const std::string& status_text,
-      blink::WebServiceWorkerResponseType response_type,
+      network::mojom::FetchResponseType response_type,
       std::unique_ptr<ServiceWorkerHeaderMap> headers,
       const std::string& blob_uuid,
       uint64_t blob_size,
-      const GURL& stream_url,
+      scoped_refptr<storage::BlobHandle> blob,
       blink::WebServiceWorkerResponseError error,
       base::Time response_time,
       bool is_in_cache_storage,
       const std::string& cache_storage_cache_name,
       std::unique_ptr<ServiceWorkerHeaderList> cors_exposed_header_names);
   ServiceWorkerResponse(const ServiceWorkerResponse& other);
+  ServiceWorkerResponse& operator=(const ServiceWorkerResponse& other);
   ~ServiceWorkerResponse();
   size_t EstimatedStructSize();
 
@@ -193,11 +154,15 @@ struct CONTENT_EXPORT ServiceWorkerResponse {
   std::vector<GURL> url_list;
   int status_code;
   std::string status_text;
-  blink::WebServiceWorkerResponseType response_type;
+  network::mojom::FetchResponseType response_type;
   ServiceWorkerHeaderMap headers;
+  // |blob_uuid| and |blob_size| are set when the body is a blob. For other
+  // types of responses, the body is provided separately in Mojo IPC via
+  // ServiceWorkerFetchResponseCallback.
   std::string blob_uuid;
   uint64_t blob_size;
-  GURL stream_url;
+  // |blob| is only used when features::kMojoBlobs is enabled.
+  scoped_refptr<storage::BlobHandle> blob;
   blink::WebServiceWorkerResponseError error;
   base::Time response_time;
   bool is_in_cache_storage = false;
@@ -215,18 +180,11 @@ struct CONTENT_EXPORT ServiceWorkerObjectInfo {
 
   int handle_id;
   GURL url;
-  blink::WebServiceWorkerState state;
+  blink::mojom::ServiceWorkerState state;
   int64_t version_id;
 };
 
-struct CONTENT_EXPORT ServiceWorkerRegistrationObjectInfo {
-  ServiceWorkerRegistrationObjectInfo();
-  int handle_id;
-  GURL scope;
-  int64_t registration_id;
-};
-
-struct ServiceWorkerVersionAttributes {
+struct CONTENT_EXPORT ServiceWorkerVersionAttributes {
   ServiceWorkerObjectInfo installing;
   ServiceWorkerObjectInfo waiting;
   ServiceWorkerObjectInfo active;

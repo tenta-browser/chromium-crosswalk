@@ -28,6 +28,7 @@
 #include "content/common/sandbox_linux/sandbox_bpf_base_policy_linux.h"
 #include "content/common/sandbox_linux/sandbox_seccomp_bpf_linux.h"
 #include "content/public/common/content_switches.h"
+#include "media/gpu/features.h"
 #include "sandbox/linux/bpf_dsl/bpf_dsl.h"
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_parameters_restrictions.h"
 #include "sandbox/linux/seccomp-bpf-helpers/syscall_sets.h"
@@ -81,7 +82,7 @@ inline bool IsArchitectureArm() {
 }
 
 inline bool UseV4L2Codec() {
-#if defined(USE_V4L2_CODEC)
+#if BUILDFLAG(USE_V4L2_CODEC)
   return true;
 #else
   return false;
@@ -89,7 +90,7 @@ inline bool UseV4L2Codec() {
 }
 
 inline bool UseLibV4L2() {
-#if defined(USE_LIBV4L2)
+#if BUILDFLAG(USE_LIBV4L2)
   return true;
 #else
   return false;
@@ -237,10 +238,7 @@ bool UpdateProcessTypeAndEnableSandbox(
 
 }  // namespace
 
-GpuProcessPolicy::GpuProcessPolicy() : GpuProcessPolicy(false) {}
-
-GpuProcessPolicy::GpuProcessPolicy(bool allow_mincore)
-    : broker_process_(NULL), allow_mincore_(allow_mincore) {}
+GpuProcessPolicy::GpuProcessPolicy() : broker_process_(NULL) {}
 
 GpuProcessPolicy::~GpuProcessPolicy() {}
 
@@ -252,12 +250,6 @@ ResultExpr GpuProcessPolicy::EvaluateSyscall(int sysno) const {
 #endif
     case __NR_ioctl:
       return Allow();
-    case __NR_mincore:
-      if (allow_mincore_) {
-        return Allow();
-      } else {
-        return SandboxBPFBasePolicy::EvaluateSyscall(sysno);
-      }
 #if defined(__i386__) || defined(__x86_64__) || defined(__mips__)
     // The Nvidia driver uses flags not in the baseline policy
     // (MAP_LOCKED | MAP_EXECUTABLE | MAP_32BIT)
@@ -337,7 +329,6 @@ void GpuProcessPolicy::InitGpuBrokerProcess(
     sandbox::bpf_dsl::Policy* (*broker_sandboxer_allocator)(void),
     const std::vector<BrokerFilePermission>& permissions_extra) {
   static const char kDriRcPath[] = "/etc/drirc";
-  static const char kDriCard0Path[] = "/dev/dri/card0";
   static const char kDriCardBasePath[] = "/dev/dri/card";
 
   static const char kNvidiaCtlPath[] = "/dev/nvidiactl";
@@ -350,15 +341,14 @@ void GpuProcessPolicy::InitGpuBrokerProcess(
 
   // All GPU process policies need these files brokered out.
   std::vector<BrokerFilePermission> permissions;
-  permissions.push_back(BrokerFilePermission::ReadWrite(kDriCard0Path));
   permissions.push_back(BrokerFilePermission::ReadOnly(kDriRcPath));
 
   if (!IsChromeOS()) {
     // For shared memory.
     permissions.push_back(
         BrokerFilePermission::ReadWriteCreateUnlinkRecursive(kDevShm));
-    // For multi-card DRI setups. NOTE: /dev/dri/card0 was already added above.
-    for (int i = 1; i <= 9; ++i) {
+    // For DRI cards.
+    for (int i = 0; i <= 9; ++i) {
       permissions.push_back(BrokerFilePermission::ReadWrite(
           base::StringPrintf("%s%d", kDriCardBasePath, i)));
     }

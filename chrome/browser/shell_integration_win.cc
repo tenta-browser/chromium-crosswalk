@@ -5,6 +5,7 @@
 #include "chrome/browser/shell_integration_win.h"
 
 #include <windows.h>
+#include <objbase.h>
 #include <shlwapi.h>
 #include <shobjidl.h>
 #include <propkey.h>  // Needs to come after shobjidl.h.
@@ -31,6 +32,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/win/registry.h"
@@ -53,11 +55,8 @@
 #include "chrome/installer/util/scoped_user_protocol_entry.h"
 #include "chrome/installer/util/shell_util.h"
 #include "components/variations/variations_associated_data.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/utility_process_mojo_client.h"
 #include "ui/base/l10n/l10n_util.h"
-
-using content::BrowserThread;
 
 namespace shell_integration {
 
@@ -149,8 +148,7 @@ base::string16 GetExpectedAppId(const base::CommandLine& command_line,
 }
 
 void MigrateTaskbarPinsCallback() {
-  // This should run on the file thread.
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   // Get full path of chrome.
   base::FilePath chrome_exe;
@@ -223,14 +221,17 @@ base::string16 GetAppForProtocolUsingRegistry(const GURL& url) {
 DefaultWebClientState GetDefaultWebClientStateFromShellUtilDefaultState(
     ShellUtil::DefaultState default_state) {
   switch (default_state) {
+    case ShellUtil::UNKNOWN_DEFAULT:
+      return DefaultWebClientState::UNKNOWN_DEFAULT;
     case ShellUtil::NOT_DEFAULT:
       return DefaultWebClientState::NOT_DEFAULT;
     case ShellUtil::IS_DEFAULT:
       return DefaultWebClientState::IS_DEFAULT;
-    default:
-      DCHECK_EQ(ShellUtil::UNKNOWN_DEFAULT, default_state);
-      return DefaultWebClientState::UNKNOWN_DEFAULT;
+    case ShellUtil::OTHER_MODE_IS_DEFAULT:
+      return DefaultWebClientState::OTHER_MODE_IS_DEFAULT;
   }
+  NOTREACHED();
+  return DefaultWebClientState::UNKNOWN_DEFAULT;
 }
 
 // A recorder of user actions in the Windows Settings app.
@@ -327,7 +328,7 @@ class OpenSystemSettingsHelper {
   // watched. The array must contain at least one element.
   static void Begin(const wchar_t* const protocols[],
                     const base::Closure& on_finished_callback) {
-    DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+    base::ThreadRestrictions::AssertIOAllowed();
 
     delete instance_;
     instance_ = new OpenSystemSettingsHelper(protocols, on_finished_callback);
@@ -363,13 +364,16 @@ class OpenSystemSettingsHelper {
                    weak_ptr_factory_.GetWeakPtr(), ConcludeReason::TIMEOUT));
   }
 
+  ~OpenSystemSettingsHelper() {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  }
+
   // Called when a change is detected on one of the registry keys being watched.
   // Note: All types of modification to the registry key will trigger this
   //       function even if the value change is the only one that matters. This
   //       is good enough for now.
   void OnRegistryKeyChanged() {
-    DCHECK_CURRENTLY_ON(BrowserThread::FILE);
-
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     // Make sure all the registry watchers have fired.
     if (--registry_watcher_count_ == 0) {
       UMA_HISTOGRAM_MEDIUM_TIMES(
@@ -384,7 +388,7 @@ class OpenSystemSettingsHelper {
   // |on_finished_callback_| and then dispose of this class instance to make
   // sure the callback won't get called subsequently.
   void ConcludeInteraction(ConcludeReason conclude_reason) {
-    DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
     UMA_HISTOGRAM_ENUMERATION(
         "DefaultBrowser.SettingsInteraction.ConcludeReason", conclude_reason,
@@ -397,6 +401,8 @@ class OpenSystemSettingsHelper {
   // Helper function to create a registry watcher for a given |key_path|. Do
   // nothing on initialization failure.
   void AddRegistryKeyWatcher(const wchar_t* key_path) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
     auto reg_key = base::MakeUnique<base::win::RegKey>(HKEY_CURRENT_USER,
                                                        key_path, KEY_NOTIFY);
 
@@ -432,6 +438,8 @@ class OpenSystemSettingsHelper {
   // Records the time it takes for the final registry watcher to get signaled.
   base::TimeTicks start_time_;
 
+  SEQUENCE_CHECKER(sequence_checker_);
+
   // Weak ptrs are used to bind this class to the callbacks of the timer and the
   // registry watcher. This makes it possible to self-delete after one of the
   // callbacks is executed to cancel the remaining ones.
@@ -462,6 +470,8 @@ class IsPinnedToTaskbarHelper {
 
   ErrorCallback error_callback_;
   ResultCallback result_callback_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(IsPinnedToTaskbarHelper);
 };
@@ -496,6 +506,8 @@ IsPinnedToTaskbarHelper::IsPinnedToTaskbarHelper(
 }
 
 void IsPinnedToTaskbarHelper::OnConnectionError() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   error_callback_.Run();
   delete this;
 }
@@ -503,6 +515,8 @@ void IsPinnedToTaskbarHelper::OnConnectionError() {
 void IsPinnedToTaskbarHelper::OnIsPinnedToTaskbarResult(
     bool succeeded,
     bool is_pinned_to_taskbar) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   result_callback_.Run(succeeded, is_pinned_to_taskbar);
   delete this;
 }
@@ -510,6 +524,8 @@ void IsPinnedToTaskbarHelper::OnIsPinnedToTaskbarResult(
 }  // namespace
 
 bool SetAsDefaultBrowser() {
+  base::ThreadRestrictions::AssertIOAllowed();
+
   base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     LOG(ERROR) << "Error getting app exe path";
@@ -529,6 +545,8 @@ bool SetAsDefaultBrowser() {
 }
 
 bool SetAsDefaultProtocolClient(const std::string& protocol) {
+  base::ThreadRestrictions::AssertIOAllowed();
+
   if (protocol.empty())
     return false;
 
@@ -594,25 +612,11 @@ DefaultWebClientState GetDefaultBrowser() {
 // error (or if Firefox is not found)it returns the default value which
 // is false.
 bool IsFirefoxDefaultBrowser() {
-  bool ff_default = false;
-  if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
-    base::string16 app_cmd;
-    base::win::RegKey key(HKEY_CURRENT_USER,
-                          ShellUtil::kRegVistaUrlPrefs, KEY_READ);
-    if (key.Valid() && (key.ReadValue(L"Progid", &app_cmd) == ERROR_SUCCESS) &&
-        app_cmd == L"FirefoxURL")
-      ff_default = true;
-  } else {
-    base::string16 key_path(L"http");
-    key_path.append(ShellUtil::kRegShellOpen);
-    base::win::RegKey key(HKEY_CLASSES_ROOT, key_path.c_str(), KEY_READ);
-    base::string16 app_cmd;
-    if (key.Valid() && (key.ReadValue(L"", &app_cmd) == ERROR_SUCCESS) &&
-        base::string16::npos !=
-        base::ToLowerASCII(app_cmd).find(L"firefox"))
-      ff_default = true;
-  }
-  return ff_default;
+  base::string16 app_cmd;
+  base::win::RegKey key(HKEY_CURRENT_USER, ShellUtil::kRegVistaUrlPrefs,
+                        KEY_READ);
+  return key.Valid() && key.ReadValue(L"Progid", &app_cmd) == ERROR_SUCCESS &&
+         app_cmd == L"FirefoxURL";
 }
 
 DefaultWebClientState IsDefaultProtocolClient(const std::string& protocol) {
@@ -624,6 +628,8 @@ DefaultWebClientState IsDefaultProtocolClient(const std::string& protocol) {
 namespace win {
 
 bool SetAsDefaultBrowserUsingIntentPicker() {
+  base::ThreadRestrictions::AssertIOAllowed();
+
   base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
@@ -642,7 +648,7 @@ bool SetAsDefaultBrowserUsingIntentPicker() {
 
 void SetAsDefaultBrowserUsingSystemSettings(
     const base::Closure& on_finished_callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
@@ -669,6 +675,8 @@ void SetAsDefaultBrowserUsingSystemSettings(
 }
 
 bool SetAsDefaultProtocolClientUsingIntentPicker(const std::string& protocol) {
+  base::ThreadRestrictions::AssertIOAllowed();
+
   base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
     NOTREACHED() << "Error getting app exe path";
@@ -690,7 +698,7 @@ bool SetAsDefaultProtocolClientUsingIntentPicker(const std::string& protocol) {
 void SetAsDefaultProtocolClientUsingSystemSettings(
     const std::string& protocol,
     const base::Closure& on_finished_callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   base::FilePath chrome_exe;
   if (!PathService::Get(base::FILE_EXE, &chrome_exe)) {
@@ -727,17 +735,12 @@ base::string16 GetChromiumModelIdForProfile(
 }
 
 void MigrateTaskbarPins() {
-  if (base::win::GetVersion() < base::win::VERSION_WIN7)
-    return;
-
-  // This needs to happen eventually (e.g. so that the appid is fixed and the
-  // run-time Chrome icon is merged with the taskbar shortcut), but this is not
-  // urgent and shouldn't delay Chrome startup.
-  static const int64_t kMigrateTaskbarPinsDelaySeconds = 15;
-  BrowserThread::PostDelayedTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&MigrateTaskbarPinsCallback),
-      base::TimeDelta::FromSeconds(kMigrateTaskbarPinsDelaySeconds));
+  // This needs to happen (e.g. so that the appid is fixed and the
+  // run-time Chrome icon is merged with the taskbar shortcut), but it is not an
+  // urgent task.
+  base::CreateCOMSTATaskRunnerWithTraits(
+      {base::MayBlock(), base::TaskPriority::BACKGROUND})
+      ->PostTask(FROM_HERE, base::Bind(&MigrateTaskbarPinsCallback));
 }
 
 void GetIsPinnedToTaskbarState(
@@ -748,8 +751,6 @@ void GetIsPinnedToTaskbarState(
 
 int MigrateShortcutsInPathInternal(const base::FilePath& chrome_exe,
                                    const base::FilePath& path) {
-  DCHECK(base::win::GetVersion() >= base::win::VERSION_WIN7);
-
   // Enumerate all pinned shortcuts in the given path directly.
   base::FileEnumerator shortcuts_enum(
       path, false,  // not recursive
@@ -782,9 +783,9 @@ int MigrateShortcutsInPathInternal(const base::FilePath& chrome_exe,
     // Load the shortcut.
     base::win::ScopedComPtr<IShellLink> shell_link;
     base::win::ScopedComPtr<IPersistFile> persist_file;
-    if (FAILED(shell_link.CreateInstance(CLSID_ShellLink, NULL,
-                                         CLSCTX_INPROC_SERVER)) ||
-        FAILED(persist_file.QueryFrom(shell_link.get())) ||
+    if (FAILED(::CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER,
+                                  IID_PPV_ARGS(&shell_link))) ||
+        FAILED(shell_link.CopyTo(persist_file.GetAddressOf())) ||
         FAILED(persist_file->Load(shortcut.value().c_str(), STGM_READ))) {
       DLOG(WARNING) << "Failed loading shortcut at " << shortcut.value();
       continue;
@@ -797,7 +798,7 @@ int MigrateShortcutsInPathInternal(const base::FilePath& chrome_exe,
     // Validate the existing app id for the shortcut.
     base::win::ScopedComPtr<IPropertyStore> property_store;
     propvariant.Reset();
-    if (FAILED(property_store.QueryFrom(shell_link.get())) ||
+    if (FAILED(shell_link.CopyTo(property_store.GetAddressOf())) ||
         property_store->GetValue(PKEY_AppUserModel_ID, propvariant.Receive()) !=
             S_OK) {
       // When in doubt, prefer not updating the shortcut.

@@ -51,6 +51,10 @@ class DeviceDetectionError(TestRunnerError):
     super(DeviceDetectionError, self).__init__(
       'Expected one device, found %s:\n%s' % (len(udids), '\n'.join(udids)))
 
+class DeviceRestartError(TestRunnerError):
+  """Error restarting a device."""
+  def __init__(self):
+    super(DeviceRestartError, self).__init__('Error restarting a device')
 
 class PlugInsNotFoundError(TestRunnerError):
   """The PlugIns directory was not found."""
@@ -220,6 +224,10 @@ class TestRunner(object):
     """
     return os.environ.copy()
 
+  def shutdown_and_restart(self):
+    """Restart a device or relaunch a simulator."""
+    pass
+
   def set_up(self):
     """Performs setup actions which must occur prior to every test launch."""
     raise NotImplementedError
@@ -319,6 +327,7 @@ class TestRunner(object):
       if result.crashed and not result.crashed_test:
         # If the app crashed but not during any particular test case, assume
         # it crashed on startup. Try one more time.
+        self.shutdown_and_restart()
         print 'Crashed on startup, retrying...'
         print
         result = self._run(cmd)
@@ -458,10 +467,12 @@ class SimulatorTestRunner(TestRunner):
           '-9',
           '-x',
           # The simulator's name varies by Xcode version.
+          'com.apple.CoreSimulator.CoreSimulatorService', # crbug.com/684305
           'iPhone Simulator', # Xcode 5
           'iOS Simulator', # Xcode 6
           'Simulator', # Xcode 7+
           'simctl', # https://crbug.com/637429
+          'xcodebuild', # https://crbug.com/684305
       ])
       # If a signal was sent, wait for the simulators to actually be killed.
       time.sleep(5)
@@ -580,7 +591,7 @@ class SimulatorTestRunner(TestRunner):
         # iossim doesn't support inverted filters for XCTests.
         if not invert:
           for test in test_filter:
-            cmd.extend(['-o', test])
+            cmd.extend(['-t', test])
       else:
         kif_filter = get_kif_test_filter(test_filter, invert=invert)
         gtest_filter = get_gtest_filter(test_filter, invert=invert)
@@ -619,6 +630,7 @@ class DeviceTestRunner(TestRunner):
     xcode_version,
     out_dir,
     env_vars=None,
+    restart=False,
     retries=None,
     test_args=None,
     xctest=False,
@@ -630,6 +642,7 @@ class DeviceTestRunner(TestRunner):
       xcode_version: Version of Xcode to use when running the test.
       out_dir: Directory to emit test data into.
       env_vars: List of environment variables to pass to the test itself.
+      restart: Whether or not restart device when test app crashes on startup.
       retries: Number of times to retry failed test cases.
       test_args: List of strings to pass as arguments to the test when
         launching.
@@ -674,6 +687,8 @@ class DeviceTestRunner(TestRunner):
         }
       }
 
+    self.restart = restart
+
   def uninstall_apps(self):
     """Uninstalls all apps found on the device."""
     for app in subprocess.check_output(
@@ -704,6 +719,20 @@ class DeviceTestRunner(TestRunner):
       ])
     except subprocess.CalledProcessError:
       raise TestDataExtractionError()
+
+  def shutdown_and_restart(self):
+    """Restart the device, wait for two minutes."""
+    # TODO(crbug.com/760399): swarming bot ios 11 devices turn to be unavailable
+    # in a few hours unexpectedly, which is assumed as an ios beta issue. Should
+    # remove this method once the bug is fixed.
+    if self.restart:
+      print 'Restarting device, wait for two minutes.'
+      try:
+        subprocess.check_call(
+          ['idevicediagnostics', 'restart', '--udid', self.udid])
+      except subprocess.CalledProcessError:
+        raise DeviceRestartError()
+      time.sleep(120)
 
   def retrieve_crash_reports(self):
     """Retrieves crash reports produced by the test."""

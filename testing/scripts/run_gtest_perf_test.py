@@ -63,7 +63,10 @@ def main():
       required=True)
   parser.add_argument(
       '--isolated-script-test-chartjson-output', type=str,
-      required=True)
+      required=False)
+  parser.add_argument(
+      '--isolated-script-test-perf-output', type=str,
+      required=False)
   parser.add_argument('--xvfb', help='Start xvfb.', action='store_true')
 
   args, rest_args = parser.parse_known_args()
@@ -88,6 +91,13 @@ def main():
       extra_flags = []
       if len(rest_args) > 1:
         extra_flags = rest_args[1:]
+
+      # These flags are to make sure that test output perf metrics in the log.
+      if not '--verbose' in extra_flags:
+        extra_flags.append('--verbose')
+      if not '--test-launcher-print-test-stdio=always' in extra_flags:
+        extra_flags.append('--test-launcher-print-test-stdio=always')
+
       if IsWindows():
         executable = '.\%s.exe' % executable
       else:
@@ -95,14 +105,19 @@ def main():
       with common.temporary_file() as tempfile_path:
         rc = common.run_command_with_output([executable] + extra_flags,
             env=env, stdoutfile=tempfile_path)
-
         # Now get the correct json format from the stdout to write to the
         # perf results file
         results_processor = (
             generate_legacy_perf_dashboard_json.LegacyResultsProcessor())
         charts = results_processor.GenerateJsonResults(tempfile_path)
+        # TODO(eakuefner): Make isolated_script_test_perf_output mandatory
+        # after flipping flag in swarming.
+        if args.isolated_script_test_perf_output:
+          filename = args.isolated_script_test_perf_output
+        else:
+          filename = args.isolated_script_test_chartjson_output
         # Write the returned encoded json to a the charts output file
-        with open(args.isolated_script_test_chartjson_output, 'w') as f:
+        with open(filename, 'w') as f:
           f.write(charts)
     except Exception:
       traceback.print_exc()

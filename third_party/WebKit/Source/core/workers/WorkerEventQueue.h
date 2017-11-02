@@ -27,7 +27,7 @@
 #ifndef WorkerEventQueue_h
 #define WorkerEventQueue_h
 
-#include "core/events/EventQueue.h"
+#include "core/dom/events/EventQueue.h"
 #include "platform/wtf/HashSet.h"
 
 namespace blink {
@@ -42,7 +42,7 @@ class WorkerEventQueue final : public EventQueue {
   DECLARE_TRACE();
 
   // EventQueue
-  bool EnqueueEvent(Event*) override;
+  bool EnqueueEvent(const WebTraceLocation&, Event*) override;
   bool CancelEvent(Event*) override;
   void Close() override;
 

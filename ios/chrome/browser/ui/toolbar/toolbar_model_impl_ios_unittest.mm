@@ -6,7 +6,6 @@
 
 #include <memory>
 
-#include "base/mac/scoped_nsobject.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,12 +14,13 @@
 #include "components/toolbar/test_toolbar_model.h"
 #include "ios/chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
+#import "ios/chrome/browser/ui/toolbar/test/toolbar_test_navigation_manager.h"
+#import "ios/chrome/browser/ui/toolbar/test/toolbar_test_web_state.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_model_delegate_ios.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_model_impl_ios.h"
 #include "ios/chrome/browser/web_state_list/fake_web_state_list_delegate.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
-#import "ios/chrome/browser/xcallback_parameters.h"
-#import "ios/shared/chrome/browser/ui/toolbar/toolbar_test_util.h"
+#import "ios/chrome/browser/web_state_list/web_state_opener.h"
 #import "ios/testing/ocmock_complex_type_helper.h"
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
@@ -31,6 +31,10 @@
 #include "third_party/ocmock/gtest_support.h"
 #include "third_party/ocmock/ocmock_extensions.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 
 static const char kWebUrl[] = "http://www.chromium.org";
@@ -39,6 +43,7 @@ static const char kNativeUrl[] = "chrome://version";
 class ToolbarModelImplIOSTest : public PlatformTest {
  protected:
   void SetUp() override {
+    PlatformTest::SetUp();
     TestChromeBrowserState::Builder test_cbs_builder;
     chrome_browser_state_ = test_cbs_builder.Build();
     chrome_browser_state_->CreateBookmarkModel(true);
@@ -53,8 +58,10 @@ class ToolbarModelImplIOSTest : public PlatformTest {
         base::MakeUnique<ToolbarTestWebState>();
     web_state->SetBrowserState(chrome_browser_state_.get());
     web_state_ = web_state.get();
-    web_state_list_->InsertWebState(0, std::move(web_state));
-    web_state_list_->ActivateWebStateAt(0);
+    web_state_list_->InsertWebState(
+        0, std::move(web_state),
+        WebStateList::INSERT_FORCE_INDEX | WebStateList::INSERT_ACTIVATE,
+        WebStateOpener());
 
     toolbarModelDelegate_.reset(
         new ToolbarModelDelegateIOS(web_state_list_.get()));

@@ -32,8 +32,6 @@
 #include "platform/wtf/ThreadingPrimitives.h"
 #include "platform/wtf/text/WTFString.h"
 
-using namespace WTF;
-
 namespace blink {
 
 class LineBreakIteratorPool final {
@@ -56,7 +54,7 @@ class LineBreakIteratorPool final {
     for (size_t i = 0; i < pool_.size(); ++i) {
       if (pool_[i].first == locale) {
         iterator = pool_[i].second;
-        pool_.erase(i);
+        pool_.EraseAt(i);
         break;
       }
     }
@@ -66,7 +64,7 @@ class LineBreakIteratorPool final {
       bool locale_is_empty = locale.IsEmpty();
       iterator = icu::BreakIterator::createLineInstance(
           locale_is_empty ? icu::Locale(CurrentTextBreakLocaleID())
-                          : icu::Locale(locale.Utf8().Data()),
+                          : icu::Locale(locale.Utf8().data()),
           open_status);
       // locale comes from a web page and it can be invalid, leading ICU
       // to fail, in which case we fall back to the default locale.
@@ -93,7 +91,7 @@ class LineBreakIteratorPool final {
 
     if (pool_.size() == kCapacity) {
       delete (pool_[0].second);
-      pool_.erase(0);
+      pool_.EraseAt(0);
     }
 
     pool_.push_back(Entry(vended_iterators_.Take(iterator), iterator));
@@ -836,12 +834,9 @@ static TextBreakIterator* SetUpIteratorWithRules(const char* break_rules,
   if (!iterator) {
     UParseError parse_status;
     UErrorCode open_status = U_ZERO_ERROR;
-    Vector<UChar> rules;
-    String(break_rules).AppendTo(rules);
-
+    // break_rules is ASCII. Pick the most efficient UnicodeString ctor.
     iterator = new icu::RuleBasedBreakIterator(
-        icu::UnicodeString(rules.Data(), rules.size()), parse_status,
-        open_status);
+        icu::UnicodeString(break_rules, -1, US_INV), parse_status, open_status);
     DCHECK(U_SUCCESS(open_status))
         << "ICU could not open a break iterator: " << u_errorName(open_status)
         << " (" << open_status << ")";

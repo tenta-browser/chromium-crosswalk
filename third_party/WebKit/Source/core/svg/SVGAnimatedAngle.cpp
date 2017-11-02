@@ -30,7 +30,7 @@
 
 #include "core/svg/SVGAnimatedAngle.h"
 
-#include "core/SVGNames.h"
+#include "core/svg_names.h"
 
 namespace blink {
 
@@ -51,7 +51,8 @@ DEFINE_TRACE(SVGAnimatedAngle) {
 }
 
 DEFINE_TRACE_WRAPPERS(SVGAnimatedAngle) {
-  visitor->TraceWrappers(contextElement());
+  SVGAnimatedProperty<SVGAngle>::TraceWrappers(visitor);
+  ScriptWrappable::TraceWrappers(visitor);
 }
 
 bool SVGAnimatedAngle::NeedsSynchronizeAttribute() {

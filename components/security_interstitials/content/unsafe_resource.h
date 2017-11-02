@@ -10,8 +10,8 @@
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
-#include "components/safe_browsing_db/hit_report.h"
-#include "components/safe_browsing_db/util.h"
+#include "components/safe_browsing/db/hit_report.h"
+#include "components/safe_browsing/db/util.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -67,6 +67,9 @@ struct UnsafeResource {
   scoped_refptr<base::SingleThreadTaskRunner> callback_thread;
   base::Callback<content::WebContents*(void)> web_contents_getter;
   safe_browsing::ThreatSource threat_source;
+  // |token| field is only set if |threat_type| is
+  // SB_THREAT_TYPE_PASSWORD_REUSE.
+  std::string token;
 };
 
 }  // security_interstitials

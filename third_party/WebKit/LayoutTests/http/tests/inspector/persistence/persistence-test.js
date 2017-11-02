@@ -27,29 +27,18 @@ InspectorTest.waitForBinding = function(fileName)
         if (uiSourceCode.name() === fileName)
             return Promise.resolve(binding);
     }
-    var fulfill;
-    var promise = new Promise(x => fulfill = x);
-    Persistence.persistence.addEventListener(Persistence.Persistence.Events.BindingCreated, onBindingCreated);
-    return promise;
-
-    function onBindingCreated(event)
-    {
-        var binding = event.data;
-        if (binding.network.name() !== fileName && binding.fileSystem.name() !== fileName)
-            return;
-        Persistence.persistence.removeEventListener(Persistence.Persistence.Events.BindingCreated, onBindingCreated);
-        fulfill(binding);
-    }
+    return InspectorTest.waitForEvent(Persistence.Persistence.Events.BindingCreated, Persistence.persistence,
+        binding => binding.network.name() === fileName || binding.fileSystem.name() === fileName);
 }
 
 InspectorTest.addFooJSFile = function(fs)
 {
-    return fs.root.mkdir("inspector").mkdir("persistence").mkdir("resources").addFile("foo.js", "\n\nwindow.foo = ()=>'foo';");
+    return fs.root.mkdir("devtools").mkdir("persistence").mkdir("resources").addFile("foo.js", "\n\nwindow.foo = ()=>'foo';");
 }
 
 InspectorTest.forceUseDefaultMapping = function() {
     Persistence.persistence._setMappingForTest((bindingCreated, bindingRemoved) => {
-        return new Persistence.DefaultMapping(Workspace.workspace, Workspace.fileSystemMapping, bindingCreated, bindingRemoved);
+        return new Persistence.DefaultMapping(Workspace.workspace, Persistence.fileSystemMapping, bindingCreated, bindingRemoved);
     });
 }
 

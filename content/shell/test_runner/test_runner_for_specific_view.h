@@ -167,9 +167,6 @@ class TestRunnerForSpecificView {
   // Changes the direction of the focused element.
   void SetTextDirection(const std::string& direction_name);
 
-  // Dump current PageImportanceSignals for the page.
-  void DumpPageImportanceSignals();
-
   // Permits the adding and removing of only one opaque overlay.
   void AddWebPageOverlay();
   void RemoveWebPageOverlay();
@@ -214,6 +211,11 @@ class TestRunnerForSpecificView {
                   const std::vector<std::string>& options_array);
   std::string SelectionAsMarkup();
   void SetViewSourceForFrame(const std::string& name, bool enabled);
+
+  // Many parts of the layout test harness assume that the main frame is local.
+  // Having all of them go through the helper below makes it easier to catch
+  // scenarios that require breaking this assumption.
+  blink::WebLocalFrame* GetLocalMainFrame();
 
   // Helpers for accessing pointers exposed by |web_view_test_proxy_base_|.
   blink::WebView* web_view();

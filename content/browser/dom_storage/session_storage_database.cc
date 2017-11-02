@@ -18,6 +18,7 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "third_party/leveldatabase/env_chromium.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
 #include "third_party/leveldatabase/src/include/leveldb/iterator.h"
 #include "third_party/leveldatabase/src/include/leveldb/options.h"
@@ -89,7 +90,7 @@ class SessionStorageDatabase::DBOperation {
       // No other operations are ongoing and the data is bad -> delete it now.
       session_storage_database_->db_.reset();
       leveldb::DestroyDB(session_storage_database_->file_path_.AsUTF8Unsafe(),
-                         leveldb::Options());
+                         leveldb_env::Options());
       session_storage_database_->invalid_db_deleted_ = true;
     }
   }
@@ -110,9 +111,11 @@ SessionStorageDatabase::SessionStorageDatabase(const base::FilePath& file_path)
 SessionStorageDatabase::~SessionStorageDatabase() {
 }
 
-void SessionStorageDatabase::ReadAreaValues(const std::string& namespace_id,
-                                            const GURL& origin,
-                                            DOMStorageValuesMap* result) {
+void SessionStorageDatabase::ReadAreaValues(
+    const std::string& namespace_id,
+    const std::vector<std::string>& original_permanent_namespace_ids,
+    const GURL& origin,
+    DOMStorageValuesMap* result) {
   // We don't create a database if it doesn't exist. In that case, there is
   // nothing to be added to the result.
   if (!LazyOpen(false))
@@ -131,6 +134,26 @@ void SessionStorageDatabase::ReadAreaValues(const std::string& namespace_id,
   if (GetMapForArea(namespace_id, origin.spec(), options, &exists, &map_id) &&
       exists)
     ReadMap(map_id, options, result, false);
+
+  if (exists) {
+    db_->ReleaseSnapshot(options.snapshot);
+    return;
+  }
+
+  // If the area does not exist, |namespace_id| might refer to a clone that
+  // is not yet created. Reading from the original database is expected to be
+  // consistent because tasks posted on commit sequence after clone did not
+  // run before capturing the snapshot.
+  for (const auto& original_db_id : original_permanent_namespace_ids) {
+    map_id.clear();
+    if (GetMapForArea(original_db_id, origin.spec(), options, &exists,
+                      &map_id) &&
+        exists) {
+      ReadMap(map_id, options, result, false);
+    }
+    if (exists)
+      break;
+  }
   db_->ReleaseSnapshot(options.snapshot);
 }
 
@@ -187,7 +210,8 @@ bool SessionStorageDatabase::CommitAreaChanges(
 }
 
 bool SessionStorageDatabase::CloneNamespace(
-    const std::string& namespace_id, const std::string& new_namespace_id) {
+    const std::string& namespace_id,
+    const std::string& new_namespace_id) {
   // Go through all origins in the namespace |namespace_id|, create placeholders
   // for them in |new_namespace_id|, and associate them with the existing maps.
 
@@ -352,17 +376,17 @@ void SessionStorageDatabase::OnMemoryDump(
   DCHECK(res);
 
   auto* mad = pmd->CreateAllocatorDump(
-      base::StringPrintf("dom_storage/session_storage_0x%" PRIXPTR,
+      base::StringPrintf("site_storage/session_storage_0x%" PRIXPTR,
                          reinterpret_cast<uintptr_t>(this)));
   mad->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
                  base::trace_event::MemoryAllocatorDump::kUnitsBytes, size);
 
-  // Memory is allocated from system allocator (malloc).
-  const char* system_allocator_name =
-      base::trace_event::MemoryDumpManager::GetInstance()
-          ->system_allocator_pool_name();
-  if (system_allocator_name)
-    pmd->AddSuballocation(mad->guid(), system_allocator_name);
+  // All leveldb databases are already dumped by leveldb_env::DBTracker. Add
+  // an edge to avoid double counting.
+  auto* tracker_dump =
+      leveldb_env::DBTracker::GetOrCreateAllocatorDump(pmd, db_.get());
+  if (tracker_dump)
+    pmd->AddOwnershipEdge(mad->guid(), tracker_dump->guid());
 }
 
 bool SessionStorageDatabase::LazyOpen(bool create_if_needed) {
@@ -383,16 +407,14 @@ bool SessionStorageDatabase::LazyOpen(bool create_if_needed) {
     return false;
   }
 
-  leveldb::DB* db;
-  leveldb::Status s = TryToOpen(&db);
+  leveldb::Status s = TryToOpen(&db_);
   if (!s.ok()) {
     LOG(WARNING) << "Failed to open leveldb in " << file_path_.value()
                  << ", error: " << s.ToString();
-    DCHECK(db == NULL);
 
     // Clear the directory and try again.
     base::DeleteFile(file_path_, true);
-    s = TryToOpen(&db);
+    s = TryToOpen(&db_);
     if (!s.ok()) {
       LOG(WARNING) << "Failed to open leveldb in " << file_path_.value()
                    << ", error: " << s.ToString();
@@ -420,7 +442,6 @@ bool SessionStorageDatabase::LazyOpen(bool create_if_needed) {
         NOTREACHED();
       }
 
-      DCHECK(db == NULL);
       db_error_ = true;
       return false;
     }
@@ -432,22 +453,22 @@ bool SessionStorageDatabase::LazyOpen(bool create_if_needed) {
                               SESSION_STORAGE_UMA_SUCCESS,
                               SESSION_STORAGE_UMA_MAX);
   }
-  db_.reset(db);
   return true;
 }
 
-leveldb::Status SessionStorageDatabase::TryToOpen(leveldb::DB** db) {
-  leveldb::Options options;
+leveldb::Status SessionStorageDatabase::TryToOpen(
+    std::unique_ptr<leveldb::DB>* db) {
+  leveldb_env::Options options;
   // The directory exists but a valid leveldb database might not exist inside it
   // (e.g., a subset of the needed files might be missing). Handle this
   // situation gracefully by creating the database now.
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   // Default write_buffer_size is 4 MB but that might leave a 3.999
   // memory allocation in RAM from a log file recovery.
   options.write_buffer_size = 64 * 1024;
-  return leveldb::DB::Open(options, file_path_.AsUTF8Unsafe(), db);
+  options.block_cache = leveldb_chrome::GetSharedWebBlockCache();
+  return leveldb_env::OpenDB(options, file_path_.AsUTF8Unsafe(), db);
 }
 
 bool SessionStorageDatabase::IsOpen() const {

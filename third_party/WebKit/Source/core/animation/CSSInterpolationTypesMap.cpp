@@ -10,8 +10,10 @@
 #include "core/animation/CSSBorderImageLengthBoxInterpolationType.h"
 #include "core/animation/CSSClipInterpolationType.h"
 #include "core/animation/CSSColorInterpolationType.h"
+#include "core/animation/CSSDefaultInterpolationType.h"
 #include "core/animation/CSSFilterListInterpolationType.h"
 #include "core/animation/CSSFontSizeInterpolationType.h"
+#include "core/animation/CSSFontVariationSettingsInterpolationType.h"
 #include "core/animation/CSSFontWeightInterpolationType.h"
 #include "core/animation/CSSImageInterpolationType.h"
 #include "core/animation/CSSImageListInterpolationType.h"
@@ -25,6 +27,7 @@
 #include "core/animation/CSSPathInterpolationType.h"
 #include "core/animation/CSSPositionAxisListInterpolationType.h"
 #include "core/animation/CSSPositionInterpolationType.h"
+#include "core/animation/CSSResolutionInterpolationType.h"
 #include "core/animation/CSSRotateInterpolationType.h"
 #include "core/animation/CSSScaleInterpolationType.h"
 #include "core/animation/CSSShadowListInterpolationType.h"
@@ -34,11 +37,11 @@
 #include "core/animation/CSSTransformInterpolationType.h"
 #include "core/animation/CSSTransformOriginInterpolationType.h"
 #include "core/animation/CSSTranslateInterpolationType.h"
-#include "core/animation/CSSValueInterpolationType.h"
+#include "core/animation/CSSVarCycleInterpolationType.h"
 #include "core/animation/CSSVisibilityInterpolationType.h"
-#include "core/css/CSSPropertyMetadata.h"
 #include "core/css/CSSSyntaxDescriptor.h"
 #include "core/css/PropertyRegistry.h"
+#include "core/css/properties/CSSPropertyAPI.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -58,7 +61,7 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
   using ApplicableTypesMap =
       HashMap<PropertyHandle, std::unique_ptr<const InterpolationTypes>>;
   DEFINE_STATIC_LOCAL(ApplicableTypesMap, applicable_types_map, ());
-  auto entry = applicable_types_map.Find(property);
+  auto entry = applicable_types_map.find(property);
   bool found_entry = entry != applicable_types_map.end();
 
   // Custom property interpolation types may change over time so don't trust the
@@ -216,6 +219,11 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
       applicable_types->push_back(
           WTF::MakeUnique<CSSFontWeightInterpolationType>(used_property));
       break;
+    case CSSPropertyFontVariationSettings:
+      applicable_types->push_back(
+          WTF::MakeUnique<CSSFontVariationSettingsInterpolationType>(
+              used_property));
+      break;
     case CSSPropertyVisibility:
       applicable_types->push_back(
           WTF::MakeUnique<CSSVisibilityInterpolationType>(used_property));
@@ -224,7 +232,6 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
       applicable_types->push_back(
           WTF::MakeUnique<CSSClipInterpolationType>(used_property));
       break;
-    case CSSPropertyOffsetRotation:
     case CSSPropertyOffsetRotate:
       applicable_types->push_back(
           WTF::MakeUnique<CSSOffsetRotateInterpolationType>(used_property));
@@ -310,12 +317,12 @@ const InterpolationTypes& CSSInterpolationTypesMap::Get(
       DCHECK_EQ(GetRegistration(registry_.Get(), property), nullptr);
       break;
     default:
-      DCHECK(!CSSPropertyMetadata::IsInterpolableProperty(css_property));
+      DCHECK(!CSSPropertyAPI::Get(css_property).IsInterpolable());
       break;
   }
 
   applicable_types->push_back(
-      WTF::MakeUnique<CSSValueInterpolationType>(used_property));
+      WTF::MakeUnique<CSSDefaultInterpolationType>(used_property));
 
   auto add_result =
       applicable_types_map.insert(property, std::move(applicable_types));
@@ -329,12 +336,18 @@ size_t CSSInterpolationTypesMap::Version() const {
   return registry_ ? registry_->RegistrationCount() : 0;
 }
 
-CSSInterpolationTypes
-CSSInterpolationTypesMap::CreateCSSInterpolationTypesForSyntax(
+InterpolationTypes
+CSSInterpolationTypesMap::CreateInterpolationTypesForCSSSyntax(
     const AtomicString& property_name,
-    const CSSSyntaxDescriptor& descriptor) {
+    const CSSSyntaxDescriptor& descriptor,
+    const PropertyRegistration& registration) {
   PropertyHandle property(property_name);
-  CSSInterpolationTypes result;
+  InterpolationTypes result;
+
+  // All custom properties may encounter var() dependency cycles.
+  result.push_back(
+      WTF::MakeUnique<CSSVarCycleInterpolationType>(property, registration));
+
   for (const CSSSyntaxComponent& component : descriptor.Components()) {
     if (component.repeatable_) {
       // TODO(alancutter): Support animation of repeatable types.
@@ -343,40 +356,54 @@ CSSInterpolationTypesMap::CreateCSSInterpolationTypesForSyntax(
 
     switch (component.type_) {
       case CSSSyntaxType::kAngle:
-        result.push_back(WTF::MakeUnique<CSSAngleInterpolationType>(property));
+        result.push_back(WTF::MakeUnique<CSSAngleInterpolationType>(
+            property, &registration));
         break;
       case CSSSyntaxType::kColor:
-        result.push_back(WTF::MakeUnique<CSSColorInterpolationType>(property));
+        result.push_back(WTF::MakeUnique<CSSColorInterpolationType>(
+            property, &registration));
         break;
       case CSSSyntaxType::kLength:
       case CSSSyntaxType::kLengthPercentage:
       case CSSSyntaxType::kPercentage:
-        result.push_back(WTF::MakeUnique<CSSLengthInterpolationType>(property));
+        result.push_back(WTF::MakeUnique<CSSLengthInterpolationType>(
+            property, &registration));
         break;
       case CSSSyntaxType::kNumber:
-        result.push_back(WTF::MakeUnique<CSSNumberInterpolationType>(property));
+        result.push_back(WTF::MakeUnique<CSSNumberInterpolationType>(
+            property, &registration));
+        break;
+      case CSSSyntaxType::kResolution:
+        result.push_back(WTF::MakeUnique<CSSResolutionInterpolationType>(
+            property, &registration));
         break;
       case CSSSyntaxType::kTime:
-        result.push_back(WTF::MakeUnique<CSSTimeInterpolationType>(property));
+        result.push_back(
+            WTF::MakeUnique<CSSTimeInterpolationType>(property, &registration));
         break;
       case CSSSyntaxType::kImage:
-      case CSSSyntaxType::kUrl:
+        result.push_back(WTF::MakeUnique<CSSImageInterpolationType>(
+            property, &registration));
+        break;
       case CSSSyntaxType::kInteger:
-      case CSSSyntaxType::kResolution:
-      case CSSSyntaxType::kTransformFunction:
+        result.push_back(WTF::MakeUnique<CSSNumberInterpolationType>(
+            property, &registration, true));
+      case CSSSyntaxType::kTransformList:
         // TODO(alancutter): Support smooth interpolation of these types.
         break;
-      case CSSSyntaxType::kTokenStream:
-      case CSSSyntaxType::kIdent:
       case CSSSyntaxType::kCustomIdent:
-        // Uses the CSSValueInterpolationType added below.
+      case CSSSyntaxType::kIdent:
+      case CSSSyntaxType::kTokenStream:
+      case CSSSyntaxType::kUrl:
+        // No interpolation behaviour defined, uses the
+        // CSSDefaultInterpolationType added below.
         break;
       default:
         NOTREACHED();
         break;
     }
   }
-  result.push_back(WTF::MakeUnique<CSSValueInterpolationType>(property));
+  result.push_back(WTF::MakeUnique<CSSDefaultInterpolationType>(property));
   return result;
 }
 

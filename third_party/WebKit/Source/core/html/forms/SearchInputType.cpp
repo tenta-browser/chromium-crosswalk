@@ -31,14 +31,15 @@
 #include "core/html/forms/SearchInputType.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
-#include "core/InputTypeNames.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/TaskRunnerHelper.h"
-#include "core/dom/shadow/ShadowRoot.h"
 #include "core/events/KeyboardEvent.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/frame/WebFeature.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/forms/TextControlInnerElements.h"
 #include "core/html/shadow/ShadowElementNames.h"
+#include "core/html_names.h"
+#include "core/input_type_names.h"
 #include "core/layout/LayoutSearchField.h"
 
 namespace blink {
@@ -57,7 +58,7 @@ InputType* SearchInputType::Create(HTMLInputElement& element) {
 }
 
 void SearchInputType::CountUsage() {
-  CountUsageIfVisible(UseCounter::kInputTypeSearch);
+  CountUsageIfVisible(WebFeature::kInputTypeSearch);
 }
 
 LayoutObject* SearchInputType::CreateLayoutObject(const ComputedStyle&) const {
@@ -75,7 +76,7 @@ bool SearchInputType::NeedsContainer() const {
 void SearchInputType::CreateShadowSubtree() {
   TextFieldInputType::CreateShadowSubtree();
   Element* container = ContainerElement();
-  Element* view_port = GetElement().UserAgentShadowRoot()->GetElementById(
+  Element* view_port = GetElement().UserAgentShadowRoot()->getElementById(
       ShadowElementNames::EditingViewPort());
   DCHECK(container);
   DCHECK(view_port);
@@ -153,7 +154,7 @@ const AtomicString& SearchInputType::DefaultAutocapitalize() const {
 }
 
 void SearchInputType::UpdateCancelButtonVisibility() {
-  Element* button = GetElement().UserAgentShadowRoot()->GetElementById(
+  Element* button = GetElement().UserAgentShadowRoot()->getElementById(
       ShadowElementNames::SearchClearButton());
   if (!button)
     return;

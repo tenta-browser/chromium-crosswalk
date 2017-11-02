@@ -33,13 +33,17 @@ class FakeModelTypeChangeProcessor : public ModelTypeChangeProcessor {
            MetadataChangeList* metadata_change_list) override;
   void Delete(const std::string& client_tag,
               MetadataChangeList* metadata_change_list) override;
+  void UpdateStorageKey(const EntityData& entity_data,
+                        const std::string& storage_key,
+                        MetadataChangeList* metadata_change_list) override;
+  void UntrackEntity(const EntityData& entity_data) override;
   void ModelReadyToSync(std::unique_ptr<MetadataBatch> batch) override;
   void OnSyncStarting(const ModelErrorHandler& error_handler,
                       const StartCallback& callback) override;
   void DisableSync() override;
   bool IsTrackingMetadata() override;
   void ReportError(const ModelError& error) override;
-  void ReportError(const tracked_objects::Location& location,
+  void ReportError(const base::Location& location,
                    const std::string& message) override;
 
   // Indicates that ReportError should be called in the future.

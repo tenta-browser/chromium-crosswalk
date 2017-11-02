@@ -10,7 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 
-import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
@@ -40,7 +39,7 @@ public final class ChildAccountInfoFetcher {
             long nativeAccountFetcherService, String accountId, String accountName) {
         mNativeAccountFetcherService = nativeAccountFetcherService;
         mAccountId = accountId;
-        mAccount = AccountManagerHelper.createAccountFromName(accountName);
+        mAccount = AccountManagerFacade.createAccountFromName(accountName);
 
         // Register for notifications about flag changes in the future.
         mAccountFlagsChangedReceiver = new BroadcastReceiver() {
@@ -70,12 +69,8 @@ public final class ChildAccountInfoFetcher {
 
     private void fetch() {
         Log.d(TAG, "Checking child account status for %s", mAccount.name);
-        AccountManagerHelper.get().checkChildAccount(mAccount, new Callback<Boolean>() {
-            @Override
-            public void onResult(Boolean isChildAccount) {
-                setIsChildAccount(isChildAccount);
-            }
-        });
+        AccountManagerFacade.get().checkChildAccount(
+                mAccount, isChildAccount -> setIsChildAccount(isChildAccount));
     }
 
     @CalledByNative
@@ -87,6 +82,12 @@ public final class ChildAccountInfoFetcher {
         Log.d(TAG, "Setting child account status for %s to %s", mAccount.name,
                 Boolean.toString(isChildAccount));
         nativeSetIsChildAccount(mNativeAccountFetcherService, mAccountId, isChildAccount);
+    }
+
+    @CalledByNative
+    private static void initializeForTests() {
+        AccountManagerDelegate delegate = new SystemAccountManagerDelegate();
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(delegate);
     }
 
     private static native void nativeSetIsChildAccount(

@@ -21,11 +21,11 @@
 
 #include "core/svg/SVGFilterPrimitiveStandardAttributes.h"
 
-#include "core/SVGNames.h"
 #include "core/layout/svg/LayoutSVGResourceContainer.h"
 #include "core/layout/svg/LayoutSVGResourceFilterPrimitive.h"
 #include "core/svg/SVGLength.h"
 #include "core/svg/graphics/filters/SVGFilterBuilder.h"
+#include "core/svg_names.h"
 #include "platform/graphics/filters/Filter.h"
 #include "platform/graphics/filters/FilterEffect.h"
 
@@ -83,11 +83,11 @@ bool SVGFilterPrimitiveStandardAttributes::SetFilterEffectAttribute(
   DCHECK(GetLayoutObject());
   EColorInterpolation color_interpolation =
       GetLayoutObject()->StyleRef().SvgStyle().ColorInterpolationFilters();
-  ColorSpace resolved_color_space =
-      SVGFilterBuilder::ResolveColorSpace(color_interpolation);
-  if (resolved_color_space == effect->OperatingColorSpace())
+  InterpolationSpace resolved_interpolation_space =
+      SVGFilterBuilder::ResolveInterpolationSpace(color_interpolation);
+  if (resolved_interpolation_space == effect->OperatingInterpolationSpace())
     return false;
-  effect->SetOperatingColorSpace(resolved_color_space);
+  effect->SetOperatingInterpolationSpace(resolved_interpolation_space);
   return true;
 }
 
@@ -168,7 +168,7 @@ LayoutObject* SVGFilterPrimitiveStandardAttributes::CreateLayoutObject(
 
 bool SVGFilterPrimitiveStandardAttributes::LayoutObjectIsNeeded(
     const ComputedStyle& style) {
-  if (isSVGFilterElement(parentNode()))
+  if (IsSVGFilterElement(parentNode()))
     return SVGElement::LayoutObjectIsNeeded(style);
 
   return false;

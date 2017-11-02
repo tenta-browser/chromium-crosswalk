@@ -26,11 +26,13 @@
 #include "bindings/core/v8/V8ScriptRunner.h"
 
 #include "bindings/core/v8/BindingSecurity.h"
+#include "bindings/core/v8/ReferrerScriptInfo.h"
 #include "bindings/core/v8/ScriptSourceCode.h"
 #include "bindings/core/v8/ScriptStreamer.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8GCController.h"
-#include "bindings/core/v8/V8ThrowException.h"
+#include "bindings/core/v8/V8Initializer.h"
+#include "build/build_config.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/frame/LocalDOMWindow.h"
@@ -41,12 +43,15 @@
 #include "core/probe/CoreProbes.h"
 #include "platform/Histogram.h"
 #include "platform/ScriptForbiddenScope.h"
+#include "platform/bindings/V8ThrowException.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/loader/fetch/CachedMetadata.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/CurrentTime.h"
 #include "public/platform/Platform.h"
+#include "public/web/WebSettings.h"
 
-#if OS(WIN)
+#if defined(OS_WIN)
 #include <malloc.h>
 #else
 #include <alloca.h>
@@ -82,24 +87,21 @@ V8CompileHistogram::~V8CompileHistogram() {
     case kCacheable: {
       DEFINE_THREAD_SAFE_STATIC_LOCAL(
           CustomCountHistogram, compile_cacheable_histogram,
-          new CustomCountHistogram("V8.CompileCacheableMicroSeconds", 0,
-                                   1000000, 50));
+          ("V8.CompileCacheableMicroSeconds", 0, 1000000, 50));
       compile_cacheable_histogram.Count(elapsed_micro_seconds);
       break;
     }
     case kNoncacheable: {
       DEFINE_THREAD_SAFE_STATIC_LOCAL(
           CustomCountHistogram, compile_non_cacheable_histogram,
-          new CustomCountHistogram("V8.CompileNoncacheableMicroSeconds", 0,
-                                   1000000, 50));
+          ("V8.CompileNoncacheableMicroSeconds", 0, 1000000, 50));
       compile_non_cacheable_histogram.Count(elapsed_micro_seconds);
       break;
     }
     case kInlineScript: {
       DEFINE_THREAD_SAFE_STATIC_LOCAL(
           CustomCountHistogram, compile_inline_histogram,
-          new CustomCountHistogram("V8.CompileInlineScriptMicroSeconds", 0,
-                                   1000000, 50));
+          ("V8.CompileInlineScriptMicroSeconds", 0, 1000000, 50));
       compile_inline_histogram.Count(elapsed_micro_seconds);
       break;
     }
@@ -154,7 +156,7 @@ v8::MaybeLocal<v8::Script> CompileWithoutOptions(
 // Compile a script, and consume a V8 cache that was generated previously.
 static v8::MaybeLocal<v8::Script> CompileAndConsumeCache(
     CachedMetadataHandler* cache_handler,
-    PassRefPtr<CachedMetadata> cached_metadata,
+    RefPtr<CachedMetadata> cached_metadata,
     v8::ScriptCompiler::CompileOptions compile_options,
     v8::Isolate* isolate,
     v8::Local<v8::String> code,
@@ -194,9 +196,9 @@ v8::MaybeLocal<v8::Script> CompileAndProduceCache(
     if (length > 1024) {
       // Omit histogram samples for small cache data to avoid outliers.
       int cache_size_ratio = static_cast<int>(100.0 * length / code->Length());
-      DEFINE_THREAD_SAFE_STATIC_LOCAL(
-          CustomCountHistogram, code_cache_size_histogram,
-          new CustomCountHistogram("V8.CodeCacheSizeRatio", 0, 10000, 50));
+      DEFINE_THREAD_SAFE_STATIC_LOCAL(CustomCountHistogram,
+                                      code_cache_size_histogram,
+                                      ("V8.CodeCacheSizeRatio", 0, 10000, 50));
       code_cache_size_histogram.Count(cache_size_ratio);
     }
     cache_handler->ClearCachedMetadata(CachedMetadataHandler::kCacheLocally);
@@ -217,7 +219,7 @@ v8::MaybeLocal<v8::Script> CompileAndConsumeOrProduce(
     v8::Local<v8::String> code,
     v8::ScriptOrigin origin) {
   RefPtr<CachedMetadata> code_cache(cache_handler->GetCachedMetadata(tag));
-  return code_cache.Get()
+  return code_cache.get()
              ? CompileAndConsumeCache(cache_handler, code_cache,
                                       consume_options, isolate, code, origin)
              : CompileAndProduceCache(cache_handler, tag, produce_options,
@@ -260,7 +262,7 @@ bool IsResourceHotForCaching(CachedMetadataHandler* cache_handler,
     return false;
   double time_stamp;
   const int size = sizeof(time_stamp);
-  ASSERT(cached_metadata->size() == size);
+  DCHECK_EQ(cached_metadata->size(), static_cast<unsigned long>(size));
   memcpy(&time_stamp, cached_metadata->Data(), size);
   return (WTF::CurrentTime() - time_stamp) < cache_within_seconds;
 }
@@ -309,7 +311,7 @@ v8::MaybeLocal<v8::Script> PostStreamCompile(
 
     case kV8CacheOptionsAlways:
       // Currently V8CacheOptionsAlways doesn't support streaming.
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
     case kV8CacheOptionsNone:
       break;
   }
@@ -321,23 +323,12 @@ typedef Function<v8::MaybeLocal<v8::Script>(v8::Isolate*,
                                             v8::ScriptOrigin)>
     CompileFn;
 
-// A notation convenience: WTF::bind<...> needs to be given the right argument
-// types. We have an awful lot of bind calls below, all with the same types, so
-// this local bind lets WTF::bind to all the work, but 'knows' the right
-// parameter types.
-// This version isn't quite as smart as the real WTF::bind, though, so you
-// sometimes may still have to call the original.
-template <typename... A>
-std::unique_ptr<CompileFn> Bind(const A&... args) {
-  return WTF::Bind(args...);
-}
-
 // Select a compile function from any of the above, mainly depending on
 // cacheOptions.
-static std::unique_ptr<CompileFn> SelectCompileFunction(
+static CompileFn SelectCompileFunction(
     V8CacheOptions cache_options,
     CachedMetadataHandler* cache_handler,
-    PassRefPtr<CachedMetadata> code_cache,
+    RefPtr<CachedMetadata> code_cache,
     v8::Local<v8::String> code,
     V8CompileHistogram::Cacheability cacheability_if_no_handler) {
   static const int kMinimalCodeLength = 1024;
@@ -345,25 +336,26 @@ static std::unique_ptr<CompileFn> SelectCompileFunction(
 
   // Caching is not available in this case.
   if (!cache_handler)
-    return Bind(CompileWithoutOptions, cacheability_if_no_handler);
+    return WTF::Bind(CompileWithoutOptions, cacheability_if_no_handler);
 
   if (cache_options == kV8CacheOptionsNone)
-    return Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
+    return WTF::Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
 
   // Caching is not worthwhile for small scripts.  Do not use caching
   // unless explicitly expected, indicated by the cache option.
   if (code->Length() < kMinimalCodeLength)
-    return Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
+    return WTF::Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
 
   // The cacheOptions will guide our strategy:
   switch (cache_options) {
     case kV8CacheOptionsParse:
       // Use parser-cache; in-memory only.
-      return Bind(CompileAndConsumeOrProduce, WrapPersistent(cache_handler),
-                  CacheTag(kCacheTagParser, cache_handler),
-                  v8::ScriptCompiler::kConsumeParserCache,
-                  v8::ScriptCompiler::kProduceParserCache,
-                  CachedMetadataHandler::kCacheLocally);
+      return WTF::Bind(CompileAndConsumeOrProduce,
+                       WrapPersistent(cache_handler),
+                       CacheTag(kCacheTagParser, cache_handler),
+                       v8::ScriptCompiler::kConsumeParserCache,
+                       v8::ScriptCompiler::kProduceParserCache,
+                       CachedMetadataHandler::kCacheLocally);
       break;
 
     case kV8CacheOptionsDefault:
@@ -371,44 +363,46 @@ static std::unique_ptr<CompileFn> SelectCompileFunction(
     case kV8CacheOptionsAlways: {
       // Use code caching for recently seen resources.
       // Use compression depending on the cache option.
-      if (code_cache)
-        return Bind(CompileAndConsumeCache, WrapPersistent(cache_handler),
-                    code_cache, v8::ScriptCompiler::kConsumeCodeCache);
+      if (code_cache) {
+        return WTF::Bind(CompileAndConsumeCache, WrapPersistent(cache_handler),
+                         std::move(code_cache),
+                         v8::ScriptCompiler::kConsumeCodeCache);
+      }
       if (cache_options != kV8CacheOptionsAlways &&
           !IsResourceHotForCaching(cache_handler, kHotHours)) {
         V8ScriptRunner::SetCacheTimeStamp(cache_handler);
-        return Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
+        return WTF::Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
       }
       uint32_t code_cache_tag = CacheTag(kCacheTagCode, cache_handler);
-      return Bind(CompileAndProduceCache, WrapPersistent(cache_handler),
-                  code_cache_tag, v8::ScriptCompiler::kProduceCodeCache,
-                  CachedMetadataHandler::kSendToPlatform);
+      return WTF::Bind(CompileAndProduceCache, WrapPersistent(cache_handler),
+                       code_cache_tag, v8::ScriptCompiler::kProduceCodeCache,
+                       CachedMetadataHandler::kSendToPlatform);
       break;
     }
 
     case kV8CacheOptionsNone:
       // Shouldn't happen, as this is handled above.
       // Case is here so that compiler can check all cases are handled.
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       break;
   }
 
   // All switch branches should return and we should never get here.
   // But some compilers aren't sure, hence this default.
-  ASSERT_NOT_REACHED();
-  return Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
+  NOTREACHED();
+  return WTF::Bind(CompileWithoutOptions, V8CompileHistogram::kCacheable);
 }
 
 // Select a compile function for a streaming compile.
-std::unique_ptr<CompileFn> SelectCompileFunction(V8CacheOptions cache_options,
-                                                 ScriptResource* resource,
-                                                 ScriptStreamer* streamer) {
+CompileFn SelectCompileFunction(V8CacheOptions cache_options,
+                                ScriptResource* resource,
+                                ScriptStreamer* streamer) {
   // We don't stream scripts which don't have a Resource.
-  ASSERT(resource);
+  DCHECK(resource);
   // Failed resources should never get this far.
-  ASSERT(!resource->ErrorOccurred());
-  ASSERT(streamer->IsFinished());
-  ASSERT(!streamer->StreamingSuppressed());
+  DCHECK(!resource->ErrorOccurred());
+  DCHECK(streamer->IsFinished());
+  DCHECK(!streamer->StreamingSuppressed());
   return WTF::Bind(PostStreamCompile, cache_options,
                    WrapPersistent(resource->CacheHandler()),
                    WrapPersistent(streamer));
@@ -416,68 +410,88 @@ std::unique_ptr<CompileFn> SelectCompileFunction(V8CacheOptions cache_options,
 }  // namespace
 
 v8::MaybeLocal<v8::Script> V8ScriptRunner::CompileScript(
+    ScriptState* script_state,
     const ScriptSourceCode& source,
-    v8::Isolate* isolate,
     AccessControlStatus access_control_status,
     V8CacheOptions cache_options) {
+  v8::Isolate* isolate = script_state->GetIsolate();
   if (source.Source().length() >= v8::String::kMaxLength) {
     V8ThrowException::ThrowError(isolate, "Source file too large.");
     return v8::Local<v8::Script>();
   }
+  // https://html.spec.whatwg.org/multipage/webappapis.html#default-classic-script-fetch-options
+  // The "default classic fetch options" credentials mode is "omit".
+  // TODO(kouhei): Follow html spec proposal to allow different credentials
+  // mode. https://github.com/whatwg/html/pull/3044
+  const ReferrerScriptInfo referrer_info(
+      WebURLRequest::kFetchCredentialsModeOmit, source.Nonce(),
+      source.ParserState());
   return CompileScript(
-      V8String(isolate, source.Source()), source.Url(), source.SourceMapUrl(),
-      source.StartPosition(), isolate, source.GetResource(), source.Streamer(),
+      script_state, V8String(isolate, source.Source()), source.Url(),
+      source.SourceMapUrl(), source.StartPosition(), source.GetResource(),
+      source.Streamer(),
       source.GetResource() ? source.GetResource()->CacheHandler() : nullptr,
-      access_control_status, cache_options);
+      access_control_status, cache_options, referrer_info);
 }
 
 v8::MaybeLocal<v8::Script> V8ScriptRunner::CompileScript(
+    ScriptState* script_state,
     const String& code,
     const String& file_name,
     const String& source_map_url,
     const TextPosition& text_position,
-    v8::Isolate* isolate,
     CachedMetadataHandler* cache_metadata_handler,
     AccessControlStatus access_control_status,
-    V8CacheOptions v8_cache_options) {
+    V8CacheOptions v8_cache_options,
+    const ReferrerScriptInfo& referrer_info) {
+  v8::Isolate* isolate = script_state->GetIsolate();
   if (code.length() >= v8::String::kMaxLength) {
     V8ThrowException::ThrowError(isolate, "Source file too large.");
     return v8::Local<v8::Script>();
   }
-  return CompileScript(V8String(isolate, code), file_name, source_map_url,
-                       text_position, isolate, nullptr, nullptr,
+  return CompileScript(script_state, V8String(isolate, code), file_name,
+                       source_map_url, text_position, nullptr, nullptr,
                        cache_metadata_handler, access_control_status,
-                       v8_cache_options);
+                       v8_cache_options, referrer_info);
 }
 
 v8::MaybeLocal<v8::Script> V8ScriptRunner::CompileScript(
+    ScriptState* script_state,
     v8::Local<v8::String> code,
     const String& file_name,
     const String& source_map_url,
     const TextPosition& script_start_position,
-    v8::Isolate* isolate,
     ScriptResource* resource,
     ScriptStreamer* streamer,
     CachedMetadataHandler* cache_handler,
     AccessControlStatus access_control_status,
-    V8CacheOptions cache_options) {
+    V8CacheOptions cache_options,
+    const ReferrerScriptInfo& referrer_info) {
   TRACE_EVENT2(
       "v8,devtools.timeline", "v8.compile", "fileName", file_name.Utf8(),
       "data",
       InspectorCompileScriptEvent::Data(file_name, script_start_position));
+  probe::V8Compile probe(ExecutionContext::From(script_state), file_name,
+                         script_start_position.line_.ZeroBasedInt(),
+                         script_start_position.column_.ZeroBasedInt());
 
-  ASSERT(!streamer || resource);
-  ASSERT(!resource || resource->CacheHandler() == cache_handler);
+  DCHECK(!streamer || resource);
+  DCHECK(!resource || resource->CacheHandler() == cache_handler);
 
   // NOTE: For compatibility with WebCore, ScriptSourceCode's line starts at
   // 1, whereas v8 starts at 0.
+  v8::Isolate* isolate = script_state->GetIsolate();
+
   v8::ScriptOrigin origin(
       V8String(isolate, file_name),
       v8::Integer::New(isolate, script_start_position.line_.ZeroBasedInt()),
       v8::Integer::New(isolate, script_start_position.column_.ZeroBasedInt()),
-      V8Boolean(access_control_status == kSharableCrossOrigin, isolate),
+      v8::Boolean::New(isolate, access_control_status == kSharableCrossOrigin),
       v8::Local<v8::Integer>(), V8String(isolate, source_map_url),
-      V8Boolean(access_control_status == kOpaqueResource, isolate));
+      v8::Boolean::New(isolate, access_control_status == kOpaqueResource),
+      v8::False(isolate),  // is_wasm
+      v8::False(isolate),  // is_module
+      referrer_info.ToV8HostDefinedOptions(isolate));
 
   V8CompileHistogram::Cacheability cacheability_if_no_handler =
       V8CompileHistogram::Cacheability::kNoncacheable;
@@ -490,32 +504,34 @@ v8::MaybeLocal<v8::Script> V8ScriptRunner::CompileScript(
       cache_handler ? cache_handler->GetCachedMetadata(
                           CacheTag(kCacheTagCode, cache_handler))
                     : nullptr);
-  std::unique_ptr<CompileFn> compile_fn =
+  CompileFn compile_fn =
       streamer ? SelectCompileFunction(cache_options, resource, streamer)
                : SelectCompileFunction(cache_options, cache_handler, code_cache,
                                        code, cacheability_if_no_handler);
 
-  return (*compile_fn)(isolate, code, origin);
+  return compile_fn(isolate, code, origin);
 }
 
 v8::MaybeLocal<v8::Module> V8ScriptRunner::CompileModule(
     v8::Isolate* isolate,
     const String& source,
     const String& file_name,
-    AccessControlStatus access_control_status) {
+    AccessControlStatus access_control_status,
+    const TextPosition& start_position,
+    const ReferrerScriptInfo& referrer_info) {
   TRACE_EVENT1("v8", "v8.compileModule", "fileName", file_name.Utf8());
-  // TODO(adamk): Add Inspector integration?
-  // TODO(adamk): Pass more info into ScriptOrigin.
+
   v8::ScriptOrigin origin(
       V8String(isolate, file_name),
-      v8::Integer::New(isolate, 0),  // line_offset
-      v8::Integer::New(isolate, 0),  // col_offset
-      V8Boolean(access_control_status == kSharableCrossOrigin, isolate),
-      v8::Local<v8::Integer>(),  // script id
-      V8String(isolate, ""),     // source_map_url
-      V8Boolean(access_control_status == kOpaqueResource, isolate),
-      V8Boolean(false, isolate),  // is_wasm
-      V8Boolean(true, isolate));  // is_module
+      v8::Integer::New(isolate, start_position.line_.ZeroBasedInt()),
+      v8::Integer::New(isolate, start_position.column_.ZeroBasedInt()),
+      v8::Boolean::New(isolate, access_control_status == kSharableCrossOrigin),
+      v8::Local<v8::Integer>(),    // script id
+      v8::String::Empty(isolate),  // source_map_url
+      v8::Boolean::New(isolate, access_control_status == kOpaqueResource),
+      v8::False(isolate),  // is_wasm
+      v8::True(isolate),   // is_module
+      referrer_info.ToV8HostDefinedOptions(isolate));
 
   v8::ScriptCompiler::Source script_source(V8String(isolate, source), origin);
   return v8::ScriptCompiler::CompileModule(isolate, &script_source);
@@ -525,17 +541,19 @@ v8::MaybeLocal<v8::Value> V8ScriptRunner::RunCompiledScript(
     v8::Isolate* isolate,
     v8::Local<v8::Script> script,
     ExecutionContext* context) {
-  ASSERT(!script.IsEmpty());
+  DCHECK(!script.IsEmpty());
   ScopedFrameBlamer frame_blamer(
       context->IsDocument() ? ToDocument(context)->GetFrame() : nullptr);
   TRACE_EVENT1("v8", "v8.run", "fileName",
                TRACE_STR_COPY(*v8::String::Utf8Value(
                    script->GetUnboundScript()->GetScriptName())));
+  RuntimeCallStatsScopedTracer rcs_scoped_tracer(isolate);
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kV8);
 
   if (v8::MicrotasksScope::GetCurrentDepth(isolate) >= kMaxRecursionDepth)
     return ThrowStackOverflowExceptionIfNeeded(isolate);
 
-  RELEASE_ASSERT(!context->IsIteratingOverObservers());
+  CHECK(!context->IsIteratingOverObservers());
 
   // Run the script and keep track of the current recursion depth.
   v8::MaybeLocal<v8::Value> result;
@@ -555,18 +573,25 @@ v8::MaybeLocal<v8::Value> V8ScriptRunner::RunCompiledScript(
 }
 
 v8::MaybeLocal<v8::Value> V8ScriptRunner::CompileAndRunInternalScript(
+    ScriptState* script_state,
     v8::Local<v8::String> source,
     v8::Isolate* isolate,
     const String& file_name,
     const TextPosition& script_start_position) {
   v8::Local<v8::Script> script;
+  // Use default ScriptReferrerInfo here:
+  // - nonce: empty for internal script, and
+  // - parser_state: always "not parser inserted" for internal scripts.
   if (!V8ScriptRunner::CompileScript(
-           source, file_name, String(), script_start_position, isolate, nullptr,
-           nullptr, nullptr, kSharableCrossOrigin, kV8CacheOptionsDefault)
+           script_state, source, file_name, String(), script_start_position,
+           nullptr, nullptr, nullptr, kSharableCrossOrigin,
+           kV8CacheOptionsDefault, ReferrerScriptInfo())
            .ToLocal(&script))
     return v8::MaybeLocal<v8::Value>();
 
   TRACE_EVENT0("v8", "v8.run");
+  RuntimeCallStatsScopedTracer rcs_scoped_tracer(isolate);
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kV8);
   v8::MicrotasksScope microtasks_scope(
       isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::MaybeLocal<v8::Value> result = script->Run(isolate->GetCurrentContext());
@@ -578,6 +603,9 @@ v8::MaybeLocal<v8::Value> V8ScriptRunner::RunCompiledInternalScript(
     v8::Isolate* isolate,
     v8::Local<v8::Script> script) {
   TRACE_EVENT0("v8", "v8.run");
+  RuntimeCallStatsScopedTracer rcs_scoped_tracer(isolate);
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kV8);
+
   v8::MicrotasksScope microtasks_scope(
       isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::MaybeLocal<v8::Value> result = script->Run(isolate->GetCurrentContext());
@@ -592,6 +620,7 @@ v8::MaybeLocal<v8::Value> V8ScriptRunner::CallAsConstructor(
     int argc,
     v8::Local<v8::Value> argv[]) {
   TRACE_EVENT0("v8", "v8.callAsConstructor");
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kV8);
 
   int depth = v8::MicrotasksScope::GetCurrentDepth(isolate);
   if (depth >= kMaxRecursionDepth)
@@ -632,13 +661,15 @@ v8::MaybeLocal<v8::Value> V8ScriptRunner::CallFunction(
       context->IsDocument() ? ToDocument(context)->GetFrame() : nullptr;
   ScopedFrameBlamer frame_blamer(frame);
   TRACE_EVENT0("v8", "v8.callFunction");
+  RuntimeCallStatsScopedTracer rcs_scoped_tracer(isolate);
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kV8);
 
   int depth = v8::MicrotasksScope::GetCurrentDepth(isolate);
   if (depth >= kMaxRecursionDepth)
     return v8::MaybeLocal<v8::Value>(
         ThrowStackOverflowExceptionIfNeeded(isolate));
 
-  RELEASE_ASSERT(!context->IsIteratingOverObservers());
+  CHECK(!context->IsIteratingOverObservers());
 
   if (ScriptForbiddenScope::IsScriptForbidden()) {
     ThrowScriptForbiddenException(isolate);
@@ -666,6 +697,9 @@ v8::MaybeLocal<v8::Value> V8ScriptRunner::CallInternalFunction(
     v8::Local<v8::Value> args[],
     v8::Isolate* isolate) {
   TRACE_EVENT0("v8", "v8.callFunction");
+  RuntimeCallStatsScopedTracer rcs_scoped_tracer(isolate);
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kV8);
+
   CHECK(!ThreadState::Current()->IsWrapperTracingForbidden());
   v8::MicrotasksScope microtasks_scope(
       isolate, v8::MicrotasksScope::kDoNotRunMicrotasks);
@@ -680,6 +714,7 @@ v8::MaybeLocal<v8::Value> V8ScriptRunner::EvaluateModule(
     v8::Local<v8::Context> context,
     v8::Isolate* isolate) {
   TRACE_EVENT0("v8", "v8.evaluateModule");
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kV8);
   v8::MicrotasksScope microtasks_scope(isolate,
                                        v8::MicrotasksScope::kRunMicrotasks);
   return module->Evaluate(context);
@@ -704,29 +739,38 @@ void V8ScriptRunner::SetCacheTimeStamp(CachedMetadataHandler* cache_handler) {
                                    CachedMetadataHandler::kSendToPlatform);
 }
 
-void V8ScriptRunner::ThrowException(v8::Isolate* isolate,
-                                    v8::Local<v8::Value> exception,
-                                    const v8::ScriptOrigin& origin) {
-  // In order for the current TryCatch to catch this exception and
-  // call MessageCallback when SetVerbose(true), create a v8::Function
-  // that calls isolate->throwException().
-  // Unlike throwStackOverflowExceptionIfNeeded(), create a temporary Script
-  // with the specified ScriptOrigin. When the exception was created but not
-  // thrown yet, the ScriptOrigin of the thrower is set to the exception.
-  // v8::Function::New() has empty ScriptOrigin, and thus the exception will
-  // be "muted" (sanitized in our terminology) if CORS does not allow.
+void V8ScriptRunner::ReportException(v8::Isolate* isolate,
+                                     v8::Local<v8::Value> exception) {
+  // TODO(adamk): Handle calls on worker threads.
+  DCHECK(IsMainThread());
+  DCHECK(!exception.IsEmpty());
+
   // https://html.spec.whatwg.org/multipage/webappapis.html#report-the-error
-  // Avoid compile and run scripts when API is available: crbug.com/639739
-  v8::Local<v8::Script> script =
-      CompileWithoutOptions(
-          V8CompileHistogram::Cacheability::kNoncacheable, isolate,
-          V8AtomicString(isolate, "((e) => { throw e; })"), origin)
-          .ToLocalChecked();
-  v8::Local<v8::Function> thrower = RunCompiledInternalScript(isolate, script)
-                                        .ToLocalChecked()
-                                        .As<v8::Function>();
-  v8::Local<v8::Value> args[] = {exception};
-  CallInternalFunction(thrower, thrower, WTF_ARRAY_LENGTH(args), args, isolate);
+  v8::Local<v8::Message> message =
+      v8::Exception::CreateMessage(isolate, exception);
+  V8Initializer::MessageHandlerInMainThread(message, exception);
 }
+
+v8::MaybeLocal<v8::Value> V8ScriptRunner::CallExtraHelper(
+    ScriptState* script_state,
+    const char* name,
+    size_t num_args,
+    v8::Local<v8::Value>* args) {
+  v8::Isolate* isolate = script_state->GetIsolate();
+  v8::Local<v8::Value> function_value;
+  v8::Local<v8::Context> context = script_state->GetContext();
+  if (!context->GetExtrasBindingObject()
+           ->Get(context, V8AtomicString(isolate, name))
+           .ToLocal(&function_value))
+    return v8::MaybeLocal<v8::Value>();
+  v8::Local<v8::Function> function = function_value.As<v8::Function>();
+  return V8ScriptRunner::CallInternalFunction(function, v8::Undefined(isolate),
+                                              num_args, args, isolate);
+}
+
+STATIC_ASSERT_ENUM(WebSettings::kV8CacheOptionsDefault, kV8CacheOptionsDefault);
+STATIC_ASSERT_ENUM(WebSettings::kV8CacheOptionsNone, kV8CacheOptionsNone);
+STATIC_ASSERT_ENUM(WebSettings::kV8CacheOptionsParse, kV8CacheOptionsParse);
+STATIC_ASSERT_ENUM(WebSettings::kV8CacheOptionsCode, kV8CacheOptionsCode);
 
 }  // namespace blink

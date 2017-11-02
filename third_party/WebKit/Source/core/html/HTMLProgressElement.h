@@ -22,7 +22,7 @@
 #define HTMLProgressElement_h
 
 #include "core/CoreExport.h"
-#include "core/html/LabelableElement.h"
+#include "core/html/forms/LabelableElement.h"
 
 namespace blink {
 
@@ -62,7 +62,7 @@ class CORE_EXPORT HTMLProgressElement final : public LabelableElement {
 
   void ParseAttribute(const AttributeModificationParams&) override;
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
 
   void DidElementStateChange();
   void DidAddUserAgentShadowRoot(ShadowRoot&) override;

@@ -11,8 +11,11 @@
 #include "base/memory/ptr_util.h"
 #include "cc/paint/paint_canvas.h"
 #include "cc/paint/paint_flags.h"
+#include "cc/paint/paint_image.h"
+#include "cc/paint/paint_image_builder.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
+#include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "media/base/data_buffer.h"
 #include "media/base/video_frame.h"
@@ -20,6 +23,7 @@
 #include "third_party/libyuv/include/libyuv.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkImageGenerator.h"
+#include "third_party/skia/include/gpu/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "third_party/skia/include/gpu/gl/GrGLTypes.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -97,6 +101,7 @@ sk_sp<SkImage> NewSkImageFromVideoFrameYUVTextures(
                         (ya_tex_size.height() + 1) / 2);
 
   GrGLTextureInfo source_textures[] = {{0, 0}, {0, 0}, {0, 0}};
+  GLint min_mag_filter[][2] = {{0, 0}, {0, 0}, {0, 0}};
   for (size_t i = 0; i < media::VideoFrame::NumPlanes(video_frame->format());
        ++i) {
     // Get the texture from the mailbox and wrap it in a GrTexture.
@@ -109,6 +114,11 @@ sk_sp<SkImage> NewSkImageFromVideoFrameYUVTextures(
         mailbox_holder.texture_target, mailbox_holder.mailbox.name);
     source_textures[i].fTarget = mailbox_holder.texture_target;
 
+    gl->BindTexture(mailbox_holder.texture_target, source_textures[i].fID);
+    gl->GetTexParameteriv(mailbox_holder.texture_target, GL_TEXTURE_MIN_FILTER,
+                          &min_mag_filter[i][0]);
+    gl->GetTexParameteriv(mailbox_holder.texture_target, GL_TEXTURE_MAG_FILTER,
+                          &min_mag_filter[i][1]);
     // TODO(dcastagna): avoid this copy once Skia supports native textures
     // with a GL_TEXTURE_RECTANGLE_ARB texture target.
     // crbug.com/505026
@@ -126,6 +136,7 @@ sk_sp<SkImage> NewSkImageFromVideoFrameYUVTextures(
       source_textures[i].fTarget = GL_TEXTURE_2D;
     }
   }
+  context_3d.gr_context->resetContext(kTextureBinding_GrGLBackendState);
   GrBackendObject handles[3] = {
       skia::GrGLTextureInfoToGrBackendObject(source_textures[0]),
       skia::GrGLTextureInfoToGrBackendObject(source_textures[1]),
@@ -155,23 +166,15 @@ sk_sp<SkImage> NewSkImageFromVideoFrameYUVTextures(
   }
   for (size_t i = 0; i < media::VideoFrame::NumPlanes(video_frame->format());
        ++i) {
+    gl->BindTexture(source_textures[i].fTarget, source_textures[i].fID);
+    gl->TexParameteri(source_textures[i].fTarget, GL_TEXTURE_MIN_FILTER,
+                      min_mag_filter[i][0]);
+    gl->TexParameteri(source_textures[i].fTarget, GL_TEXTURE_MAG_FILTER,
+                      min_mag_filter[i][1]);
+
     gl->DeleteTextures(1, &source_textures[i].fID);
   }
   return img;
-}
-
-bool VideoTextureNeedsClipping(const VideoFrame* video_frame) {
-  // There are multiple reasons that the size of the video frame's
-  // visible rectangle may differ from the coded size, including the
-  // encoder rounding up to the size of a macroblock, or use of
-  // non-square pixels.
-  //
-  // Some callers of these APIs (HTMLVideoElement and the 2D canvas
-  // context) already clip to the video frame's visible rectangle.
-  // WebGL on the other hand assumes that only the valid pixels are
-  // contained in the destination texture. This helper function
-  // determines whether this slower path is needed.
-  return video_frame->visible_rect().size() != video_frame->coded_size();
 }
 
 // Creates a SkImage from a |video_frame| backed by native resources.
@@ -200,34 +203,31 @@ sk_sp<SkImage> NewSkImageFromVideoFrameNative(VideoFrame* video_frame,
     gl->BindTexture(GL_TEXTURE_2D, source_texture);
     SkCanvasVideoRenderer::CopyVideoFrameSingleTextureToGLTexture(
         gl, video_frame,
-        SkCanvasVideoRenderer::SingleFrameForVideoElementOrCanvas,
-        source_texture, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, true, false);
+        GL_TEXTURE_2D, source_texture, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE, 0,
+        true, false);
+    context_3d.gr_context->resetContext(kTextureBinding_GrGLBackendState);
   } else {
     gl->WaitSyncTokenCHROMIUM(mailbox_holder.sync_token.GetConstData());
     source_texture = gl->CreateAndConsumeTextureCHROMIUM(
         mailbox_holder.texture_target, mailbox_holder.mailbox.name);
   }
-  GrBackendTextureDesc desc;
-  desc.fFlags = kRenderTarget_GrBackendTextureFlag;
-  desc.fOrigin = kTopLeft_GrSurfaceOrigin;
-  desc.fWidth = video_frame->coded_size().width();
-  desc.fHeight = video_frame->coded_size().height();
-  desc.fConfig = kRGBA_8888_GrPixelConfig;
   GrGLTextureInfo source_texture_info;
   source_texture_info.fID = source_texture;
   source_texture_info.fTarget = GL_TEXTURE_2D;
-  desc.fTextureHandle =
-      skia::GrGLTextureInfoToGrBackendObject(source_texture_info);
-  return SkImage::MakeFromAdoptedTexture(context_3d.gr_context, desc);
+  GrBackendTexture source_backend_texture(
+      video_frame->coded_size().width(), video_frame->coded_size().height(),
+      kRGBA_8888_GrPixelConfig, source_texture_info);
+  return SkImage::MakeFromAdoptedTexture(
+      context_3d.gr_context, source_backend_texture, kTopLeft_GrSurfaceOrigin);
 }
 
 }  // anonymous namespace
 
 // Generates an RGB image from a VideoFrame. Convert YUV to RGB plain on GPU.
-class VideoImageGenerator : public SkImageGenerator {
+class VideoImageGenerator : public cc::PaintImageGenerator {
  public:
   VideoImageGenerator(const scoped_refptr<VideoFrame>& frame)
-      : SkImageGenerator(
+      : cc::PaintImageGenerator(
             SkImageInfo::MakeN32Premul(frame->visible_rect().width(),
                                        frame->visible_rect().height())),
         frame_(frame) {
@@ -235,20 +235,23 @@ class VideoImageGenerator : public SkImageGenerator {
   }
   ~VideoImageGenerator() override {}
 
- protected:
-  bool onGetPixels(const SkImageInfo& info,
-                   void* pixels,
-                   size_t row_bytes,
-                   SkPMColor ctable[],
-                   int* ctable_count) override {
+  sk_sp<SkData> GetEncodedData() const override { return nullptr; }
+
+  bool GetPixels(const SkImageInfo& info,
+                 void* pixels,
+                 size_t row_bytes,
+                 size_t frame_index,
+                 uint32_t lazy_pixel_ref) override {
+    DCHECK_EQ(frame_index, 0u);
+
     // If skia couldn't do the YUV conversion on GPU, we will on CPU.
     SkCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(frame_.get(), pixels,
                                                         row_bytes);
     return true;
   }
 
-  bool onQueryYUV8(SkYUVSizeInfo* sizeInfo,
-                   SkYUVColorSpace* color_space) const override {
+  bool QueryYUV8(SkYUVSizeInfo* sizeInfo,
+                 SkYUVColorSpace* color_space) const override {
     if (!media::IsYuvPlanar(frame_->format()) ||
         // TODO(rileya): Skia currently doesn't support YUVA conversion. Remove
         // this case once it does. As-is we will fall back on the pure-software
@@ -278,8 +281,12 @@ class VideoImageGenerator : public SkImageGenerator {
     return true;
   }
 
-  bool onGetYUV8Planes(const SkYUVSizeInfo& sizeInfo,
-                       void* planes[3]) override {
+  bool GetYUV8Planes(const SkYUVSizeInfo& sizeInfo,
+                     void* planes[3],
+                     size_t frame_index,
+                     uint32_t lazy_pixel_ref) override {
+    DCHECK_EQ(frame_index, 0u);
+
     media::VideoPixelFormat format = frame_->format();
     DCHECK(media::IsYuvPlanar(format) && format != PIXEL_FORMAT_YV12A);
 
@@ -340,7 +347,8 @@ SkCanvasVideoRenderer::SkCanvasVideoRenderer()
           FROM_HERE,
           base::TimeDelta::FromSeconds(kTemporaryResourceDeletionDelay),
           this,
-          &SkCanvasVideoRenderer::ResetCache) {}
+          &SkCanvasVideoRenderer::ResetCache),
+      renderer_stable_id_(cc::PaintImage::GetNextId()) {}
 
 SkCanvasVideoRenderer::~SkCanvasVideoRenderer() {
   ResetCache();
@@ -384,8 +392,7 @@ void SkCanvasVideoRenderer::Paint(const scoped_refptr<VideoFrame>& video_frame,
 
   const bool need_rotation = video_rotation != VIDEO_ROTATION_0;
   const bool need_scaling =
-      dest_rect.size() !=
-      gfx::SizeF(gfx::SkISizeToSize(last_image_->dimensions()));
+      dest_rect.size() != gfx::SizeF(last_image_.width(), last_image_.height());
   const bool need_translation = !dest_rect.origin().IsOrigin();
   bool need_transform = need_rotation || need_scaling || need_translation;
   if (need_transform) {
@@ -416,10 +423,10 @@ void SkCanvasVideoRenderer::Paint(const scoped_refptr<VideoFrame>& video_frame,
           gfx::SizeF(rotated_dest_size.height(), rotated_dest_size.width());
     }
     canvas->scale(
-        SkFloatToScalar(rotated_dest_size.width() / last_image_->width()),
-        SkFloatToScalar(rotated_dest_size.height() / last_image_->height()));
-    canvas->translate(-SkFloatToScalar(last_image_->width() * 0.5f),
-                      -SkFloatToScalar(last_image_->height() * 0.5f));
+        SkFloatToScalar(rotated_dest_size.width() / last_image_.width()),
+        SkFloatToScalar(rotated_dest_size.height() / last_image_.height()));
+    canvas->translate(-SkFloatToScalar(last_image_.width() * 0.5f),
+                      -SkFloatToScalar(last_image_.height() * 0.5f));
   }
 
   // This is a workaround for crbug.com/524717. A texture backed image is not
@@ -428,12 +435,15 @@ void SkCanvasVideoRenderer::Paint(const scoped_refptr<VideoFrame>& video_frame,
   // sw image into the SkPicture. The long term solution is for Skia to provide
   // a SkPicture filter that makes a picture safe for multiple CPU raster
   // threads. (skbug.com/4321).
+  cc::PaintImage image = last_image_;
   if (canvas->imageInfo().colorType() == kUnknown_SkColorType) {
-    sk_sp<SkImage> swImage = last_image_->makeNonTextureImage();
-    canvas->drawImage(swImage, 0, 0, &video_flags);
-  } else {
-    canvas->drawImage(last_image_, 0, 0, &video_flags);
+    sk_sp<SkImage> non_texture_image =
+        last_image_.GetSkImage()->makeNonTextureImage();
+    image = cc::PaintImageBuilder::WithProperties(last_image_)
+                .set_image(std::move(non_texture_image))
+                .TakePaintImage();
   }
+  canvas->drawImage(image, 0, 0, &video_flags);
 
   if (need_transform)
     canvas->restore();
@@ -571,7 +581,7 @@ void FlipAndConvertY16(const VideoFrame* video_frame,
           *out_row++ = *row++ / 65535.f;
         continue;
       }
-      // For other formats, hit NOTREACHED bellow.
+      // For other formats, hit NOTREACHED below.
     } else if (type == GL_UNSIGNED_BYTE) {
       // We take the upper 8 bits of 16-bit data and convert it as luminance to
       // ARGB.  We loose the precision here, but it is important not to render
@@ -632,6 +642,38 @@ bool TexImageHelper(VideoFrame* frame,
   FlipAndConvertY16(frame, (*temp_buffer)->writable_data(), format, type,
                     flip_y, output_row_bytes);
   return true;
+}
+
+// Upload the |frame| data to temporary texture of |temp_format|,
+// |temp_internalformat| and |temp_type| and then copy intermediate texture
+// subimage to destination |texture|. The destination |texture| is bound to the
+// |target| before the call.
+void TextureSubImageUsingIntermediate(unsigned target,
+                                      unsigned texture,
+                                      gpu::gles2::GLES2Interface* gl,
+                                      VideoFrame* frame,
+                                      int temp_internalformat,
+                                      unsigned temp_format,
+                                      unsigned temp_type,
+                                      int level,
+                                      int xoffset,
+                                      int yoffset,
+                                      bool flip_y,
+                                      bool premultiply_alpha) {
+  unsigned temp_texture = 0;
+  gl->GenTextures(1, &temp_texture);
+  gl->BindTexture(target, temp_texture);
+  gl->TexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  gl->TexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  gl->TexImage2D(target, 0, temp_internalformat, frame->visible_rect().width(),
+                 frame->visible_rect().height(), 0, temp_format, temp_type,
+                 frame->visible_data(0));
+  gl->BindTexture(target, texture);
+  gl->CopySubTextureCHROMIUM(temp_texture, 0, target, texture, level, 0, 0,
+                             xoffset, yoffset, frame->visible_rect().width(),
+                             frame->visible_rect().height(), flip_y,
+                             premultiply_alpha, false);
+  gl->DeleteTextures(1, &temp_texture);
 }
 
 }  // anonymous namespace
@@ -765,11 +807,12 @@ void SkCanvasVideoRenderer::ConvertVideoFrameToRGBPixels(
 void SkCanvasVideoRenderer::CopyVideoFrameSingleTextureToGLTexture(
     gpu::gles2::GLES2Interface* gl,
     VideoFrame* video_frame,
-    SingleFrameCopyMode copy_mode,
+    unsigned int target,
     unsigned int texture,
     unsigned int internal_format,
     unsigned int format,
     unsigned int type,
+    int level,
     bool premultiply_alpha,
     bool flip_y) {
   DCHECK(video_frame);
@@ -791,34 +834,26 @@ void SkCanvasVideoRenderer::CopyVideoFrameSingleTextureToGLTexture(
   // value down to get the expected result.
   // "flip_y == true" means to reverse the video orientation while
   // "flip_y == false" means to keep the intrinsic orientation.
-
-  if (copy_mode == SingleFrameForVideoElementOrCanvas ||
-      !VideoTextureNeedsClipping(video_frame)) {
-    // No need to clip the source video texture.
-    gl->CopyTextureCHROMIUM(source_texture, 0, GL_TEXTURE_2D, texture, 0,
-                            internal_format, type, flip_y, premultiply_alpha,
-                            false);
-  } else {
+  if (video_frame->visible_rect().size() != video_frame->coded_size()) {
     // Must reallocate the destination texture and copy only a sub-portion.
     gfx::Rect dest_rect = video_frame->visible_rect();
 #if DCHECK_IS_ON()
-    // The caller should have bound _texture_ to the GL_TEXTURE_2D
-    // binding point already.
-    GLuint current_texture = 0;
-    gl->GetIntegerv(GL_TEXTURE_BINDING_2D,
-                    reinterpret_cast<GLint*>(&current_texture));
-    DCHECK_EQ(current_texture, texture);
     // There should always be enough data in the source texture to
     // cover this copy.
     DCHECK_LE(dest_rect.width(), video_frame->coded_size().width());
     DCHECK_LE(dest_rect.height(), video_frame->coded_size().height());
 #endif
-    gl->TexImage2D(GL_TEXTURE_2D, 0, internal_format, dest_rect.width(),
+    gl->TexImage2D(target, level, internal_format, dest_rect.width(),
                    dest_rect.height(), 0, format, type, nullptr);
-    gl->CopySubTextureCHROMIUM(source_texture, 0, GL_TEXTURE_2D, texture, 0, 0,
-                               0, dest_rect.x(), dest_rect.y(),
-                               dest_rect.width(), dest_rect.height(), flip_y,
-                               premultiply_alpha, false);
+    gl->CopySubTextureCHROMIUM(source_texture, 0, target, texture, level, 0, 0,
+                               dest_rect.x(), dest_rect.y(), dest_rect.width(),
+                               dest_rect.height(), flip_y, premultiply_alpha,
+                               false);
+
+  } else {
+    gl->CopyTextureCHROMIUM(source_texture, 0, target, texture, level,
+                            internal_format, type, flip_y, premultiply_alpha,
+                            false);
   }
 
   gl->DeleteTextures(1, &source_texture);
@@ -832,10 +867,12 @@ bool SkCanvasVideoRenderer::CopyVideoFrameTexturesToGLTexture(
     const Context3D& context_3d,
     gpu::gles2::GLES2Interface* destination_gl,
     const scoped_refptr<VideoFrame>& video_frame,
+    unsigned int target,
     unsigned int texture,
     unsigned int internal_format,
     unsigned int format,
     unsigned int type,
+    int level,
     bool premultiply_alpha,
     bool flip_y) {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -849,7 +886,10 @@ bool SkCanvasVideoRenderer::CopyVideoFrameTexturesToGLTexture(
 
     const GrGLTextureInfo* texture_info =
         skia::GrBackendObjectToGrGLTextureInfo(
-            last_image_->getTextureHandle(true));
+            last_image_.GetSkImage()->getTextureHandle(true));
+
+    if (!texture_info)
+      return false;
 
     gpu::gles2::GLES2Interface* canvas_gl = context_3d.gl;
     gpu::MailboxHolder mailbox_holder;
@@ -872,34 +912,9 @@ bool SkCanvasVideoRenderer::CopyVideoFrameTexturesToGLTexture(
         destination_gl->CreateAndConsumeTextureCHROMIUM(
             mailbox_holder.texture_target, mailbox_holder.mailbox.name);
 
-    // See whether the source video texture must be clipped.
-    if (VideoTextureNeedsClipping(video_frame.get())) {
-      // Reallocate destination texture and copy only valid region.
-      gfx::Rect dest_rect = video_frame->visible_rect();
-#if DCHECK_IS_ON()
-      // The caller should have bound _texture_ to the GL_TEXTURE_2D
-      // binding point already.
-      GLuint current_texture = 0;
-      destination_gl->GetIntegerv(GL_TEXTURE_BINDING_2D,
-                                  reinterpret_cast<GLint*>(&current_texture));
-      DCHECK_EQ(current_texture, texture);
-      // There should always be enough data in the source texture to
-      // cover this copy.
-      DCHECK_LE(dest_rect.width(), video_frame->coded_size().width());
-      DCHECK_LE(dest_rect.height(), video_frame->coded_size().height());
-#endif
-      destination_gl->TexImage2D(GL_TEXTURE_2D, 0, internal_format,
-                                 dest_rect.width(), dest_rect.height(), 0,
-                                 format, type, nullptr);
-      destination_gl->CopySubTextureCHROMIUM(
-          intermediate_texture, 0, GL_TEXTURE_2D, texture, 0, 0, 0,
-          dest_rect.x(), dest_rect.y(), dest_rect.width(), dest_rect.height(),
-          flip_y, premultiply_alpha, false);
-    } else {
-      destination_gl->CopyTextureCHROMIUM(
-          intermediate_texture, 0, GL_TEXTURE_2D, texture, 0, internal_format,
-          type, flip_y, premultiply_alpha, false);
-    }
+    destination_gl->CopyTextureCHROMIUM(intermediate_texture, 0, target,
+                                        texture, level, internal_format, type,
+                                        flip_y, premultiply_alpha, false);
 
     destination_gl->DeleteTextures(1, &intermediate_texture);
 
@@ -916,25 +931,52 @@ bool SkCanvasVideoRenderer::CopyVideoFrameTexturesToGLTexture(
     video_frame->UpdateReleaseSyncToken(&client);
   } else {
     CopyVideoFrameSingleTextureToGLTexture(
-        destination_gl, video_frame.get(), SingleFrameForWebGL, texture,
-        internal_format, format, type, premultiply_alpha, flip_y);
+        destination_gl, video_frame.get(), target, texture, internal_format,
+        format, type, level, premultiply_alpha, flip_y);
   }
 
   return true;
 }
 
-bool SkCanvasVideoRenderer::TexImage2D(unsigned target,
-                                       gpu::gles2::GLES2Interface* gl,
-                                       VideoFrame* frame,
-                                       int level,
-                                       int internalformat,
-                                       unsigned format,
-                                       unsigned type,
-                                       bool flip_y,
-                                       bool premultiply_alpha) {
+bool SkCanvasVideoRenderer::TexImage2D(
+    unsigned target,
+    unsigned texture,
+    gpu::gles2::GLES2Interface* gl,
+    const gpu::Capabilities& gpu_capabilities,
+    VideoFrame* frame,
+    int level,
+    int internalformat,
+    unsigned format,
+    unsigned type,
+    bool flip_y,
+    bool premultiply_alpha) {
   DCHECK(frame);
   DCHECK(!frame->HasTextures());
 
+  // Note: CopyTextureCHROMIUM uses mediump for color computation. Don't use
+  // it if the precision would lead to data loss when converting 16-bit
+  // normalized to float. medium_float.precision > 15 means that the approach
+  // below is not used on Android, where the extension EXT_texture_norm16 is
+  // not widely supported. It is used on Windows, Linux and OSX.
+  // Android support is not required for now because Tango depth camera already
+  // provides floating point data (projected point cloud). See crbug.com/674440.
+  if (gpu_capabilities.texture_norm16 &&
+      gpu_capabilities.fragment_shader_precisions.medium_float.precision > 15 &&
+      target == GL_TEXTURE_2D &&
+      (type == GL_FLOAT || type == GL_UNSIGNED_BYTE)) {
+    // TODO(aleksandar.stojiljkovic): Extend the approach to TexSubImage2D
+    // implementation and other types. See https://crbug.com/624436.
+
+    // Allocate the destination texture.
+    gl->TexImage2D(target, level, internalformat, frame->visible_rect().width(),
+                   frame->visible_rect().height(), 0, format, type, nullptr);
+    // We use sized internal format GL_R16_EXT instead of unsized GL_RED.
+    // See angleproject:1952
+    TextureSubImageUsingIntermediate(target, texture, gl, frame, GL_R16_EXT,
+                                     GL_RED, GL_UNSIGNED_SHORT, level, 0, 0,
+                                     flip_y, premultiply_alpha);
+    return true;
+  }
   scoped_refptr<DataBuffer> temp_buffer;
   if (!TexImageHelper(frame, format, type, flip_y, &temp_buffer))
     return false;
@@ -971,15 +1013,23 @@ bool SkCanvasVideoRenderer::TexSubImage2D(unsigned target,
 void SkCanvasVideoRenderer::ResetCache() {
   DCHECK(thread_checker_.CalledOnValidThread());
   // Clear cached values.
-  last_image_ = nullptr;
+  last_image_ = cc::PaintImage();
   last_timestamp_ = kNoTimestamp;
 }
 
 bool SkCanvasVideoRenderer::UpdateLastImage(
     const scoped_refptr<VideoFrame>& video_frame,
     const Context3D& context_3d) {
-  if (!last_image_ || video_frame->timestamp() != last_timestamp_) {
+  if (!last_image_ || video_frame->timestamp() != last_timestamp_ ||
+      !last_image_.GetSkImage()->getTextureHandle(true)) {
     ResetCache();
+
+    auto paint_image_builder =
+        cc::PaintImageBuilder::WithDefault()
+            .set_id(renderer_stable_id_)
+            .set_animation_type(cc::PaintImage::AnimationType::VIDEO)
+            .set_completion_state(cc::PaintImage::CompletionState::DONE);
+
     // Generate a new image.
     // Note: Skia will hold onto |video_frame| via |video_generator| only when
     // |video_frame| is software.
@@ -989,16 +1039,17 @@ bool SkCanvasVideoRenderer::UpdateLastImage(
       DCHECK(context_3d.gr_context);
       DCHECK(context_3d.gl);
       if (media::VideoFrame::NumPlanes(video_frame->format()) > 1) {
-        last_image_ =
-            NewSkImageFromVideoFrameYUVTextures(video_frame.get(), context_3d);
+        paint_image_builder.set_image(
+            NewSkImageFromVideoFrameYUVTextures(video_frame.get(), context_3d));
       } else {
-        last_image_ =
-            NewSkImageFromVideoFrameNative(video_frame.get(), context_3d);
+        paint_image_builder.set_image(
+            NewSkImageFromVideoFrameNative(video_frame.get(), context_3d));
       }
     } else {
-      last_image_ = SkImage::MakeFromGenerator(
-          base::MakeUnique<VideoImageGenerator>(video_frame));
+      paint_image_builder.set_paint_image_generator(
+          sk_make_sp<VideoImageGenerator>(video_frame));
     }
+    last_image_ = paint_image_builder.TakePaintImage();
     CorrectLastImageDimensions(gfx::RectToSkIRect(video_frame->visible_rect()));
     if (!last_image_)  // Couldn't create the SkImage.
       return false;
@@ -1014,9 +1065,11 @@ void SkCanvasVideoRenderer::CorrectLastImageDimensions(
   last_image_dimensions_for_testing_ = visible_rect.size();
   if (!last_image_)
     return;
-  if (last_image_->dimensions() != visible_rect.size() &&
-      last_image_->bounds().contains(visible_rect)) {
-    last_image_ = last_image_->makeSubset(visible_rect);
+  SkIRect bounds = SkIRect::MakeWH(last_image_.width(), last_image_.height());
+  if (bounds.size() != visible_rect.size() && bounds.contains(visible_rect)) {
+    last_image_ = cc::PaintImageBuilder::WithCopy(std::move(last_image_))
+                      .make_subset(gfx::SkIRectToRect(visible_rect))
+                      .TakePaintImage();
   }
 }
 

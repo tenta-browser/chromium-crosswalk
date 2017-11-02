@@ -20,7 +20,7 @@
 #include "gpu/gpu_export.h"
 #include "ui/gfx/geometry/size.h"
 
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
 typedef unsigned long VisualID;
 #endif
 
@@ -66,7 +66,8 @@ enum VideoCodecProfile {
   DOLBYVISION_PROFILE4,
   DOLBYVISION_PROFILE5,
   DOLBYVISION_PROFILE7,
-  VIDEO_CODEC_PROFILE_MAX = DOLBYVISION_PROFILE7,
+  THEORAPROFILE_ANY,
+  VIDEO_CODEC_PROFILE_MAX = THEORAPROFILE_ANY,
 };
 
 // Specification of a decoding profile supported by a hardware decoder.
@@ -223,6 +224,14 @@ struct GPU_EXPORT GPUInfo {
   // True if the current set of outputs supports overlays.
   bool supports_overlays = false;
 
+  // True if the current set of outputs supports HDR.
+  bool hdr = false;
+
+  // True only on android when extensions for threaded mailbox sharing are
+  // present. Threaded mailbox sharing is used on Android only, so this check
+  // is only implemented on Android.
+  bool can_support_threaded_texture_mailbox = false;
+
   // The state of whether the basic/context/DxDiagnostics info is collected and
   // if the collection fails or not.
   CollectInfoResult basic_info_state;
@@ -239,7 +248,7 @@ struct GPU_EXPORT GPUInfo {
       video_encode_accelerator_supported_profiles;
   bool jpeg_decode_accelerator_supported;
 
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   VisualID system_visual;
   VisualID rgba_visual;
 #endif

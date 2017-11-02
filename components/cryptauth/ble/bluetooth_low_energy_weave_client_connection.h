@@ -1,7 +1,6 @@
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-
 #ifndef COMPONENTS_CRYPTAUTH_BLE_BLUETOOTH_LOW_ENERGY_WEAVE_CLIENT_CONNECTION_H_
 #define COMPONENTS_CRYPTAUTH_BLE_BLUETOOTH_LOW_ENERGY_WEAVE_CLIENT_CONNECTION_H_
 
@@ -10,19 +9,19 @@
 
 #include <map>
 #include <memory>
-#include <queue>
 #include <string>
 
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "components/cryptauth/ble/bluetooth_low_energy_characteristics_finder.h"
 #include "components/cryptauth/ble/bluetooth_low_energy_weave_packet_generator.h"
 #include "components/cryptauth/ble/bluetooth_low_energy_weave_packet_receiver.h"
 #include "components/cryptauth/ble/fake_wire_message.h"
 #include "components/cryptauth/ble/remote_attribute.h"
-#include "components/cryptauth/bluetooth_throttler.h"
 #include "components/cryptauth/connection.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_device.h"
@@ -40,6 +39,7 @@ namespace weave {
 
 // Creates GATT connection on top of the BLE connection and act as a Client.
 // uWeave communication follows the flow:
+//
 // Client                           | Server
 // ---------------------------------|--------------------------------
 // send connection request          |
@@ -57,31 +57,27 @@ class BluetoothLowEnergyWeaveClientConnection
    public:
     static std::unique_ptr<Connection> NewInstance(
         const RemoteDevice& remote_device,
-        const std::string& device_address,
         scoped_refptr<device::BluetoothAdapter> adapter,
         const device::BluetoothUUID remote_service_uuid,
-        BluetoothThrottler* bluetooth_throttler);
-
-    // Exposed for testing.
-    static void SetInstanceForTesting(std::shared_ptr<Factory> factory);
+        device::BluetoothDevice* bluetooth_device,
+        bool should_set_low_connection_latency);
+    static void SetInstanceForTesting(Factory* factory);
 
    protected:
-    // Exposed for testing.
     virtual std::unique_ptr<Connection> BuildInstance(
         const RemoteDevice& remote_device,
-        const std::string& device_address,
         scoped_refptr<device::BluetoothAdapter> adapter,
         const device::BluetoothUUID remote_service_uuid,
-        BluetoothThrottler* bluetooth_throttler);
+        device::BluetoothDevice* bluetooth_device,
+        bool should_set_low_connection_latency);
 
    private:
-    static std::shared_ptr<Factory> factory_instance_;
+    static Factory* factory_instance_;
   };
 
-  // The sub-state of a BluetoothLowEnergyWeaveClientConnection
-  // extends the IN_PROGRESS state of Connection::Status.
   enum SubStatus {
     DISCONNECTED,
+    WAITING_CONNECTION_LATENCY,
     WAITING_GATT_CONNECTION,
     WAITING_CHARACTERISTICS,
     CHARACTERISTICS_FOUND,
@@ -91,47 +87,64 @@ class BluetoothLowEnergyWeaveClientConnection
     CONNECTED,
   };
 
-  // Constructs a Bluetooth low energy connection to the service with
-  // |remote_service_| on the |remote_device|. The |adapter| must be already
-  // initialized and ready. The GATT connection may alreaady be established and
-  // pass through |gatt_connection|. A subsequent call to Connect() must be
-  // made.
+  // Constructs the Connection object; a subsequent call to Connect() is
+  // necessary to initiate the BLE connection.
   BluetoothLowEnergyWeaveClientConnection(
       const RemoteDevice& remote_device,
-      const std::string& device_address,
       scoped_refptr<device::BluetoothAdapter> adapter,
       const device::BluetoothUUID remote_service_uuid,
-      BluetoothThrottler* bluetooth_throttler);
+      device::BluetoothDevice* bluetooth_device,
+      bool should_set_low_connection_latency);
 
   ~BluetoothLowEnergyWeaveClientConnection() override;
 
-  // namespace Connection:
+  // Connection:
   void Connect() override;
   void Disconnect() override;
   std::string GetDeviceAddress() override;
 
  protected:
-  // Exposed for testing.
-  // NOTE: This method may indirectly cause this object's destructor to be
-  // called. Do not perform any operations that touch the internals of this
-  // class after calling this method.
-  void DestroyConnection();
+  enum BleWeaveConnectionResult {
+    BLE_WEAVE_CONNECTION_RESULT_CLOSED_NORMALLY = 0,
+    BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_SETTING_CONNECTION_LATENCY = 1,
+    BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_CREATING_GATT_CONNECTION = 2,
+    BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_STARTING_NOTIFY_SESSION = 3,
+    BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_FINDING_GATT_CHARACTERISTICS = 4,
+    BLE_WEAVE_CONNECTION_RESULT_TIMEOUT_WAITING_FOR_CONNECTION_RESPONSE = 5,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_BLUETOOTH_DEVICE_NOT_AVAILABLE = 6,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_CREATING_GATT_CONNECTION = 7,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_STARTING_NOTIFY_SESSION = 8,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_FINDING_GATT_CHARACTERISTICS = 9,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_WRITING_GATT_CHARACTERISTIC = 10,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_GATT_CHARACTERISTIC_NOT_AVAILABLE = 11,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_WRITE_QUEUE_OUT_OF_SYNC = 12,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_DEVICE_LOST = 13,
+    BLE_WEAVE_CONNECTION_RESULT_ERROR_CONNECTION_DROPPED = 14,
+    BLE_WEAVE_CONNECTION_RESULT_MAX
+  };
 
-  // Exposed for testing.
+  // Destroys the connection immediately; if there was an active connection, it
+  // will be disconnected after this call. Note that this function may notify
+  // observers of a connection status change.
+  void DestroyConnection(BleWeaveConnectionResult result);
+
   SubStatus sub_status() { return sub_status_; }
 
-  // Sets |task_runner_| for testing.
-  void SetTaskRunnerForTesting(scoped_refptr<base::TaskRunner> task_runner);
+  void SetupTestDoubles(
+      scoped_refptr<base::TaskRunner> test_task_runner,
+      std::unique_ptr<base::Timer> test_timer,
+      std::unique_ptr<BluetoothLowEnergyWeavePacketGenerator> test_generator,
+      std::unique_ptr<BluetoothLowEnergyWeavePacketReceiver> test_receiver);
 
-  // Virtual for testing.
   virtual BluetoothLowEnergyCharacteristicsFinder* CreateCharacteristicsFinder(
       const BluetoothLowEnergyCharacteristicsFinder::SuccessCallback&
           success_callback,
       const BluetoothLowEnergyCharacteristicsFinder::ErrorCallback&
           error_callback);
 
-  // namespace Connection:
+  // Connection:
   void SendMessageImpl(std::unique_ptr<WireMessage> message) override;
+  void OnDidSendMessage(const WireMessage& message, bool success) override;
 
   // device::BluetoothAdapter::Observer:
   void DeviceChanged(device::BluetoothAdapter* adapter,
@@ -143,12 +156,113 @@ class BluetoothLowEnergyWeaveClientConnection
       device::BluetoothRemoteGattCharacteristic* characteristic,
       const Packet& value) override;
 
+  bool should_set_low_connection_latency() {
+    return should_set_low_connection_latency_;
+  }
+
  private:
+  friend class CryptAuthBluetoothLowEnergyWeaveClientConnectionTest;
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           CreateAndDestroyWithoutConnectCallDoesntCrash);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           DisconnectWithoutConnectDoesntCrash);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectSuccess);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectSuccessDisconnect);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectSuccessDisconnect_DoNotSetLowLatency);
+  FRIEND_TEST_ALL_PREFIXES(
+      CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+      ConnectIncompleteDisconnectFromWaitingCharacteristicsState);
+  FRIEND_TEST_ALL_PREFIXES(
+      CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+      ConnectIncompleteDisconnectFromWaitingNotifySessionState);
+  FRIEND_TEST_ALL_PREFIXES(
+      CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+      ConnectIncompleteDisconnectFromWaitingConnectionResponseState);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectFailsCharacteristicsNotFound);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectFailsCharacteristicsFoundThenUnavailable);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectFailsNotifySessionError);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectFailsErrorSendingConnectionRequest);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ReceiveMessageSmallerThanCharacteristicSize);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ReceiveMessageLargerThanCharacteristicSize);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           SendMessageSmallerThanCharacteristicSize);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           SendMessageLargerThanCharacteristicSize);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           SendMessageKeepsFailing);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ReceiveCloseConnectionTest);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ReceiverErrorTest);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ReceiverErrorWithPendingWritesTest);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ObserverDeletesConnectionOnDisconnect);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ObserverDeletesConnectionOnMessageSent);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           WriteConnectionCloseMaxNumberOfTimes);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           ConnectAfterADelayWhenThrottled);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           SetConnectionLatencyError);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           Timeout_ConnectionLatency);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           Timeout_GattConnection);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           Timeout_GattCharacteristics);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           Timeout_NotifySession);
+  FRIEND_TEST_ALL_PREFIXES(CryptAuthBluetoothLowEnergyWeaveClientConnectionTest,
+                           Timeout_ConnectionResponse);
+
   enum WriteRequestType {
     REGULAR,
     MESSAGE_COMPLETE,
     CONNECTION_REQUEST,
     CONNECTION_CLOSE
+  };
+
+  // GATT_CONNECTION_RESULT_UNKNOWN indicates that the Bluetooth platform
+  // returned a code that is not recognized.
+  enum GattConnectionResult {
+    GATT_CONNECTION_RESULT_SUCCESS = 0,
+    GATT_CONNECTION_RESULT_ERROR_AUTH_CANCELED = 1,
+    GATT_CONNECTION_RESULT_ERROR_AUTH_FAILED = 2,
+    GATT_CONNECTION_RESULT_ERROR_AUTH_REJECTED = 3,
+    GATT_CONNECTION_RESULT_ERROR_AUTH_TIMEOUT = 4,
+    GATT_CONNECTION_RESULT_ERROR_FAILED = 5,
+    GATT_CONNECTION_RESULT_ERROR_INPROGRESS = 6,
+    GATT_CONNECTION_RESULT_ERROR_UNKNOWN = 7,
+    GATT_CONNECTION_RESULT_ERROR_UNSUPPORTED_DEVICE = 8,
+    GATT_CONNECTION_RESULT_UNKNOWN = 9,
+    GATT_CONNECTION_RESULT_MAX
+  };
+
+  // GATT_SERVICE_OPERATION_RESULT_UNKNOWN indicates that the Bluetooth
+  // platform returned a code that is not recognized.
+  enum GattServiceOperationResult {
+    GATT_SERVICE_OPERATION_RESULT_SUCCESS = 0,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_UNKNOWN = 1,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_FAILED = 2,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_IN_PROGRESS = 3,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_INVALID_LENGTH = 4,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_NOT_PERMITTED = 5,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_NOT_AUTHORIZED = 6,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_NOT_PAIRED = 7,
+    GATT_SERVICE_OPERATION_RESULT_GATT_ERROR_NOT_SUPPORTED = 8,
+    GATT_SERVICE_OPERATION_RESULT_UNKNOWN = 9,
+    GATT_SERVICE_OPERATION_RESULT_MAX
   };
 
   // Represents a request to write |value| to a some characteristic.
@@ -157,163 +271,122 @@ class BluetoothLowEnergyWeaveClientConnection
   struct WriteRequest {
     WriteRequest(const Packet& val,
                  WriteRequestType request_type,
-                 std::shared_ptr<WireMessage> message);
+                 WireMessage* associated_wire_message);
     WriteRequest(const Packet& val, WriteRequestType request_type);
-    WriteRequest(const WriteRequest& other);
-    ~WriteRequest();
+    WriteRequest(const WireMessage& other);
+    virtual ~WriteRequest();
 
     Packet value;
     WriteRequestType request_type;
-    std::shared_ptr<WireMessage> message;
-    int number_of_failed_attempts;
+    WireMessage* associated_wire_message;
+    int number_of_failed_attempts = 0;
   };
 
+  static std::string SubStatusToString(SubStatus sub_status);
+
+  // Returns the timeout for the given SubStatus. If no timeout is needed for
+  // |sub_status|, base::TimeDelta::Max() is returned.
+  static base::TimeDelta GetTimeoutForSubStatus(SubStatus sub_status);
+
+  // Sets the current status; if |status| corresponds to one of Connection's
+  // Status types, observers will be notified of the change.
   void SetSubStatus(SubStatus status);
+  void OnTimeoutForSubStatus(SubStatus status);
 
-  // Creates the GATT connection with |remote_device|.
+  // These functions are used to set up the connection so that it is ready to
+  // send/receive data.
+  void SetConnectionLatency();
   void CreateGattConnection();
-
-  // Called when a GATT connection is created.
   void OnGattConnectionCreated(
       std::unique_ptr<device::BluetoothGattConnection> gatt_connection);
-
-  // Callback called when there is an error creating the GATT connection.
+  void OnSetConnectionLatencyError();
   void OnCreateGattConnectionError(
       device::BluetoothDevice::ConnectErrorCode error_code);
-
-  // Callback called when |tx_characteristic_| and |rx_characteristic_| were
-  // found.
   void OnCharacteristicsFound(const RemoteAttribute& service,
                               const RemoteAttribute& tx_characteristic,
                               const RemoteAttribute& rx_characteristic);
-
-  // Callback called there was an error finding the characteristics.
   void OnCharacteristicsFinderError(const RemoteAttribute& tx_characteristic,
                                     const RemoteAttribute& rx_characteristic);
-
-  // Starts a notify session for |rx_characteristic_| when ready
-  // (SubStatus::CHARACTERISTICS_FOUND).
   void StartNotifySession();
-
-  // Called when a notification session is successfully started for
-  // |rx_characteristic_| characteristic.
   void OnNotifySessionStarted(
       std::unique_ptr<device::BluetoothGattNotifySession> notify_session);
-
-  // Called when there is an error starting a notification session for
-  // |rx_characteristic_| characteristic.
   void OnNotifySessionError(device::BluetoothGattService::GattErrorCode);
 
-  // Stops |notify_session_|.
-  void StopNotifySession();
-
-  // Sends a connection request to server if ready
-  // (SubStatus::NOTIFY_SESSION_READY).
+  // Sends the connection request message (the first message in the uWeave
+  // handshake).
   void SendConnectionRequest();
 
   // Completes and updates the status accordingly.
   void CompleteConnection();
 
-  // This is the only entry point for WriteRequests, which are processed
-  // accordingly the following flow:
-  // 1) |request| is enqueued;
-  // 2) |request| will be processed by ProcessNextWriteRequest() when there is
-  // no pending write request;
-  // 3) |request| will be dequeued when it's successfully processed
-  // (OnRemoteCharacteristicWritten());
-  // 4) |request| is not dequeued if it fails
-  // (OnWriteRemoteCharacteristicError()), it remains on the queue and will be
-  // retried. |request| will remain on the queue until it succeeds or it
-  // triggers a Disconnect() call (after |max_number_of_tries_|).
-  void WriteRemoteCharacteristic(const WriteRequest& request);
-
-  // Processes the next request in |write_requests_queue_|.
+  // If no write is in progress and there are queued packets, sends the next
+  // packet; if there is already a write in progress or there are no queued
+  // packets, this function is a no-op.
   void ProcessNextWriteRequest();
 
-  // Called when the
-  // BluetoothRemoteGattCharacteristic::RemoteCharacteristicWrite() is
-  // successfully complete.
+  void SendPendingWriteRequest();
   void OnRemoteCharacteristicWritten();
-
-  // Called when there is an error writing to the remote characteristic
-  // |tx_characteristic_|.
   void OnWriteRemoteCharacteristicError(
       device::BluetoothRemoteGattService::GattErrorCode error);
+  void ClearQueueAndSendConnectionClose();
 
-  void OnPacketReceiverError();
+  void RecordBleWeaveConnectionResult(BleWeaveConnectionResult result);
+  void RecordGattConnectionResult(GattConnectionResult result);
+  GattConnectionResult BluetoothDeviceConnectErrorCodeToGattConnectionResult(
+      device::BluetoothDevice::ConnectErrorCode error_code);
+  void RecordGattNotifySessionResult(GattServiceOperationResult result);
+  void RecordGattWriteCharacteristicResult(GattServiceOperationResult result);
+  GattServiceOperationResult
+  BluetoothRemoteDeviceGattServiceGattErrorCodeToGattServiceOperationResult(
+      device::BluetoothRemoteGattService::GattErrorCode error_code);
 
-  // Prints the time elapsed since |Connect()| was called.
-  void PrintTimeElapsed();
-
-  // Returns the service corresponding to |remote_service_| in the current
-  // device.
+  // Private getters for the Bluetooth classes corresponding to this connection.
   device::BluetoothRemoteGattService* GetRemoteService();
-
-  // Returns the characteristic corresponding to |identifier| in the current
-  // service.
   device::BluetoothRemoteGattCharacteristic* GetGattCharacteristic(
       const std::string& identifier);
+  device::BluetoothDevice* GetBluetoothDevice();
 
   // Get the reason that the other side of the connection decided to close the
   // connection.
-  // Will crash if the receiver is not in CONNECTION_CLOSED state.
   std::string GetReasonForClose();
 
-  // Returns the device corresponding to |device_address_|.
-  device::BluetoothDevice* GetBluetoothDevice();
-
   // The device to which to connect.
-  const std::string device_address_;
+  device::BluetoothDevice* bluetooth_device_;
 
-  // The Bluetooth adapter over which the Bluetooth connection will be made.
+  bool should_set_low_connection_latency_;
+
+  // Tracks if the result of this connection has been recorded (using
+  // BleWeaveConnectionResult). The result of a connection should only be
+  // recorded once.
+  bool has_recorded_connection_result_ = false;
+
   scoped_refptr<device::BluetoothAdapter> adapter_;
-
-  // Remote service the |gatt_connection_| was established with.
   RemoteAttribute remote_service_;
-
-  // uWeave packet generator.
   std::unique_ptr<BluetoothLowEnergyWeavePacketGenerator> packet_generator_;
-
-  // uWeave packet receiver.
   std::unique_ptr<BluetoothLowEnergyWeavePacketReceiver> packet_receiver_;
-
-  // Characteristic used to send data to the remote device.
   RemoteAttribute tx_characteristic_;
-
-  // Characteristic used to receive data from the remote device.
   RemoteAttribute rx_characteristic_;
-
-  // Throttles repeated connection attempts to the same device. This is a
-  // workaround for crbug.com/508919. Not owned, must outlive this instance.
-  BluetoothThrottler* bluetooth_throttler_;
-
   scoped_refptr<base::TaskRunner> task_runner_;
+  std::unique_ptr<base::Timer> timer_;
 
-  // The GATT connection with the remote device.
+  // These pointers start out null and are created during the connection
+  // process.
   std::unique_ptr<device::BluetoothGattConnection> gatt_connection_;
-
-  // The characteristics finder for remote device.
   std::unique_ptr<BluetoothLowEnergyCharacteristicsFinder>
       characteristic_finder_;
-
-  // The notify session for |rx_characteristic|.
   std::unique_ptr<device::BluetoothGattNotifySession> notify_session_;
 
-  // Internal connection status
   SubStatus sub_status_;
 
-  // Bytes already received for the current receive operation.
-  std::string incoming_bytes_buffer_;
+  // The WriteRequest that is currently being sent as well as those queued to be
+  // sent. Each WriteRequest corresponds to one uWeave packet to be sent.
+  std::unique_ptr<WriteRequest> pending_write_request_;
+  base::queue<std::unique_ptr<WriteRequest>> queued_write_requests_;
 
-  // Indicates there is a
-  // BluetoothRemoteGattCharacteristic::WriteRemoteCharacteristic
-  // operation pending.
-  bool write_remote_characteristic_pending_;
-
-  std::queue<WriteRequest> write_requests_queue_;
-
-  // Stores when the instace was created.
-  base::TimeTicks start_time_;
+  // WireMessages queued to be sent. Each WireMessage correponds to one or more
+  // WriteRequests. WireMessages remain in this queue until the last
+  // corresponding WriteRequest has been sent.
+  base::queue<std::unique_ptr<WireMessage>> queued_wire_messages_;
 
   base::WeakPtrFactory<BluetoothLowEnergyWeaveClientConnection>
       weak_ptr_factory_;

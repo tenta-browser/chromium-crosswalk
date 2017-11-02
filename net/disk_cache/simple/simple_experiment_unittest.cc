@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/feature_list.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_param_associator.h"
 #include "base/optional.h"
@@ -25,8 +24,8 @@ namespace disk_cache {
 class SimpleExperimentTest : public testing::Test {
  protected:
   void SetUp() override {
-    field_trial_list_ = base::MakeUnique<base::FieldTrialList>(
-        base::MakeUnique<base::MockEntropyProvider>());
+    field_trial_list_ = std::make_unique<base::FieldTrialList>(
+        std::make_unique<base::MockEntropyProvider>());
   }
   void ConfigureSizeFieldTrial(bool enabled, base::Optional<uint32_t> param) {
     const std::string kTrialName = "SimpleSizeTrial";

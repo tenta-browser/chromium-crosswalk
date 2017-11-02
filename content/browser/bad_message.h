@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_BAD_MESSAGE_H_
 #define CONTENT_BROWSER_BAD_MESSAGE_H_
 
+#include "content/common/content_export.h"
+
 namespace content {
 class BrowserMessageFilter;
 class RenderProcessHost;
@@ -44,16 +46,16 @@ enum BadMessageReason {
   CSDH_NOT_RECOGNIZED = 20,
   DSMF_OPEN_STORAGE = 21,  // obsolete; no longer used
   DSMF_LOAD_STORAGE = 22,
-  DBMF_INVALID_ORIGIN_ON_OPEN = 23,
-  DBMF_DB_NOT_OPEN_ON_MODIFY = 24,
-  DBMF_DB_NOT_OPEN_ON_CLOSE = 25,
-  DBMF_INVALID_ORIGIN_ON_SQLITE_ERROR = 26,
+  DBMF_INVALID_ORIGIN_ON_OPEN = 23,          // obsolete; no longer used
+  DBMF_DB_NOT_OPEN_ON_MODIFY = 24,           // obsolete; no longer used
+  DBMF_DB_NOT_OPEN_ON_CLOSE = 25,            // obsolete; no longer used
+  DBMF_INVALID_ORIGIN_ON_SQLITE_ERROR = 26,  // obsolete; no longer used
   RDH_INVALID_PRIORITY = 27,
   RDH_REQUEST_NOT_TRANSFERRING = 28,
   RDH_BAD_DOWNLOAD = 29,
-  NMF_NO_PERMISSION_SHOW = 30,
-  NMF_NO_PERMISSION_CLOSE = 31,
-  NMF_NO_PERMISSION_VERIFY = 32,
+  NMF_NO_PERMISSION_SHOW = 30,    // obsolete; no longer used
+  NMF_NO_PERMISSION_CLOSE = 31,   // obsolete; no longer used
+  NMF_NO_PERMISSION_VERIFY = 32,  // obsolete; no longer used
   MH_INVALID_MIDI_PORT = 33,
   MH_SYS_EX_PERMISSION = 34,
   ACDH_REGISTER = 35,
@@ -82,8 +84,8 @@ enum BadMessageReason {
   SWDH_GET_REGISTRATION_FOR_READY_NO_HOST = 58,
   SWDH_GET_REGISTRATION_FOR_READY_ALREADY_IN_PROGRESS = 59,
   SWDH_POST_MESSAGE = 60,
-  SWDH_PROVIDER_CREATED_NO_HOST = 61,
-  SWDH_PROVIDER_DESTROYED_NO_HOST = 62,
+  SWDH_PROVIDER_CREATED_NO_HOST = 61,    // obsolete; no longer used
+  SWDH_PROVIDER_DESTROYED_NO_HOST = 62,  // obsolete; no longer used
   SWDH_SET_HOSTED_VERSION_NO_HOST = 63,
   OBSOLETE_SWDH_SET_HOSTED_VERSION = 64,
   SWDH_WORKER_SCRIPT_LOAD_NO_HOST = 65,
@@ -146,8 +148,8 @@ enum BadMessageReason {
   NI_IN_PAGE_NAVIGATION = 122,
   RPH_MOJO_PROCESS_ERROR = 123,
   DBMF_INVALID_ORIGIN_ON_GET_SPACE = 124,
-  DBMF_INVALID_ORIGIN_ON_MODIFIED = 125,
-  DBMF_INVALID_ORIGIN_ON_CLOSED = 126,
+  DBMF_INVALID_ORIGIN_ON_MODIFIED = 125,  // obsolete; not used
+  DBMF_INVALID_ORIGIN_ON_CLOSED = 126,    // obsolete; not used
   WSI_INVALID_HEADER_VALUE = 127,
   SWDH_SET_HOSTED_VERSION_INVALID_HOST = 128,
   SWDH_SET_HOSTED_VERSION_PROCESS_MISMATCH = 129,
@@ -163,7 +165,7 @@ enum BadMessageReason {
   BDH_DISALLOWED_ORIGIN = 139,
   ARH_CREATED_STREAM_WITHOUT_AUTHORIZATION = 140,
   MDDH_INVALID_DEVICE_TYPE_REQUEST = 141,
-  MDDH_UNAUTHORIZED_ORIGIN = 142,
+  MDDH_UNAUTHORIZED_ORIGIN = 142,  // obsolete; no longer used
   SWDH_ENABLE_NAVIGATION_PRELOAD_NO_HOST = 143,
   SWDH_ENABLE_NAVIGATION_PRELOAD_INVALID_ORIGIN = 144,
   SWDH_ENABLE_NAVIGATION_PRELOAD_BAD_REGISTRATION_ID = 145,
@@ -185,10 +187,22 @@ enum BadMessageReason {
   BDH_INVALID_DESCRIPTOR_ID = 161,
   RWH_INVALID_BEGIN_FRAME_ACK_DID_NOT_SWAP = 162,
   RWH_INVALID_BEGIN_FRAME_ACK_COMPOSITOR_FRAME = 163,
-  BFSI_INVALID_TAG = 164,
+  BFSI_INVALID_DEVELOPER_ID = 164,
   BFSI_INVALID_REQUESTS = 165,
   BFSI_INVALID_TITLE = 166,
   RWH_INVALID_FRAME_TOKEN = 167,
+  RWH_BAD_FRAME_SINK_REQUEST = 168,
+  RWH_SURFACE_INVARIANTS_VIOLATION = 169,
+  RFH_ILLEGAL_UPLOAD_PARAMS = 170,
+  RFH_BASE_URL_FOR_DATA_URL_SPECIFIED = 171,
+  RFPH_ILLEGAL_UPLOAD_PARAMS = 172,
+  SWDH_PROVIDER_CREATED_ILLEGAL_TYPE = 173,  // obsolete; no longer used
+  SWDH_PROVIDER_CREATED_ILLEGAL_TYPE_NOT_WINDOW = 174,
+  SWDH_PROVIDER_CREATED_ILLEGAL_TYPE_CONTROLLER = 175,
+  SWDH_PROVIDER_CREATED_DUPLICATE_ID = 176,
+  SWDH_PROVIDER_CREATED_BAD_ID = 177,
+  RFH_KEEP_ALIVE_HANDLE_REQUESTED_INCORRECTLY = 178,
+  BFSI_INVALID_UNIQUE_ID = 179,
 
   // Please add new elements here. The naming convention is abbreviated class
   // name (e.g. RenderFrameHost becomes RFH) plus a unique description of the
@@ -203,7 +217,8 @@ enum BadMessageReason {
 void ReceivedBadMessage(RenderProcessHost* host, BadMessageReason reason);
 
 // Equivalent to the above, but callable from any thread.
-void ReceivedBadMessage(int render_process_id, BadMessageReason reason);
+CONTENT_EXPORT void ReceivedBadMessage(int render_process_id,
+                                       BadMessageReason reason);
 
 // Called when a browser message filter receives a bad IPC message from a
 // renderer or other child process. Logs the event, records a histogram metric

@@ -9,10 +9,10 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPICaretColor::parseSingleValue(
+const CSSValue* CSSPropertyAPICaretColor::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   if (range.Peek().Id() == CSSValueAuto)
     return CSSPropertyParserHelpers::ConsumeIdent(range);
   return CSSPropertyParserHelpers::ConsumeColor(range, context.Mode());

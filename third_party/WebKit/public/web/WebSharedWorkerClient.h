@@ -31,7 +31,9 @@
 #ifndef WebSharedWorkerClient_h
 #define WebSharedWorkerClient_h
 
-#include "public/platform/WebMessagePortChannel.h"
+#include "public/platform/WebContentSettingsClient.h"
+#include "public/platform/WebWorkerFetchContext.h"
+#include "public/platform/web_feature.mojom-shared.h"
 #include "public/web/WebDevToolsAgentClient.h"
 
 namespace blink {
@@ -39,10 +41,8 @@ namespace blink {
 class WebApplicationCacheHost;
 class WebApplicationCacheHostClient;
 class WebNotificationPresenter;
-class WebSecurityOrigin;
 class WebServiceWorkerNetworkProvider;
 class WebString;
-class WebWorkerContentSettingsClientProxy;
 
 // Provides an interface back to the in-page script object for a worker.
 // All functions are expected to be called back on the thread that created
@@ -52,7 +52,7 @@ class WebWorkerContentSettingsClientProxy;
 // or workerContextDestroyed() is called).
 class WebSharedWorkerClient {
  public:
-  virtual void CountFeature(uint32_t) = 0;
+  virtual void CountFeature(mojom::WebFeature) = 0;
   virtual void WorkerContextClosed() = 0;
   virtual void WorkerContextDestroyed() = 0;
   virtual void WorkerReadyForInspection() {}
@@ -66,24 +66,12 @@ class WebSharedWorkerClient {
 
   // Called on the main webkit thread in the worker process during
   // initialization.
-  virtual WebApplicationCacheHost* CreateApplicationCacheHost(
+  virtual std::unique_ptr<WebApplicationCacheHost> CreateApplicationCacheHost(
       WebApplicationCacheHostClient*) = 0;
 
   // Called on the main thread during initialization.
-  // WebWorkerContentSettingsClientProxy should not retain the given
-  // WebSecurityOrigin, as the proxy instance is passed to worker thread
-  // while WebSecurityOrigin is not thread safe.
-  virtual WebWorkerContentSettingsClientProxy*
-  CreateWorkerContentSettingsClientProxy(const WebSecurityOrigin& origin) {
-    return nullptr;
-  }
-
-  // Called on the main thread during initialization.
-  // Ownership of the returned object is transferred to the caller.
-  virtual WebServiceWorkerNetworkProvider*
-  CreateServiceWorkerNetworkProvider() {
-    return nullptr;
-  }
+  virtual std::unique_ptr<WebServiceWorkerNetworkProvider>
+  CreateServiceWorkerNetworkProvider() = 0;
 
   virtual void SendDevToolsMessage(int session_id,
                                    int call_id,
@@ -91,6 +79,14 @@ class WebSharedWorkerClient {
                                    const WebString& state) {}
   virtual WebDevToolsAgentClient::WebKitClientMessageLoop*
   CreateDevToolsMessageLoop() {
+    return nullptr;
+  }
+
+  // Returns a new WebWorkerFetchContext for the shared worker. Ownership of the
+  // returned object is transferred to the caller. This is used only when
+  // off-main-thread-fetch is enabled.
+  virtual std::unique_ptr<WebWorkerFetchContext> CreateWorkerFetchContext(
+      WebServiceWorkerNetworkProvider*) {
     return nullptr;
   }
 };

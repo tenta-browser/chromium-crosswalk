@@ -10,9 +10,12 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
+#include "base/containers/circular_deque.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "net/base/io_buffer.h"
@@ -147,7 +150,7 @@ class FakeSocket : public P2PDatagramSocket {
   int read_buffer_size_;
   net::CompletionCallback read_callback_;
 
-  std::deque<std::vector<char> > incoming_packets_;
+  base::circular_deque<std::vector<char>> incoming_packets_;
 
   FakeSocket* peer_socket_;
   RateLimiter* rate_limiter_;

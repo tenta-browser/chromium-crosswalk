@@ -4,9 +4,10 @@
 
 #include "platform/graphics/gpu/DrawingBuffer.h"
 
-#include "cc/resources/single_release_callback.h"
-#include "cc/resources/texture_mailbox.h"
+#include "components/viz/common/quads/texture_mailbox.h"
+#include "components/viz/common/resources/single_release_callback.h"
 #include "gpu/command_buffer/client/gles2_interface_stub.h"
+#include "gpu/config/gpu_feature_info.h"
 #include "platform/graphics/gpu/DrawingBufferTestHelpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -33,7 +34,12 @@ class WebGraphicsContext3DProviderSoftwareRenderingForTests
   // Not used by WebGL code.
   GrContext* GetGrContext() override { return nullptr; }
   bool BindToCurrentThread() override { return false; }
-  gpu::Capabilities GetCapabilities() override { return gpu::Capabilities(); }
+  const gpu::Capabilities& GetCapabilities() const override {
+    return capabilities_;
+  }
+  const gpu::GpuFeatureInfo& GetGpuFeatureInfo() const override {
+    return gpu_feature_info_;
+  }
   void SetLostContextCallback(const base::Closure&) {}
   void SetErrorMessageCallback(
       const base::Callback<void(const char*, int32_t id)>&) {}
@@ -41,6 +47,8 @@ class WebGraphicsContext3DProviderSoftwareRenderingForTests
 
  private:
   std::unique_ptr<gpu::gles2::GLES2Interface> gl_;
+  gpu::Capabilities capabilities_;
+  gpu::GpuFeatureInfo gpu_feature_info_;
 };
 
 class DrawingBufferSoftwareRenderingTest : public Test {
@@ -53,8 +61,10 @@ class DrawingBufferSoftwareRenderingTest : public Test {
         provider = WTF::WrapUnique(
             new WebGraphicsContext3DProviderSoftwareRenderingForTests(
                 std::move(gl)));
+    GLES2InterfaceForTests* gl_ =
+        static_cast<GLES2InterfaceForTests*>(provider->ContextGL());
     drawing_buffer_ = DrawingBufferForTests::Create(
-        std::move(provider), nullptr, initial_size, DrawingBuffer::kPreserve,
+        std::move(provider), gl_, initial_size, DrawingBuffer::kPreserve,
         kDisableMultisampling);
     CHECK(drawing_buffer_);
   }
@@ -63,11 +73,11 @@ class DrawingBufferSoftwareRenderingTest : public Test {
   bool is_software_rendering_ = false;
 };
 
-TEST_F(DrawingBufferSoftwareRenderingTest, bitmapRecycling) {
-  cc::TextureMailbox texture_mailbox;
-  std::unique_ptr<cc::SingleReleaseCallback> release_callback1;
-  std::unique_ptr<cc::SingleReleaseCallback> release_callback2;
-  std::unique_ptr<cc::SingleReleaseCallback> release_callback3;
+TEST_F(DrawingBufferSoftwareRenderingTest, BitmapRecycling) {
+  viz::TextureMailbox texture_mailbox;
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback1;
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback2;
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback3;
   IntSize initial_size(kInitialWidth, kInitialHeight);
   IntSize alternate_size(kInitialWidth, kAlternateHeight);
 
@@ -97,6 +107,30 @@ TEST_F(DrawingBufferSoftwareRenderingTest, bitmapRecycling) {
   EXPECT_EQ(0, drawing_buffer_->RecycledBitmapCount());
   release_callback3->Run(gpu::SyncToken(), false /* lostResource */);
   EXPECT_EQ(1, drawing_buffer_->RecycledBitmapCount());
+
+  drawing_buffer_->BeginDestruction();
+}
+
+TEST_F(DrawingBufferSoftwareRenderingTest, FramebufferBinding) {
+  GLES2InterfaceForTests* gl_ = drawing_buffer_->ContextGLForTests();
+  viz::TextureMailbox texture_mailbox;
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback;
+  IntSize initial_size(kInitialWidth, kInitialHeight);
+  GLint drawBinding = 0, readBinding = 0;
+
+  GLuint draw_framebuffer_binding = 0xbeef3;
+  GLuint read_framebuffer_binding = 0xbeef4;
+  gl_->BindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_framebuffer_binding);
+  gl_->BindFramebuffer(GL_READ_FRAMEBUFFER, read_framebuffer_binding);
+  gl_->SaveState();
+  drawing_buffer_->Resize(initial_size);
+  drawing_buffer_->MarkContentsChanged();
+  drawing_buffer_->PrepareTextureMailbox(&texture_mailbox, &release_callback);
+  gl_->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawBinding);
+  gl_->GetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readBinding);
+  EXPECT_EQ(static_cast<GLint>(draw_framebuffer_binding), drawBinding);
+  EXPECT_EQ(static_cast<GLint>(read_framebuffer_binding), readBinding);
+  release_callback->Run(gpu::SyncToken(), false /* lostResource */);
 
   drawing_buffer_->BeginDestruction();
 }

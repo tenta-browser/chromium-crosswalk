@@ -6,7 +6,6 @@
 
 #include "core/dom/Modulator.h"
 #include "core/dom/ModuleScript.h"
-#include "core/dom/ScriptModuleResolver.h"
 #include "core/loader/modulescript/ModuleScriptFetchRequest.h"
 #include "core/loader/modulescript/ModuleScriptLoaderClient.h"
 #include "platform/WebTaskRunner.h"
@@ -50,8 +49,7 @@ class ModuleMap::Entry final : public GarbageCollectedFinalized<Entry>,
   HeapHashSet<Member<SingleModuleClient>> clients_;
 };
 
-ModuleMap::Entry::Entry(ModuleMap* map)
-    : module_script_(this, nullptr), map_(map) {
+ModuleMap::Entry::Entry(ModuleMap* map) : map_(map) {
   DCHECK(map_);
 }
 
@@ -90,19 +88,13 @@ void ModuleMap::Entry::NotifyNewSingleModuleFinished(
   module_script_ = module_script;
   is_fetching_ = false;
 
-  if (module_script_) {
-    map_->GetModulator()->GetScriptModuleResolver()->RegisterModuleScript(
-        module_script_);
-  }
-
   for (const auto& client : clients_) {
     DispatchFinishedNotificationAsync(client);
   }
-  clients_.Clear();
+  clients_.clear();
 }
 
 ModuleScript* ModuleMap::Entry::GetModuleScript() const {
-  DCHECK(!is_fetching_);
   return module_script_.Get();
 }
 
@@ -131,11 +123,10 @@ void ModuleMap::FetchSingleModuleScript(const ModuleScriptFetchRequest& request,
   // Step 2. If moduleMap[url] is "fetching", wait in parallel until that
   // entry's value changes, then queue a task on the networking task source to
   // proceed with running the following steps.
-  MapImpl::AddResult result =
-      map_.insert(request.Url(), TraceWrapperMember<Entry>(this, nullptr));
+  MapImpl::AddResult result = map_.insert(request.Url(), nullptr);
   TraceWrapperMember<Entry>& entry = result.stored_value->value;
   if (result.is_new_entry) {
-    entry = TraceWrapperMember<Entry>(this, Entry::Create(this));
+    entry = Entry::Create(this);
 
     // Steps 4-9 loads a new single module script.
     // Delegates to ModuleScriptLoader via Modulator.
@@ -151,8 +142,9 @@ void ModuleMap::FetchSingleModuleScript(const ModuleScriptFetchRequest& request,
 }
 
 ModuleScript* ModuleMap::GetFetchedModuleScript(const KURL& url) const {
-  MapImpl::const_iterator it = map_.Find(url);
-  CHECK_NE(it, map_.end());
+  MapImpl::const_iterator it = map_.find(url);
+  if (it == map_.end())
+    return nullptr;
   return it->value->GetModuleScript();
 }
 

@@ -112,16 +112,15 @@ WebFileSystem* LocalFileSystem::GetFileSystem() const {
   return platform->FileSystem();
 }
 
-void LocalFileSystem::RequestFileSystemAccessInternal(
-    ExecutionContext* context,
-    std::unique_ptr<WTF::Closure> allowed,
-    std::unique_ptr<WTF::Closure> denied) {
+void LocalFileSystem::RequestFileSystemAccessInternal(ExecutionContext* context,
+                                                      WTF::Closure allowed,
+                                                      WTF::Closure denied) {
   if (!context->IsDocument()) {
     if (!Client().RequestFileSystemAccessSync(context)) {
-      (*denied)();
+      denied();
       return;
     }
-    (*allowed)();
+    allowed();
     return;
   }
   Client().RequestFileSystemAccessAsync(
@@ -154,7 +153,7 @@ void LocalFileSystem::FileSystemAllowedInternal(ExecutionContext* context,
     return;
   }
   KURL storage_partition =
-      KURL(KURL(), context->GetSecurityOrigin()->ToString());
+      KURL(NullURL(), context->GetSecurityOrigin()->ToString());
   file_system->OpenFileSystem(storage_partition,
                               static_cast<WebFileSystemType>(type),
                               callbacks->Release());

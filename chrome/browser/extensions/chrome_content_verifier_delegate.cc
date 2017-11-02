@@ -21,6 +21,7 @@
 #include "base/version.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
+#include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/extensions/policy_extension_reinstaller.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -29,8 +30,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/management_policy.h"
-#include "extensions/common/constants.h"
-#include "extensions/common/extension.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/extensions_client.h"
 #include "extensions/common/manifest.h"
@@ -131,7 +131,10 @@ ContentVerifierDelegate::Mode ChromeContentVerifierDelegate::ShouldBeVerified(
   if (!Manifest::IsAutoUpdateableLocation(extension.location()))
     return ContentVerifierDelegate::NONE;
 
-  if (!ManifestURL::UpdatesFromGallery(&extension)) {
+  // Use the InstallVerifier's |IsFromStore| method to avoid discrepancies
+  // between which extensions are considered in-store.
+  // See https://crbug.com/766806 for details.
+  if (!InstallVerifier::IsFromStore(extension)) {
     // It's possible that the webstore update url was overridden for testing
     // so also consider extensions with the default (production) update url
     // to be from the store as well.
@@ -195,7 +198,8 @@ void ChromeContentVerifierDelegate::VerifyFailed(
                       << extension_id << " installed at: "
                       << extension->path().value();
       pending_manager->ExpectPolicyReinstallForCorruption(extension_id);
-      service->DisableExtension(extension_id, Extension::DISABLE_CORRUPTED);
+      service->DisableExtension(extension_id,
+                                disable_reason::DISABLE_CORRUPTED);
       // Attempt to reinstall.
       policy_extension_reinstaller_->NotifyExtensionDisabledDueToCorruption();
       return;
@@ -205,7 +209,7 @@ void ChromeContentVerifierDelegate::VerifyFailed(
                   << "') due to content verification failure. In tests you "
                   << "might want to use a ScopedIgnoreContentVerifierForTest "
                   << "instance to prevent this.";
-    service->DisableExtension(extension_id, Extension::DISABLE_CORRUPTED);
+    service->DisableExtension(extension_id, disable_reason::DISABLE_CORRUPTED);
     ExtensionPrefs::Get(context_)->IncrementCorruptedDisableCount();
     UMA_HISTOGRAM_BOOLEAN("Extensions.CorruptExtensionBecameDisabled", true);
     UMA_HISTOGRAM_ENUMERATION("Extensions.CorruptExtensionDisabledReason",

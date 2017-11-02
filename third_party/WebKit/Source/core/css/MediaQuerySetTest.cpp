@@ -13,9 +13,10 @@ namespace blink {
 typedef struct {
   const char* input;
   const char* output;
-} TestCase;
+} MediaQuerySetTestCase;
 
-static void TestMediaQuery(TestCase test, MediaQuerySet& query_set) {
+static void TestMediaQuery(MediaQuerySetTestCase test,
+                           MediaQuerySet& query_set) {
   StringBuilder output;
   size_t j = 0;
   while (j < query_set.QueryVector().size()) {
@@ -27,16 +28,16 @@ static void TestMediaQuery(TestCase test, MediaQuerySet& query_set) {
     output.Append(", ");
   }
   if (test.output)
-    ASSERT_STREQ(test.output, output.ToString().Ascii().Data());
+    ASSERT_STREQ(test.output, output.ToString().Ascii().data());
   else
-    ASSERT_STREQ(test.input, output.ToString().Ascii().Data());
+    ASSERT_STREQ(test.input, output.ToString().Ascii().data());
 }
 
 TEST(MediaQuerySetTest, Basic) {
   // The first string represents the input string.
   // The second string represents the output string, if present.
   // Otherwise, the output string is identical to the first string.
-  TestCase test_cases[] = {
+  MediaQuerySetTestCase test_cases[] = {
       {"", nullptr},
       {" ", ""},
       {"screen", nullptr},

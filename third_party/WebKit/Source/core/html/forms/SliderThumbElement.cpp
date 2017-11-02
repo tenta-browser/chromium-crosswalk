@@ -31,13 +31,13 @@
 
 #include "core/html/forms/SliderThumbElement.h"
 
-#include "core/dom/shadow/ShadowRoot.h"
-#include "core/events/Event.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/events/Event.h"
 #include "core/events/MouseEvent.h"
 #include "core/events/TouchEvent.h"
 #include "core/frame/EventHandlerRegistry.h"
 #include "core/frame/LocalFrame.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/forms/StepRange.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/shadow/ShadowElementNames.h"
@@ -91,7 +91,7 @@ bool SliderThumbElement::MatchesReadWritePseudoClass() const {
   return HostInput() && HostInput()->MatchesReadWritePseudoClass();
 }
 
-Node* SliderThumbElement::FocusDelegate() {
+const Node* SliderThumbElement::FocusDelegate() const {
   return HostInput();
 }
 
@@ -102,7 +102,7 @@ void SliderThumbElement::DragFrom(const LayoutPoint& point) {
 
 void SliderThumbElement::SetPositionFromPoint(const LayoutPoint& point) {
   HTMLInputElement* input(HostInput());
-  Element* track_element = input->UserAgentShadowRoot()->GetElementById(
+  Element* track_element = input->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::SliderTrack());
 
   if (!input->GetLayoutObject() || !GetLayoutBox() ||
@@ -283,7 +283,7 @@ void SliderThumbElement::DetachLayoutTree(const AttachContext& context) {
 HTMLInputElement* SliderThumbElement::HostInput() const {
   // Only HTMLInputElement creates SliderThumbElement instances as its shadow
   // nodes.  So, ownerShadowHost() must be an HTMLInputElement.
-  return toHTMLInputElement(OwnerShadowHost());
+  return ToHTMLInputElement(OwnerShadowHost());
 }
 
 static const AtomicString& SliderThumbShadowPartId() {
@@ -328,7 +328,7 @@ inline SliderContainerElement::SliderContainerElement(Document& document)
 DEFINE_NODE_FACTORY(SliderContainerElement)
 
 HTMLInputElement* SliderContainerElement::HostInput() const {
-  return toHTMLInputElement(OwnerShadowHost());
+  return ToHTMLInputElement(OwnerShadowHost());
 }
 
 LayoutObject* SliderContainerElement::CreateLayoutObject(const ComputedStyle&) {
@@ -364,7 +364,7 @@ void SliderContainerElement::HandleTouchEvent(TouchEvent* event) {
 
   TouchList* touches = event->targetTouches();
   SliderThumbElement* thumb = ToSliderThumbElement(
-      GetTreeScope().GetElementById(ShadowElementNames::SliderThumb()));
+      GetTreeScope().getElementById(ShadowElementNames::SliderThumb()));
   if (touches->length() == 1) {
     if (event->type() == EventTypeNames::touchstart) {
       start_point_ = touches->item(0)->AbsoluteLocation();
@@ -456,6 +456,7 @@ void SliderContainerElement::UpdateTouchEventHandlerRegistry() {
         GetDocument().GetPage()->GetEventHandlerRegistry();
     registry.DidAddEventHandler(
         *this, EventHandlerRegistry::kTouchStartOrMoveEventPassive);
+    registry.DidAddEventHandler(*this, EventHandlerRegistry::kPointerEvent);
     has_touch_event_handler_ = true;
   }
 }

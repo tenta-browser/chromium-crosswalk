@@ -26,7 +26,6 @@
 
 #include "platform/image-decoders/ImageFrame.h"
 
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/skia/SkiaUtils.h"
 #include "platform/image-decoders/ImageDecoder.h"
 
@@ -36,7 +35,6 @@ ImageFrame::ImageFrame()
     : allocator_(0),
       has_alpha_(true),
       status_(kFrameEmpty),
-      duration_(0),
       disposal_method_(kDisposeNotSpecified),
       alpha_blend_source_(kBlendAtopPreviousFrame),
       premultiply_alpha_(true),
@@ -48,11 +46,8 @@ ImageFrame& ImageFrame::operator=(const ImageFrame& other) {
     return *this;
 
   bitmap_ = other.bitmap_;
-  // Keep the pixels locked since we will be writing directly into the
-  // bitmap throughout this object's lifetime.
-  bitmap_.lockPixels();
-  // Be sure to assign this before calling setStatus(), since setStatus() may
-  // call notifyBitmapIfPixelsChanged().
+  // Be sure to assign this before calling SetStatus(), since SetStatus() may
+  // call NotifyBitmapIfPixelsChanged().
   pixels_changed_ = other.pixels_changed_;
   SetMemoryAllocator(other.GetAllocator());
   SetOriginalFrameRect(other.OriginalFrameRect());
@@ -61,7 +56,7 @@ ImageFrame& ImageFrame::operator=(const ImageFrame& other) {
   SetDisposalMethod(other.GetDisposalMethod());
   SetAlphaBlendSource(other.GetAlphaBlendSource());
   SetPremultiplyAlpha(other.PremultiplyAlpha());
-  // Be sure that this is called after we've called setStatus(), since we
+  // Be sure that this is called after we've called SetStatus(), since we
   // look at our status to know what to do with the alpha value.
   SetHasAlpha(other.HasAlpha());
   SetRequiredPreviousFrameIndex(other.RequiredPreviousFrameIndex());
@@ -71,9 +66,9 @@ ImageFrame& ImageFrame::operator=(const ImageFrame& other) {
 void ImageFrame::ClearPixelData() {
   bitmap_.reset();
   status_ = kFrameEmpty;
-  // NOTE: Do not reset other members here; clearFrameBufferCache()
+  // NOTE: Do not reset other members here; ClearFrameBufferCache()
   // calls this to free the bitmap data, but other functions like
-  // initFrameBuffer() and frameComplete() may still need to read
+  // InitFrameBuffer() and FrameComplete() may still need to read
   // other metadata out of this frame later.
 }
 
@@ -86,7 +81,14 @@ bool ImageFrame::CopyBitmapData(const ImageFrame& other) {
   DCHECK_NE(this, &other);
   has_alpha_ = other.has_alpha_;
   bitmap_.reset();
-  return other.bitmap_.copyTo(&bitmap_, other.bitmap_.colorType());
+  SkImageInfo info = other.bitmap_.info();
+  if (!bitmap_.tryAllocPixels(info)) {
+    return false;
+  }
+
+  status_ = kFrameAllocated;
+  return other.bitmap_.readPixels(info, bitmap_.getPixels(), bitmap_.rowBytes(),
+                                  0, 0);
 }
 
 bool ImageFrame::TakeBitmapDataIfWritable(ImageFrame* other) {
@@ -100,20 +102,25 @@ bool ImageFrame::TakeBitmapDataIfWritable(ImageFrame* other) {
   bitmap_.reset();
   bitmap_.swap(other->bitmap_);
   other->status_ = kFrameEmpty;
+  status_ = kFrameAllocated;
   return true;
 }
 
 bool ImageFrame::AllocatePixelData(int new_width,
                                    int new_height,
                                    sk_sp<SkColorSpace> color_space) {
-  // allocatePixelData() should only be called once.
+  // AllocatePixelData() should only be called once.
   DCHECK(!Width() && !Height());
 
   bitmap_.setInfo(SkImageInfo::MakeN32(
       new_width, new_height,
       premultiply_alpha_ ? kPremul_SkAlphaType : kUnpremul_SkAlphaType,
       std::move(color_space)));
-  return bitmap_.tryAllocPixels(allocator_, 0);
+  bool allocated = bitmap_.tryAllocPixels(allocator_);
+  if (allocated)
+    status_ = kFrameAllocated;
+
+  return allocated;
 }
 
 bool ImageFrame::HasAlpha() const {
@@ -139,8 +146,8 @@ void ImageFrame::SetStatus(Status status) {
     // Send pending pixels changed notifications now, because we can't do
     // this after the bitmap has been marked immutable.  We don't set the
     // bitmap immutable here because it would defeat
-    // takeBitmapDataIfWritable().  Instead we let the bitmap stay mutable
-    // until someone calls finalizePixelsAndGetImage() to actually get the
+    // TakeBitmapDataIfWritable().  Instead we let the bitmap stay mutable
+    // until someone calls FinalizePixelsAndGetImage() to actually get the
     // SkImage.
     NotifyBitmapIfPixelsChanged();
   }

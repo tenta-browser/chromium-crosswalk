@@ -24,14 +24,14 @@
 namespace blink {
 namespace {
 
-class SVGInlineTextBoxPainterTest : public PaintControllerPaintTest {
+class SVGInlineTextBoxPainterTest : public PaintControllerPaintTestBase {
  public:
   const DrawingDisplayItem* GetDrawingForSVGTextById(const char* element_name) {
     // Look up the inline text box that serves as the display item client for
     // the painted text.
     LayoutSVGText* target_svg_text =
         ToLayoutSVGText(GetDocument()
-                            .GetElementById(AtomicString(element_name))
+                            .getElementById(AtomicString(element_name))
                             ->GetLayoutObject());
     LayoutSVGInlineText* target_inline_text =
         target_svg_text->DescendantTextNodes()[0];
@@ -61,7 +61,7 @@ class SVGInlineTextBoxPainterTest : public PaintControllerPaintTest {
 
  private:
   void SetUp() override {
-    PaintControllerPaintTest::SetUp();
+    PaintControllerPaintTestBase::SetUp();
     EnableCompositing();
   }
 };
@@ -80,7 +80,7 @@ bool ApproximatelyEqual(int a, int b, int delta) {
 
 const static int kPixelDelta = 4;
 
-#define EXPECT_RECT_EQ(expected, actual)                                    \
+#define EXPECT_RECT_APPROX_EQ(expected, actual)                             \
   do {                                                                      \
     const FloatRect& actual_rect = actual;                                  \
     EXPECT_TRUE(                                                            \
@@ -99,11 +99,6 @@ const static int kPixelDelta = 4;
         << ", expected: " << expected.Height();                             \
   } while (false)
 
-static IntRect CullRectFromDrawing(
-    const DrawingDisplayItem& drawing_display_item) {
-  return IntRect(drawing_display_item.GetPaintRecord()->cullRect());
-}
-
 TEST_F(SVGInlineTextBoxPainterTest, TextCullRect_DefaultWritingMode) {
   SetBodyInnerHTML(
       "<svg width='400px' height='400px' font-family='Arial' font-size='30'>"
@@ -114,16 +109,16 @@ TEST_F(SVGInlineTextBoxPainterTest, TextCullRect_DefaultWritingMode) {
   const DrawingDisplayItem* drawing_display_item =
       GetDrawingForSVGTextById("target");
   AssertTextDrawingEquals(drawing_display_item, "x");
-  EXPECT_RECT_EQ(IntRect(50, 3, 15, 33),
-                 CullRectFromDrawing(*drawing_display_item));
+  EXPECT_RECT_APPROX_EQ(IntRect(50, 3, 15, 33),
+                        drawing_display_item->GetPaintRecordBounds());
 
   SelectAllText();
   GetDocument().View()->UpdateAllLifecyclePhases();
 
   drawing_display_item = GetDrawingForSVGTextById("target");
   AssertTextDrawingEquals(drawing_display_item, "x");
-  EXPECT_RECT_EQ(IntRect(50, 3, 15, 33),
-                 CullRectFromDrawing(*drawing_display_item));
+  EXPECT_RECT_APPROX_EQ(IntRect(50, 3, 15, 33),
+                        drawing_display_item->GetPaintRecordBounds());
 }
 
 TEST_F(SVGInlineTextBoxPainterTest, TextCullRect_WritingModeTopToBottom) {
@@ -136,8 +131,8 @@ TEST_F(SVGInlineTextBoxPainterTest, TextCullRect_WritingModeTopToBottom) {
   const DrawingDisplayItem* drawing_display_item =
       GetDrawingForSVGTextById("target");
   AssertTextDrawingEquals(drawing_display_item, "x");
-  EXPECT_RECT_EQ(IntRect(33, 30, 34, 15),
-                 CullRectFromDrawing(*drawing_display_item));
+  EXPECT_RECT_APPROX_EQ(IntRect(33, 30, 34, 15),
+                        drawing_display_item->GetPaintRecordBounds());
 
   SelectAllText();
   GetDocument().View()->UpdateAllLifecyclePhases();
@@ -147,8 +142,8 @@ TEST_F(SVGInlineTextBoxPainterTest, TextCullRect_WritingModeTopToBottom) {
   // enclosingIntRect() in SVGInlineTextBox::localSelectionRect().
   drawing_display_item = GetDrawingForSVGTextById("target");
   AssertTextDrawingEquals(drawing_display_item, "x");
-  EXPECT_RECT_EQ(IntRect(33, 30, 34, 16),
-                 CullRectFromDrawing(*drawing_display_item));
+  EXPECT_RECT_APPROX_EQ(IntRect(33, 30, 34, 16),
+                        drawing_display_item->GetPaintRecordBounds());
 }
 
 TEST_F(SVGInlineTextBoxPainterTest, TextCullRect_TextShadow) {
@@ -162,8 +157,8 @@ TEST_F(SVGInlineTextBoxPainterTest, TextCullRect_TextShadow) {
   const DrawingDisplayItem* drawing_display_item =
       GetDrawingForSVGTextById("target");
   AssertTextDrawingEquals(drawing_display_item, "x");
-  EXPECT_RECT_EQ(IntRect(50, 3, 220, 238),
-                 CullRectFromDrawing(*drawing_display_item));
+  EXPECT_RECT_APPROX_EQ(IntRect(50, 3, 220, 238),
+                        drawing_display_item->GetPaintRecordBounds());
 }
 
 }  // namespace

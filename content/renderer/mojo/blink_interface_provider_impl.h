@@ -17,19 +17,15 @@ class SingleThreadTaskRunner;
 
 namespace service_manager {
 class Connector;
-class InterfaceProvider;
 }
 
 namespace content {
 
 // An implementation of blink::InterfaceProvider that forwards to a
 // service_manager::InterfaceProvider.
-class BlinkInterfaceProviderImpl : public blink::InterfaceProvider {
+class BlinkInterfaceProviderImpl final : public blink::InterfaceProvider {
  public:
-  explicit BlinkInterfaceProviderImpl(
-      base::WeakPtr<service_manager::Connector> connector);
-  explicit BlinkInterfaceProviderImpl(
-      base::WeakPtr<service_manager::InterfaceProvider> remote_interfaces);
+  explicit BlinkInterfaceProviderImpl(service_manager::Connector* connector);
   ~BlinkInterfaceProviderImpl();
 
   // blink::InterfaceProvider override.
@@ -38,14 +34,7 @@ class BlinkInterfaceProviderImpl : public blink::InterfaceProvider {
 
  private:
   const base::WeakPtr<service_manager::Connector> connector_;
-  const base::WeakPtr<service_manager::InterfaceProvider> remote_interfaces_;
-
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
-
-  // Should only be accessed by Web Worker threads that are using the
-  // blink::Platform-level interface provider.
-  base::WeakPtr<BlinkInterfaceProviderImpl> weak_ptr_;
-  base::WeakPtrFactory<BlinkInterfaceProviderImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(BlinkInterfaceProviderImpl);
 };

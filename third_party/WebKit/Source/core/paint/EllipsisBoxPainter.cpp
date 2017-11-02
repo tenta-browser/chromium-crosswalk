@@ -61,8 +61,8 @@ void EllipsisBoxPainter::PaintEllipsis(const PaintInfo& paint_info,
   if (!font_data)
     return;
 
-  TextPainter::Style text_style = TextPainter::TextPaintingStyle(
-      ellipsis_box_.GetLineLayoutItem(), style, paint_info);
+  TextPaintStyle text_style = TextPainter::TextPaintingStyle(
+      ellipsis_box_.GetLineLayoutItem().GetDocument(), style, paint_info);
   TextRun text_run = ConstructTextRun(font, ellipsis_box_.EllipsisStr(), style,
                                       TextRun::kAllowTrailingExpansion);
   LayoutPoint text_origin(

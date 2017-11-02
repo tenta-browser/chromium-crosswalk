@@ -30,7 +30,7 @@
 
 #include "bindings/core/v8/V8HTMLAllCollection.h"
 
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Element.h"
 #include "bindings/core/v8/V8NodeList.h"
 #include "core/dom/StaticNodeList.h"
@@ -63,9 +63,9 @@ static v8::Local<v8::Value> GetItem(
     HTMLAllCollection* collection,
     v8::Local<v8::Value> argument,
     const CallbackInfo& info,
-    UseCounter::Feature named_feature,
-    UseCounter::Feature indexed_feature,
-    UseCounter::Feature indexed_with_non_number_feature) {
+    WebFeature named_feature,
+    WebFeature indexed_feature,
+    WebFeature indexed_with_non_number_feature) {
   v8::Local<v8::Uint32> index;
   if (!argument->ToArrayIndex(info.GetIsolate()->GetCurrentContext())
            .ToLocal(&index)) {
@@ -95,41 +95,43 @@ void V8HTMLAllCollection::itemMethodCustom(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
   if (info.Length() < 1) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentAllItemNoArguments);
+                      WebFeature::kDocumentAllItemNoArguments);
     return;
   }
 
-  HTMLAllCollection* impl = V8HTMLAllCollection::toImpl(info.Holder());
+  HTMLAllCollection* impl = V8HTMLAllCollection::ToImpl(info.Holder());
   V8SetReturnValue(
-      info, GetItem(impl, info[0], info, UseCounter::kDocumentAllItemNamed,
-                    UseCounter::kDocumentAllItemIndexed,
-                    UseCounter::kDocumentAllItemIndexedWithNonNumber));
+      info, GetItem(impl, info[0], info, WebFeature::kDocumentAllItemNamed,
+                    WebFeature::kDocumentAllItemIndexed,
+                    WebFeature::kDocumentAllItemIndexedWithNonNumber));
 }
 
 void V8HTMLAllCollection::legacyCallCustom(
     const v8::FunctionCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(
+      info.GetIsolate(), "Blink_V8HTMLAllCollection_legacyCallCustom");
   if (info.Length() < 1) {
     UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                      UseCounter::kDocumentAllLegacyCallNoArguments);
+                      WebFeature::kDocumentAllLegacyCallNoArguments);
     return;
   }
 
   UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                    UseCounter::kDocumentAllLegacyCall);
+                    WebFeature::kDocumentAllLegacyCall);
 
-  HTMLAllCollection* impl = V8HTMLAllCollection::toImpl(info.Holder());
+  HTMLAllCollection* impl = V8HTMLAllCollection::ToImpl(info.Holder());
 
   if (info.Length() == 1) {
     V8SetReturnValue(
         info,
-        GetItem(impl, info[0], info, UseCounter::kDocumentAllLegacyCallNamed,
-                UseCounter::kDocumentAllLegacyCallIndexed,
-                UseCounter::kDocumentAllLegacyCallIndexedWithNonNumber));
+        GetItem(impl, info[0], info, WebFeature::kDocumentAllLegacyCallNamed,
+                WebFeature::kDocumentAllLegacyCallIndexed,
+                WebFeature::kDocumentAllLegacyCallIndexedWithNonNumber));
     return;
   }
 
   UseCounter::Count(CurrentExecutionContext(info.GetIsolate()),
-                    UseCounter::kDocumentAllLegacyCallTwoArguments);
+                    WebFeature::kDocumentAllLegacyCallTwoArguments);
 
   // If there is a second argument it is the index of the item we want.
   TOSTRING_VOID(V8StringResource<>, name, info[0]);

@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CONTENT_COMMON_RESOURCE_MESSAGES_H_
+#define CONTENT_COMMON_RESOURCE_MESSAGES_H_
+
 // IPC messages for resource loading.
 //
 // NOTE: All messages must send an |int request_id| as their first parameter.
-
-// Multiply-included message file, hence no include guard.
 
 #include <stdint.h>
 
@@ -14,23 +15,25 @@
 #include "base/process/process.h"
 #include "content/common/content_param_traits_macros.h"
 #include "content/common/navigation_params.h"
-#include "content/common/resource_request.h"
-#include "content/common/resource_request_body_impl.h"
-#include "content/common/resource_request_completion_status.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/common_param_traits.h"
+#include "content/public/common/resource_request.h"
+#include "content/public/common/resource_request_body.h"
+#include "content/public/common/resource_request_completion_status.h"
 #include "content/public/common/resource_response.h"
+#include "content/public/common/service_worker_modes.h"
 #include "ipc/ipc_message_macros.h"
 #include "net/base/request_priority.h"
+#include "net/cert/ct_policy_status.h"
 #include "net/cert/signed_certificate_timestamp.h"
 #include "net/cert/signed_certificate_timestamp_and_status.h"
 #include "net/http/http_response_info.h"
-#include "net/nqe/effective_connection_type.h"
+#include "net/ssl/ssl_info.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
 #include "third_party/WebKit/public/platform/WebMixedContentContextType.h"
 
-#ifndef CONTENT_COMMON_RESOURCE_MESSAGES_H_
-#define CONTENT_COMMON_RESOURCE_MESSAGES_H_
+#ifndef INTERNAL_CONTENT_COMMON_RESOURCE_MESSAGES_H_
+#define INTERNAL_CONTENT_COMMON_RESOURCE_MESSAGES_H_
 
 namespace net {
 struct LoadTimingInfo;
@@ -45,7 +48,26 @@ namespace IPC {
 template <>
 struct ParamTraits<scoped_refptr<net::HttpResponseHeaders> > {
   typedef scoped_refptr<net::HttpResponseHeaders> param_type;
-  static void GetSize(base::PickleSizer* s, const param_type& p);
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<net::SSLInfo> {
+  typedef net::SSLInfo param_type;
+  static void Write(base::Pickle* m, const param_type& p);
+  static bool Read(const base::Pickle* m,
+                   base::PickleIterator* iter,
+                   param_type* r);
+  static void Log(const param_type& p, std::string* l);
+};
+
+template <>
+struct CONTENT_EXPORT ParamTraits<net::HashValue> {
+  typedef net::HashValue param_type;
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -56,7 +78,6 @@ struct ParamTraits<scoped_refptr<net::HttpResponseHeaders> > {
 template <>
 struct CONTENT_EXPORT ParamTraits<storage::DataElement> {
   typedef storage::DataElement param_type;
-  static void GetSize(base::PickleSizer* s, const param_type& p);
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -67,7 +88,6 @@ struct CONTENT_EXPORT ParamTraits<storage::DataElement> {
 template <>
 struct ParamTraits<scoped_refptr<content::ResourceDevToolsInfo> > {
   typedef scoped_refptr<content::ResourceDevToolsInfo> param_type;
-  static void GetSize(base::PickleSizer* s, const param_type& p);
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -78,7 +98,6 @@ struct ParamTraits<scoped_refptr<content::ResourceDevToolsInfo> > {
 template <>
 struct ParamTraits<net::LoadTimingInfo> {
   typedef net::LoadTimingInfo param_type;
-  static void GetSize(base::PickleSizer* s, const param_type& p);
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -87,9 +106,8 @@ struct ParamTraits<net::LoadTimingInfo> {
 };
 
 template <>
-struct ParamTraits<scoped_refptr<content::ResourceRequestBodyImpl>> {
-  typedef scoped_refptr<content::ResourceRequestBodyImpl> param_type;
-  static void GetSize(base::PickleSizer* s, const param_type& p);
+struct ParamTraits<scoped_refptr<content::ResourceRequestBody>> {
+  typedef scoped_refptr<content::ResourceRequestBody> param_type;
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -100,7 +118,6 @@ struct ParamTraits<scoped_refptr<content::ResourceRequestBodyImpl>> {
 template <>
 struct ParamTraits<scoped_refptr<net::ct::SignedCertificateTimestamp>> {
   typedef scoped_refptr<net::ct::SignedCertificateTimestamp> param_type;
-  static void GetSize(base::PickleSizer* s, const param_type& p);
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
@@ -110,8 +127,7 @@ struct ParamTraits<scoped_refptr<net::ct::SignedCertificateTimestamp>> {
 
 }  // namespace IPC
 
-#endif  // CONTENT_COMMON_RESOURCE_MESSAGES_H_
-
+#endif  // INTERNAL_CONTENT_COMMON_RESOURCE_MESSAGES_H_
 
 #define IPC_MESSAGE_START ResourceMsgStart
 #undef IPC_MESSAGE_EXPORT
@@ -120,6 +136,17 @@ struct ParamTraits<scoped_refptr<net::ct::SignedCertificateTimestamp>> {
 IPC_ENUM_TRAITS_MAX_VALUE( \
     net::HttpResponseInfo::ConnectionInfo, \
     net::HttpResponseInfo::NUM_OF_CONNECTION_INFOS - 1)
+
+IPC_ENUM_TRAITS_MAX_VALUE(net::TokenBindingParam, net::TB_PARAM_ECDSAP256)
+IPC_ENUM_TRAITS_MAX_VALUE(net::SSLInfo::HandshakeType,
+                          net::SSLInfo::HANDSHAKE_FULL)
+IPC_ENUM_TRAITS_MAX_VALUE(
+    net::ct::CertPolicyCompliance,
+    net::ct::CertPolicyCompliance::CERT_POLICY_BUILD_NOT_TIMELY)
+IPC_ENUM_TRAITS_MAX_VALUE(net::OCSPVerifyResult::ResponseStatus,
+                          net::OCSPVerifyResult::PARSE_RESPONSE_DATA_ERROR)
+IPC_ENUM_TRAITS_MAX_VALUE(net::OCSPRevocationStatus,
+                          net::OCSPRevocationStatus::UNKNOWN)
 
 IPC_ENUM_TRAITS_MAX_VALUE(content::FetchRequestMode,
                           content::FETCH_REQUEST_MODE_LAST)
@@ -132,9 +159,6 @@ IPC_ENUM_TRAITS_MAX_VALUE(content::FetchRedirectMode,
 
 IPC_ENUM_TRAITS_MAX_VALUE(content::ServiceWorkerMode,
                           content::ServiceWorkerMode::LAST)
-
-IPC_ENUM_TRAITS_MAX_VALUE(net::EffectiveConnectionType,
-                          net::EFFECTIVE_CONNECTION_TYPE_LAST - 1)
 
 IPC_ENUM_TRAITS_MAX_VALUE(blink::WebMixedContentContextType,
                           blink::WebMixedContentContextType::kLast)
@@ -159,6 +183,8 @@ IPC_STRUCT_TRAITS_BEGIN(content::ResourceResponseInfo)
   IPC_STRUCT_TRAITS_MEMBER(mime_type)
   IPC_STRUCT_TRAITS_MEMBER(charset)
   IPC_STRUCT_TRAITS_MEMBER(has_major_certificate_errors)
+  IPC_STRUCT_TRAITS_MEMBER(is_legacy_symantec_cert)
+  IPC_STRUCT_TRAITS_MEMBER(cert_validity_start)
   IPC_STRUCT_TRAITS_MEMBER(content_length)
   IPC_STRUCT_TRAITS_MEMBER(encoded_data_length)
   IPC_STRUCT_TRAITS_MEMBER(encoded_body_length)
@@ -199,10 +225,14 @@ IPC_STRUCT_TRAITS_BEGIN(net::RedirectInfo)
   IPC_STRUCT_TRAITS_MEMBER(status_code)
   IPC_STRUCT_TRAITS_MEMBER(new_method)
   IPC_STRUCT_TRAITS_MEMBER(new_url)
-  IPC_STRUCT_TRAITS_MEMBER(new_first_party_for_cookies)
+  IPC_STRUCT_TRAITS_MEMBER(new_site_for_cookies)
   IPC_STRUCT_TRAITS_MEMBER(new_referrer)
   IPC_STRUCT_TRAITS_MEMBER(new_referrer_policy)
   IPC_STRUCT_TRAITS_MEMBER(referred_token_binding_host)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(net::MutableNetworkTrafficAnnotationTag)
+  IPC_STRUCT_TRAITS_MEMBER(unique_id_hash_code)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(net::SignedCertificateTimestampAndStatus)
@@ -215,7 +245,7 @@ IPC_ENUM_TRAITS_MAX_VALUE(net::ct::SCTVerifyStatus, net::ct::SCT_STATUS_MAX)
 IPC_STRUCT_TRAITS_BEGIN(content::ResourceRequest)
   IPC_STRUCT_TRAITS_MEMBER(method)
   IPC_STRUCT_TRAITS_MEMBER(url)
-  IPC_STRUCT_TRAITS_MEMBER(first_party_for_cookies)
+  IPC_STRUCT_TRAITS_MEMBER(site_for_cookies)
   IPC_STRUCT_TRAITS_MEMBER(request_initiator)
   IPC_STRUCT_TRAITS_MEMBER(referrer)
   IPC_STRUCT_TRAITS_MEMBER(referrer_policy)
@@ -234,19 +264,19 @@ IPC_STRUCT_TRAITS_BEGIN(content::ResourceRequest)
   IPC_STRUCT_TRAITS_MEMBER(fetch_request_mode)
   IPC_STRUCT_TRAITS_MEMBER(fetch_credentials_mode)
   IPC_STRUCT_TRAITS_MEMBER(fetch_redirect_mode)
+  IPC_STRUCT_TRAITS_MEMBER(fetch_integrity)
   IPC_STRUCT_TRAITS_MEMBER(fetch_request_context_type)
   IPC_STRUCT_TRAITS_MEMBER(fetch_mixed_content_context_type)
   IPC_STRUCT_TRAITS_MEMBER(fetch_frame_type)
   IPC_STRUCT_TRAITS_MEMBER(request_body)
   IPC_STRUCT_TRAITS_MEMBER(download_to_file)
+  IPC_STRUCT_TRAITS_MEMBER(keepalive)
   IPC_STRUCT_TRAITS_MEMBER(has_user_gesture)
   IPC_STRUCT_TRAITS_MEMBER(enable_load_timing)
   IPC_STRUCT_TRAITS_MEMBER(enable_upload_progress)
   IPC_STRUCT_TRAITS_MEMBER(do_not_prompt_for_login)
   IPC_STRUCT_TRAITS_MEMBER(render_frame_id)
   IPC_STRUCT_TRAITS_MEMBER(is_main_frame)
-  IPC_STRUCT_TRAITS_MEMBER(parent_is_main_frame)
-  IPC_STRUCT_TRAITS_MEMBER(parent_render_frame_id)
   IPC_STRUCT_TRAITS_MEMBER(transition_type)
   IPC_STRUCT_TRAITS_MEMBER(should_replace_current_entry)
   IPC_STRUCT_TRAITS_MEMBER(transferred_request_child_id)
@@ -262,11 +292,11 @@ IPC_STRUCT_TRAITS_END()
 // Parameters for a ResourceMsg_RequestComplete
 IPC_STRUCT_TRAITS_BEGIN(content::ResourceRequestCompletionStatus)
   IPC_STRUCT_TRAITS_MEMBER(error_code)
-  IPC_STRUCT_TRAITS_MEMBER(was_ignored_by_handler)
   IPC_STRUCT_TRAITS_MEMBER(exists_in_cache)
   IPC_STRUCT_TRAITS_MEMBER(completion_time)
   IPC_STRUCT_TRAITS_MEMBER(encoded_data_length)
   IPC_STRUCT_TRAITS_MEMBER(encoded_body_length)
+  IPC_STRUCT_TRAITS_MEMBER(decoded_body_length)
 IPC_STRUCT_TRAITS_END()
 
 // Resource messages sent from the browser to the renderer.
@@ -337,10 +367,12 @@ IPC_MESSAGE_CONTROL2(ResourceMsg_RequestComplete,
 // Resource messages sent from the renderer to the browser.
 
 // Makes a resource request via the browser.
-IPC_MESSAGE_CONTROL3(ResourceHostMsg_RequestResource,
-                     int /* routing_id */,
-                     int /* request_id */,
-                     content::ResourceRequest)
+IPC_MESSAGE_CONTROL4(
+    ResourceHostMsg_RequestResource,
+    int /* routing_id */,
+    int /* request_id */,
+    content::ResourceRequest,
+    net::MutableNetworkTrafficAnnotationTag /* network_traffic_annotation */)
 
 // Cancels a resource request with the ID given as the parameter.
 IPC_MESSAGE_CONTROL1(ResourceHostMsg_CancelRequest,
@@ -376,3 +408,5 @@ IPC_MESSAGE_CONTROL3(ResourceHostMsg_DidChangePriority,
                      int /* request_id */,
                      net::RequestPriority,
                      int /* intra_priority_value */)
+
+#endif  // CONTENT_COMMON_RESOURCE_MESSAGES_H_

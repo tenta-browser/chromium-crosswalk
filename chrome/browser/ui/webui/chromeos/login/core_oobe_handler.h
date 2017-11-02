@@ -18,7 +18,6 @@
 #include "chrome/browser/chromeos/login/version_info_updater.h"
 #include "chrome/browser/ui/webui/chromeos/login/base_webui_handler.h"
 #include "ui/events/event_source.h"
-#include "ui/keyboard/scoped_keyboard_disabler.h"
 
 namespace base {
 class ListValue;
@@ -56,6 +55,7 @@ class CoreOobeHandler : public BaseWebUIHandler,
       const std::string& os_version_label_text) override;
   void OnEnterpriseInfoUpdated(const std::string& message_text,
                                const std::string& asset_id) override;
+  void OnDeviceInfoUpdated(const std::string& bluetooth_name) override;
 
   // ui::EventSource implementation:
   ui::EventSink* GetEventSink() override;
@@ -92,7 +92,7 @@ class CoreOobeHandler : public BaseWebUIHandler,
   void ReloadContent(const base::DictionaryValue& dictionary) override;
   void ReloadEulaContent(const base::DictionaryValue& dictionary) override;
   void ShowControlBar(bool show) override;
-  void ShowPinKeyboard(bool show) override;
+  void SetVirtualKeyboardShown(bool displayed) override;
   void SetClientAreaSize(int width, int height) override;
   void ShowDeviceResetScreen() override;
   void ShowEnableDebuggingScreen() override;
@@ -107,7 +107,6 @@ class CoreOobeHandler : public BaseWebUIHandler,
   void HandleEnableLargeCursor(bool enabled);
   void HandleEnableHighContrast(bool enabled);
   void HandleEnableVirtualKeyboard(bool enabled);
-  void HandleSetForceDisableVirtualKeyboard(bool disable);
   void HandleEnableScreenMagnifier(bool enabled);
   void HandleEnableSpokenFeedback(bool /* enabled */);
   void HandleInitialized();
@@ -160,8 +159,6 @@ class CoreOobeHandler : public BaseWebUIHandler,
   std::unique_ptr<AccessibilityStatusSubscription> accessibility_subscription_;
 
   DemoModeDetector demo_mode_detector_;
-
-  keyboard::ScopedKeyboardDisabler scoped_keyboard_disabler_;
 
   DISALLOW_COPY_AND_ASSIGN(CoreOobeHandler);
 };

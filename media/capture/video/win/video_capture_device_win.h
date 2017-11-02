@@ -12,10 +12,12 @@
 #define NO_DSHOW_STRSAFE
 #include <dshow.h>
 #include <stdint.h>
+#include <vidcap.h>
 
 #include <map>
 #include <string>
 
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/win/scoped_comptr.h"
@@ -25,9 +27,9 @@
 #include "media/capture/video/win/sink_input_pin_win.h"
 #include "media/capture/video_capture_types.h"
 
-namespace tracked_objects {
+namespace base {
 class Location;
-}  // namespace tracked_objects
+}  // namespace base
 
 namespace media {
 
@@ -55,6 +57,14 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
     AM_MEDIA_TYPE* media_type_;
   };
 
+  static void GetDeviceCapabilityList(const std::string& device_id,
+                                      bool query_detailed_frame_rates,
+                                      CapabilityList* out_capability_list);
+  static void GetPinCapabilityList(
+      base::win::ScopedComPtr<IBaseFilter> capture_filter,
+      base::win::ScopedComPtr<IPin> output_capture_pin,
+      bool query_detailed_frame_rates,
+      CapabilityList* out_capability_list);
   static HRESULT GetDeviceFilter(const std::string& device_id,
                                  IBaseFilter** filter);
   static base::win::ScopedComPtr<IPin> GetPin(IBaseFilter* filter,
@@ -76,6 +86,9 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
       std::unique_ptr<VideoCaptureDevice::Client> client) override;
   void StopAndDeAllocate() override;
   void TakePhoto(TakePhotoCallback callback) override;
+  void GetPhotoState(GetPhotoStateCallback callback) override;
+  void SetPhotoOptions(mojom::PhotoSettingsPtr settings,
+                       SetPhotoOptionsCallback callback) override;
 
  private:
   enum InternalState {
@@ -85,6 +98,8 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
                  // User needs to recover by destroying the object.
   };
 
+  bool InitializeVideoAndCameraControls();
+
   // Implements SinkFilterObserver.
   void FrameReceived(const uint8_t* buffer,
                      int length,
@@ -93,7 +108,7 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
 
   bool CreateCapabilityMap();
   void SetAntiFlickerInCaptureFilter(const VideoCaptureParams& params);
-  void SetErrorState(const tracked_objects::Location& from_here,
+  void SetErrorState(const base::Location& from_here,
                      const std::string& reason,
                      HRESULT hr);
 
@@ -115,9 +130,17 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
   // Map of all capabilities this device support.
   CapabilityList capabilities_;
 
+  VideoCaptureFormat capture_format_;
+
+  base::win::ScopedComPtr<ICameraControl> camera_control_;
+  base::win::ScopedComPtr<IVideoProcAmp> video_control_;
+  // These flags keep the manual/auto mode between cycles of SetPhotoOptions().
+  bool white_balance_mode_manual_;
+  bool exposure_mode_manual_;
+
   base::TimeTicks first_ref_time_;
 
-  std::queue<TakePhotoCallback> take_photo_callbacks_;
+  base::queue<TakePhotoCallback> take_photo_callbacks_;
 
   base::ThreadChecker thread_checker_;
 

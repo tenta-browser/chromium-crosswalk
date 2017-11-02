@@ -4,6 +4,7 @@
 
 #include "platform/heap/PageMemory.h"
 
+#include "base/allocator/partition_allocator/oom.h"
 #include "platform/heap/Heap.h"
 #include "platform/wtf/AddressSanitizer.h"
 #include "platform/wtf/Assertions.h"
@@ -16,14 +17,14 @@ void MemoryRegion::Release() {
 }
 
 bool MemoryRegion::Commit() {
-  WTF::RecommitSystemPages(base_, size_);
-  return WTF::SetSystemPagesAccessible(base_, size_);
+  CHECK(WTF::RecommitSystemPages(base_, size_, WTF::PageReadWrite));
+  return WTF::SetSystemPagesAccess(base_, size_, WTF::PageReadWrite);
 }
 
 void MemoryRegion::Decommit() {
   ASAN_UNPOISON_MEMORY_REGION(base_, size_);
   WTF::DecommitSystemPages(base_, size_);
-  WTF::SetSystemPagesInaccessible(base_, size_);
+  CHECK(WTF::SetSystemPagesAccess(base_, size_, WTF::PageInaccessible));
 }
 
 PageMemoryRegion::PageMemoryRegion(Address base,
@@ -83,14 +84,14 @@ PageMemoryRegion* RegionTree::Lookup(Address address) {
       current = current->right_;
       continue;
     }
-    ASSERT(current->region_->Contains(address));
+    DCHECK(current->region_->Contains(address));
     return current->region_;
   }
   return nullptr;
 }
 
 void RegionTree::Add(PageMemoryRegion* region) {
-  ASSERT(region);
+  DCHECK(region);
   RegionTreeNode* new_tree = new RegionTreeNode(region);
   new_tree->AddTo(&root_);
 }
@@ -98,7 +99,7 @@ void RegionTree::Add(PageMemoryRegion* region) {
 void RegionTreeNode::AddTo(RegionTreeNode** context) {
   Address base = region_->Base();
   for (RegionTreeNode* current = *context; current; current = *context) {
-    ASSERT(!current->region_->Contains(base));
+    DCHECK(!current->region_->Contains(base));
     context =
         (base < current->region_->Base()) ? &current->left_ : &current->right_;
   }
@@ -106,8 +107,8 @@ void RegionTreeNode::AddTo(RegionTreeNode** context) {
 }
 
 void RegionTree::Remove(PageMemoryRegion* region) {
-  ASSERT(region);
-  ASSERT(root_);
+  DCHECK(region);
+  DCHECK(root_);
   Address base = region->Base();
   RegionTreeNode** context = &root_;
   RegionTreeNode* current = root_;
@@ -136,7 +137,7 @@ void RegionTree::Remove(PageMemoryRegion* region) {
 
 PageMemory::PageMemory(PageMemoryRegion* reserved, const MemoryRegion& writable)
     : reserved_(reserved), writable_(writable) {
-  ASSERT(reserved->Contains(writable));
+  DCHECK(reserved->Contains(writable));
 
   // Register the writable area of the memory as part of the LSan root set.
   // Only the writable area is mapped and can contain C++ objects.  Those
@@ -158,7 +159,7 @@ static size_t RoundToOsPageSize(size_t size) {
 }
 
 PageMemory* PageMemory::Allocate(size_t payload_size, RegionTree* region_tree) {
-  ASSERT(payload_size > 0);
+  DCHECK_GT(payload_size, 0u);
 
   // Virtual memory allocation routines operate in OS page sizes.
   // Round up the requested size to nearest os page size.
@@ -171,7 +172,7 @@ PageMemory* PageMemory::Allocate(size_t payload_size, RegionTree* region_tree) {
       PageMemoryRegion::AllocateLargePage(allocation_size, region_tree);
   PageMemory* storage =
       SetupPageMemoryInRegion(page_memory_region, 0, payload_size);
-  RELEASE_ASSERT(storage->Commit());
+  CHECK(storage->Commit());
   return storage;
 }
 

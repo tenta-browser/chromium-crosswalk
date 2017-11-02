@@ -1,111 +1,65 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef CHROMEOS_COMPONENTS_BLE_SCANNER_H_
-#define CHROMEOS_COMPONENTS_BLE_SCANNER_H_
-
-#include <map>
+#ifndef CHROMEOS_COMPONENTS_TETHER_BLE_SCANNER_H_
+#define CHROMEOS_COMPONENTS_TETHER_BLE_SCANNER_H_
 
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "chromeos/components/tether/local_device_data_provider.h"
-#include "components/cryptauth/eid_generator.h"
-#include "device/bluetooth/bluetooth_adapter.h"
-#include "device/bluetooth/bluetooth_adapter_factory.h"
+#include "components/cryptauth/remote_device.h"
 
 namespace device {
 class BluetoothDevice;
-class BluetoothDiscoverySession;
 }
 
 namespace chromeos {
 
 namespace tether {
 
-class BleScanner : public device::BluetoothAdapter::Observer {
+// Performs BLE scans for devices which are advertising to this device.
+class BleScanner {
  public:
   class Observer {
    public:
     virtual void OnReceivedAdvertisementFromDevice(
-        const std::string& device_address,
-        cryptauth::RemoteDevice remote_device) = 0;
+        const cryptauth::RemoteDevice& remote_device,
+        device::BluetoothDevice* bluetooth_device) {}
+    virtual void OnDiscoverySessionStateChanged(bool discovery_session_active) {
+    }
   };
 
-  BleScanner(scoped_refptr<device::BluetoothAdapter> adapter,
-             const LocalDeviceDataProvider* local_device_data_provider);
-  ~BleScanner() override;
+  BleScanner();
+  virtual ~BleScanner();
 
+  // Registers a scan filter for the given device. The scan filter will remain
+  // active until a subsequent call to UnregisterScanFilterForDevice() is made.
+  // Returns whether the scan filter was successfully registered.
   virtual bool RegisterScanFilterForDevice(
-      const cryptauth::RemoteDevice& remote_device);
-  virtual bool UnregisterScanFilterForDevice(
-      const cryptauth::RemoteDevice& remote_device);
+      const cryptauth::RemoteDevice& remote_device) = 0;
 
-  bool IsDeviceRegistered(const std::string& device_id);
+  // Unregisters a scan filter for |device|. Returns whether the scan filter was
+  // successfully unregistered.
+  virtual bool UnregisterScanFilterForDevice(
+      const cryptauth::RemoteDevice& remote_device) = 0;
+
+  // A discovery session should be active if at least one device has been
+  // registered. However, discovery sessions are started and stopped
+  // asynchronously, so these two functions may return different values.
+  virtual bool ShouldDiscoverySessionBeActive() = 0;
+  virtual bool IsDiscoverySessionActive() = 0;
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
-  // device::BluetoothAdapter::Observer
-  void AdapterPoweredChanged(device::BluetoothAdapter* adapter,
-                             bool powered) override;
-  void DeviceAdded(device::BluetoothAdapter* adapter,
-                   device::BluetoothDevice* bluetooth_device) override;
-  void DeviceChanged(device::BluetoothAdapter* adapter,
-                     device::BluetoothDevice* bluetooth_device) override;
-
  protected:
-  base::ObserverList<Observer> observer_list_;
+  void NotifyReceivedAdvertisementFromDevice(
+      const cryptauth::RemoteDevice& remote_device,
+      device::BluetoothDevice* bluetooth_device);
+  void NotifyDiscoverySessionStateChanged(bool discovery_session_active);
 
  private:
-  friend class BleScannerTest;
-
-  class ServiceDataProvider {
-   public:
-    virtual ~ServiceDataProvider() {}
-    virtual const std::vector<uint8_t>* GetServiceDataForUUID(
-        device::BluetoothDevice* bluetooth_device) = 0;
-  };
-
-  class ServiceDataProviderImpl : public ServiceDataProvider {
-   public:
-    ServiceDataProviderImpl();
-    ~ServiceDataProviderImpl() override;
-    const std::vector<uint8_t>* GetServiceDataForUUID(
-        device::BluetoothDevice* bluetooth_device) override;
-  };
-
-  BleScanner(std::unique_ptr<ServiceDataProvider> service_data_provider,
-             scoped_refptr<device::BluetoothAdapter> adapter,
-             const cryptauth::EidGenerator* eid_generator,
-             const LocalDeviceDataProvider* local_device_data_provider);
-
-  void UpdateDiscoveryStatus();
-  void StartDiscoverySession();
-  void OnDiscoverySessionStarted(
-      std::unique_ptr<device::BluetoothDiscoverySession> discovery_session);
-  void OnStartDiscoverySessionError();
-  void StopDiscoverySession();
-  void HandleDeviceUpdated(device::BluetoothDevice* bluetooth_device);
-  void CheckForMatchingScanFilters(device::BluetoothDevice* bluetooth_device,
-                                   std::string& service_data);
-
-  std::unique_ptr<ServiceDataProvider> service_data_provider_;
-
-  scoped_refptr<device::BluetoothAdapter> adapter_;
-
-  // |eid_generator_| and |local_device_data_provider_| are not owned by this
-  // instance and must outlive it.
-  const cryptauth::EidGenerator* eid_generator_;
-  const LocalDeviceDataProvider* local_device_data_provider_;
-
-  bool is_initializing_discovery_session_;
-  std::unique_ptr<device::BluetoothDiscoverySession> discovery_session_;
-
-  std::vector<cryptauth::RemoteDevice> registered_remote_devices_;
-
-  base::WeakPtrFactory<BleScanner> weak_ptr_factory_;
+  base::ObserverList<Observer> observer_list_;
 
   DISALLOW_COPY_AND_ASSIGN(BleScanner);
 };
@@ -114,4 +68,4 @@ class BleScanner : public device::BluetoothAdapter::Observer {
 
 }  // namespace chromeos
 
-#endif  // CHROMEOS_COMPONENTS_BLE_SCANNER_H_
+#endif  // CHROMEOS_COMPONENTS_TETHER_BLE_SCANNER_H_

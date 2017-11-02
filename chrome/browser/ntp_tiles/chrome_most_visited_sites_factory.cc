@@ -11,6 +11,7 @@
 #include "base/callback.h"
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
+#include "chrome/browser/favicon/large_icon_service_factory.h"
 #include "chrome/browser/history/top_sites_factory.h"
 #include "chrome/browser/ntp_tiles/chrome_popular_sites_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -39,7 +40,7 @@ class SupervisorBridge : public ntp_tiles::MostVisitedSitesSupervisor,
 
   void SetObserver(Observer* observer) override;
   bool IsBlocked(const GURL& url) override;
-  std::vector<MostVisitedSitesSupervisor::Whitelist> whitelists() override;
+  std::vector<MostVisitedSitesSupervisor::Whitelist> GetWhitelists() override;
   bool IsChildProfile() override;
 
   // SupervisedUserServiceObserver implementation.
@@ -80,7 +81,7 @@ bool SupervisorBridge::IsBlocked(const GURL& url) {
 }
 
 std::vector<ntp_tiles::MostVisitedSitesSupervisor::Whitelist>
-SupervisorBridge::whitelists() {
+SupervisorBridge::GetWhitelists() {
   std::vector<MostVisitedSitesSupervisor::Whitelist> results;
   SupervisedUserService* supervised_user_service =
       SupervisedUserServiceFactory::GetForProfile(profile_);
@@ -124,6 +125,7 @@ ChromeMostVisitedSitesFactory::NewForProfile(Profile* profile) {
       base::MakeUnique<ntp_tiles::IconCacherImpl>(
           FaviconServiceFactory::GetForProfile(
               profile, ServiceAccessType::IMPLICIT_ACCESS),
+          LargeIconServiceFactory::GetForBrowserContext(profile),
           base::MakeUnique<image_fetcher::ImageFetcherImpl>(
               base::MakeUnique<suggestions::ImageDecoderImpl>(),
               profile->GetRequestContext())),

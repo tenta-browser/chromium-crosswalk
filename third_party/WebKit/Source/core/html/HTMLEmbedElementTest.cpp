@@ -4,17 +4,17 @@
 
 #include "core/html/HTMLEmbedElement.h"
 
+#include <memory>
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLObjectElement.h"
 #include "core/style/ComputedStyle.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 namespace blink {
 
-class HTMLEmbedElementTest : public testing::Test {
+class HTMLEmbedElementTest : public ::testing::Test {
  protected:
   HTMLEmbedElementTest() {}
 
@@ -35,7 +35,8 @@ void HTMLEmbedElementTest::SetUp() {
 }
 
 void HTMLEmbedElementTest::SetHtmlInnerHTML(const char* html_content) {
-  GetDocument().documentElement()->setInnerHTML(String::FromUTF8(html_content));
+  GetDocument().documentElement()->SetInnerHTMLFromString(
+      String::FromUTF8(html_content));
   GetDocument().View()->UpdateAllLifecyclePhases();
 }
 
@@ -53,10 +54,9 @@ TEST_F(HTMLEmbedElementTest, FallbackState) {
       "width='1' height='1' id='fce'>"
       "</object></div>");
 
-  auto* object_element = GetDocument().GetElementById("fco");
+  auto* object_element = GetDocument().getElementById("fco");
   ASSERT_TRUE(object_element);
-  ASSERT_TRUE(isHTMLObjectElement(object_element));
-  HTMLObjectElement* object = toHTMLObjectElement(object_element);
+  HTMLObjectElement* object = ToHTMLObjectElement(object_element);
 
   // At this moment updatePlugin() function is not called, so
   // useFallbackContent() will return false.
@@ -65,10 +65,9 @@ TEST_F(HTMLEmbedElementTest, FallbackState) {
   EXPECT_FALSE(object->UseFallbackContent());
   EXPECT_TRUE(object->WillUseFallbackContentAtLayout());
 
-  auto* embed_element = GetDocument().GetElementById("fce");
+  auto* embed_element = GetDocument().getElementById("fce");
   ASSERT_TRUE(embed_element);
-  ASSERT_TRUE(isHTMLEmbedElement(embed_element));
-  HTMLEmbedElement* embed = toHTMLEmbedElement(embed_element);
+  HTMLEmbedElement* embed = ToHTMLEmbedElement(embed_element);
 
   GetDocument().View()->UpdateAllLifecyclePhases();
 

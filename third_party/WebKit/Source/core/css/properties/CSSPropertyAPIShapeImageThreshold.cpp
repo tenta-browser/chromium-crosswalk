@@ -8,10 +8,10 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIShapeImageThreshold::parseSingleValue(
+const CSSValue* CSSPropertyAPIShapeImageThreshold::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   return CSSPropertyParserHelpers::ConsumeNumber(range, kValueRangeAll);
 }
 

@@ -19,7 +19,6 @@
 #include "chrome/browser/extensions/permissions_updater.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/extensions/extension_install_ui_factory.h"
-#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/strings/grit/components_strings.h"
@@ -29,7 +28,7 @@
 #include "extensions/browser/extension_util.h"
 #include "extensions/browser/image_loader.h"
 #include "extensions/browser/install/extension_install_ui.h"
-#include "extensions/common/constants.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_icon_set.h"
 #include "extensions/common/extension_resource.h"
@@ -80,14 +79,16 @@ bool AutoConfirmPrompt(ExtensionInstallPrompt::DoneCallback* callback) {
     // the real implementations it's highly likely the message loop will be
     // pumping a few times before the user clicks accept or cancel.
     case extensions::ScopedTestDialogAutoConfirm::ACCEPT:
+    case extensions::ScopedTestDialogAutoConfirm::ACCEPT_AND_OPTION:
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(base::ResetAndReturn(callback),
-                                ExtensionInstallPrompt::Result::ACCEPTED));
+          FROM_HERE, base::BindOnce(base::ResetAndReturn(callback),
+                                    ExtensionInstallPrompt::Result::ACCEPTED));
       return true;
     case extensions::ScopedTestDialogAutoConfirm::CANCEL:
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(base::ResetAndReturn(callback),
-                                ExtensionInstallPrompt::Result::USER_CANCELED));
+          FROM_HERE,
+          base::BindOnce(base::ResetAndReturn(callback),
+                         ExtensionInstallPrompt::Result::USER_CANCELED));
       return true;
   }
 
@@ -159,15 +160,11 @@ ExtensionInstallPrompt::Prompt::Prompt(PromptType type)
 ExtensionInstallPrompt::Prompt::~Prompt() {
 }
 
-void ExtensionInstallPrompt::Prompt::SetPermissions(
+void ExtensionInstallPrompt::Prompt::AddPermissions(
     const PermissionMessages& permissions,
     PermissionsType permissions_type) {
   InstallPromptPermissions& install_permissions =
       GetPermissionsForType(permissions_type);
-
-  install_permissions.permissions.clear();
-  install_permissions.details.clear();
-  install_permissions.is_showing_details.clear();
 
   for (const PermissionMessage& msg : permissions) {
     install_permissions.permissions.push_back(msg.message());
@@ -443,7 +440,7 @@ void ExtensionInstallPrompt::Prompt::AppendRatingStars(
     rating_fractional = 0;
   }
 
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   int i;
   for (i = 0; i < rating_integer; i++) {
     appender(rb.GetImageSkiaNamed(IDR_EXTENSIONS_RATING_STAR_ON), data);
@@ -592,7 +589,7 @@ ExtensionInstallPrompt::GetReEnablePromptTypeForExtension(
   bool is_remote_install =
       context &&
       extensions::ExtensionPrefs::Get(context)->HasDisableReason(
-          extension->id(), extensions::Extension::DISABLE_REMOTE_INSTALL);
+          extension->id(), extensions::disable_reason::DISABLE_REMOTE_INSTALL);
 
   return is_remote_install ? REMOTE_INSTALL_PROMPT : RE_ENABLE_PROMPT;
 }
@@ -790,7 +787,7 @@ void ExtensionInstallPrompt::ShowConfirmation() {
     const extensions::PermissionMessageProvider* message_provider =
         extensions::PermissionMessageProvider::Get();
 
-    prompt_->SetPermissions(message_provider->GetPermissionMessages(
+    prompt_->AddPermissions(message_provider->GetPermissionMessages(
                                 message_provider->GetAllPermissionIDs(
                                     *permissions_to_display, type)),
                             REGULAR_PERMISSIONS);
@@ -799,7 +796,7 @@ void ExtensionInstallPrompt::ShowConfirmation() {
         extension_ ? &extension_->permissions_data()->withheld_permissions()
                    : nullptr;
     if (withheld && !withheld->IsEmpty()) {
-      prompt_->SetPermissions(
+      prompt_->AddPermissions(
           message_provider->GetPermissionMessages(
               message_provider->GetAllPermissionIDs(*withheld, type)),
           WITHHELD_PERMISSIONS);

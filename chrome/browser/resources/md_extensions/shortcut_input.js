@@ -6,7 +6,7 @@ cr.define('extensions', function() {
   'use strict';
 
   // The UI to display and manage keyboard shortcuts set for extension commands.
-  var ShortcutInput = Polymer({
+  const ShortcutInput = Polymer({
     is: 'extensions-shortcut-input',
 
     behaviors: [I18nBehavior],
@@ -37,7 +37,7 @@ cr.define('extensions', function() {
     },
 
     ready: function() {
-      var node = this.$['input'];
+      const node = this.$['input'];
       node.addEventListener('mouseup', this.startCapture_.bind(this));
       node.addEventListener('blur', this.endCapture_.bind(this));
       node.addEventListener('focus', this.startCapture_.bind(this));
@@ -131,9 +131,11 @@ cr.define('extensions', function() {
     /** @private */
     commitPending_: function() {
       this.shortcut = this.pendingShortcut_;
-      this.fire('shortcut-updated', {keybinding: this.shortcut,
-                                     item: this.item,
-                                     commandName: this.commandName});
+      this.fire('shortcut-updated', {
+        keybinding: this.shortcut,
+        item: this.item,
+        commandName: this.commandName
+      });
     },
 
     /**
@@ -141,9 +143,9 @@ cr.define('extensions', function() {
      * @private
      */
     computeText_: function() {
-      if (this.capturing_)
-        return this.pendingShortcut_ || this.i18n('shortcutTypeAShortcut');
-      return this.shortcut || this.i18n('shortcutNotSet');
+      let shortcutString =
+          this.capturing_ ? this.pendingShortcut_ : this.shortcut;
+      return shortcutString.split('+').join(' + ');
     },
 
     /**

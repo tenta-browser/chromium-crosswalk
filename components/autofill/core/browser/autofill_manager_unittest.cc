@@ -17,7 +17,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/run_loop.h"
@@ -41,10 +40,12 @@
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
+#include "components/autofill/core/browser/test_autofill_clock.h"
 #include "components/autofill/core/browser/test_autofill_driver.h"
 #include "components/autofill/core/browser/test_autofill_external_delegate.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
+#include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
 #include "components/autofill/core/common/autofill_switches.h"
 #include "components/autofill/core/common/autofill_util.h"
@@ -52,15 +53,16 @@
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/metrics/proto/ukm/entry.pb.h"
 #include "components/prefs/pref_service.h"
-#include "components/rappor/test_rappor_service.h"
 #include "components/security_state/core/security_state.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/ukm/test_ukm_service.h"
-#include "components/ukm/ukm_entry.h"
+#include "components/ukm/test_ukm_recorder.h"
 #include "components/ukm/ukm_source.h"
 #include "components/variations/variations_associated_data.h"
+#include "components/variations/variations_params_manager.h"
 #include "net/base/url_util.h"
+#include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -73,19 +75,25 @@ using testing::_;
 using testing::AtLeast;
 using testing::Return;
 using testing::SaveArg;
+using testing::UnorderedElementsAre;
 
 namespace autofill {
-
 namespace {
+
+using UkmCardUploadDecisionType = ukm::builders::Autofill_CardUploadDecision;
+using UkmDeveloperEngagementType = ukm::builders::Autofill_DeveloperEngagement;
 
 const int kDefaultPageID = 137;
 
-const std::string kUTF8MidlineEllipsis =
+const char kUTF8MidlineEllipsis[] =
     "  "
     "\xE2\x80\xA2\xE2\x80\x86"
     "\xE2\x80\xA2\xE2\x80\x86"
     "\xE2\x80\xA2\xE2\x80\x86"
     "\xE2\x80\xA2\xE2\x80\x86";
+
+const base::Time kArbitraryTime = base::Time::FromDoubleT(25);
+const base::Time kMuchLaterTime = base::Time::FromDoubleT(5000);
 
 class MockAutofillClient : public TestAutofillClient {
  public:
@@ -111,7 +119,9 @@ class TestPaymentsClient : public payments::PaymentsClient {
   ~TestPaymentsClient() override {}
 
   void GetUploadDetails(const std::vector<AutofillProfile>& addresses,
+                        const std::vector<const char*>& active_experiments,
                         const std::string& app_locale) override {
+    active_experiments_ = active_experiments;
     delegate_->OnDidGetUploadDetails(
         app_locale == "en-US" ? AutofillClient::SUCCESS
                               : AutofillClient::PERMANENT_FAILURE,
@@ -121,8 +131,12 @@ class TestPaymentsClient : public payments::PaymentsClient {
 
   void UploadCard(const payments::PaymentsClient::UploadRequestDetails&
                       request_details) override {
-    delegate_->OnDidUploadCard(AutofillClient::SUCCESS);
+    active_experiments_ = request_details.active_experiments;
+    delegate_->OnDidUploadCard(AutofillClient::SUCCESS, server_id_);
   }
+
+  std::string server_id_;
+  std::vector<const char*> active_experiments_;
 
  private:
   payments::PaymentsClientDelegate* const delegate_;
@@ -148,7 +162,7 @@ class TestPersonalDataManager : public PersonalDataManager {
 
   std::string SaveImportedProfile(const AutofillProfile& profile) override {
     num_times_save_imported_profile_called_++;
-    AddProfile(base::MakeUnique<AutofillProfile>(profile));
+    AddProfile(profile);
     return profile.guid();
   }
 
@@ -168,16 +182,22 @@ class TestPersonalDataManager : public PersonalDataManager {
     return NULL;
   }
 
-  void AddProfile(std::unique_ptr<AutofillProfile> profile) {
-    profile->set_modification_date(base::Time::Now());
-    web_profiles_.push_back(std::move(profile));
+  void AddProfile(const AutofillProfile& profile) override {
+    std::unique_ptr<AutofillProfile> profile_ptr =
+        base::MakeUnique<AutofillProfile>(profile);
+    profile_ptr->set_modification_date(AutofillClock::Now());
+    web_profiles_.push_back(std::move(profile_ptr));
   }
 
   void AddCreditCard(const CreditCard& credit_card) override {
     std::unique_ptr<CreditCard> local_credit_card =
         base::MakeUnique<CreditCard>(credit_card);
-    local_credit_card->set_modification_date(base::Time::Now());
+    local_credit_card->set_modification_date(AutofillClock::Now());
     local_credit_cards_.push_back(std::move(local_credit_card));
+  }
+
+  void AddFullServerCreditCard(const CreditCard& credit_card) override {
+    AddServerCreditCard(credit_card);
   }
 
   void RecordUseOf(const AutofillDataModel& data_model) override {
@@ -210,12 +230,18 @@ class TestPersonalDataManager : public PersonalDataManager {
     }
   }
 
-  void ClearAutofillProfiles() {
-    web_profiles_.clear();
-  }
+  void ClearAutofillProfiles() { web_profiles_.clear(); }
 
   void ClearCreditCards() {
     local_credit_cards_.clear();
+    server_credit_cards_.clear();
+  }
+
+  void AddServerCreditCard(const CreditCard& credit_card) {
+    std::unique_ptr<CreditCard> server_credit_card =
+        base::MakeUnique<CreditCard>(credit_card);
+    server_credit_card->set_modification_date(AutofillClock::Now());
+    server_credit_cards_.push_back(std::move(server_credit_card));
   }
 
   // Create Elvis card with whitespace in the credit card number.
@@ -224,7 +250,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     std::unique_ptr<CreditCard> credit_card = base::MakeUnique<CreditCard>();
     test::SetCreditCardInfo(credit_card.get(), "Elvis Presley",
                             "4234 5678 9012 3456",  // Visa
-                            "04", "2999");
+                            "04", "2999", "1");
     credit_card->set_guid("00000000-0000-0000-0000-000000000008");
     local_credit_cards_.push_back(std::move(credit_card));
   }
@@ -235,7 +261,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     std::unique_ptr<CreditCard> credit_card = base::MakeUnique<CreditCard>();
     test::SetCreditCardInfo(credit_card.get(), "Elvis Presley",
                             "4234-5678-9012-3456",  // Visa
-                            "04", "2999");
+                            "04", "2999", "1");
     credit_card->set_guid("00000000-0000-0000-0000-000000000009");
     local_credit_cards_.push_back(std::move(credit_card));
   }
@@ -245,7 +271,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     std::unique_ptr<CreditCard> credit_card = base::MakeUnique<CreditCard>();
     test::SetCreditCardInfo(credit_card.get(), "Miku Hatsune",
                             "4234567890654321",  // Visa
-                            month, year);
+                            month, year, "1");
     credit_card->set_guid("00000000-0000-0000-0000-000000000007");
     local_credit_cards_.push_back(std::move(credit_card));
   }
@@ -255,7 +281,7 @@ class TestPersonalDataManager : public PersonalDataManager {
     std::unique_ptr<CreditCard> credit_card = base::MakeUnique<CreditCard>();
     test::SetCreditCardInfo(credit_card.get(), "Homer Simpson",
                             "4234567890654321",  // Visa
-                            "05", "2000");
+                            "05", "2000", "1");
     credit_card->set_guid("00000000-0000-0000-0000-000000000009");
     local_credit_cards_.push_back(std::move(credit_card));
   }
@@ -289,23 +315,25 @@ class TestPersonalDataManager : public PersonalDataManager {
     std::unique_ptr<CreditCard> credit_card = base::MakeUnique<CreditCard>();
     test::SetCreditCardInfo(credit_card.get(), "Elvis Presley",
                             "4234567890123456",  // Visa
-                            "04", "2999");
+                            "04", "2999", "1");
     credit_card->set_guid("00000000-0000-0000-0000-000000000004");
     credit_card->set_use_count(10);
-    credit_card->set_use_date(base::Time::Now() - base::TimeDelta::FromDays(5));
+    credit_card->set_use_date(AutofillClock::Now() -
+                              base::TimeDelta::FromDays(5));
     credit_cards->push_back(std::move(credit_card));
 
     credit_card = base::MakeUnique<CreditCard>();
     test::SetCreditCardInfo(credit_card.get(), "Buddy Holly",
                             "5187654321098765",  // Mastercard
-                            "10", "2998");
+                            "10", "2998", "1");
     credit_card->set_guid("00000000-0000-0000-0000-000000000005");
     credit_card->set_use_count(5);
-    credit_card->set_use_date(base::Time::Now() - base::TimeDelta::FromDays(4));
+    credit_card->set_use_date(AutofillClock::Now() -
+                              base::TimeDelta::FromDays(4));
     credit_cards->push_back(std::move(credit_card));
 
     credit_card = base::MakeUnique<CreditCard>();
-    test::SetCreditCardInfo(credit_card.get(), "", "", "", "");
+    test::SetCreditCardInfo(credit_card.get(), "", "", "", "", "");
     credit_card->set_guid("00000000-0000-0000-0000-000000000006");
     credit_cards->push_back(std::move(credit_card));
   }
@@ -333,6 +361,13 @@ class TestAutofillDownloadManager : public AutofillDownloadManager {
       EXPECT_EQ(*last_queried_forms_[i], expected_forms[i]);
     }
   }
+
+  MOCK_METHOD5(StartUploadRequest,
+               bool(const FormStructure&,
+                    bool,
+                    const ServerFieldTypeSet&,
+                    const std::string&,
+                    bool));
 
  private:
   std::vector<FormStructure*> last_queried_forms_;
@@ -409,22 +444,19 @@ void ExpectFilledForm(int page_id,
                       filled_form.fields[3]);
     ExpectFilledField("Address Line 2", "addr2", address2, "text",
                       filled_form.fields[4]);
-    ExpectFilledField("City", "city", city, "text",
-                      filled_form.fields[5]);
-    ExpectFilledField("State", "state", state, "text",
-                      filled_form.fields[6]);
+    ExpectFilledField("City", "city", city, "text", filled_form.fields[5]);
+    ExpectFilledField("State", "state", state, "text", filled_form.fields[6]);
     ExpectFilledField("Postal Code", "zipcode", postal_code, "text",
                       filled_form.fields[7]);
     ExpectFilledField("Country", "country", country, "text",
                       filled_form.fields[8]);
     ExpectFilledField("Phone Number", "phonenumber", phone, "tel",
                       filled_form.fields[9]);
-    ExpectFilledField("Email", "email", email, "email",
-                      filled_form.fields[10]);
+    ExpectFilledField("Email", "email", email, "email", filled_form.fields[10]);
   }
 
   if (has_credit_card_fields) {
-    size_t offset = has_address_fields? kAddressFormSize : 0;
+    size_t offset = has_address_fields ? kAddressFormSize : 0;
     ExpectFilledField("Name on Card", "nameoncard", name_on_card, "text",
                       filled_form.fields[offset + 0]);
     ExpectFilledField("Card Number", "cardnumber", card_number, "text",
@@ -483,11 +515,11 @@ class MockAutocompleteHistoryManager : public AutocompleteHistoryManager {
   MockAutocompleteHistoryManager(AutofillDriver* driver, AutofillClient* client)
       : AutocompleteHistoryManager(driver, client) {}
 
-  MOCK_METHOD4(OnGetAutocompleteSuggestions, void(
-      int query_id,
-      const base::string16& name,
-      const base::string16& prefix,
-      const std::string& form_control_type));
+  MOCK_METHOD4(OnGetAutocompleteSuggestions,
+               void(int query_id,
+                    const base::string16& name,
+                    const base::string16& prefix,
+                    const std::string& form_control_type));
   MOCK_METHOD1(OnWillSubmitForm, void(const FormData& form));
 
  private:
@@ -500,23 +532,25 @@ class MockAutofillDriver : public TestAutofillDriver {
       : is_incognito_(false), did_interact_with_credit_card_form_(false) {}
 
   // Mock methods to enable testability.
-  MOCK_METHOD3(SendFormDataToRenderer, void(int query_id,
-                                            RendererFormDataAction action,
-                                            const FormData& data));
+  MOCK_METHOD3(SendFormDataToRenderer,
+               void(int query_id,
+                    RendererFormDataAction action,
+                    const FormData& data));
 
-  void SetIsIncognito(bool is_incognito) {
-    is_incognito_ = is_incognito;
-  }
+  MOCK_METHOD1(SendAutofillTypePredictionsToRenderer,
+               void(const std::vector<FormStructure*>& forms));
+
+  void SetIsIncognito(bool is_incognito) { is_incognito_ = is_incognito; }
 
   bool IsIncognito() const override { return is_incognito_; }
 
   void DidInteractWithCreditCardForm() override {
     did_interact_with_credit_card_form_ = true;
-  };
+  }
 
   void ClearDidInteractWithCreditCardForm() {
     did_interact_with_credit_card_form_ = false;
-  };
+  }
 
   bool did_interact_with_credit_card_form() const {
     return did_interact_with_credit_card_form_;
@@ -535,12 +569,15 @@ class TestAutofillManager : public AutofillManager {
                       TestPersonalDataManager* personal_data)
       : AutofillManager(driver, client, personal_data),
         personal_data_(personal_data),
+        context_getter_(driver->GetURLRequestContext()),
+        test_payments_client_(new TestPaymentsClient(context_getter_, this)),
         autofill_enabled_(true),
+        credit_card_enabled_(true),
         credit_card_upload_enabled_(false),
         credit_card_was_uploaded_(false),
-        expected_observed_submission_(true) {
-    set_payments_client(
-        new TestPaymentsClient(driver->GetURLRequestContext(), this));
+        expected_observed_submission_(true),
+        call_parent_upload_form_data_(false) {
+    set_payments_client(test_payments_client_);
   }
   ~TestAutofillManager() override {}
 
@@ -558,6 +595,15 @@ class TestAutofillManager : public AutofillManager {
     credit_card_upload_enabled_ = credit_card_upload_enabled;
   }
 
+  bool IsCreditCardAutofillEnabled() override { return credit_card_enabled_; }
+
+  void set_credit_card_enabled(bool credit_card_enabled) {
+    credit_card_enabled_ = credit_card_enabled;
+    if (!credit_card_enabled_)
+      // Credit card data is refreshed when this pref is changed.
+      personal_data_->ClearCreditCards();
+  }
+
   bool credit_card_was_uploaded() { return credit_card_was_uploaded_; }
 
   void set_expected_submitted_field_types(
@@ -567,6 +613,10 @@ class TestAutofillManager : public AutofillManager {
 
   void set_expected_observed_submission(bool expected) {
     expected_observed_submission_ = expected;
+  }
+
+  void set_call_parent_upload_form_data(bool value) {
+    call_parent_upload_form_data_ = value;
   }
 
   void UploadFormDataAsyncCallback(const FormStructure* submitted_form,
@@ -583,10 +633,9 @@ class TestAutofillManager : public AutofillManager {
       ASSERT_EQ(expected_submitted_field_types_.size(),
                 submitted_form->field_count());
       for (size_t i = 0; i < expected_submitted_field_types_.size(); ++i) {
-        SCOPED_TRACE(
-            base::StringPrintf(
-                "Field %d with value %s", static_cast<int>(i),
-                base::UTF16ToUTF8(submitted_form->field(i)->value).c_str()));
+        SCOPED_TRACE(base::StringPrintf(
+            "Field %d with value %s", static_cast<int>(i),
+            base::UTF16ToUTF8(submitted_form->field(i)->value).c_str()));
         const ServerFieldTypeSet& possible_types =
             submitted_form->field(i)->possible_types();
         EXPECT_EQ(expected_submitted_field_types_[i].size(),
@@ -615,6 +664,9 @@ class TestAutofillManager : public AutofillManager {
   void UploadFormData(const FormStructure& submitted_form,
                       bool observed_submission) override {
     submitted_form_signature_ = submitted_form.FormSignatureAsStr();
+
+    if (call_parent_upload_form_data_)
+      AutofillManager::UploadFormData(submitted_form, observed_submission);
   }
 
   const std::string GetSubmittedFormSignature() {
@@ -629,12 +681,24 @@ class TestAutofillManager : public AutofillManager {
     return personal_data_->GetCreditCardWithGUID(guid);
   }
 
+  std::vector<CreditCard*> GetLocalCreditCards() const {
+    return personal_data_->GetLocalCreditCards();
+  }
+
+  std::vector<CreditCard*> GetCreditCards() const {
+    return personal_data_->GetCreditCards();
+  }
+
   void AddProfile(std::unique_ptr<AutofillProfile> profile) {
-    personal_data_->AddProfile(std::move(profile));
+    personal_data_->AddProfile(*profile);
   }
 
   void AddCreditCard(const CreditCard& credit_card) {
     personal_data_->AddCreditCard(credit_card);
+  }
+
+  const std::vector<const char*>& GetActiveExperiments() const {
+    return test_payments_client_->active_experiments_;
   }
 
   int GetPackedCreditCardID(int credit_card_id) {
@@ -645,25 +709,35 @@ class TestAutofillManager : public AutofillManager {
   }
 
   void AddSeenForm(std::unique_ptr<FormStructure> form) {
+    form->set_form_parsed_timestamp(base::TimeTicks::Now());
     form_structures()->push_back(std::move(form));
   }
 
-  void ClearFormStructures() {
-    form_structures()->clear();
+  void ClearFormStructures() { form_structures()->clear(); }
+
+  void ResetPaymentsClientForCardUpload(const char* server_id) {
+    TestPaymentsClient* payments_client =
+        new TestPaymentsClient(context_getter_, this);
+    payments_client->server_id_ = server_id;
+    set_payments_client(payments_client);
   }
 
  private:
-  void OnDidUploadCard(AutofillClient::PaymentsRpcResult result) override {
+  void OnDidUploadCard(AutofillClient::PaymentsRpcResult result,
+                       const std::string& server_id) override {
     credit_card_was_uploaded_ = true;
+    AutofillManager::OnDidUploadCard(result, server_id);
   };
 
-  // Weak reference.
-  TestPersonalDataManager* personal_data_;
-
+  TestPersonalDataManager* personal_data_;        // Weak reference.
+  net::URLRequestContextGetter* context_getter_;  // Weak reference.
+  TestPaymentsClient* test_payments_client_;      // Weak reference.
   bool autofill_enabled_;
+  bool credit_card_enabled_;
   bool credit_card_upload_enabled_;
   bool credit_card_was_uploaded_;
   bool expected_observed_submission_;
+  bool call_parent_upload_form_data_;
 
   std::unique_ptr<base::RunLoop> run_loop_;
 
@@ -719,8 +793,7 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
 
   // Wrappers around the above GetSuggestions call that take a hardcoded number
   // of expected results so callsites are cleaner.
-  void CheckSuggestions(int expected_page_id,
-                        const Suggestion& suggestion0) {
+  void CheckSuggestions(int expected_page_id, const Suggestion& suggestion0) {
     std::vector<Suggestion> suggestion_vector;
     suggestion_vector.push_back(suggestion0);
     CheckSuggestions(expected_page_id, 1, &suggestion_vector[0]);
@@ -759,9 +832,7 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
     ASSERT_EQ(expected_num_suggestions, suggestions_.size());
   }
 
-  bool on_query_seen() const {
-    return on_query_seen_;
-  }
+  bool on_query_seen() const { return on_query_seen_; }
 
   bool on_suggestions_returned_seen() const {
     return on_suggestions_returned_seen_;
@@ -784,19 +855,9 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
   DISALLOW_COPY_AND_ASSIGN(TestAutofillExternalDelegate);
 };
 
-// Finds the specified UKM metric by |name| in the specified UKM |metrics|.
-const ukm::Entry_Metric* FindMetric(
-    const char* name,
-    const google::protobuf::RepeatedPtrField<ukm::Entry_Metric>& metrics) {
-  for (const auto& metric : metrics) {
-    if (metric.metric_hash() == base::HashMetricName(name))
-      return &metric;
-  }
-  return nullptr;
-}
-
 // Get Ukm sources from the Ukm service.
-std::vector<const ukm::UkmSource*> GetUkmSources(ukm::TestUkmService* service) {
+std::vector<const ukm::UkmSource*> GetUkmSources(
+    ukm::TestUkmRecorder* service) {
   std::vector<const ukm::UkmSource*> sources;
   for (const auto& kv : service->GetSources())
     sources.push_back(kv.second.get());
@@ -808,13 +869,13 @@ std::vector<const ukm::UkmSource*> GetUkmSources(ukm::TestUkmService* service) {
 
 class AutofillManagerTest : public testing::Test {
  public:
-  AutofillManagerTest() : field_trial_list_(nullptr) {}
+  AutofillManagerTest() {}
 
   void SetUp() override {
     autofill_client_.SetPrefs(test::PrefServiceForTesting());
     personal_data_.set_database(autofill_client_.GetDatabase());
     personal_data_.SetPrefService(autofill_client_.GetPrefs());
-    autofill_driver_.reset(new MockAutofillDriver());
+    autofill_driver_.reset(new testing::NiceMock<MockAutofillDriver>());
     request_context_ = new net::TestURLRequestContextGetter(
         base::ThreadTaskRunnerHandle::Get());
     autofill_driver_->SetURLRequestContext(request_context_.get());
@@ -825,12 +886,10 @@ class AutofillManagerTest : public testing::Test {
     // AutofillManager takes ownership of |download_manager_|.
     autofill_manager_->set_download_manager(download_manager_);
     external_delegate_.reset(new TestAutofillExternalDelegate(
-        autofill_manager_.get(),
-        autofill_driver_.get()));
+        autofill_manager_.get(), autofill_driver_.get()));
     autofill_manager_->SetExternalDelegate(external_delegate_.get());
 
-    // Clear all the things.
-    variations::testing::ClearAllVariationParams();
+    variation_params_.ClearAllVariationParams();
   }
 
   void TearDown() override {
@@ -843,6 +902,7 @@ class AutofillManagerTest : public testing::Test {
     // need to care about removing self as an observer in destruction.
     personal_data_.set_database(scoped_refptr<AutofillWebDataService>(NULL));
     personal_data_.SetPrefService(NULL);
+    personal_data_.ClearCreditCards();
 
     request_context_ = nullptr;
   }
@@ -870,7 +930,9 @@ class AutofillManagerTest : public testing::Test {
 
   void FormSubmitted(const FormData& form) {
     autofill_manager_->ResetRunLoop();
-    if (autofill_manager_->OnWillSubmitForm(form, base::TimeTicks::Now()))
+    if (autofill_manager_->OnWillSubmitForm(form, base::TimeTicks::Now()) &&
+        (!personal_data_.GetProfiles().empty() ||
+         !personal_data_.GetCreditCards().empty()))
       autofill_manager_->WaitForAsyncUploadProcess();
     autofill_manager_->OnFormSubmitted(form);
   }
@@ -879,9 +941,8 @@ class AutofillManagerTest : public testing::Test {
                             const FormData& form,
                             const FormFieldData& field,
                             int unique_id) {
-    autofill_manager_->FillOrPreviewForm(
-        AutofillDriver::FORM_DATA_ACTION_FILL, query_id, form, field,
-        unique_id);
+    autofill_manager_->FillOrPreviewForm(AutofillDriver::FORM_DATA_ACTION_FILL,
+                                         query_id, form, field, unique_id);
   }
 
   // Calls |autofill_manager_->OnFillAutofillFormData()| with the specified
@@ -895,9 +956,9 @@ class AutofillManagerTest : public testing::Test {
                                           int unique_id,
                                           int* response_query_id,
                                           FormData* response_data) {
-    EXPECT_CALL(*autofill_driver_, SendFormDataToRenderer(_, _, _)).
-        WillOnce((DoAll(testing::SaveArg<0>(response_query_id),
-                        testing::SaveArg<2>(response_data))));
+    EXPECT_CALL(*autofill_driver_, SendFormDataToRenderer(_, _, _))
+        .WillOnce((DoAll(testing::SaveArg<0>(response_query_id),
+                         testing::SaveArg<2>(response_data))));
     FillAutofillFormData(input_query_id, input_form, input_field, unique_id);
   }
 
@@ -932,8 +993,8 @@ class AutofillManagerTest : public testing::Test {
     test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
     form->fields.push_back(field);
     if (use_month_type) {
-      test::CreateTestFormField(
-          "Expiration Date", "ccmonth", "", "month", &field);
+      test::CreateTestFormField("Expiration Date", "ccmonth", "", "month",
+                                &field);
       form->fields.push_back(field);
     } else {
       test::CreateTestFormField("Expiration Date", "ccmonth", "", "text",
@@ -996,8 +1057,8 @@ class AutofillManagerTest : public testing::Test {
     FormsSeen(std::vector<FormData>(1, *form));
     *card = CreditCard(CreditCard::MASKED_SERVER_CARD, "a123");
     test::SetCreditCardInfo(card, "John Dillinger", "1881" /* Visa */, "01",
-                            "2017");
-    card->SetTypeForMaskedCard(kVisaCard);
+                            "2017", "1");
+    card->SetNetworkForMaskedCard(kVisaCard);
 
     EXPECT_CALL(*autofill_driver_, SendFormDataToRenderer(_, _, _))
         .Times(AtLeast(1));
@@ -1009,9 +1070,9 @@ class AutofillManagerTest : public testing::Test {
   // Convenience method for using and retrieving a mock autocomplete history
   // manager.
   MockAutocompleteHistoryManager* RecreateMockAutocompleteHistoryManager() {
-    MockAutocompleteHistoryManager* manager = new
-        MockAutocompleteHistoryManager(autofill_driver_.get(),
-                                       autofill_manager_->client());
+    MockAutocompleteHistoryManager* manager =
+        new MockAutocompleteHistoryManager(autofill_driver_.get(),
+                                           autofill_manager_->client());
     autofill_manager_->autocomplete_history_manager_.reset(manager);
     return manager;
   }
@@ -1028,84 +1089,104 @@ class AutofillManagerTest : public testing::Test {
         security_state::kHttpFormWarningFeature);
   }
 
-  void EnableUkmLogging() {
-    scoped_feature_list_.InitAndEnableFeature(kAutofillUkmLogging);
+  void EnableAutofillOfferLocalSaveIfServerCardManuallyEnteredExperiment() {
+    scoped_feature_list_.InitAndEnableFeature(
+        kAutofillOfferLocalSaveIfServerCardManuallyEntered);
   }
 
-  void EnableAutofillUpstreamRequestCvcIfMissingExperimentAndUkmLogging() {
-    scoped_feature_list_.InitWithFeatures(
-        {kAutofillUpstreamRequestCvcIfMissing, kAutofillUkmLogging}, {});
+  void EnableAutofillUpstreamRequestCvcIfMissingExperiment() {
+    scoped_feature_list_.InitAndEnableFeature(
+        kAutofillUpstreamRequestCvcIfMissing);
+  }
+
+  void EnableAutofillUpstreamShowGoogleLogoExperiment() {
+    scoped_feature_list_.InitAndEnableFeature(kAutofillUpstreamShowGoogleLogo);
+  }
+
+  void EnableAutofillUpstreamShowNewUiExperiment() {
+    scoped_feature_list_.InitAndEnableFeature(kAutofillUpstreamShowNewUi);
+  }
+
+  void EnableAutofillUpstreamUseAutofillProfileComparator() {
+    scoped_feature_list_.InitAndEnableFeature(
+        kAutofillUpstreamUseAutofillProfileComparator);
+  }
+
+  void DisableCreditCardAutofill() {
+    scoped_feature_list_.InitAndEnableFeature(
+        kAutofillCreditCardAblationExperiment);
   }
 
   void ExpectUniqueFillableFormParsedUkm() {
-    ukm::TestUkmService* ukm_service = autofill_client_.GetTestUkmService();
-
     // Check that one source is logged.
-    ASSERT_EQ(1U, ukm_service->sources_count());
-    const ukm::UkmSource* source = GetUkmSources(ukm_service)[0];
+    ASSERT_EQ(1U, test_ukm_recorder_.sources_count());
+    const ukm::UkmSource* source = GetUkmSources(&test_ukm_recorder_)[0];
 
     // Check that one entry is logged.
-    EXPECT_EQ(1U, ukm_service->entries_count());
-    const ukm::UkmEntry* entry = ukm_service->GetEntry(0);
-    EXPECT_EQ(source->id(), entry->source_id());
+    EXPECT_EQ(1U, test_ukm_recorder_.entries_count());
+    const ukm::mojom::UkmEntry* entry = test_ukm_recorder_.GetEntry(0);
+    EXPECT_EQ(source->id(), entry->source_id);
 
-    ukm::Entry entry_proto;
-    entry->PopulateProto(&entry_proto);
-    EXPECT_EQ(source->id(), entry_proto.source_id());
+    EXPECT_EQ(source->id(), entry->source_id);
 
     // Check if there is an entry for developer engagement decision.
-    EXPECT_EQ(base::HashMetricName(internal::kUKMDeveloperEngagementEntryName),
-              entry_proto.event_hash());
-    EXPECT_EQ(1, entry_proto.metrics_size());
+    EXPECT_EQ(base::HashMetricName(UkmDeveloperEngagementType::kEntryName),
+              entry->event_hash);
+    EXPECT_EQ(1U, entry->metrics.size());
 
     // Check that the expected developer engagement metric is logged.
-    const ukm::Entry_Metric* metric = FindMetric(
-        internal::kUKMDeveloperEngagementMetricName, entry_proto.metrics());
+    const ukm::mojom::UkmMetric* metric = ukm::TestUkmRecorder::FindMetric(
+        entry, UkmDeveloperEngagementType::kDeveloperEngagementName);
     ASSERT_NE(nullptr, metric);
-    EXPECT_EQ(static_cast<int>(
-                  AutofillMetrics::FILLABLE_FORM_PARSED_WITHOUT_TYPE_HINTS),
-              metric->value());
+    EXPECT_EQ(1 << AutofillMetrics::FILLABLE_FORM_PARSED_WITHOUT_TYPE_HINTS,
+              metric->value);
+  }
+
+  void ExpectUniqueCardUploadDecision(
+      const base::HistogramTester& histogram_tester,
+      AutofillMetrics::CardUploadDecisionMetric metric) {
+    histogram_tester.ExpectUniqueSample("Autofill.CardUploadDecisionMetric",
+                                        ToHistogramSample(metric), 1);
+  }
+
+  void ExpectCardUploadDecision(
+      const base::HistogramTester& histogram_tester,
+      AutofillMetrics::CardUploadDecisionMetric metric) {
+    histogram_tester.ExpectBucketCount("Autofill.CardUploadDecisionMetric",
+                                       ToHistogramSample(metric), 1);
   }
 
   void ExpectCardUploadDecisionUkm(
       AutofillMetrics::CardUploadDecisionMetric upload_decision) {
-    ExpectMetric(internal::kUKMCardUploadDecisionMetricName,
-                 internal::kUKMCardUploadDecisionEntryName,
-                 static_cast<int>(upload_decision),
+    int expected_metric_value = upload_decision;
+    ExpectMetric(UkmCardUploadDecisionType::kUploadDecisionName,
+                 UkmCardUploadDecisionType::kEntryName, expected_metric_value,
                  1 /* expected_num_matching_entries */);
   }
 
   void ExpectFillableFormParsedUkm(int num_fillable_forms_parsed) {
-    ExpectMetric(internal::kUKMDeveloperEngagementMetricName,
-                 internal::kUKMDeveloperEngagementEntryName,
-                 static_cast<int>(
-                     AutofillMetrics::FILLABLE_FORM_PARSED_WITHOUT_TYPE_HINTS),
+    ExpectMetric(UkmDeveloperEngagementType::kDeveloperEngagementName,
+                 UkmDeveloperEngagementType::kEntryName,
+                 1 << AutofillMetrics::FILLABLE_FORM_PARSED_WITHOUT_TYPE_HINTS,
                  num_fillable_forms_parsed);
   }
 
   void ExpectMetric(const char* metric_name,
                     const char* entry_name,
-                    int metric_value,
+                    int expected_metric_value,
                     int expected_num_matching_entries) {
-    ukm::TestUkmService* ukm_service = autofill_client_.GetTestUkmService();
-
     int num_matching_entries = 0;
-    for (size_t i = 0; i < ukm_service->entries_count(); ++i) {
-      const ukm::UkmEntry* entry = ukm_service->GetEntry(i);
-
-      ukm::Entry entry_proto;
-      entry->PopulateProto(&entry_proto);
-      EXPECT_EQ(entry->source_id(), entry_proto.source_id());
-
+    for (size_t i = 0; i < test_ukm_recorder_.entries_count(); ++i) {
+      const ukm::mojom::UkmEntry* entry = test_ukm_recorder_.GetEntry(i);
       // Check if there is an entry for |entry_name|.
-      if (entry_proto.event_hash() == base::HashMetricName(entry_name)) {
-        EXPECT_EQ(1, entry_proto.metrics_size());
+      if (entry->event_hash == base::HashMetricName(entry_name)) {
+        EXPECT_EQ(1UL, entry->metrics.size());
 
         // Check that the expected |metric_value| is logged.
-        const ukm::Entry_Metric* metric =
-            FindMetric(metric_name, entry_proto.metrics());
+        const ukm::mojom::UkmMetric* metric =
+            ukm::TestUkmRecorder::FindMetric(entry, metric_name);
         ASSERT_NE(nullptr, metric);
-        EXPECT_EQ(metric_value, metric->value());
+        EXPECT_EQ(expected_metric_value, metric->value);
         ++num_matching_entries;
       }
     }
@@ -1114,22 +1195,31 @@ class AutofillManagerTest : public testing::Test {
 
  protected:
   base::test::ScopedTaskEnvironment scoped_task_environment_;
+  ukm::TestAutoSetUkmRecorder test_ukm_recorder_;
   MockAutofillClient autofill_client_;
   std::unique_ptr<MockAutofillDriver> autofill_driver_;
   std::unique_ptr<TestAutofillManager> autofill_manager_;
   std::unique_ptr<TestAutofillExternalDelegate> external_delegate_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
-  TestPaymentsClient* payments_client_;
   TestAutofillDownloadManager* download_manager_;
   TestPersonalDataManager personal_data_;
-  base::FieldTrialList field_trial_list_;
   base::test::ScopedFeatureList scoped_feature_list_;
+  variations::testing::VariationParamsManager variation_params_;
+
+ private:
+  int ToHistogramSample(AutofillMetrics::CardUploadDecisionMetric metric) {
+    for (int sample = 0; sample < metric + 1; ++sample)
+      if (metric & (1 << sample))
+        return sample;
+
+    NOTREACHED();
+    return 0;
+  }
 };
 
 class TestFormStructure : public FormStructure {
  public:
-  explicit TestFormStructure(const FormData& form)
-      : FormStructure(form) {}
+  explicit TestFormStructure(const FormData& form) : FormStructure(form) {}
   ~TestFormStructure() override {}
 
   void SetFieldTypes(const std::vector<ServerFieldType>& heuristic_types,
@@ -1141,7 +1231,7 @@ class TestFormStructure : public FormStructure {
       AutofillField* form_field = field(i);
       ASSERT_TRUE(form_field);
       form_field->set_heuristic_type(heuristic_types[i]);
-      form_field->set_server_type(server_types[i]);
+      form_field->set_overall_server_type(server_types[i]);
     }
 
     UpdateAutofillCount();
@@ -1162,14 +1252,14 @@ TEST_F(AutofillManagerTest, OnFormsSeen_Empty) {
 
   base::HistogramTester histogram_tester;
   FormsSeen(forms);
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.UserHappiness", 0 /* FORMS_LOADED */, 1);
+  histogram_tester.ExpectUniqueSample("Autofill.UserHappiness",
+                                      0 /* FORMS_LOADED */, 1);
 
   // No more forms, metric is not logged.
   forms.clear();
   FormsSeen(forms);
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.UserHappiness", 0 /* FORMS_LOADED */, 1);
+  histogram_tester.ExpectUniqueSample("Autofill.UserHappiness",
+                                      0 /* FORMS_LOADED */, 1);
 }
 
 // Test that calling OnFormsSeen consecutively with a different set of forms
@@ -1205,6 +1295,31 @@ TEST_F(AutofillManagerTest, OnFormsSeen_DifferentFormStructures) {
   histogram_tester.ExpectUniqueSample("Autofill.UserHappiness",
                                       0 /* FORMS_LOADED */, 2);
   download_manager_->VerifyLastQueriedForms(forms);
+}
+
+// Test that when forms are seen, the renderer is updated with the predicted
+// field types
+TEST_F(AutofillManagerTest, OnFormsSeen_SendAutofillTypePredictionsToRenderer) {
+  // Set up a queryable form.
+  FormData form1;
+  test::CreateTestAddressFormData(&form1);
+
+  // Set up a non-queryable form.
+  FormData form2;
+  FormFieldData field;
+  test::CreateTestFormField("Querty", "qwerty", "", "text", &field);
+  form2.name = ASCIIToUTF16("NonQueryable");
+  form2.origin = form1.origin;
+  form2.action = GURL("https://myform.com/submit.html");
+  form2.fields.push_back(field);
+
+  // Package the forms for observation.
+  std::vector<FormData> forms{form1, form2};
+
+  // Setup expectations.
+  EXPECT_CALL(*autofill_driver_, SendAutofillTypePredictionsToRenderer(_))
+      .Times(2);
+  FormsSeen(forms);
 }
 
 // Test that no autofill suggestions are returned for a field with an
@@ -1392,8 +1507,7 @@ TEST_F(AutofillManagerTest, GetProfileSuggestions_MatchCharacter) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion("Elvis", "3734 Elvis Presley Blvd.", "", 1));
+      kDefaultPageID, Suggestion("Elvis", "3734 Elvis Presley Blvd.", "", 1));
 }
 
 // Tests that we return address profile suggestions values when the section
@@ -1415,28 +1529,28 @@ TEST_F(AutofillManagerTest,
   std::unique_ptr<AutofillProfile> profile1 =
       base::MakeUnique<AutofillProfile>();
   profile1->set_guid("00000000-0000-0000-0000-000000000103");
-  profile1->SetInfo(AutofillType(NAME_FIRST), ASCIIToUTF16("Robin"), "en-US");
-  profile1->SetInfo(AutofillType(NAME_LAST), ASCIIToUTF16("Grimes"), "en-US");
-  profile1->SetInfo(AutofillType(ADDRESS_HOME_LINE1),
-                    ASCIIToUTF16("1234 Smith Blvd."), "en-US");
+  profile1->SetInfo(NAME_FIRST, ASCIIToUTF16("Robin"), "en-US");
+  profile1->SetInfo(NAME_LAST, ASCIIToUTF16("Grimes"), "en-US");
+  profile1->SetInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("1234 Smith Blvd."),
+                    "en-US");
   autofill_manager_->AddProfile(std::move(profile1));
 
   std::unique_ptr<AutofillProfile> profile2 =
       base::MakeUnique<AutofillProfile>();
   profile2->set_guid("00000000-0000-0000-0000-000000000124");
-  profile2->SetInfo(AutofillType(NAME_FIRST), ASCIIToUTF16("Carl"), "en-US");
-  profile2->SetInfo(AutofillType(NAME_LAST), ASCIIToUTF16("Grimes"), "en-US");
-  profile2->SetInfo(AutofillType(ADDRESS_HOME_LINE1),
-                    ASCIIToUTF16("1234 Smith Blvd."), "en-US");
+  profile2->SetInfo(NAME_FIRST, ASCIIToUTF16("Carl"), "en-US");
+  profile2->SetInfo(NAME_LAST, ASCIIToUTF16("Grimes"), "en-US");
+  profile2->SetInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("1234 Smith Blvd."),
+                    "en-US");
   autofill_manager_->AddProfile(std::move(profile2));
 
   std::unique_ptr<AutofillProfile> profile3 =
       base::MakeUnique<AutofillProfile>();
   profile3->set_guid("00000000-0000-0000-0000-000000000126");
-  profile3->SetInfo(AutofillType(NAME_FIRST), ASCIIToUTF16("Aaron"), "en-US");
-  profile3->SetInfo(AutofillType(NAME_LAST), ASCIIToUTF16("Googler"), "en-US");
-  profile3->SetInfo(AutofillType(ADDRESS_HOME_LINE1),
-                    ASCIIToUTF16("1600 Amphitheater pkwy"), "en-US");
+  profile3->SetInfo(NAME_FIRST, ASCIIToUTF16("Aaron"), "en-US");
+  profile3->SetInfo(NAME_LAST, ASCIIToUTF16("Googler"), "en-US");
+  profile3->SetInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("1600 Amphitheater pkwy"),
+                    "en-US");
   autofill_manager_->AddProfile(std::move(profile3));
 
   FormFieldData field;
@@ -1469,8 +1583,7 @@ TEST_F(AutofillManagerTest, GetProfileSuggestions_AlreadyAutofilledNoLabels) {
 
   // Test that we sent the right values to the external delegate. No labels.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion("Elvis", "" /* no label */, "", 1));
+      kDefaultPageID, Suggestion("Elvis", "" /* no label */, "", 1));
 }
 
 // Test that we return no suggestions when the form has no relevant fields.
@@ -1551,11 +1664,12 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_EmptyValue) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1573,11 +1687,12 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_Whitespace) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1595,11 +1710,12 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_StopCharsOnly) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card profile suggestions when the triggering
@@ -1609,7 +1725,7 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_StopCharsWithInput) {
   CreditCard credit_card;
   test::SetCreditCardInfo(&credit_card, "John Smith",
                           "5255667890123123",  // Mastercard
-                          "08", "2017");
+                          "08", "2017", "1");
   credit_card.set_guid("00000000-0000-0000-0000-000000000007");
   autofill_manager_->AddCreditCard(credit_card);
 
@@ -1626,9 +1742,10 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_StopCharsWithInput) {
 
   // Test that we sent the right value to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("MasterCard" + kUTF8MidlineEllipsis + "3123",
-                                 "08/17", kMasterCard,
-                                 autofill_manager_->GetPackedCreditCardID(7)));
+      kDefaultPageID,
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "3123",
+                 "08/17", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(7)));
 }
 
 // Test that we return only matching credit card profile suggestions when the
@@ -1646,9 +1763,9 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_MatchCharacter) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)));
 }
 
 // Test that we return credit card profile suggestions when the selected form
@@ -1665,9 +1782,9 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_NonCCNumber) {
 
 #if defined(OS_ANDROID)
   static const std::string kVisaSuggestion =
-      "Visa" + kUTF8MidlineEllipsis + "3456";
+      std::string("Visa") + kUTF8MidlineEllipsis + "3456";
   static const std::string kMcSuggestion =
-      "MasterCard" + kUTF8MidlineEllipsis + "8765";
+      std::string("Mastercard") + kUTF8MidlineEllipsis + "8765";
 #else
   static const std::string kVisaSuggestion = "*3456";
   static const std::string kMcSuggestion = "*8765";
@@ -1696,10 +1813,9 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_NonSecureContext) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion(
-          l10n_util::GetStringUTF8(IDS_AUTOFILL_WARNING_INSECURE_CONNECTION),
-          "", "", -1));
+      kDefaultPageID, Suggestion(l10n_util::GetStringUTF8(
+                                     IDS_AUTOFILL_WARNING_INSECURE_CONNECTION),
+                                 "", "", -1));
 
   // Clear the test credit cards and try again -- we shouldn't return a warning.
   personal_data_.ClearCreditCards();
@@ -1767,18 +1883,18 @@ TEST_F(AutofillManagerTest,
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we will eventually return the credit card signin promo when there
 // are no credit card suggestions and the promo is active. See the tests in
 // AutofillExternalDelegateTest that test whether the promo is added.
 TEST_F(AutofillManagerTest, GetCreditCardSuggestions_OnlySigninPromo) {
-  // Make sure there are no credit cards.
   personal_data_.ClearCreditCards();
 
   // Set up our form data.
@@ -1852,11 +1968,12 @@ TEST_F(AutofillManagerTest,
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return credit card suggestions for secure pages that have a
@@ -1876,11 +1993,12 @@ TEST_F(AutofillManagerTest,
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that we return all credit card suggestions in the case that two cards
@@ -1891,9 +2009,10 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_RepeatedObfuscatedNumber) {
   CreditCard credit_card;
   test::SetCreditCardInfo(&credit_card, "Elvis Presley",
                           "5231567890123456",  // Mastercard
-                          "05", "2999");
+                          "05", "2999", "1");
   credit_card.set_guid("00000000-0000-0000-0000-000000000007");
-  credit_card.set_use_date(base::Time::Now() - base::TimeDelta::FromDays(15));
+  credit_card.set_use_date(AutofillClock::Now() -
+                           base::TimeDelta::FromDays(15));
   autofill_manager_->AddCreditCard(credit_card);
 
   // Set up our form data.
@@ -1907,13 +2026,15 @@ TEST_F(AutofillManagerTest, GetCreditCardSuggestions_RepeatedObfuscatedNumber) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "3456", "05/99",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(7)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "3456",
+                 "05/99", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(7)));
 }
 
 // Test that we return profile and credit card suggestions for combined forms.
@@ -1939,11 +2060,12 @@ TEST_F(AutofillManagerTest, GetAddressAndCreditCardSuggestions) {
 
   // Test that we sent the credit card suggestions to the external delegate.
   external_delegate_->CheckSuggestions(
-      kPageID2, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                           "04/99", kVisaCard,
-                           autofill_manager_->GetPackedCreditCardID(4)),
-      Suggestion("MasterCard" + kUTF8MidlineEllipsis + "8765", "10/98",
-                 kMasterCard, autofill_manager_->GetPackedCreditCardID(5)));
+      kPageID2,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)),
+      Suggestion(std::string("Mastercard") + kUTF8MidlineEllipsis + "8765",
+                 "10/98", kMasterCard,
+                 autofill_manager_->GetPackedCreditCardID(5)));
 }
 
 // Test that for non-https forms with both address and credit card fields, we
@@ -1972,15 +2094,70 @@ TEST_F(AutofillManagerTest, GetAddressAndCreditCardSuggestionsNonHttps) {
 
   // Test that we sent the right values to the external delegate.
   external_delegate_->CheckSuggestions(
-      kPageID2,
-      Suggestion(
-          l10n_util::GetStringUTF8(IDS_AUTOFILL_WARNING_INSECURE_CONNECTION),
-          "", "", -1));
+      kPageID2, Suggestion(l10n_util::GetStringUTF8(
+                               IDS_AUTOFILL_WARNING_INSECURE_CONNECTION),
+                           "", "", -1));
 
   // Clear the test credit cards and try again -- we shouldn't return a warning.
   personal_data_.ClearCreditCards();
   GetAutofillSuggestions(form, field);
   external_delegate_->CheckNoSuggestions(kDefaultPageID);
+}
+
+TEST_F(AutofillManagerTest,
+       ShouldShowAddressSuggestionsIfCreditCardAutofillDisabled) {
+  DisableCreditCardAutofill();
+
+  // Set up our form data.
+  FormData form;
+  test::CreateTestAddressFormData(&form);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+
+  FormFieldData field = form.fields[0];
+  GetAutofillSuggestions(form, field);
+
+  // Check that address suggestions will still be available.
+  external_delegate_->CheckSuggestions(
+      kDefaultPageID, Suggestion("Charles", "123 Apple St.", "", 1),
+      Suggestion("Elvis", "3734 Elvis Presley Blvd.", "", 2));
+}
+
+TEST_F(AutofillManagerTest,
+       ShouldNotShowCreditCardsSuggestionsIfCreditCardAutofillDisabled) {
+  DisableCreditCardAutofill();
+
+  // Set up our form data.
+  FormData form;
+  CreateTestCreditCardFormData(&form, true, false);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+
+  FormFieldData field = form.fields[0];
+  GetAutofillSuggestions(form, field);
+
+  // Check that credit card suggestions will not be available.
+  external_delegate_->CheckNoSuggestions(kDefaultPageID);
+}
+
+TEST_F(AutofillManagerTest,
+       ShouldLogFormSubmitEventIfCreditCardAutofillDisabled) {
+  DisableCreditCardAutofill();
+
+  // Set up our form data.
+  FormData form;
+  CreateTestCreditCardFormData(&form, true, false);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+
+  FormFieldData field = form.fields[0];
+  GetAutofillSuggestions(form, field);
+
+  base::HistogramTester histogram_tester;
+  FormSubmitted(form);
+  histogram_tester.ExpectBucketCount(
+      "Autofill.FormEvents.CreditCard",
+      AutofillMetrics::FORM_EVENT_SUGGESTION_SHOWN_SUBMITTED_ONCE, 1);
 }
 
 // Test that we return autocomplete-like suggestions when trying to autofill
@@ -2025,10 +2202,9 @@ TEST_F(AutofillManagerTest, GetFieldSuggestionsForAutocompleteOnly) {
   AutocompleteSuggestionsReturned(suggestions);
 
   // Test that we sent the right values to the external delegate.
-  external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion("one", "", "", 0),
-      Suggestion("two", "", "", 0));
+  external_delegate_->CheckSuggestions(kDefaultPageID,
+                                       Suggestion("one", "", "", 0),
+                                       Suggestion("two", "", "", 0));
 }
 
 // Test that we do not return duplicate values drawn from multiple profiles when
@@ -2054,9 +2230,8 @@ TEST_F(AutofillManagerTest, GetFieldSuggestionsWithDuplicateValues) {
   GetAutofillSuggestions(form, field);
 
   // Test that we sent the right values to the external delegate.
-  external_delegate_->CheckSuggestions(
-      kDefaultPageID,
-      Suggestion("Elvis", "", "", 1));
+  external_delegate_->CheckSuggestions(kDefaultPageID,
+                                       Suggestion("Elvis", "", "", 1));
 }
 
 TEST_F(AutofillManagerTest, GetProfileSuggestions_FancyPhone) {
@@ -2069,10 +2244,8 @@ TEST_F(AutofillManagerTest, GetProfileSuggestions_FancyPhone) {
   std::unique_ptr<AutofillProfile> profile =
       base::MakeUnique<AutofillProfile>();
   profile->set_guid("00000000-0000-0000-0000-000000000103");
-  profile->SetInfo(AutofillType(NAME_FULL), ASCIIToUTF16("Natty Bumppo"),
-                   "en-US");
-  profile->SetRawInfo(PHONE_HOME_WHOLE_NUMBER,
-                      ASCIIToUTF16("1800PRAIRIE"));
+  profile->SetInfo(NAME_FULL, ASCIIToUTF16("Natty Bumppo"), "en-US");
+  profile->SetRawInfo(PHONE_HOME_WHOLE_NUMBER, ASCIIToUTF16("1800PRAIRIE"));
   autofill_manager_->AddProfile(std::move(profile));
 
   const FormFieldData& field = form.fields[9];
@@ -2107,8 +2280,8 @@ TEST_F(AutofillManagerTest, GetProfileSuggestions_ForPhonePrefixOrSuffix) {
 
   FormFieldData field;
   for (const auto& test_field : test_fields) {
-    test::CreateTestFormField(
-        test_field.label, test_field.name, "", "text", &field);
+    test::CreateTestFormField(test_field.label, test_field.name, "", "text",
+                              &field);
     field.max_length = test_field.max_length;
     field.autocomplete_attribute = std::string();
     form.fields.push_back(field);
@@ -2217,8 +2390,8 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_Simple) {
   FillAutofillFormDataAndSaveResults(kDefaultPageID, form, *form.fields.begin(),
                                      MakeFrontendID(guid, std::string()),
                                      &response_page_id, &response_data);
-  ExpectFilledCreditCardFormElvis(
-      response_page_id, response_data, kDefaultPageID, false);
+  ExpectFilledCreditCardFormElvis(response_page_id, response_data,
+                                  kDefaultPageID, false);
 }
 
 // Test that whitespace is stripped from the credit card number.
@@ -2282,9 +2455,8 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_NoYearNoMonth) {
                                      MakeFrontendID(guid, std::string()),
                                      &response_page_id, &response_data);
   ExpectFilledCreditCardYearMonthWithYearMonth(response_page_id, response_data,
-      kDefaultPageID, false, "", "");
+                                               kDefaultPageID, false, "", "");
 }
-
 
 // Test that we correctly fill a credit card form with month input type.
 // 2. year empty, month non-empty
@@ -2305,7 +2477,7 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_NoYearMonth) {
                                      MakeFrontendID(guid, std::string()),
                                      &response_page_id, &response_data);
   ExpectFilledCreditCardYearMonthWithYearMonth(response_page_id, response_data,
-      kDefaultPageID, false, "", "04");
+                                               kDefaultPageID, false, "", "04");
 }
 
 // Test that we correctly fill a credit card form with month input type.
@@ -2335,7 +2507,6 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_YearNoMonth) {
 TEST_F(AutofillManagerTest, FillCreditCardForm_YearMonth) {
   // Same as the SetUp(), but generate 4 credit cards with year month
   // combination.
-  personal_data_.ClearCreditCards();
   personal_data_.CreateTestCreditCardsYearAndMonth("2999", "04");
   // Set up our form data.
   FormData form;
@@ -2420,8 +2591,8 @@ TEST_F(AutofillManagerTest, FillAddressAndCreditCardForm) {
                                        MakeFrontendID(guid2, std::string()),
                                        &response_page_id, &response_data);
     SCOPED_TRACE("Credit card");
-    ExpectFilledCreditCardFormElvis(
-        response_page_id, response_data, kPageID2, true);
+    ExpectFilledCreditCardFormElvis(response_page_id, response_data, kPageID2,
+                                    true);
   }
 }
 
@@ -2467,8 +2638,12 @@ TEST_F(AutofillManagerTest, FillAddressForm_UnrecognizedAttribute) {
 }
 
 // Test that non credit card related fields with the autocomplete attribute set
-// to off are not filled on desktop.
-TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOff) {
+// to off are not filled on desktop when the feature to autofill all addresses
+// is disabled.
+TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOffRespected) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(kAutofillAlwaysFillAddresses);
+
   FormData address_form;
   address_form.name = ASCIIToUTF16("MyForm");
   address_form.origin = GURL("https://myform.com/form.html");
@@ -2521,6 +2696,48 @@ TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOff) {
     ExpectFilledField("Address Line 1", "addr1", "3734 Elvis Presley Blvd.",
                       "text", response_data.fields[3]);
   }
+}
+
+// Test that non credit card related fields with the autocomplete attribute set
+// to off are filled on all platforms when the feature to autofill all addresses
+// is enabled (default).
+TEST_F(AutofillManagerTest, FillAddressForm_AutocompleteOffNotRespected) {
+  FormData address_form;
+  address_form.name = ASCIIToUTF16("MyForm");
+  address_form.origin = GURL("https://myform.com/form.html");
+  address_form.action = GURL("https://myform.com/submit.html");
+  FormFieldData field;
+  test::CreateTestFormField("First name", "firstname", "", "text", &field);
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Middle name", "middle", "", "text", &field);
+  field.should_autocomplete = false;
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Last name", "lastname", "", "text", &field);
+  field.should_autocomplete = true;
+  address_form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  field.should_autocomplete = false;
+  address_form.fields.push_back(field);
+  std::vector<FormData> address_forms(1, address_form);
+  FormsSeen(address_forms);
+
+  // Fill the address form.
+  const char guid[] = "00000000-0000-0000-0000-000000000001";
+  int response_page_id = 0;
+  FormData response_data;
+  FillAutofillFormDataAndSaveResults(
+      kDefaultPageID, address_form, address_form.fields[0],
+      MakeFrontendID(std::string(), guid), &response_page_id, &response_data);
+
+  // All fields should be filled.
+  ExpectFilledField("First name", "firstname", "Elvis", "text",
+                    response_data.fields[0]);
+  ExpectFilledField("Middle name", "middle", "Aaron", "text",
+                    response_data.fields[1]);
+  ExpectFilledField("Last name", "lastname", "Presley", "text",
+                    response_data.fields[2]);
+  ExpectFilledField("Address Line 1", "addr1", "3734 Elvis Presley Blvd.",
+                    "text", response_data.fields[3]);
 }
 
 // Test that a field with a value equal to it's placeholder attribute is filled.
@@ -2648,7 +2865,7 @@ TEST_F(AutofillManagerTest, FillCreditCardForm_ExpiredCard) {
   test::CreateTestFormField("Name on Card", "nameoncard", "", "text", &field);
   field.autocomplete_attribute = "cc-name";
   form.fields.push_back(field);
-  std::vector<const char*> kCreditCardTypes = {"Visa", "Master Card", "AmEx",
+  std::vector<const char*> kCreditCardTypes = {"Visa", "Mastercard", "AmEx",
                                                "discover"};
   test::CreateTestSelectField("Card Type", "cardtype", "", kCreditCardTypes,
                               kCreditCardTypes, 4, &field);
@@ -2734,8 +2951,7 @@ TEST_F(AutofillManagerTest, FillFormWithNonFocusableFields) {
   ASSERT_EQ(6U, response_data.fields.size());
   ExpectFilledField("First Name", "firstname", "Elvis", "text",
                     response_data.fields[0]);
-  ExpectFilledField("", "lastname", "Presley", "text",
-                    response_data.fields[1]);
+  ExpectFilledField("", "lastname", "Presley", "text", response_data.fields[1]);
   ExpectFilledField("", "email", "theking@gmail.com", "text",
                     response_data.fields[2]);
   ExpectFilledField("Phone Number", "phonenumber", "12345678901", "tel",
@@ -2771,7 +2987,7 @@ TEST_F(AutofillManagerTest, FillFormWithMultipleSections) {
   {
     SCOPED_TRACE("Address 1");
     // The second address section should be empty.
-    ASSERT_EQ(response_data.fields.size(), 2*kAddressFormSize);
+    ASSERT_EQ(response_data.fields.size(), 2 * kAddressFormSize);
     for (size_t i = kAddressFormSize; i < form.fields.size(); ++i) {
       EXPECT_EQ(base::string16(), response_data.fields[i].value);
     }
@@ -2796,7 +3012,7 @@ TEST_F(AutofillManagerTest, FillFormWithMultipleSections) {
     ASSERT_EQ(response_data.fields.size(), form.fields.size());
 
     // The first address section should be empty.
-    ASSERT_EQ(response_data.fields.size(), 2*kAddressFormSize);
+    ASSERT_EQ(response_data.fields.size(), 2 * kAddressFormSize);
     for (size_t i = 0; i < kAddressFormSize; ++i) {
       EXPECT_EQ(base::string16(), response_data.fields[i].value);
     }
@@ -2921,8 +3137,7 @@ TEST_F(AutofillManagerTest, FillFormWithAuthorSpecifiedSections) {
     EXPECT_EQ(GURL("https://myform.com/submit.html"), response_data.action);
     ASSERT_EQ(11U, response_data.fields.size());
 
-    ExpectFilledField("", "country", "US", "text",
-                      response_data.fields[0]);
+    ExpectFilledField("", "country", "US", "text", response_data.fields[0]);
     ExpectFilledField("", "firstname", "", "text", response_data.fields[1]);
     ExpectFilledField("", "lastname", "", "text", response_data.fields[2]);
     ExpectFilledField("", "address", "3734 Elvis Presley Blvd.", "text",
@@ -3033,15 +3248,14 @@ TEST_F(AutofillManagerTest, FillAutofilledForm) {
                                      &response_page_id, &response_data);
   {
     SCOPED_TRACE("Credit card 1");
-    ExpectFilledCreditCardFormElvis(
-        response_page_id, response_data, kPageID2, true);
+    ExpectFilledCreditCardFormElvis(response_page_id, response_data, kPageID2,
+                                    true);
   }
 
   // Now set the credit card fields to also be auto-filled, and try again to
   // fill the credit card data
   for (std::vector<FormFieldData>::iterator iter = form.fields.begin();
-       iter != form.fields.end();
-       ++iter) {
+       iter != form.fields.end(); ++iter) {
     iter->is_autofilled = true;
   }
 
@@ -3076,19 +3290,17 @@ TEST_F(AutofillManagerTest, FillPhoneNumber) {
     const char* name;
     size_t max_length;
     const char* autocomplete_attribute;
-  } test_fields[] = {
-    { "country code", "country_code", 1, "tel-country-code" },
-    { "area code", "area_code", 3, "tel-area-code" },
-    { "phone", "phone_prefix", 3, "tel-local-prefix" },
-    { "-", "phone_suffix", 4, "tel-local-suffix" },
-    { "Phone Extension", "ext", 3, "tel-extension" }
-  };
+  } test_fields[] = {{"country code", "country_code", 1, "tel-country-code"},
+                     {"area code", "area_code", 3, "tel-area-code"},
+                     {"phone", "phone_prefix", 3, "tel-local-prefix"},
+                     {"-", "phone_suffix", 4, "tel-local-suffix"},
+                     {"Phone Extension", "ext", 3, "tel-extension"}};
 
   FormFieldData field;
   const size_t default_max_length = field.max_length;
   for (const auto& test_field : test_fields) {
-    test::CreateTestFormField(
-        test_field.label, test_field.name, "", "text", &field);
+    test::CreateTestFormField(test_field.label, test_field.name, "", "text",
+                              &field);
     field.max_length = test_field.max_length;
     field.autocomplete_attribute = std::string();
     form_with_us_number_max_length.fields.push_back(field);
@@ -3510,7 +3722,7 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictions) {
   // Simulate having seen this form on page load.
   // |form_structure| will be owned by |autofill_manager_|.
   TestFormStructure* form_structure = new TestFormStructure(form);
-  form_structure->DetermineHeuristicTypes(nullptr /* ukm_service */);
+  form_structure->DetermineHeuristicTypes(nullptr /* ukm_recorder */);
   autofill_manager_->AddSeenForm(base::WrapUnique(form_structure));
 
   // Similarly, a second form.
@@ -3530,20 +3742,20 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictions) {
   form2.fields.push_back(field);
 
   TestFormStructure* form_structure2 = new TestFormStructure(form2);
-  form_structure2->DetermineHeuristicTypes(nullptr /* ukm_service */);
+  form_structure2->DetermineHeuristicTypes(nullptr /* ukm_recorder */);
   autofill_manager_->AddSeenForm(base::WrapUnique(form_structure2));
 
   AutofillQueryResponseContents response;
-  response.add_field()->set_autofill_type(3);
+  response.add_field()->set_overall_type_prediction(3);
   for (int i = 0; i < 7; ++i) {
-    response.add_field()->set_autofill_type(0);
+    response.add_field()->set_overall_type_prediction(0);
   }
-  response.add_field()->set_autofill_type(3);
-  response.add_field()->set_autofill_type(2);
-  response.add_field()->set_autofill_type(61);
-  response.add_field()->set_autofill_type(5);
-  response.add_field()->set_autofill_type(4);
-  response.add_field()->set_autofill_type(35);
+  response.add_field()->set_overall_type_prediction(3);
+  response.add_field()->set_overall_type_prediction(2);
+  response.add_field()->set_overall_type_prediction(61);
+  response.add_field()->set_overall_type_prediction(5);
+  response.add_field()->set_overall_type_prediction(4);
+  response.add_field()->set_overall_type_prediction(35);
 
   std::string response_string;
   ASSERT_TRUE(response.SerializeToString(&response_string));
@@ -3559,8 +3771,7 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictions) {
                                      AutofillMetrics::QUERY_RESPONSE_RECEIVED,
                                      1);
   histogram_tester.ExpectBucketCount("Autofill.ServerQueryResponse",
-                                     AutofillMetrics::QUERY_RESPONSE_PARSED,
-                                     1);
+                                     AutofillMetrics::QUERY_RESPONSE_PARSED, 1);
   // We expect the server type to have been applied to the first field of the
   // first form.
   EXPECT_EQ(NAME_FIRST, form_structure->field(0)->Type().GetStorableType());
@@ -3583,17 +3794,17 @@ TEST_F(AutofillManagerTest, OnLoadedServerPredictions_ResetManager) {
   // Simulate having seen this form on page load.
   // |form_structure| will be owned by |autofill_manager_|.
   TestFormStructure* form_structure = new TestFormStructure(form);
-  form_structure->DetermineHeuristicTypes(nullptr /* ukm_service */);
+  form_structure->DetermineHeuristicTypes(nullptr /* ukm_recorder */);
   autofill_manager_->AddSeenForm(base::WrapUnique(form_structure));
 
   AutofillQueryResponseContents response;
-  response.add_field()->set_autofill_type(3);
+  response.add_field()->set_overall_type_prediction(3);
   for (int i = 0; i < 7; ++i) {
-    response.add_field()->set_autofill_type(0);
+    response.add_field()->set_overall_type_prediction(0);
   }
-  response.add_field()->set_autofill_type(3);
-  response.add_field()->set_autofill_type(2);
-  response.add_field()->set_autofill_type(61);
+  response.add_field()->set_overall_type_prediction(3);
+  response.add_field()->set_overall_type_prediction(2);
+  response.add_field()->set_overall_type_prediction(61);
 
   std::string response_string;
   ASSERT_TRUE(response.SerializeToString(&response_string));
@@ -3617,11 +3828,12 @@ TEST_F(AutofillManagerTest, FormSubmittedServerTypes) {
   // Set up our form data.
   FormData form;
   test::CreateTestAddressFormData(&form);
+  FormsSeen(std::vector<FormData>(1, form));
 
   // Simulate having seen this form on page load.
   // |form_structure| will be owned by |autofill_manager_|.
   TestFormStructure* form_structure = new TestFormStructure(form);
-  form_structure->DetermineHeuristicTypes(nullptr /* ukm_service */);
+  form_structure->DetermineHeuristicTypes(nullptr /* ukm_recorder */);
 
   // Clear the heuristic types, and instead set the appropriate server types.
   std::vector<ServerFieldType> heuristic_types, server_types;
@@ -3656,6 +3868,7 @@ TEST_F(AutofillManagerTest, FormSubmittedPossibleTypesTwoSubmissions) {
   FormData form;
   std::vector<ServerFieldTypeSet> expected_types;
   test::CreateTestAddressFormData(&form, &expected_types);
+  FormsSeen(std::vector<FormData>(1, form));
 
   // Fill the form.
   const char guid[] = "00000000-0000-0000-0000-000000000001";
@@ -3852,7 +4065,7 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
   std::vector<CreditCard> credit_cards;
   CreditCard credit_card;
   test::SetCreditCardInfo(&credit_card, "John Doe", "4234-5678-9012-3456", "04",
-                          "2999");
+                          "2999", "1");
   credit_card.set_guid("00000000-0000-0000-0000-000000000003");
   credit_cards.push_back(credit_card);
 
@@ -3889,8 +4102,8 @@ TEST_F(AutofillManagerTest, DeterminePossibleFieldTypesForUpload) {
 
       // Test a European profile.
       {"Paris", ADDRESS_HOME_CITY},
-      {"Île de France", ADDRESS_HOME_STATE},  // Exact match
-      {"Ile de France", ADDRESS_HOME_STATE},  // Missing accent.
+      {"Île de France", ADDRESS_HOME_STATE},    // Exact match
+      {"Ile de France", ADDRESS_HOME_STATE},    // Missing accent.
       {"-Ile-de-France-", ADDRESS_HOME_STATE},  // Extra punctuation.
       {"île dÉ FrÃÑÇË", ADDRESS_HOME_STATE},  // Other accents & case mismatch.
       {"75008", ADDRESS_HOME_ZIP},
@@ -4039,7 +4252,7 @@ TEST_F(AutofillManagerTest, DisambiguateUploadTypes) {
   std::vector<CreditCard> credit_cards;
   CreditCard credit_card;
   test::SetCreditCardInfo(&credit_card, "Elvis Presley", "4234-5678-9012-3456",
-                          "04", "2999");
+                          "04", "2999", "1");
   credit_card.set_guid("00000000-0000-0000-0000-000000000003");
   credit_cards.push_back(credit_card);
 
@@ -4177,7 +4390,8 @@ TEST_F(AutofillManagerTest, DisambiguateUploadTypes) {
     // Assign the specified predicted type for each field in the test case.
     FormStructure form_structure(form);
     for (size_t i = 0; i < test_fields.size(); ++i) {
-      form_structure.field(i)->set_server_type(test_fields[i].predicted_type);
+      form_structure.field(i)->set_overall_server_type(
+          test_fields[i].predicted_type);
     }
 
     AutofillManager::DeterminePossibleFieldTypesForUpload(
@@ -4284,7 +4498,7 @@ TEST_F(AutofillManagerTest, OnTextFieldDidChangeAndUnfocus_Upload) {
   form.fields[2].value = ASCIIToUTF16("theking@gmail.com");
   // Simulate editing a field.
   autofill_manager_->OnTextFieldDidChange(form, form.fields.front(),
-                                          base::TimeTicks::Now());
+                                          gfx::RectF(), base::TimeTicks::Now());
 
   autofill_manager_->ResetRunLoop();
   // Simulate lost of focus on the form.
@@ -4337,7 +4551,7 @@ TEST_F(AutofillManagerTest, OnTextFieldDidChangeAndNavigation_Upload) {
   form.fields[2].value = ASCIIToUTF16("theking@gmail.com");
   // Simulate editing a field.
   autofill_manager_->OnTextFieldDidChange(form, form.fields.front(),
-                                          base::TimeTicks::Now());
+                                          gfx::RectF(), base::TimeTicks::Now());
 
   autofill_manager_->ResetRunLoop();
   // Simulate a navigation so that the pending form is uploaded.
@@ -4486,9 +4700,9 @@ TEST_F(AutofillManagerTest,
   GetAutofillSuggestions(form, number_field);
 
   external_delegate_->CheckSuggestions(
-      kDefaultPageID, Suggestion("Visa" + kUTF8MidlineEllipsis + "3456",
-                                 "04/99", kVisaCard,
-                                 autofill_manager_->GetPackedCreditCardID(4)));
+      kDefaultPageID,
+      Suggestion(std::string("Visa") + kUTF8MidlineEllipsis + "3456", "04/99",
+                 kVisaCard, autofill_manager_->GetPackedCreditCardID(4)));
 }
 
 // Test that inputs detected to be CVC inputs are forced to
@@ -4575,14 +4789,80 @@ TEST_F(AutofillManagerTest, FillInUpdatedExpirationDate) {
                                      "4012888888881881");
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard DISABLED_UploadCreditCard
-#else
-#define MAYBE_UploadCreditCard UploadCreditCard
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, CreditCardDisabledDoesNotSave) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_enabled(false);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // The credit card should neither be saved locally or uploaded.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that no histogram entry was logged.
+  histogram_tester.ExpectTotalCount("Autofill.CardUploadDecisionMetric", 0);
+}
+
+TEST_F(AutofillManagerTest, CreditCardDisabledDoesNotFillFormData) {
+  autofill_manager_->set_credit_card_enabled(false);
+
+  // Set up our form data.
+  FormData form;
+  CreateTestCreditCardFormData(&form, true, false);
+  std::vector<FormData> forms(1, form);
+  FormsSeen(forms);
+
+  const char guid[] = "00000000-0000-0000-0000-000000000004";
+
+  // Expect no fields filled, no form data sent to renderer.
+  EXPECT_CALL(*autofill_driver_, SendFormDataToRenderer(_, _, _)).Times(0);
+
+  FillAutofillFormData(kDefaultPageID, form, *form.fields.begin(),
+                       MakeFrontendID(guid, std::string()));
+}
+
+TEST_F(AutofillManagerTest, CreditCardDisabledDoesNotSuggest) {
+  autofill_manager_->set_credit_card_enabled(false);
+
+  // Set up our form data.
+  FormData form;
+  CreateTestCreditCardFormData(&form, true, false);
+  std::vector<FormData> forms(1, form);
+  EXPECT_CALL(autofill_client_, ShouldShowSigninPromo());
+  FormsSeen(forms);
+
+  FormFieldData field;
+  test::CreateTestFormField("Name on Card", "nameoncard", "pres", "text",
+                            &field);
+  GetAutofillSuggestions(form, field);
+  // Expect no suggestions as autofill and autocomplete are disabled for credit
+  // cards.
+  EXPECT_FALSE(external_delegate_->on_suggestions_returned_seen());
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard) {
+  personal_data_.ClearCreditCards();
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -4611,23 +4891,114 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard) {
 
   base::HistogramTester histogram_tester;
 
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
   FormSubmitted(credit_card_form);
   EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
 
+  // Server did not send a server_id, expect copy of card is not stored.
+  EXPECT_TRUE(autofill_manager_->GetCreditCards().empty());
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample("Autofill.CardUploadDecisionExpanded",
-                                      AutofillMetrics::UPLOAD_OFFERED, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
+  // Verify the histogram entry for recent profile modification.
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.HasModifiedProfile.CreditCardFormSubmission", true, 1);
+  // Verify that UMA for "DaysSincePreviousUse" was not logged because we
+  // modified the profile.
+  histogram_tester.ExpectTotalCount(
+      "Autofill.DaysSincePreviousUseAtSubmission.Profile", 0);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_FeatureNotEnabled DISABLED_UploadCreditCard_FeatureNotEnabled
+TEST_F(AutofillManagerTest, UploadCreditCard_RequestCVCEnabled_DoesNotTrigger) {
+  EnableAutofillUpstreamRequestCvcIfMissingExperiment();
+
+  personal_data_.ClearCreditCards();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  // Submitted form included CVC, so user did not need to enter CVC.
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCardAndSaveCopy) {
+  personal_data_.ClearCreditCards();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  const char* const server_id = "InstrumentData:1234";
+  autofill_manager_->ResetPaymentsClientForCardUpload(server_id);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  const char* const card_number = "4111111111111111";
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16(card_number);
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  FormSubmitted(credit_card_form);
+
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetLocalCreditCards().empty());
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  // See |OfferStoreUnmaskedCards|
+  EXPECT_TRUE(autofill_manager_->GetCreditCards().empty());
 #else
-#define MAYBE_UploadCreditCard_FeatureNotEnabled UploadCreditCard_FeatureNotEnabled
+  ASSERT_EQ(1U, autofill_manager_->GetCreditCards().size());
+  const CreditCard* const saved_card = autofill_manager_->GetCreditCards()[0];
+  EXPECT_EQ(CreditCard::OK, saved_card->GetServerStatus());
+  EXPECT_EQ(base::ASCIIToUTF16("1111"), saved_card->LastFourDigits());
+  EXPECT_EQ(kVisaCard, saved_card->network());
+  EXPECT_EQ(11, saved_card->expiration_month());
+  EXPECT_EQ(2017, saved_card->expiration_year());
+  EXPECT_EQ(server_id, saved_card->server_id());
+  EXPECT_EQ(CreditCard::FULL_SERVER_CARD, saved_card->record_type());
+  EXPECT_EQ(base::ASCIIToUTF16(card_number), saved_card->number());
 #endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_FeatureNotEnabled) {
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_FeatureNotEnabled) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(false);
 
@@ -4658,18 +5029,11 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_FeatureNotEnabled) {
   FormSubmitted(credit_card_form);
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
-  // Verify that no histogram entry was logged called.
-  histogram_tester.ExpectTotalCount("Autofill.CardUploadDecisionExpanded", 0);
+  // Verify that no histogram entry was logged.
+  histogram_tester.ExpectTotalCount("Autofill.CardUploadDecisionMetric", 0);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_CvcUnavailable DISABLED_UploadCreditCard_CvcUnavailable
-#else
-#define MAYBE_UploadCreditCard_CvcUnavailable UploadCreditCard_CvcUnavailable
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_CvcUnavailable) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_CvcUnavailable) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -4704,31 +5068,13 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_CvcUnavailable) {
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::CVC_VALUE_NOT_FOUND);
   // Verify that the correct UKM was logged.
-  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC);
-
-  rappor::TestRapporServiceImpl* rappor_service =
-      autofill_client_.test_rappor_service();
-  EXPECT_EQ(1, rappor_service->GetReportsCount());
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
-      "Autofill.CardUploadNotOfferedNoCvc", &sample, &type));
-  EXPECT_EQ("myform.com", sample);
-  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
+  ExpectCardUploadDecisionUkm(AutofillMetrics::CVC_VALUE_NOT_FOUND);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_CvcInvalidLength DISABLED_UploadCreditCard_CvcInvalidLength
-#else
-#define MAYBE_UploadCreditCard_CvcInvalidLength UploadCreditCard_CvcInvalidLength
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_CvcInvalidLength) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_CvcInvalidLength) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -4760,31 +5106,13 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_CvcInvalidLength) {
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::INVALID_CVC_VALUE);
   // Verify that the correct UKM was logged.
-  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC);
-
-  rappor::TestRapporServiceImpl* rappor_service =
-      autofill_client_.test_rappor_service();
-  EXPECT_EQ(1, rappor_service->GetReportsCount());
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
-      "Autofill.CardUploadNotOfferedNoCvc", &sample, &type));
-  EXPECT_EQ("myform.com", sample);
-  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
+  ExpectCardUploadDecisionUkm(AutofillMetrics::INVALID_CVC_VALUE);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_MultipleCvcFields DISABLED_UploadCreditCard_MultipleCvcFields
-#else
-#define MAYBE_UploadCreditCard_MultipleCvcFields UploadCreditCard_MultipleCvcFields
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_MultipleCvcFields) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_MultipleCvcFields) {
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Remove the profiles that were created in the TestPersonalDataManager
@@ -4838,23 +5166,253 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_MultipleCvcFields) {
   EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_OFFERED, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
 }
 
+TEST_F(AutofillManagerTest, UploadCreditCard_NoCvcFieldOnForm) {
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Remove the profiles that were created in the TestPersonalDataManager
+  // constructor because they would result in conflicting names that would
+  // prevent the upload.
+  personal_data_.ClearAutofillProfiles();
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.  Note that CVC field is missing.
+  FormData credit_card_form;
+  credit_card_form.name = ASCIIToUTF16("MyForm");
+  credit_card_form.origin = GURL("https://myform.com/form.html");
+  credit_card_form.action = GURL("https://myform.com/submit.html");
+
+  FormFieldData field;
+  test::CreateTestFormField("Card Name", "cardname", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Month", "ccmonth", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Year", "ccyear", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+
+  base::HistogramTester histogram_tester;
+
+  // Upload should not happen because user did not provide CVC.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::CVC_FIELD_NOT_FOUND);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::CVC_FIELD_NOT_FOUND);
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_NoCvcFieldOnForm_InvalidCvcInNonCvcField) {
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Remove the profiles that were created in the TestPersonalDataManager
+  // constructor because they would result in conflicting names that would
+  // prevent the upload.
+  personal_data_.ClearAutofillProfiles();
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data. Note that CVC field is missing.
+  FormData credit_card_form;
+  credit_card_form.name = ASCIIToUTF16("MyForm");
+  credit_card_form.origin = GURL("https://myform.com/form.html");
+  credit_card_form.action = GURL("https://myform.com/submit.html");
+
+  FormFieldData field;
+  test::CreateTestFormField("Card Name", "cardname", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Month", "ccmonth", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Year", "ccyear", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Random Field", "random", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+
+  FormsSeen({credit_card_form});
+
+  // Enter an invalid cvc in "Random Field" and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("1234");
+
+  base::HistogramTester histogram_tester;
+
+  // Upload should not happen because user did not provide CVC.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::CVC_FIELD_NOT_FOUND);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::CVC_FIELD_NOT_FOUND);
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_NoCvcFieldOnForm_CvcInNonCvcField) {
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Remove the profiles that were created in the TestPersonalDataManager
+  // constructor because they would result in conflicting names that would
+  // prevent the upload.
+  personal_data_.ClearAutofillProfiles();
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data. Note that CVC field is missing.
+  FormData credit_card_form;
+  credit_card_form.name = ASCIIToUTF16("MyForm");
+  credit_card_form.origin = GURL("https://myform.com/form.html");
+  credit_card_form.action = GURL("https://myform.com/submit.html");
+
+  FormFieldData field;
+  test::CreateTestFormField("Card Name", "cardname", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Month", "ccmonth", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Year", "ccyear", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Random Field", "random", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+
+  FormsSeen({credit_card_form});
+
+  // Enter an invalid cvc in "Random Field" and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Upload should not happen because user did not provide CVC.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(
+      histogram_tester,
+      AutofillMetrics::FOUND_POSSIBLE_CVC_VALUE_IN_NON_CVC_FIELD);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(
+      AutofillMetrics::FOUND_POSSIBLE_CVC_VALUE_IN_NON_CVC_FIELD);
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_NoCvcFieldOnForm_CvcInAddressField) {
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Remove the profiles that were created in the TestPersonalDataManager
+  // constructor because they would result in conflicting names that would
+  // prevent the upload.
+  personal_data_.ClearAutofillProfiles();
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data. Note that CVC field is missing.
+  FormData credit_card_form;
+  credit_card_form.name = ASCIIToUTF16("MyForm");
+  credit_card_form.origin = GURL("https://myform.com/form.html");
+  credit_card_form.action = GURL("https://myform.com/submit.html");
+
+  FormFieldData field;
+  test::CreateTestFormField("Card Name", "cardname", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Card Number", "cardnumber", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Month", "ccmonth", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Expiration Year", "ccyear", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+  test::CreateTestFormField("Address Line 1", "addr1", "", "text", &field);
+  credit_card_form.fields.push_back(field);
+
+  FormsSeen({credit_card_form});
+
+  // Enter an invalid cvc in "Random Field" and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Upload should not happen because user did not provide CVC.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::CVC_FIELD_NOT_FOUND);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::CVC_FIELD_NOT_FOUND);
+}
+
 // TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
 #if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_NoCvcFieldOnForm \
-  DISABLED_UploadCreditCard_NoCvcFieldOnForm
+#define MAYBE_UploadCreditCard_NoCvcFieldOnForm_UserEntersCvc \
+  DISABLED_UploadCreditCard_NoCvcFieldOnForm_UserEntersCvc
 #else
-#define MAYBE_UploadCreditCard_NoCvcFieldOnForm \
-  UploadCreditCard_NoCvcFieldOnForm
+#define MAYBE_UploadCreditCard_NoCvcFieldOnForm_UserEntersCvc \
+  UploadCreditCard_NoCvcFieldOnForm_UserEntersCvc
 #endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoCvcFieldOnForm) {
-  EnableAutofillUpstreamRequestCvcIfMissingExperimentAndUkmLogging();
+TEST_F(AutofillManagerTest,
+       MAYBE_UploadCreditCard_NoCvcFieldOnForm_UserEntersCvc) {
+  EnableAutofillUpstreamRequestCvcIfMissingExperiment();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Remove the profiles that were created in the TestPersonalDataManager
@@ -4900,26 +5458,22 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoCvcFieldOnForm) {
   EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
   FormSubmitted(credit_card_form);
   EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_THAT(autofill_manager_->GetActiveExperiments(),
+              UnorderedElementsAre(kAutofillUpstreamRequestCvcIfMissing.name));
 
-  // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample("Autofill.CardUploadDecisionExpanded",
-                                      AutofillMetrics::UPLOAD_OFFERED_NO_CVC,
-                                      1);
+  // Verify that the correct histogram entries were logged.
+  ExpectCardUploadDecision(histogram_tester, AutofillMetrics::UPLOAD_OFFERED);
+  ExpectCardUploadDecision(histogram_tester,
+                           AutofillMetrics::CVC_FIELD_NOT_FOUND);
   // Verify that the correct UKM was logged.
-  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED_NO_CVC);
+  ExpectMetric(
+      UkmCardUploadDecisionType::kUploadDecisionName,
+      UkmCardUploadDecisionType::kEntryName,
+      AutofillMetrics::UPLOAD_OFFERED | AutofillMetrics::CVC_FIELD_NOT_FOUND,
+      1 /* expected_num_matching_entries */);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_NoCvcFieldOnFormExperimentOff \
-  DISABLED_UploadCreditCard_NoCvcFieldOnFormExperimentOff
-#else
-#define MAYBE_UploadCreditCard_NoCvcFieldOnFormExperimentOff \
-  UploadCreditCard_NoCvcFieldOnFormExperimentOff
-#endif
-TEST_F(AutofillManagerTest,
-       MAYBE_UploadCreditCard_NoCvcFieldOnFormExperimentOff) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_NoCvcFieldOnFormExperimentOff) {
   autofill_manager_->set_credit_card_upload_enabled(true);
 
   // Remove the profiles that were created in the TestPersonalDataManager
@@ -4967,31 +5521,151 @@ TEST_F(AutofillManagerTest,
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::CVC_FIELD_NOT_FOUND);
   // Verify that the correct UKM was logged.
-  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC);
-
-  rappor::TestRapporServiceImpl* rappor_service =
-      autofill_client_.test_rappor_service();
-  EXPECT_EQ(1, rappor_service->GetReportsCount());
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
-      "Autofill.CardUploadNotOfferedNoCvc", &sample, &type));
-  EXPECT_EQ("myform.com", sample);
-  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
+  ExpectCardUploadDecisionUkm(AutofillMetrics::CVC_FIELD_NOT_FOUND);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_NoProfileAvailable DISABLED_UploadCreditCard_NoProfileAvailable
-#else
-#define MAYBE_UploadCreditCard_NoProfileAvailable UploadCreditCard_NoProfileAvailable
+// kAutofillUpstreamShowNewUi and kAutofillUpstreamShowGoogleLogo flags are
+// currently not available on Android.
+#if !defined(OS_ANDROID)
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_AddNewUiFlagStateToRequestIfExperimentOn) {
+  EnableAutofillUpstreamShowNewUiExperiment();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  // Confirm upload happened and the new UI flag was sent in the request.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_THAT(autofill_manager_->GetActiveExperiments(),
+              UnorderedElementsAre(kAutofillUpstreamShowNewUi.name));
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_DoNotAddNewUiFlagStateToRequestIfExperimentOff) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  // Confirm upload happened and the new UI flag was not sent in the request.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_AddShowGoogleLogoFlagStateToRequestIfExperimentOn) {
+  EnableAutofillUpstreamShowGoogleLogoExperiment();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  // Confirm upload happened and the show Google logo flag was sent in the
+  // request.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_THAT(autofill_manager_->GetActiveExperiments(),
+              UnorderedElementsAre(kAutofillUpstreamShowGoogleLogo.name));
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_DoNotAddShowGoogleLogoFlagStateToRequestIfExpOff) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  // Confirm upload happened and the show Google logo flag was not sent in the
+  // request.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
+}
 #endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoProfileAvailable) {
-  EnableUkmLogging();
+
+TEST_F(AutofillManagerTest, UploadCreditCard_NoProfileAvailable) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5016,33 +5690,66 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoProfileAvailable) {
   FormSubmitted(credit_card_form);
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
-  // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ADDRESS, 1);
+  // Verify that the correct histogram entries are logged.
+  ExpectUniqueCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ADDRESS_PROFILE);
   // Verify that the correct UKM was logged.
-  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ADDRESS);
-
-  rappor::TestRapporServiceImpl* rappor_service =
-      autofill_client_.test_rappor_service();
-  EXPECT_EQ(1, rappor_service->GetReportsCount());
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
-      "Autofill.CardUploadNotOfferedNoAddress", &sample, &type));
-  EXPECT_EQ("myform.com", sample);
-  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
+  ExpectCardUploadDecisionUkm(
+      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ADDRESS_PROFILE);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_CvcUnavailableAndNoProfileAvailable DISABLED_UploadCreditCard_CvcUnavailableAndNoProfileAvailable
-#else
-#define MAYBE_UploadCreditCard_CvcUnavailableAndNoProfileAvailable UploadCreditCard_CvcUnavailableAndNoProfileAvailable
-#endif
+TEST_F(AutofillManagerTest, UploadCreditCard_NoRecentlyUsedProfile) {
+  // Create the test clock and set the time to a specific value.
+  TestAutofillClock test_clock;
+  test_clock.SetNow(kArbitraryTime);
+
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit an address form in order to establish a profile.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set the current time to another value.
+  test_clock.SetNow(kMuchLaterTime);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Neither a local save nor an upload should happen in this case.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(
+      histogram_tester,
+      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_RECENTLY_USED_ADDRESS);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(
+      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_RECENTLY_USED_ADDRESS);
+  // Verify the histogram entry for recent profile modification.
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.HasModifiedProfile.CreditCardFormSubmission", false, 1);
+}
+
 TEST_F(AutofillManagerTest,
-       MAYBE_UploadCreditCard_CvcUnavailableAndNoProfileAvailable) {
-  EnableUkmLogging();
+       UploadCreditCard_CvcUnavailableAndNoProfileAvailable) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5069,32 +5776,20 @@ TEST_F(AutofillManagerTest,
   FormSubmitted(credit_card_form);
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
-  // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC, 1);
+  // Verify that the correct histogram entries were logged.
+  ExpectCardUploadDecision(histogram_tester,
+                           AutofillMetrics::CVC_VALUE_NOT_FOUND);
+  ExpectCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ADDRESS_PROFILE);
   // Verify that the correct UKM was logged.
-  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_NOT_OFFERED_NO_CVC);
-
-  rappor::TestRapporServiceImpl* rappor_service =
-      autofill_client_.test_rappor_service();
-  EXPECT_EQ(1, rappor_service->GetReportsCount());
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
-      "Autofill.CardUploadNotOfferedNoCvc", &sample, &type));
-  EXPECT_EQ("myform.com", sample);
-  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
+  ExpectMetric(UkmCardUploadDecisionType::kUploadDecisionName,
+               UkmCardUploadDecisionType::kEntryName,
+               AutofillMetrics::CVC_VALUE_NOT_FOUND |
+                   AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ADDRESS_PROFILE,
+               1 /* expected_num_matching_entries */);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_NoNameAvailable DISABLED_UploadCreditCard_NoNameAvailable
-#else
-#define MAYBE_UploadCreditCard_NoNameAvailable UploadCreditCard_NoNameAvailable
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoNameAvailable) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_NoNameAvailable) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5126,31 +5821,13 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoNameAvailable) {
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_NAME, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_NOT_OFFERED_NO_NAME);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_NOT_OFFERED_NO_NAME);
-
-  rappor::TestRapporServiceImpl* rappor_service =
-      autofill_client_.test_rappor_service();
-  EXPECT_EQ(1, rappor_service->GetReportsCount());
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
-      "Autofill.CardUploadNotOfferedNoName", &sample, &type));
-  EXPECT_EQ("myform.com", sample);
-  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_ZipCodesConflict DISABLED_UploadCreditCard_ZipCodesConflict
-#else
-#define MAYBE_UploadCreditCard_ZipCodesConflict UploadCreditCard_ZipCodesConflict
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_ZipCodesConflict) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_ZipCodesConflict) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5192,22 +5869,102 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_ZipCodesConflict) {
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_ZIPS, 1);
+  ExpectUniqueCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_ZIPS);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(
       AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_ZIPS);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_ZipCodesHavePrefixMatch DISABLED_UploadCreditCard_ZipCodesHavePrefixMatch
-#else
-#define MAYBE_UploadCreditCard_ZipCodesHavePrefixMatch UploadCreditCard_ZipCodesHavePrefixMatch
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_ZipCodesHavePrefixMatch) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_ZipCodesDiscardWhitespace) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit two address forms with different zip codes.
+  FormData address_form1, address_form2;
+  test::CreateTestAddressFormData(&address_form1);
+  test::CreateTestAddressFormData(&address_form2);
+
+  FormsSeen({address_form1, address_form2});
+
+  ManuallyFillAddressForm("Flo", "Master", "H3B2Y5", "CA", &address_form1);
+  FormSubmitted(address_form1);
+
+  ManuallyFillAddressForm("Flo", "Master", "h3b 2y5", "CA", &address_form2);
+  FormSubmitted(address_form2);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the data, but don't include a name, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Neither a local save nor an upload should happen in this case.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_ZIPS);
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_ZipCodesDiscardWhitespace_ComparatorEnabled) {
+  EnableAutofillUpstreamUseAutofillProfileComparator();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit two address forms with different zip codes.
+  FormData address_form1, address_form2;
+  test::CreateTestAddressFormData(&address_form1);
+  test::CreateTestAddressFormData(&address_form2);
+
+  FormsSeen({address_form1, address_form2});
+
+  ManuallyFillAddressForm("Flo", "Master", "H3B2Y5", "CA", &address_form1);
+  FormSubmitted(address_form1);
+
+  ManuallyFillAddressForm("Flo", "Master", "h3b 2y5", "CA", &address_form2);
+  FormSubmitted(address_form2);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the data, but don't include a name, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Zips match because we discard whitespace before comparison.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_THAT(
+      autofill_manager_->GetActiveExperiments(),
+      UnorderedElementsAre(kAutofillUpstreamUseAutofillProfileComparator.name));
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_ZipCodesHavePrefixMatch) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5247,21 +6004,13 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_ZipCodesHavePrefixMatch) {
   EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_OFFERED, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_NoZipCodeAvailable DISABLED_UploadCreditCard_NoZipCodeAvailable
-#else
-#define MAYBE_UploadCreditCard_NoZipCodeAvailable UploadCreditCard_NoZipCodeAvailable
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoZipCodeAvailable) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_NoZipCodeAvailable) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5300,21 +6049,13 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NoZipCodeAvailable) {
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ZIP_CODE, 1);
+  ExpectUniqueCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ZIP_CODE);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_NOT_OFFERED_NO_ZIP_CODE);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_NamesMatchLoosely DISABLED_UploadCreditCard_NamesMatchLoosely
-#else
-#define MAYBE_UploadCreditCard_NamesMatchLoosely UploadCreditCard_NamesMatchLoosely
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NamesMatchLoosely) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_CCFormHasMiddleInitial) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5322,11 +6063,7 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NamesMatchLoosely) {
   FormData address_form1, address_form2;
   test::CreateTestAddressFormData(&address_form1);
   test::CreateTestAddressFormData(&address_form2);
-
-  std::vector<FormData> address_forms;
-  address_forms.push_back(address_form1);
-  address_forms.push_back(address_form2);
-  FormsSeen(address_forms);
+  FormsSeen({address_form1, address_form2});
 
   // Names can be different case.
   ManuallyFillAddressForm("flo", "master", "77401", "US", &address_form1);
@@ -5339,7 +6076,7 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NamesMatchLoosely) {
   // Set up our credit card form data.
   FormData credit_card_form;
   CreateTestCreditCardFormData(&credit_card_form, true, false);
-  FormsSeen(std::vector<FormData>(1, credit_card_form));
+  FormsSeen({credit_card_form});
 
   // Edit the data, but use the name with a middle initial *and* period, and
   // submit.
@@ -5355,23 +6092,312 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NamesMatchLoosely) {
   EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
   FormSubmitted(credit_card_form);
   EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_OFFERED, 1);
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_NamesHaveToMatch DISABLED_UploadCreditCard_NamesHaveToMatch
-#else
-#define MAYBE_UploadCreditCard_NamesHaveToMatch UploadCreditCard_NamesHaveToMatch
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NamesHaveToMatch) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_CCFormHasMiddleInitial_ComparatorEnabled) {
+  EnableAutofillUpstreamUseAutofillProfileComparator();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit two address forms with different names.
+  FormData address_form1, address_form2;
+  test::CreateTestAddressFormData(&address_form1);
+  test::CreateTestAddressFormData(&address_form2);
+  FormsSeen({address_form1, address_form2});
+
+  // Names can be different case.
+  ManuallyFillAddressForm("flo", "master", "77401", "US", &address_form1);
+  FormSubmitted(address_form1);
+
+  // And they can have a middle initial even if the other names don't.
+  ManuallyFillAddressForm("Flo W", "Master", "77401", "US", &address_form2);
+  FormSubmitted(address_form2);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the data, but use the name with a middle initial *and* period, and
+  // submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo W. Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Names match loosely, upload should happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_THAT(
+      autofill_manager_->GetActiveExperiments(),
+      UnorderedElementsAre(kAutofillUpstreamUseAutofillProfileComparator.name));
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_NoMiddleInitialInCCForm) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit two address forms with different names.
+  FormData address_form1, address_form2;
+  test::CreateTestAddressFormData(&address_form1);
+  test::CreateTestAddressFormData(&address_form2);
+  FormsSeen({address_form1, address_form2});
+
+  // Names can have different variations of middle initials.
+  ManuallyFillAddressForm("flo w.", "master", "77401", "US", &address_form1);
+  FormSubmitted(address_form1);
+  ManuallyFillAddressForm("Flo W", "Master", "77401", "US", &address_form2);
+  FormSubmitted(address_form2);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the data, but do not use middle initial.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Names match loosely, upload should happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_NoMiddleInitialInCCForm_ComparatorEnabled) {
+  EnableAutofillUpstreamUseAutofillProfileComparator();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit two address forms with different names.
+  FormData address_form1, address_form2;
+  test::CreateTestAddressFormData(&address_form1);
+  test::CreateTestAddressFormData(&address_form2);
+  FormsSeen({address_form1, address_form2});
+
+  // Names can have different variations of middle initials.
+  ManuallyFillAddressForm("flo w.", "master", "77401", "US", &address_form1);
+  FormSubmitted(address_form1);
+  ManuallyFillAddressForm("Flo W", "Master", "77401", "US", &address_form2);
+  FormSubmitted(address_form2);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the data, but do not use middle initial.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Names match loosely, upload should happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_CCFormHasMiddleName) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit address form without middle name.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("John", "Adams", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the name by adding a middle name.
+  credit_card_form.fields[0].value = ASCIIToUTF16("John Quincy Adams");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Names match loosely but we have disabled comparator. Upload should not
+  // happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_NAMES);
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_CCFormHasMiddleName_ComparatorEnabled) {
+  EnableAutofillUpstreamUseAutofillProfileComparator();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit address form without middle name.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("John", "Adams", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the name by adding a middle name.
+  credit_card_form.fields[0].value = ASCIIToUTF16("John Quincy Adams");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Names match loosely, upload should happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_THAT(
+      autofill_manager_->GetActiveExperiments(),
+      UnorderedElementsAre(kAutofillUpstreamUseAutofillProfileComparator.name));
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_CCFormRemovesMiddleName) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit address form with middle name.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("John Quincy", "Adams", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the name by removing middle name.
+  credit_card_form.fields[0].value = ASCIIToUTF16("John Adams");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // With the comparator disabled, names do not match; upload should not happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_NAMES);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(
+      AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_NAMES);
+}
+
+TEST_F(AutofillManagerTest,
+       UploadCreditCard_CCFormRemovesMiddleName_ComparatorEnabled) {
+  EnableAutofillUpstreamUseAutofillProfileComparator();
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit address form with middle name.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("John Quincy", "Adams", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the name by removing middle name.
+  credit_card_form.fields[0].value = ASCIIToUTF16("John Adams");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Names match loosely, upload should happen.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_THAT(
+      autofill_manager_->GetActiveExperiments(),
+      UnorderedElementsAre(kAutofillUpstreamUseAutofillProfileComparator.name));
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
+  // Verify that the correct UKM was logged.
+  ExpectCardUploadDecisionUkm(AutofillMetrics::UPLOAD_OFFERED);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_NamesHaveToMatch) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5409,34 +6435,113 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_NamesHaveToMatch) {
   EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
   FormSubmitted(credit_card_form);
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+  EXPECT_TRUE(autofill_manager_->GetActiveExperiments().empty());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_NAMES, 1);
+  ExpectUniqueCardUploadDecision(
+      histogram_tester, AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_NAMES);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(
       AutofillMetrics::UPLOAD_NOT_OFFERED_CONFLICTING_NAMES);
-
-  rappor::TestRapporServiceImpl* rappor_service =
-      autofill_client_.test_rappor_service();
-  EXPECT_EQ(1, rappor_service->GetReportsCount());
-  std::string sample;
-  rappor::RapporType type;
-  EXPECT_TRUE(rappor_service->GetRecordedSampleForMetric(
-      "Autofill.CardUploadNotOfferedConflictingNames", &sample, &type));
-  EXPECT_EQ("myform.com", sample);
-  EXPECT_EQ(rappor::ETLD_PLUS_ONE_RAPPOR_TYPE, type);
 }
 
-// TODO(crbug.com/666704): Flaky on android_n5x_swarming_rel bot.
-#if defined(OS_ANDROID)
-#define MAYBE_UploadCreditCard_UploadDetailsFails DISABLED_UploadCreditCard_UploadDetailsFails
-#else
-#define MAYBE_UploadCreditCard_UploadDetailsFails UploadCreditCard_UploadDetailsFails
-#endif
-TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_UploadDetailsFails) {
-  EnableUkmLogging();
+TEST_F(AutofillManagerTest, UploadCreditCard_IgnoreOldProfiles) {
+  // Create the test clock and set the time to a specific value.
+  TestAutofillClock test_clock;
+  test_clock.SetNow(kArbitraryTime);
+
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit two address forms with different names.
+  FormData address_form1, address_form2;
+  test::CreateTestAddressFormData(&address_form1);
+  test::CreateTestAddressFormData(&address_form2);
+  FormsSeen({address_form1, address_form2});
+
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form1);
+  FormSubmitted(address_form1);
+
+  // Advance the current time. Since |address_form1| will not be a recently
+  // used address profile, we will not include it in the candidate profiles.
+  test_clock.SetNow(kMuchLaterTime);
+
+  ManuallyFillAddressForm("Master", "Blaster", "77401", "US", &address_form2);
+  FormSubmitted(address_form2);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, but use yet another name, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Master Blaster");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  // Name matches recently used profile, should offer upload.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that the correct histogram entry (and only that) was logged.
+  ExpectUniqueCardUploadDecision(histogram_tester,
+                                 AutofillMetrics::UPLOAD_OFFERED);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_LogPreviousUseDate) {
+  // Create the test clock and set the time to a specific value.
+  TestAutofillClock test_clock;
+  test_clock.SetNow(kArbitraryTime);
+
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen({address_form});
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+  const std::vector<AutofillProfile*>& profiles =
+      personal_data_.GetProfilesToSuggest();
+  ASSERT_EQ(1U, profiles.size());
+
+  // Advance the current time and simulate use of the address profile.
+  test_clock.SetNow(kMuchLaterTime);
+  profiles[0]->RecordAndLogUse();
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen({credit_card_form});
+
+  // Edit the credit card form and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  base::HistogramTester histogram_tester;
+
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_TRUE(autofill_manager_->credit_card_was_uploaded());
+
+  // Verify that UMA for "DaysSincePreviousUse" is logged.
+  histogram_tester.ExpectUniqueSample(
+      "Autofill.DaysSincePreviousUseAtSubmission.Profile",
+      (kMuchLaterTime - kArbitraryTime).InDays(),
+      /*expected_count=*/1);
+}
+
+TEST_F(AutofillManagerTest, UploadCreditCard_UploadDetailsFails) {
   personal_data_.ClearAutofillProfiles();
   autofill_manager_->set_credit_card_upload_enabled(true);
 
@@ -5472,12 +6577,92 @@ TEST_F(AutofillManagerTest, MAYBE_UploadCreditCard_UploadDetailsFails) {
   EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 
   // Verify that the correct histogram entry (and only that) was logged.
-  histogram_tester.ExpectUniqueSample(
-      "Autofill.CardUploadDecisionExpanded",
-      AutofillMetrics::UPLOAD_NOT_OFFERED_GET_UPLOAD_DETAILS_FAILED, 1);
+  ExpectUniqueCardUploadDecision(
+      histogram_tester,
+      AutofillMetrics::UPLOAD_NOT_OFFERED_GET_UPLOAD_DETAILS_FAILED);
   // Verify that the correct UKM was logged.
   ExpectCardUploadDecisionUkm(
       AutofillMetrics::UPLOAD_NOT_OFFERED_GET_UPLOAD_DETAILS_FAILED);
+}
+
+TEST_F(AutofillManagerTest, DuplicateMaskedCreditCard) {
+  EnableAutofillOfferLocalSaveIfServerCardManuallyEnteredExperiment();
+
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+  autofill_manager_->set_app_locale("en-US");
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Add a masked credit card whose |TypeAndLastFourDigits| matches what we will
+  // enter below.
+  CreditCard credit_card(CreditCard::MASKED_SERVER_CARD, "a123");
+  test::SetCreditCardInfo(&credit_card, "Flo Master", "1111", "11", "2017",
+                          "1");
+  credit_card.SetNetworkForMaskedCard(kVisaCard);
+  personal_data_.AddServerCreditCard(credit_card);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  // The local save prompt should be shown.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _));
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
+}
+
+TEST_F(AutofillManagerTest, DuplicateMaskedCreditCard_ExperimentOff) {
+  personal_data_.ClearAutofillProfiles();
+  autofill_manager_->set_credit_card_upload_enabled(true);
+  autofill_manager_->set_app_locale("en-US");
+
+  // Create, fill and submit an address form in order to establish a recent
+  // profile which can be selected for the upload request.
+  FormData address_form;
+  test::CreateTestAddressFormData(&address_form);
+  FormsSeen(std::vector<FormData>(1, address_form));
+  ManuallyFillAddressForm("Flo", "Master", "77401", "US", &address_form);
+  FormSubmitted(address_form);
+
+  // Add a masked credit card whose |TypeAndLastFourDigits| matches what we will
+  // enter below.
+  CreditCard credit_card(CreditCard::MASKED_SERVER_CARD, "a123");
+  test::SetCreditCardInfo(&credit_card, "Flo Master", "1111", "11", "2017",
+                          "1");
+  credit_card.SetNetworkForMaskedCard(kVisaCard);
+  personal_data_.AddServerCreditCard(credit_card);
+
+  // Set up our credit card form data.
+  FormData credit_card_form;
+  CreateTestCreditCardFormData(&credit_card_form, true, false);
+  FormsSeen(std::vector<FormData>(1, credit_card_form));
+
+  // Edit the data, and submit.
+  credit_card_form.fields[0].value = ASCIIToUTF16("Flo Master");
+  credit_card_form.fields[1].value = ASCIIToUTF16("4111111111111111");
+  credit_card_form.fields[2].value = ASCIIToUTF16("11");
+  credit_card_form.fields[3].value = ASCIIToUTF16("2017");
+  credit_card_form.fields[4].value = ASCIIToUTF16("123");
+
+  // The local save prompt should not be shown because the experiment is off.
+  EXPECT_CALL(autofill_client_, ConfirmSaveCreditCardLocally(_, _)).Times(0);
+  FormSubmitted(credit_card_form);
+  EXPECT_FALSE(autofill_manager_->credit_card_was_uploaded());
 }
 
 // Verify that typing "gmail" will match "theking@gmail.com" and
@@ -5563,7 +6748,7 @@ TEST_F(AutofillManagerTest, DisplayCreditCardSuggestionsWithMatchingTokens) {
 
 #if defined(OS_ANDROID)
   static const std::string kVisaSuggestion =
-      "Visa" + kUTF8MidlineEllipsis + "3456";
+      std::string("Visa") + kUTF8MidlineEllipsis + "3456";
 #else
   static const std::string kVisaSuggestion = "*3456";
 #endif
@@ -5760,23 +6945,21 @@ TEST_F(AutofillManagerTest,
   std::unique_ptr<AutofillProfile> profile1 =
       base::MakeUnique<AutofillProfile>();
   profile1->set_guid("00000000-0000-0000-0000-000000000103");
-  profile1->SetInfo(AutofillType(NAME_FIRST), ASCIIToUTF16("Robin"), "en-US");
-  profile1->SetInfo(AutofillType(NAME_MIDDLE), ASCIIToUTF16("Adam Smith"),
+  profile1->SetInfo(NAME_FIRST, ASCIIToUTF16("Robin"), "en-US");
+  profile1->SetInfo(NAME_MIDDLE, ASCIIToUTF16("Adam Smith"), "en-US");
+  profile1->SetInfo(NAME_LAST, ASCIIToUTF16("Grimes"), "en-US");
+  profile1->SetInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("1234 Smith Blvd."),
                     "en-US");
-  profile1->SetInfo(AutofillType(NAME_LAST), ASCIIToUTF16("Grimes"), "en-US");
-  profile1->SetInfo(AutofillType(ADDRESS_HOME_LINE1),
-                    ASCIIToUTF16("1234 Smith Blvd."), "en-US");
   autofill_manager_->AddProfile(std::move(profile1));
 
   std::unique_ptr<AutofillProfile> profile2 =
       base::MakeUnique<AutofillProfile>();
   profile2->set_guid("00000000-0000-0000-0000-000000000124");
-  profile2->SetInfo(AutofillType(NAME_FIRST), ASCIIToUTF16("Carl"), "en-US");
-  profile2->SetInfo(AutofillType(NAME_MIDDLE), ASCIIToUTF16("Shawn Smith"),
+  profile2->SetInfo(NAME_FIRST, ASCIIToUTF16("Carl"), "en-US");
+  profile2->SetInfo(NAME_MIDDLE, ASCIIToUTF16("Shawn Smith"), "en-US");
+  profile2->SetInfo(NAME_LAST, ASCIIToUTF16("Grimes"), "en-US");
+  profile2->SetInfo(ADDRESS_HOME_LINE1, ASCIIToUTF16("1234 Smith Blvd."),
                     "en-US");
-  profile2->SetInfo(AutofillType(NAME_LAST), ASCIIToUTF16("Grimes"), "en-US");
-  profile2->SetInfo(AutofillType(ADDRESS_HOME_LINE1),
-                    ASCIIToUTF16("1234 Smith Blvd."), "en-US");
   autofill_manager_->AddProfile(std::move(profile2));
 
   FormFieldData field;
@@ -5853,7 +7036,46 @@ TEST_F(AutofillManagerTest, ShouldUploadForm) {
 
 // Verify that no suggestions are shown on desktop for non credit card related
 // fields if the initiating field has the "autocomplete" attribute set to off.
-TEST_F(AutofillManagerTest, DisplaySuggestions_AutocompleteOff_AddressField) {
+TEST_F(AutofillManagerTest,
+       DisplaySuggestions_AutocompleteOffNotRespected_AddressField) {
+  // Set up an address form.
+  FormData mixed_form;
+  mixed_form.name = ASCIIToUTF16("MyForm");
+  mixed_form.origin = GURL("https://myform.com/form.html");
+  mixed_form.action = GURL("https://myform.com/submit.html");
+  FormFieldData field;
+  test::CreateTestFormField("First name", "firstname", "", "text", &field);
+  field.should_autocomplete = false;
+  mixed_form.fields.push_back(field);
+  test::CreateTestFormField("Last name", "lastname", "", "text", &field);
+  field.should_autocomplete = true;
+  mixed_form.fields.push_back(field);
+  test::CreateTestFormField("Address", "address", "", "text", &field);
+  field.should_autocomplete = true;
+  mixed_form.fields.push_back(field);
+  std::vector<FormData> mixed_forms(1, mixed_form);
+  FormsSeen(mixed_forms);
+
+  // Suggestions should be displayed on desktop for this field in all
+  // circumstances.
+  GetAutofillSuggestions(mixed_form, mixed_form.fields[0]);
+  EXPECT_TRUE(external_delegate_->on_suggestions_returned_seen());
+
+  // Suggestions should always be displayed for all the other fields.
+  for (size_t i = 1U; i < mixed_form.fields.size(); ++i) {
+    GetAutofillSuggestions(mixed_form, mixed_form.fields[i]);
+    EXPECT_TRUE(external_delegate_->on_suggestions_returned_seen());
+  }
+}
+
+// Verify that no suggestions are shown on desktop for non credit card related
+// fields if the initiating field has the "autocomplete" attribute set to off
+// and the feature to autofill all addresses is also off.
+TEST_F(AutofillManagerTest,
+       DisplaySuggestions_AutocompleteOffRespected_AddressField) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(kAutofillAlwaysFillAddresses);
+
   // Set up an address form.
   FormData mixed_form;
   mixed_form.name = ASCIIToUTF16("MyForm");
@@ -5969,7 +7191,7 @@ TEST_F(AutofillManagerTest, DisplaySuggestionsForUpdatedServerTypedForm) {
   form.fields.push_back(field);
 
   auto form_structure = base::MakeUnique<TestFormStructure>(form);
-  form_structure->DetermineHeuristicTypes(nullptr /* ukm_service */);
+  form_structure->DetermineHeuristicTypes(nullptr /* ukm_recorder */);
   // Make sure the form can not be autofilled now.
   ASSERT_EQ(0u, form_structure->autofill_count());
   for (size_t idx = 0; idx < form_structure->field_count(); ++idx) {
@@ -6061,23 +7283,33 @@ TEST_F(AutofillManagerTest, SignInFormSubmission_Upload) {
   types.insert(EMAIL_ADDRESS);
   expected_types.push_back(types);
 
-  test::CreateTestFormField("Password", "pw", "secret", "password", &field);
+  test::CreateTestFormField("Password", "pw", "", "password", &field);
   form.fields.push_back(field);
+  FormsSeen(std::vector<FormData>(1, form));
   types.clear();
   types.insert(PASSWORD);
   expected_types.push_back(types);
+
+  FormsSeen({form});
 
   // We will expect these types in the upload and no observed submission. (the
   // callback initiated by WaitForAsyncUploadProcess checks these expectations.)
   autofill_manager_->set_expected_submitted_field_types(expected_types);
   autofill_manager_->set_expected_observed_submission(true);
+  autofill_manager_->set_call_parent_upload_form_data(true);
   autofill_manager_->ResetRunLoop();
 
   std::unique_ptr<FormStructure> form_structure(new FormStructure(form));
   form_structure->set_is_signin_upload(true);
+  form_structure->set_form_parsed_timestamp(base::TimeTicks::Now());
   form_structure->field(1)->set_possible_types({autofill::PASSWORD});
 
   std::string signature = form_structure->FormSignatureAsStr();
+
+  ServerFieldTypeSet uploaded_available_types;
+  EXPECT_CALL(*download_manager_,
+              StartUploadRequest(_, false, _, std::string(), true))
+      .WillOnce(DoAll(SaveArg<2>(&uploaded_available_types), Return(true)));
   autofill_manager_->StartUploadProcess(std::move(form_structure),
                                         base::TimeTicks::Now(), true);
 
@@ -6085,6 +7317,8 @@ TEST_F(AutofillManagerTest, SignInFormSubmission_Upload) {
   autofill_manager_->WaitForAsyncUploadProcess();
 
   EXPECT_EQ(signature, autofill_manager_->GetSubmittedFormSignature());
+  EXPECT_NE(uploaded_available_types.end(),
+            uploaded_available_types.find(autofill::PASSWORD));
 }
 
 }  // namespace autofill

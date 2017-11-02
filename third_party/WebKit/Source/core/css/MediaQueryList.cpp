@@ -85,7 +85,7 @@ bool MediaQueryList::HasPendingActivity() const {
 }
 
 void MediaQueryList::ContextDestroyed(ExecutionContext*) {
-  listeners_.Clear();
+  listeners_.clear();
   RemoveAllEventListeners();
 }
 
@@ -102,7 +102,7 @@ bool MediaQueryList::MediaFeaturesChanged(
 
 bool MediaQueryList::UpdateMatches() {
   matches_dirty_ = false;
-  if (matches_ != matcher_->Evaluate(media_.Get())) {
+  if (matches_ != matcher_->Evaluate(media_.get())) {
     matches_ = !matches_;
     return true;
   }

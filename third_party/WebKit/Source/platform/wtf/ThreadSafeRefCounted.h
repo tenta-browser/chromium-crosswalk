@@ -30,53 +30,39 @@
 #ifndef ThreadSafeRefCounted_h
 #define ThreadSafeRefCounted_h
 
+#include "base/memory/ref_counted.h"
 #include "platform/wtf/Allocator.h"
-#include "platform/wtf/Atomics.h"
-#include "platform/wtf/DynamicAnnotations.h"
-#include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/WTFExport.h"
 
 namespace WTF {
 
-class WTF_EXPORT ThreadSafeRefCountedBase {
-  WTF_MAKE_NONCOPYABLE(ThreadSafeRefCountedBase);
-  USING_FAST_MALLOC(ThreadSafeRefCountedBase);
+template <typename T, typename Traits>
+class ThreadSafeRefCounted;
 
- public:
-  ThreadSafeRefCountedBase(int initial_ref_count = 1)
-      : ref_count_(initial_ref_count) {}
-
-  void Ref() { AtomicIncrement(&ref_count_); }
-
-  bool HasOneRef() { return RefCount() == 1; }
-
-  int RefCount() const { return static_cast<int const volatile&>(ref_count_); }
-
- protected:
-  // Returns whether the pointer should be freed or not.
-  bool DerefBase() {
-    WTF_ANNOTATE_HAPPENS_BEFORE(&ref_count_);
-    if (AtomicDecrement(&ref_count_) <= 0) {
-      WTF_ANNOTATE_HAPPENS_AFTER(&ref_count_);
-      return true;
-    }
-    return false;
+template <typename T>
+struct DefaultThreadSafeRefCountedTraits {
+  static void Destruct(const T* x) {
+    WTF::ThreadSafeRefCounted<
+        T, DefaultThreadSafeRefCountedTraits>::DeleteInternal(x);
   }
-
- private:
-  int ref_count_;
 };
 
-template <class T>
-class ThreadSafeRefCounted : public ThreadSafeRefCountedBase {
- public:
-  void Deref() {
-    if (DerefBase())
-      delete static_cast<T*>(this);
-  }
+template <typename T, typename Traits = DefaultThreadSafeRefCountedTraits<T>>
+class ThreadSafeRefCounted : public base::RefCountedThreadSafe<T, Traits> {
+  // Put |T| in here instead of |RefCounted| so the heap profiler reports |T|
+  // instead of |RefCounted<T>|. This does not affect overloading of operator
+  // new.
+  USING_FAST_MALLOC(T);
 
- protected:
-  ThreadSafeRefCounted() {}
+ public:
+  REQUIRE_ADOPTION_FOR_REFCOUNTED_TYPE();
+
+ private:
+  friend struct DefaultThreadSafeRefCountedTraits<T>;
+
+  template <typename U>
+  static void DeleteInternal(const U* x) {
+    delete x;
+  }
 };
 
 }  // namespace WTF

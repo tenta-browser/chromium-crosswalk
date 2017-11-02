@@ -36,10 +36,8 @@ import traceback
 from webkitpy.common import exit_codes
 from webkitpy.common.host import Host
 from webkitpy.layout_tests.controllers.manager import Manager
-from webkitpy.layout_tests.generate_results_dashboard import DashBoardGenerator
 from webkitpy.layout_tests.models import test_run_results
 from webkitpy.layout_tests.port.factory import configuration_options, platform_options
-from webkitpy.layout_tests.views import buildbot_results
 from webkitpy.layout_tests.views import printing
 
 _log = logging.getLogger(__name__)
@@ -80,6 +78,10 @@ def main(argv, stdout, stderr):
         return exit_codes.UNEXPECTED_ERROR_EXIT_STATUS
 
 
+def deprecate(option, opt_str, _, parser):
+    parser.error('%s: %s' % (opt_str, option.help))
+
+
 def parse_args(args):
     option_group_definitions = []
 
@@ -99,7 +101,7 @@ def parse_args(args):
                 action='append',
                 default=[],
                 dest='adb_devices',
-                help='Run Android layout tests on these devices.'),
+                help='Run Android layout tests on these devices'),
             # FIXME: Flip this to be off by default once we can log the
             # device setup more cleanly.
             optparse.make_option(
@@ -107,8 +109,8 @@ def parse_args(args):
                 dest='android_logging',
                 action='store_false',
                 default=True,
-                help=('Do not log android-specific debug messages (default is to log as part '
-                      'of --debug-rwt-logging')),
+                help=('Do not log android-specific debug messages (default '
+                      'is to log as part of --debug-rwt-logging)')),
         ]))
 
     option_group_definitions.append(
@@ -117,8 +119,9 @@ def parse_args(args):
                 '--add-platform-exceptions',
                 action='store_true',
                 default=False,
-                help=('Save generated results into the *most-specific-platform* directory rather '
-                      'than the *generic-platform* directory')),
+                help=('For --reset-results and --new-flag-specific-baseline, save generated '
+                      'results into the *most-specific-platform* directory rather than the '
+                      'current baseline directory or *generic-platform* directory')),
             optparse.make_option(
                 '--additional-driver-flag',
                 '--additional-drt-flag',
@@ -142,8 +145,9 @@ def parse_args(args):
                       'multiple search path entries.')),
             optparse.make_option(
                 '--build-directory',
-                help=('Path to the directory under which build files are kept (should not '
-                      'include configuration)')),
+                default='out',
+                help=('Path to the directory where build files are kept, not including '
+                      'configuration. In general this will be "out".')),
             optparse.make_option(
                 '--clobber-old-results',
                 action='store_true',
@@ -159,11 +163,6 @@ def parse_args(args):
                 type='string',
                 help='Alternative driver binary to use'),
             optparse.make_option(
-                '--full-results-html',
-                action='store_true',
-                default=False,
-                help='Show all failures in results.html, rather than only regressions'),
-            optparse.make_option(
                 '--json-test-results',              # New name from json_results_generator
                 '--write-full-results-to',          # Old argument name
                 '--isolated-script-test-output',    # Isolated API
@@ -174,16 +173,23 @@ def parse_args(args):
                 help='Path to write the JSON test results for only *failing* tests.'),
             optparse.make_option(
                 '--new-baseline',
+                action='callback',
+                callback=deprecate,
+                help=('Deprecated. Use "webkit-patch rebaseline-cl" instead, or '
+                      '"--reset-results --add-platform-exceptions" if you do want to create '
+                      'new baselines for the *most-specific-platform* locally.')),
+            optparse.make_option(
+                '--new-flag-specific-baseline',
                 action='store_true',
                 default=False,
-                help=('Save generated results as new baselines into the *most-specific-platform* '
-                      "directory, overwriting whatever's already there. Equivalent to "
-                      '--reset-results --add-platform-exceptions')),
+                help=('Together with --additional-driver-flag, if actual results are '
+                      'different from expected, save actual results as new baselines '
+                      'into the flag-specific generic-platform directory.')),
             optparse.make_option(
                 '--new-test-results',
-                action='store_true',
-                default=False,
-                help='Create new baselines when no expected results exist'),
+                action='callback',
+                callback=deprecate,
+                help='Deprecated. Use --reset-results instead.'),
             optparse.make_option(
                 '--no-show-results',
                 dest='show_results',
@@ -226,12 +232,6 @@ def parse_args(args):
             optparse.make_option(
                 '--results-directory',
                 help='Location of test results'),
-            optparse.make_option(
-                '--skip-failing-tests',
-                action='store_true',
-                default=False,
-                help=('Skip tests that are expected to fail. Note: When using this option, '
-                      'you might miss new crashes in these tests.')),
             optparse.make_option(
                 '--smoke',
                 action='store_true',
@@ -357,6 +357,7 @@ def parse_args(args):
                 help='Output per-test profile information, using the specified profiler.'),
             optparse.make_option(
                 '--repeat-each',
+                '--gtest_repeat',
                 type='int',
                 default=1,
                 help='Number of times to run each test (e.g. AAABBBCCC)'),
@@ -405,10 +406,22 @@ def parse_args(args):
                 action='store',
                 default=None,
                 help=('control how tests marked SKIP are run. '
-                      "'default' == Skip tests unless explicitly listed on the command line, "
-                      "'ignore' == Run them anyway, "
-                      "'only' == only run the SKIP tests, "
-                      "'always' == always skip, even if listed on the command line.")),
+                      '"default" == Skip tests unless explicitly listed on the command line, '
+                      '"ignore" == Run them anyway, '
+                      '"only" == only run the SKIP tests, '
+                      '"always" == always skip, even if listed on the command line.')),
+            optparse.make_option(
+                '--skip-failing-tests',
+                action='store_true',
+                default=False,
+                help=('Skip tests that are expected to fail. Note: When using this option, '
+                      'you might miss new crashes in these tests.')),
+            optparse.make_option(
+                '--skip-timeouts',
+                action='store_true',
+                default=False,
+                help=('Skip tests marked TIMEOUT. Use it to speed up running the entire '
+                      'test suite.')),
             optparse.make_option(
                 '--fastest',
                 action='store',
@@ -425,9 +438,9 @@ def parse_args(args):
             optparse.make_option(
                 '--wrapper',
                 help=('wrapper command to insert before invocations of the driver; option '
-                      "is split on whitespace before running. (Example: --wrapper='valgrind "
-                      "--smc-check=all')")),
-            # FIXME: Display default number of child processes that will run.
+                      'is split on whitespace before running. (Example: --wrapper="valgrind '
+                      '--smc-check=all")')),
+            # FIXME: Display the default number of child processes that will run.
             optparse.make_option(
                 '-f', '--fully-parallel',
                 action='store_true',
@@ -442,6 +455,10 @@ def parse_args(args):
                 action='store_true',
                 default=False,
                 help='Do everything but actually run the tests or upload results.'),
+            optparse.make_option(
+                '-w', '--watch',
+                action='store_true',
+                help='Re-run tests quickly (e.g. avoid restarting the server)'),
         ]))
 
     # FIXME: Move these into json_results_generator.py.
@@ -473,14 +490,22 @@ def parse_args(args):
                 help='If specified, upload results json files to this appengine server.'),
         ]))
 
-    option_parser = optparse.OptionParser()
+    option_parser = optparse.OptionParser(
+        prog='run-webkit-tests',
+        usage='%prog [options] [tests]',
+        description='Runs Blink layout tests as described in docs/testing/layout_tests.md')
 
     for group_name, group_options in option_group_definitions:
         option_group = optparse.OptionGroup(option_parser, group_name)
         option_group.add_options(group_options)
         option_parser.add_option_group(option_group)
 
-    return option_parser.parse_args(args)
+    (options, args) = option_parser.parse_args(args)
+
+    if options.new_flag_specific_baseline and not options.additional_driver_flag:
+        option_parser.error('--new-flag-specific-baseline requires --additional-driver-flag')
+
+    return (options, args)
 
 
 def _set_up_derived_options(port, options, args):
@@ -489,11 +514,11 @@ def _set_up_derived_options(port, options, args):
         options.batch_size = port.default_batch_size()
 
     if not options.child_processes:
-        options.child_processes = port.host.environ.get('WEBKIT_TEST_CHILD_PROCESSES',
-                                                        str(port.default_child_processes()))
+        options.child_processes = port.host.environ.get(
+            'WEBKIT_TEST_CHILD_PROCESSES', str(port.default_child_processes()))
     if not options.max_locked_shards:
-        options.max_locked_shards = int(port.host.environ.get('WEBKIT_TEST_MAX_LOCKED_SHARDS',
-                                                              str(port.default_max_locked_shards())))
+        options.max_locked_shards = int(port.host.environ.get(
+            'WEBKIT_TEST_MAX_LOCKED_SHARDS', str(port.default_max_locked_shards())))
 
     if not options.configuration:
         options.configuration = port.default_configuration()
@@ -509,9 +534,8 @@ def _set_up_derived_options(port, options, args):
             additional_platform_directories.append(port.host.filesystem.abspath(path))
         options.additional_platform_directory = additional_platform_directories
 
-    if options.new_baseline:
+    if options.new_flag_specific_baseline:
         options.reset_results = True
-        options.add_platform_exceptions = True
 
     if options.pixel_test_directories:
         options.pixel_tests = True
@@ -580,33 +604,13 @@ def run(port, options, args, logging_stream, stdout):
         run_details = _run_tests(port, options, args, printer)
         printer.flush()
 
-        if (not options.dry_run and
-                (run_details.exit_code not in exit_codes.ERROR_CODES or
-                 run_details.exit_code == exit_codes.EARLY_EXIT_STATUS) and
-                not run_details.initial_results.keyboard_interrupted):
-            bot_printer = buildbot_results.BuildBotPrinter(stdout, options.debug_rwt_logging)
-            bot_printer.print_results(run_details)
-            stdout.flush()
-
-            _log.debug('Generating dashboard...')
-            gen_dash_board = DashBoardGenerator(port)
-            gen_dash_board.generate()
-            _log.debug('Dashboard generated.')
-
         _log.debug('')
-        _log.debug('Testing completed, Exit status: %d', run_details.exit_code)
-
-        # Temporary process dump for debugging windows timeout issues, see crbug.com/522396.
-        _log.debug('')
-        _log.debug('Process dump:')
-        for process in port.host.executive.process_dump():
-            _log.debug('\t%s', process)
-
+        _log.debug('Testing completed. Exit status: %d', run_details.exit_code)
         return run_details
 
     finally:
         printer.cleanup()
 
+
 if __name__ == '__main__':
-    exit_code = main(sys.argv[1:], sys.stdout, sys.stderr)
-    sys.exit(exit_code)
+    sys.exit(main(sys.argv[1:], sys.stdout, sys.stderr))

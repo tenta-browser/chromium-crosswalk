@@ -7,8 +7,6 @@
 #include "base/file_descriptor_posix.h"
 #include "media/gpu/va_surface.h"
 #include "media/gpu/vaapi_wrapper.h"
-#include "third_party/libva/va/drm/va_drm.h"
-#include "third_party/libva/va/va.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 #include "ui/gfx/native_pixmap.h"
 #include "ui/gl/gl_bindings.h"
@@ -44,6 +42,9 @@ VaapiDrmPicture::~VaapiDrmPicture() {
 
 static unsigned BufferFormatToInternalFormat(gfx::BufferFormat format) {
   switch (format) {
+    case gfx::BufferFormat::BGRX_8888:
+      return GL_RGB;
+
     case gfx::BufferFormat::BGRA_8888:
       return GL_BGRA_EXT;
 
@@ -64,9 +65,6 @@ bool VaapiDrmPicture::Initialize() {
     LOG(ERROR) << "Failed creating VASurface for NativePixmap";
     return false;
   }
-
-  pixmap_->SetProcessingCallback(
-      base::Bind(&VaapiWrapper::ProcessPixmap, vaapi_wrapper_));
 
   if (texture_id_ != 0 && !make_context_current_cb_.is_null()) {
     if (!make_context_current_cb_.Run())

@@ -25,25 +25,28 @@
 #include "platform/loader/fetch/Resource.h"
 
 #include <stdint.h>
+
 #include <algorithm>
 #include <cassert>
 #include <memory>
+
+#include "build/build_config.h"
 #include "platform/Histogram.h"
 #include "platform/InstanceCounters.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/SharedBuffer.h"
 #include "platform/WebTaskRunner.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/loader/fetch/CachedMetadata.h"
-#include "platform/loader/fetch/CrossOriginAccessControl.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/IntegrityMetadata.h"
 #include "platform/loader/fetch/MemoryCache.h"
 #include "platform/loader/fetch/ResourceClient.h"
 #include "platform/loader/fetch/ResourceClientWalker.h"
+#include "platform/loader/fetch/ResourceFinishObserver.h"
 #include "platform/loader/fetch/ResourceLoader.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "platform/network/HTTPParsers.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/CurrentTime.h"
 #include "platform/wtf/MathExtras.h"
@@ -53,10 +56,20 @@
 #include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCachePolicy.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebSecurityOrigin.h"
+#include "services/network/public/interfaces/fetch_api.mojom-blink.h"
 
 namespace blink {
+
+namespace {
+
+void NotifyFinishObservers(
+    HeapHashSet<WeakMember<ResourceFinishObserver>>* observers) {
+  for (const auto& observer : *observers)
+    observer->NotifyFinished();
+}
+
+}  // namespace
 
 // These response headers are not copied from a revalidated response to the
 // cached response headers. For compatibility, this list is based on Chromium's
@@ -94,8 +107,8 @@ static inline bool ShouldUpdateHeaderAfterRevalidation(
   }
   for (size_t i = 0;
        i < WTF_ARRAY_LENGTH(kHeaderPrefixesToIgnoreAfterRevalidation); i++) {
-    if (header.StartsWith(kHeaderPrefixesToIgnoreAfterRevalidation[i],
-                          kTextCaseASCIIInsensitive))
+    if (header.StartsWithIgnoringASCIICase(
+            kHeaderPrefixesToIgnoreAfterRevalidation[i]))
       return false;
   }
   return true;
@@ -110,7 +123,7 @@ class Resource::CachedMetadataHandlerImpl : public CachedMetadataHandler {
   DECLARE_VIRTUAL_TRACE();
   void SetCachedMetadata(uint32_t, const char*, size_t, CacheType) override;
   void ClearCachedMetadata(CacheType) override;
-  PassRefPtr<CachedMetadata> GetCachedMetadata(uint32_t) const override;
+  RefPtr<CachedMetadata> GetCachedMetadata(uint32_t) const override;
   String Encoding() const override;
   // Sets the serialized metadata retrieved from the platform's cache.
   void SetSerializedCachedMetadata(const char*, size_t);
@@ -153,21 +166,20 @@ void Resource::CachedMetadataHandlerImpl::SetCachedMetadata(
 
 void Resource::CachedMetadataHandlerImpl::ClearCachedMetadata(
     CachedMetadataHandler::CacheType cache_type) {
-  cached_metadata_.Clear();
+  cached_metadata_ = nullptr;
   if (cache_type == CachedMetadataHandler::kSendToPlatform)
     SendToPlatform();
 }
 
-PassRefPtr<CachedMetadata>
-Resource::CachedMetadataHandlerImpl::GetCachedMetadata(
+RefPtr<CachedMetadata> Resource::CachedMetadataHandlerImpl::GetCachedMetadata(
     uint32_t data_type_id) const {
   if (!cached_metadata_ || cached_metadata_->DataTypeID() != data_type_id)
     return nullptr;
-  return cached_metadata_.Get();
+  return cached_metadata_;
 }
 
 String Resource::CachedMetadataHandlerImpl::Encoding() const {
-  return resource_->Encoding();
+  return String(resource_->Encoding().GetName());
 }
 
 void Resource::CachedMetadataHandlerImpl::SetSerializedCachedMetadata(
@@ -185,7 +197,7 @@ void Resource::CachedMetadataHandlerImpl::SendToPlatform() {
     const Vector<char>& serialized_data = cached_metadata_->SerializedData();
     Platform::Current()->CacheMetadata(
         GetResponse().Url(), GetResponse().ResponseTime(),
-        serialized_data.Data(), serialized_data.size());
+        serialized_data.data(), serialized_data.size());
   } else {
     Platform::Current()->CacheMetadata(
         GetResponse().Url(), GetResponse().ResponseTime(), nullptr, 0);
@@ -235,7 +247,7 @@ void Resource::ServiceWorkerResponseCachedMetadataHandler::SendToPlatform() {
     const Vector<char>& serialized_data = cached_metadata_->SerializedData();
     Platform::Current()->CacheMetadataInCacheStorage(
         GetResponse().Url(), GetResponse().ResponseTime(),
-        serialized_data.Data(), serialized_data.size(),
+        serialized_data.data(), serialized_data.size(),
         WebSecurityOrigin(security_origin_),
         GetResponse().CacheStorageCacheName());
   } else {
@@ -246,83 +258,19 @@ void Resource::ServiceWorkerResponseCachedMetadataHandler::SendToPlatform() {
   }
 }
 
-// This class cannot be on-heap because the first callbackHandler() call
-// instantiates the singleton object while we can call it in the
-// pre-finalization step.
-class Resource::ResourceCallback final {
- public:
-  static ResourceCallback& CallbackHandler();
-  void Schedule(Resource*);
-  void Cancel(Resource*);
-  bool IsScheduled(Resource*) const;
-
- private:
-  ResourceCallback();
-
-  void RunTask();
-  TaskHandle task_handle_;
-  HashSet<Persistent<Resource>> resources_with_pending_clients_;
-};
-
-Resource::ResourceCallback& Resource::ResourceCallback::CallbackHandler() {
-  DEFINE_STATIC_LOCAL(ResourceCallback, callback_handler, ());
-  return callback_handler;
-}
-
-Resource::ResourceCallback::ResourceCallback() {}
-
-void Resource::ResourceCallback::Schedule(Resource* resource) {
-  if (!task_handle_.IsActive()) {
-    // WTF::unretained(this) is safe because a posted task is canceled when
-    // |m_taskHandle| is destroyed on the dtor of this ResourceCallback.
-    task_handle_ =
-        Platform::Current()
-            ->CurrentThread()
-            ->Scheduler()
-            ->LoadingTaskRunner()
-            ->PostCancellableTask(
-                BLINK_FROM_HERE,
-                WTF::Bind(&ResourceCallback::RunTask, WTF::Unretained(this)));
-  }
-  resources_with_pending_clients_.insert(resource);
-}
-
-void Resource::ResourceCallback::Cancel(Resource* resource) {
-  resources_with_pending_clients_.erase(resource);
-  if (task_handle_.IsActive() && resources_with_pending_clients_.IsEmpty())
-    task_handle_.Cancel();
-}
-
-bool Resource::ResourceCallback::IsScheduled(Resource* resource) const {
-  return resources_with_pending_clients_.Contains(resource);
-}
-
-void Resource::ResourceCallback::RunTask() {
-  HeapVector<Member<Resource>> resources;
-  for (const Member<Resource>& resource : resources_with_pending_clients_)
-    resources.push_back(resource.Get());
-  resources_with_pending_clients_.Clear();
-
-  for (const auto& resource : resources)
-    resource->FinishPendingClients();
-}
-
 Resource::Resource(const ResourceRequest& request,
                    Type type,
                    const ResourceLoaderOptions& options)
-    : load_finish_time_(0),
+    : type_(type),
+      status_(ResourceStatus::kNotStarted),
+      load_finish_time_(0),
       identifier_(0),
+      preload_discovery_time_(0.0),
       encoded_size_(0),
       encoded_size_memory_usage_(0),
       decoded_size_(0),
       overhead_size_(CalculateOverheadSize()),
-      preload_count_(0),
-      preload_discovery_time_(0.0),
       cache_identifier_(MemoryCache::DefaultCacheIdentifier()),
-      preload_result_(kPreloadNotReferenced),
-      type_(type),
-      status_(ResourceStatus::kNotStarted),
-      needs_synchronous_cache_hit_(false),
       link_preload_(false),
       is_revalidating_(false),
       is_alive_(false),
@@ -330,16 +278,14 @@ Resource::Resource(const ResourceRequest& request,
       integrity_disposition_(ResourceIntegrityDisposition::kNotChecked),
       options_(options),
       response_timestamp_(CurrentTime()),
-      cancel_timer_(Platform::Current()->MainThread()->GetWebTaskRunner(),
-                    this,
-                    &Resource::CancelTimerFired),
       resource_request_(request) {
   InstanceCounters::IncrementCounter(InstanceCounters::kResourceCounter);
 
   // Currently we support the metadata caching only for HTTP family.
   if (GetResourceRequest().Url().ProtocolIsInHTTPFamily())
     cache_handler_ = CachedMetadataHandlerImpl::Create(this);
-  MemoryCoordinator::Instance().RegisterClient(this);
+  if (IsMainThread())
+    MemoryCoordinator::Instance().RegisterClient(this);
 }
 
 Resource::~Resource() {
@@ -352,6 +298,7 @@ DEFINE_TRACE(Resource) {
   visitor->Trace(clients_);
   visitor->Trace(clients_awaiting_callback_);
   visitor->Trace(finished_clients_);
+  visitor->Trace(finish_observers_);
   MemoryCoordinatorClient::Trace(visitor);
 }
 
@@ -362,9 +309,49 @@ void Resource::SetLoader(ResourceLoader* loader) {
   status_ = ResourceStatus::kPending;
 }
 
-void Resource::CheckNotify() {
-  if (IsLoading())
+void Resource::CheckResourceIntegrity() {
+  // Skip the check and reuse the previous check result, especially on
+  // successful revalidation.
+  if (IntegrityDisposition() != ResourceIntegrityDisposition::kNotChecked)
     return;
+
+  // Loading error occurred? Then result is uncheckable.
+  integrity_report_info_.Clear();
+  if (ErrorOccurred()) {
+    CHECK(!Data());
+    integrity_disposition_ = ResourceIntegrityDisposition::kFailed;
+    return;
+  }
+
+  // No integrity attributes to check? Then we're passing.
+  if (IntegrityMetadata().IsEmpty()) {
+    integrity_disposition_ = ResourceIntegrityDisposition::kPassed;
+    return;
+  }
+
+  const char* data = nullptr;
+  size_t data_length = 0;
+
+  // Edge case: If a resource actually has zero bytes then it will not
+  // typically have a resource buffer, but we still need to check integrity
+  // because people might want to assert a zero-length resource.
+  CHECK(DecodedSize() == 0 || Data());
+  if (Data()) {
+    data = Data()->Data();
+    data_length = Data()->size();
+  }
+
+  if (SubresourceIntegrity::CheckSubresourceIntegrity(IntegrityMetadata(), data,
+                                                      data_length, Url(), *this,
+                                                      integrity_report_info_))
+    integrity_disposition_ = ResourceIntegrityDisposition::kPassed;
+  else
+    integrity_disposition_ = ResourceIntegrityDisposition::kFailed;
+  DCHECK_NE(IntegrityDisposition(), ResourceIntegrityDisposition::kNotChecked);
+}
+
+void Resource::NotifyFinished() {
+  DCHECK(IsLoaded());
 
   ResourceClientWalker<ResourceClient> w(clients_);
   while (ResourceClient* c = w.Next()) {
@@ -393,7 +380,7 @@ void Resource::AppendData(const char* data, size_t length) {
   SetEncodedSize(data_->size());
 }
 
-void Resource::SetResourceBuffer(PassRefPtr<SharedBuffer> resource_buffer) {
+void Resource::SetResourceBuffer(RefPtr<SharedBuffer> resource_buffer) {
   DCHECK(!is_revalidating_);
   DCHECK(!ErrorOccurred());
   DCHECK_EQ(options_.data_buffering_policy, kBufferData);
@@ -402,8 +389,24 @@ void Resource::SetResourceBuffer(PassRefPtr<SharedBuffer> resource_buffer) {
 }
 
 void Resource::ClearData() {
-  data_.Clear();
+  data_ = nullptr;
   encoded_size_memory_usage_ = 0;
+}
+
+void Resource::TriggerNotificationForFinishObservers(
+    WebTaskRunner* task_runner) {
+  if (finish_observers_.IsEmpty())
+    return;
+
+  auto new_collections = new HeapHashSet<WeakMember<ResourceFinishObserver>>(
+      std::move(finish_observers_));
+  finish_observers_.clear();
+
+  task_runner->PostTask(
+      BLINK_FROM_HERE,
+      WTF::Bind(&NotifyFinishObservers, WrapPersistent(new_collections)));
+
+  DidRemoveClientOrObserver();
 }
 
 void Resource::SetDataBufferingPolicy(
@@ -413,12 +416,13 @@ void Resource::SetDataBufferingPolicy(
   SetEncodedSize(0);
 }
 
-void Resource::GetError(const ResourceError& error) {
+void Resource::FinishAsError(const ResourceError& error,
+                             WebTaskRunner* task_runner) {
   DCHECK(!error.IsNull());
   error_ = error;
   is_revalidating_ = false;
 
-  if (error_.IsCancellation() || !IsPreloaded())
+  if ((error_.IsCancellation() || !is_unused_preload_) && IsMainThread())
     GetMemoryCache()->Remove(this);
 
   if (!ErrorOccurred())
@@ -426,46 +430,24 @@ void Resource::GetError(const ResourceError& error) {
   DCHECK(ErrorOccurred());
   ClearData();
   loader_ = nullptr;
-  CheckNotify();
+  CheckResourceIntegrity();
+  TriggerNotificationForFinishObservers(task_runner);
+  NotifyFinished();
 }
 
-void Resource::Finish(double load_finish_time) {
+void Resource::Finish(double load_finish_time, WebTaskRunner* task_runner) {
   DCHECK(!is_revalidating_);
   load_finish_time_ = load_finish_time;
   if (!ErrorOccurred())
     status_ = ResourceStatus::kCached;
   loader_ = nullptr;
-  CheckNotify();
+  CheckResourceIntegrity();
+  TriggerNotificationForFinishObservers(task_runner);
+  NotifyFinished();
 }
 
 AtomicString Resource::HttpContentType() const {
   return GetResponse().HttpContentType();
-}
-
-bool Resource::PassesAccessControlCheck(
-    const SecurityOrigin* security_origin) const {
-  StoredCredentials stored_credentials =
-      LastResourceRequest().AllowStoredCredentials()
-          ? kAllowStoredCredentials
-          : kDoNotAllowStoredCredentials;
-  CrossOriginAccessControl::AccessStatus status =
-      CrossOriginAccessControl::CheckAccess(GetResponse(), stored_credentials,
-                                            security_origin);
-
-  return status == CrossOriginAccessControl::kAccessAllowed;
-}
-
-bool Resource::IsEligibleForIntegrityCheck(
-    SecurityOrigin* security_origin) const {
-  return security_origin->CanRequest(GetResourceRequest().Url()) ||
-         PassesAccessControlCheck(security_origin);
-}
-
-void Resource::SetIntegrityDisposition(
-    ResourceIntegrityDisposition disposition) {
-  DCHECK_NE(disposition, ResourceIntegrityDisposition::kNotChecked);
-  DCHECK(type_ == Resource::kScript || type_ == Resource::kCSSStyleSheet);
-  integrity_disposition_ = disposition;
 }
 
 bool Resource::MustRefetchDueToIntegrityMetadata(
@@ -493,13 +475,9 @@ static double CurrentAge(const ResourceResponse& response,
   return corrected_received_age + resident_time;
 }
 
-double Resource::CurrentAge() const {
-  return blink::CurrentAge(GetResponse(), response_timestamp_);
-}
-
 static double FreshnessLifetime(const ResourceResponse& response,
                                 double response_timestamp) {
-#if !OS(ANDROID)
+#if !defined(OS_ANDROID)
   // On desktop, local files should be reloaded in case they change.
   if (response.Url().IsLocalFile())
     return 0;
@@ -526,10 +504,6 @@ static double FreshnessLifetime(const ResourceResponse& response,
   // If no cache headers are present, the specification leaves the decision to
   // the UA. Other browsers seem to opt for 0.
   return 0;
-}
-
-double Resource::FreshnessLifetime() const {
-  return blink::FreshnessLifetime(GetResponse(), response_timestamp_);
 }
 
 static bool CanUseResponse(const ResourceResponse& response,
@@ -569,6 +543,7 @@ const ResourceRequest& Resource::LastResourceRequest() const {
 
 void Resource::SetRevalidatingRequest(const ResourceRequest& request) {
   SECURITY_CHECK(redirect_chain_.IsEmpty());
+  SECURITY_CHECK(!is_unused_preload_);
   DCHECK(!request.IsNull());
   CHECK(!is_revalidation_start_forbidden_);
   is_revalidating_ = true;
@@ -588,7 +563,7 @@ void Resource::SetResponse(const ResourceResponse& response) {
   response_ = response;
   if (this->GetResponse().WasFetchedViaServiceWorker()) {
     cache_handler_ = ServiceWorkerResponseCachedMetadataHandler::Create(
-        this, fetcher_security_origin_.Get());
+        this, fetcher_security_origin_.get());
   }
 }
 
@@ -646,16 +621,9 @@ String Resource::ReasonNotDeletable() const {
   if (loader_) {
     if (!builder.IsEmpty())
       builder.Append(' ');
-    builder.Append("m_loader");
+    builder.Append("loader_");
   }
-  if (preload_count_) {
-    if (!builder.IsEmpty())
-      builder.Append(' ');
-    builder.Append("m_preloadCount(");
-    builder.AppendNumber(preload_count_);
-    builder.Append(')');
-  }
-  if (GetMemoryCache()->Contains(this)) {
+  if (IsMainThread() && GetMemoryCache()->Contains(this)) {
     if (!builder.IsEmpty())
       builder.Append(' ');
     builder.Append("in_memory_cache");
@@ -691,33 +659,16 @@ static bool TypeNeedsSynchronousCacheHit(Resource::Type type) {
   return false;
 }
 
-void Resource::WillAddClientOrObserver(PreloadReferencePolicy policy) {
-  if (policy == kMarkAsReferenced && preload_result_ == kPreloadNotReferenced) {
-    if (IsLoaded())
-      preload_result_ = kPreloadReferencedWhileComplete;
-    else if (IsLoading())
-      preload_result_ = kPreloadReferencedWhileLoading;
-    else
-      preload_result_ = kPreloadReferenced;
-
-    if (preload_discovery_time_) {
-      int time_since_discovery = static_cast<int>(
-          1000 * (MonotonicallyIncreasingTime() - preload_discovery_time_));
-      DEFINE_STATIC_LOCAL(CustomCountHistogram, preload_discovery_histogram,
-                          ("PreloadScanner.ReferenceTime", 0, 10000, 50));
-      preload_discovery_histogram.Count(time_since_discovery);
-    }
-  }
+void Resource::WillAddClientOrObserver() {
   if (!HasClientsOrObservers()) {
     is_alive_ = true;
   }
 }
 
-void Resource::AddClient(ResourceClient* client,
-                         PreloadReferencePolicy policy) {
+void Resource::AddClient(ResourceClient* client) {
   CHECK(!is_add_remove_client_prohibited_);
 
-  WillAddClientOrObserver(policy);
+  WillAddClientOrObserver();
 
   if (is_revalidating_) {
     clients_.insert(client);
@@ -725,12 +676,20 @@ void Resource::AddClient(ResourceClient* client,
   }
 
   // If an error has occurred or we have existing data to send to the new client
-  // and the resource type supprts it, send it asynchronously.
+  // and the resource type supports it, send it asynchronously.
   if ((ErrorOccurred() || !GetResponse().IsNull()) &&
-      !TypeNeedsSynchronousCacheHit(GetType()) &&
-      !needs_synchronous_cache_hit_) {
+      !TypeNeedsSynchronousCacheHit(GetType())) {
     clients_awaiting_callback_.insert(client);
-    ResourceCallback::CallbackHandler().Schedule(this);
+    if (!async_finish_pending_clients_task_.IsActive()) {
+      async_finish_pending_clients_task_ =
+          Platform::Current()
+              ->CurrentThread()
+              ->Scheduler()
+              ->LoadingTaskRunner()
+              ->PostCancellableTask(BLINK_FROM_HERE,
+                                    WTF::Bind(&Resource::FinishPendingClients,
+                                              WrapWeakPersistent(this)));
+    }
     return;
   }
 
@@ -752,9 +711,29 @@ void Resource::RemoveClient(ResourceClient* client) {
   else
     clients_.erase(client);
 
-  if (clients_awaiting_callback_.IsEmpty())
-    ResourceCallback::CallbackHandler().Cancel(this);
+  if (clients_awaiting_callback_.IsEmpty() &&
+      async_finish_pending_clients_task_.IsActive()) {
+    async_finish_pending_clients_task_.Cancel();
+  }
 
+  DidRemoveClientOrObserver();
+}
+
+void Resource::AddFinishObserver(ResourceFinishObserver* client,
+                                 WebTaskRunner* task_runner) {
+  CHECK(!is_add_remove_client_prohibited_);
+  DCHECK(!finish_observers_.Contains(client));
+
+  WillAddClientOrObserver();
+  finish_observers_.insert(client);
+  if (IsLoaded())
+    TriggerNotificationForFinishObservers(task_runner);
+}
+
+void Resource::RemoveFinishObserver(ResourceFinishObserver* client) {
+  CHECK(!is_add_remove_client_prohibited_);
+
+  finish_observers_.erase(client);
   DidRemoveClientOrObserver();
 }
 
@@ -770,22 +749,15 @@ void Resource::DidRemoveClientOrObserver() {
     // operation."
     // We allow non-secure content to be reused in history, but we do not allow
     // secure content to be reused.
-    if (HasCacheControlNoStoreHeader() && Url().ProtocolIs("https"))
+    if (HasCacheControlNoStoreHeader() && Url().ProtocolIs("https") &&
+        IsMainThread())
       GetMemoryCache()->Remove(this);
   }
 }
 
 void Resource::AllClientsAndObserversRemoved() {
-  if (!loader_)
-    return;
-  if (!cancel_timer_.IsActive())
-    cancel_timer_.StartOneShot(0, BLINK_FROM_HERE);
-}
-
-void Resource::CancelTimerFired(TimerBase* timer) {
-  DCHECK_EQ(timer, &cancel_timer_);
-  if (!HasClientsOrObservers() && loader_)
-    loader_->Cancel();
+  if (loader_)
+    loader_->ScheduleCancel();
 }
 
 void Resource::SetDecodedSize(size_t decoded_size) {
@@ -793,7 +765,8 @@ void Resource::SetDecodedSize(size_t decoded_size) {
     return;
   size_t old_size = size();
   decoded_size_ = decoded_size;
-  GetMemoryCache()->Update(this, old_size, size());
+  if (IsMainThread())
+    GetMemoryCache()->Update(this, old_size, size());
 }
 
 void Resource::SetEncodedSize(size_t encoded_size) {
@@ -803,7 +776,8 @@ void Resource::SetEncodedSize(size_t encoded_size) {
   size_t old_size = size();
   encoded_size_ = encoded_size;
   encoded_size_memory_usage_ = encoded_size;
-  GetMemoryCache()->Update(this, old_size, size());
+  if (IsMainThread())
+    GetMemoryCache()->Update(this, old_size, size());
 }
 
 void Resource::FinishPendingClients() {
@@ -816,7 +790,7 @@ void Resource::FinishPendingClients() {
   //    back.
   //
   // Handle case (1) by saving a list of clients to notify. A separate list also
-  // ensure a client is either in m_clients or m_clientsAwaitingCallback.
+  // ensure a client is either in cliens_ or clients_awaiting_callback_.
   HeapVector<Member<ResourceClient>> clients_to_notify;
   CopyToVector(clients_awaiting_callback_, clients_to_notify);
 
@@ -828,19 +802,130 @@ void Resource::FinishPendingClients() {
 
     // When revalidation starts after waiting clients are scheduled and
     // before they are added here. In such cases, we just add the clients
-    // to |m_clients| without didAddClient(), as in Resource::addClient().
+    // to |clients_| without DidAddClient(), as in Resource::AddClient().
     if (!is_revalidating_)
       DidAddClient(client);
   }
 
   // It is still possible for the above loop to finish a new client
   // synchronously. If there's no client waiting we should deschedule.
-  bool scheduled = ResourceCallback::CallbackHandler().IsScheduled(this);
+  bool scheduled = async_finish_pending_clients_task_.IsActive();
   if (scheduled && clients_awaiting_callback_.IsEmpty())
-    ResourceCallback::CallbackHandler().Cancel(this);
+    async_finish_pending_clients_task_.Cancel();
 
   // Prevent the case when there are clients waiting but no callback scheduled.
   DCHECK(clients_awaiting_callback_.IsEmpty() || scheduled);
+}
+
+bool Resource::CanReuse(const FetchParameters& params) const {
+  const ResourceRequest& new_request = params.GetResourceRequest();
+  const ResourceLoaderOptions& new_options = params.Options();
+
+  // Never reuse opaque responses from a service worker for requests that are
+  // not no-cors. https://crbug.com/625575
+  // TODO(yhirano): Remove this.
+  if (GetResponse().WasFetchedViaServiceWorker() &&
+      GetResponse().ResponseTypeViaServiceWorker() ==
+          network::mojom::FetchResponseType::kOpaque &&
+      new_request.GetFetchRequestMode() !=
+          WebURLRequest::kFetchRequestModeNoCORS) {
+    return false;
+  }
+
+  // If credentials were sent with the previous request and won't be with this
+  // one, or vice versa, re-fetch the resource.
+  //
+  // This helps with the case where the server sends back
+  // "Access-Control-Allow-Origin: *" all the time, but some of the client's
+  // requests are made without CORS and some with.
+  if (GetResourceRequest().AllowStoredCredentials() !=
+      new_request.AllowStoredCredentials())
+    return false;
+
+  // Certain requests (e.g., XHRs) might have manually set headers that require
+  // revalidation. In theory, this should be a Revalidate case. In practice, the
+  // MemoryCache revalidation path assumes a whole bunch of things about how
+  // revalidation works that manual headers violate, so punt to Reload instead.
+  //
+  // Similarly, a request with manually added revalidation headers can lead to a
+  // 304 response for a request that wasn't flagged as a revalidation attempt.
+  // Normally, successful revalidation will maintain the original response's
+  // status code, but for a manual revalidation the response code remains 304.
+  // In this case, the Resource likely has insufficient context to provide a
+  // useful cache hit or revalidation. See http://crbug.com/643659
+  if (new_request.IsConditional() || response_.HttpStatusCode() == 304)
+    return false;
+
+  // Answers the question "can a separate request with different options be
+  // re-used" (e.g. preload request). The safe (but possibly slow) answer is
+  // always false.
+  //
+  // Data buffering policy differences are believed to be safe for re-use.
+  //
+  // TODO: Check content_security_policy_option.
+  //
+  // initiator_info is purely informational and should be benign for re-use.
+  //
+  // request_initiator_context is benign (indicates document vs. worker).
+
+  // Reuse only if both the existing Resource and the new request are
+  // asynchronous. Particularly,
+  // 1. Sync and async Resource/requests shouldn't be mixed (crbug.com/652172),
+  // 2. Sync existing Resources shouldn't be revalidated, and
+  // 3. Sync new requests shouldn't revalidate existing Resources.
+  //
+  // 2. and 3. are because SyncResourceHandler handles redirects without
+  // calling WillFollowRedirect, and causes response URL mismatch
+  // (crbug.com/618967) and bypassing redirect restriction around revalidation
+  // (crbug.com/613971 for 2. and crbug.com/614989 for 3.).
+  if (new_options.synchronous_policy == kRequestSynchronously ||
+      options_.synchronous_policy == kRequestSynchronously)
+    return false;
+
+  if (resource_request_.GetKeepalive() || new_request.GetKeepalive()) {
+    return false;
+  }
+
+  // securityOrigin has more complicated checks which callers are responsible
+  // for.
+
+  if (new_request.GetFetchCredentialsMode() !=
+      resource_request_.GetFetchCredentialsMode())
+    return false;
+
+  const auto new_mode = new_request.GetFetchRequestMode();
+  const auto existing_mode = resource_request_.GetFetchRequestMode();
+
+  if (new_mode != existing_mode)
+    return false;
+
+  switch (new_mode) {
+    case WebURLRequest::kFetchRequestModeNoCORS:
+    case WebURLRequest::kFetchRequestModeNavigate:
+      break;
+
+    case WebURLRequest::kFetchRequestModeCORS:
+    case WebURLRequest::kFetchRequestModeSameOrigin:
+    case WebURLRequest::kFetchRequestModeCORSWithForcedPreflight:
+      // We have two separate CORS handling logics in DocumentThreadableLoader
+      // and ResourceLoader and sharing resources is difficult when they are
+      // handled differently.
+      if (options_.cors_handling_by_resource_fetcher !=
+          new_options.cors_handling_by_resource_fetcher) {
+        // If the existing one is handled in DocumentThreadableLoader and the
+        // new one is handled in ResourceLoader, reusing the existing one will
+        // lead to CORS violations.
+        if (!options_.cors_handling_by_resource_fetcher)
+          return false;
+
+        // Otherwise (i.e., if the existing one is handled in ResourceLoader
+        // and the new one is handled in DocumentThreadableLoader), reusing
+        // the existing one will lead to double check which is harmless.
+      }
+      break;
+  }
+
+  return true;
 }
 
 void Resource::Prune() {
@@ -930,8 +1015,8 @@ void Resource::SetCachePolicyBypassingCache() {
   resource_request_.SetCachePolicy(WebCachePolicy::kBypassingCache);
 }
 
-void Resource::SetPreviewsStateNoTransform() {
-  resource_request_.SetPreviewsState(WebURLRequest::kPreviewsNoTransform);
+void Resource::SetPreviewsState(WebURLRequest::PreviewsState previews_state) {
+  resource_request_.SetPreviewsState(previews_state);
 }
 
 void Resource::ClearRangeRequestHeader() {
@@ -966,8 +1051,29 @@ void Resource::RevalidationFailed() {
   SECURITY_CHECK(redirect_chain_.IsEmpty());
   ClearData();
   cache_handler_.Clear();
+  integrity_disposition_ = ResourceIntegrityDisposition::kNotChecked;
+  integrity_report_info_.Clear();
   DestroyDecodedDataForFailedRevalidation();
   is_revalidating_ = false;
+}
+
+void Resource::MarkAsPreload() {
+  DCHECK(!is_unused_preload_);
+  is_unused_preload_ = true;
+}
+
+bool Resource::MatchPreload(const FetchParameters& params, WebTaskRunner*) {
+  DCHECK(is_unused_preload_);
+  is_unused_preload_ = false;
+
+  if (preload_discovery_time_) {
+    int time_since_discovery = static_cast<int>(
+        1000 * (MonotonicallyIncreasingTime() - preload_discovery_time_));
+    DEFINE_STATIC_LOCAL(CustomCountHistogram, preload_discovery_histogram,
+                        ("PreloadScanner.ReferenceTime", 0, 10000, 50));
+    preload_discovery_histogram.Count(time_since_discovery);
+  }
+  return true;
 }
 
 bool Resource::CanReuseRedirectChain() const {

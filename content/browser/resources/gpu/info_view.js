@@ -38,10 +38,6 @@ cr.define('gpu', function() {
       if (browserBridge.clientInfo) {
         var clientInfo = browserBridge.clientInfo;
 
-        var commandLineParts = clientInfo.command_line.split(' ');
-        commandLineParts.shift(); // Pop off the exe path
-        var commandLineString = commandLineParts.join(' ')
-
         this.setTable_('client-info', [
           {
             description: 'Data exported',
@@ -72,8 +68,8 @@ cr.define('gpu', function() {
             value: clientInfo.graphics_backend
           },
           {
-            description: 'Command Line Args',
-            value: commandLineString
+            description: 'Command Line',
+            value: clientInfo.command_line
           }]);
       } else {
         this.setText_('client-info', '... loading...');
@@ -97,6 +93,7 @@ cr.define('gpu', function() {
         'native_gpu_memory_buffers': 'Native GpuMemoryBuffers',
         'vpx_decode': 'VPx Video Decode',
         'webgl2': 'WebGL2',
+        'checker_imaging': 'CheckerImaging',
       };
 
       var statusMap =  {
@@ -234,6 +231,11 @@ cr.define('gpu', function() {
           this.setTable_('gpu-memory-buffer-info', gpuInfo.gpuMemoryBufferInfo);
         else
           this.setTable_('gpu-memory-buffer-info', []);
+
+        if (gpuInfo.displayInfo)
+          this.setTable_('display-info', gpuInfo.displayInfo);
+        else
+          this.setTable_('display-info', []);
 
         if (gpuInfo.diagnostics) {
           diagnosticsDiv.hidden = false;

@@ -47,7 +47,7 @@ class OobeTest : public OobeBaseTest {
     // If the login display is still showing, exit gracefully.
     if (LoginDisplayHost::default_host()) {
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&chrome::AttemptExit));
+          FROM_HERE, base::BindOnce(&chrome::AttemptExit));
       content::RunMessageLoop();
     }
 
@@ -86,8 +86,7 @@ IN_PROC_BROWSER_TEST_F(OobeTest, Accelerator) {
 
   gfx::NativeWindow login_window = GetLoginWindowWidget()->GetNativeWindow();
 
-  ui_controls::SendKeyPress(login_window,
-                            ui::VKEY_E,
+  ui_controls::SendKeyPress(login_window, ui::VKEY_E,
                             true,    // control
                             false,   // shift
                             true,    // alt

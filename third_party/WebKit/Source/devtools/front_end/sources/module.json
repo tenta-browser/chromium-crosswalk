@@ -496,6 +496,20 @@
             "title": "Close All"
         },
         {
+            "type": "@UI.ActionDelegate",
+            "category": "Sources",
+            "actionId": "sources.create-snippet",
+            "className": "Sources.SourcesNavigatorView.CreatingActionDelegate",
+            "title": "Create new snippet"
+        },
+        {
+            "type": "@UI.ActionDelegate",
+            "category": "Sources",
+            "actionId": "sources.add-folder-to-workspace",
+            "className": "Sources.SourcesNavigatorView.CreatingActionDelegate",
+            "title": "Add folder to workspace"
+        },
+        {
             "type": "@UI.ViewLocationResolver",
             "name": "navigator-view",
             "className": "Sources.SourcesPanel"
@@ -503,26 +517,18 @@
         {
             "type": "@UI.ViewLocationResolver",
             "name": "sources-sidebar",
+            "category": "Sources",
             "className": "Sources.SourcesPanel"
         },
         {
             "type": "view",
             "location": "sources-sidebar",
             "id": "sources.xhrBreakpoints",
-            "title": "XHR Breakpoints",
+            "title": "XHR/fetch Breakpoints",
             "order": 5,
-            "hasToolbar": "true",
+            "hasToolbar": true,
             "persistence": "permanent",
             "className": "Sources.XHRBreakpointsSidebarPane"
-        },
-        {
-            "type": "view",
-            "location": "sources-sidebar",
-            "id": "sources.domBreakpoints",
-            "title": "DOM Breakpoints",
-            "order": 7,
-            "persistence": "permanent",
-            "factoryName": "Components.DOMBreakpointsSidebarPane.Proxy"
         },
         {
             "type": "view",
@@ -530,7 +536,7 @@
             "id": "sources.globalListeners",
             "title": "Global Listeners",
             "order": 8,
-            "hasToolbar": "true",
+            "hasToolbar": true,
             "persistence": "permanent",
             "className": "Sources.ObjectEventListenersSidebarPane"
         },
@@ -591,13 +597,6 @@
             "contextTypes": [
                 "SDK.DebuggerPausedDetails"
             ],
-            "className": "Components.DOMBreakpointsSidebarPane"
-        },
-        {
-            "type": "@UI.ContextFlavorListener",
-            "contextTypes": [
-                "SDK.DebuggerPausedDetails"
-            ],
             "className": "Sources.CallStackSidebarPane"
         },
         {
@@ -618,7 +617,8 @@
         "inline_editor",
         "color_picker",
         "event_listeners",
-        "object_ui"
+        "object_ui",
+        "formatter"
     ],
     "scripts": [
         "AddSourceMapURLDialog.js",
@@ -644,7 +644,6 @@
         "ThreadsSidebarPane.js",
         "ScriptFormatterEditorAction.js",
         "InplaceFormatterEditorAction.js",
-        "ScriptFormatter.js",
         "SourceFormatter.js",
         "OpenFileQuickOpen.js",
         "SourcesView.js",
@@ -662,14 +661,18 @@
         "debuggerPausedMessage.css",
         "eventListenerBreakpoints.css",
         "fileBasedSearchResultsPane.css",
+        "javaScriptBreakpointsSidebarPane.css",
         "navigatorTree.css",
         "navigatorView.css",
         "revisionHistory.css",
+        "scopeChainSidebarPane.css",
         "serviceWorkersSidebar.css",
         "sourcesPanel.css",
         "sourcesSearch.css",
         "sourcesView.css",
         "threadsSidebarPane.css",
+        "watchExpressionsSidebarPane.css",
+        "xhrBreakpointsSidebarPane.css",
         "dialog.css"
     ]
 }

@@ -7,16 +7,13 @@
 
 #import <UIKit/UIKit.h>
 
-#include "ios/chrome/browser/ui/tabs/tab_strip_controller.h"
-
 @class AlertCoordinator;
+@protocol ApplicationCommands;
+@protocol BrowserCommands;
 @class KeyCommandsProvider;
 @class MessageBubbleView;
 @class PKPass;
 @class PKAddPassesViewController;
-@class PreloadController;
-@protocol PreloadProvider;
-@protocol ShareProtocol;
 @class TabModel;
 class ToolbarModelDelegateIOS;
 class ToolbarModelIOS;
@@ -32,10 +29,6 @@ namespace ios {
 class ChromeBrowserState;
 }
 
-// The category for all messages presented by the
-// BrowserViewControllerDependencyFactory via |showSnackbarWithMessage:|.
-extern NSString* const kBrowserViewControllerSnackbarCategory;
-
 // Creates helper objects needed by BrowserViewController.
 @interface BrowserViewControllerDependencyFactory : NSObject
 
@@ -44,9 +37,6 @@ extern NSString* const kBrowserViewControllerSnackbarCategory;
 // reference).
 - (id)initWithBrowserState:(ios::ChromeBrowserState*)browserState;
 
-// Returns the ShareProtocol shared instance.
-- (id<ShareProtocol>)shareControllerInstance;
-
 // Creates a new PassKit view controller to display |pass|.
 - (PKAddPassesViewController*)newPassKitViewControllerForPass:(PKPass*)pass;
 
@@ -54,23 +44,17 @@ extern NSString* const kBrowserViewControllerSnackbarCategory;
 - (void)showPassKitErrorInfoBarForManager:
     (infobars::InfoBarManager*)infoBarManager;
 
-// Caller is responsible for releasing all of the created objects.
-- (PreloadController*)newPreloadController;
-
-- (TabStripController*)newTabStripControllerWithTabModel:(TabModel*)model;
-
 - (ToolbarModelIOS*)newToolbarModelIOSWithDelegate:
     (ToolbarModelDelegateIOS*)delegate;
 
 - (WebToolbarController*)
 newWebToolbarControllerWithDelegate:(id<WebToolbarDelegate>)delegate
                           urlLoader:(id<UrlLoader>)urlLoader
-                    preloadProvider:(id<PreloadProvider>)preload;
+                         dispatcher:(id<ApplicationCommands, BrowserCommands>)
+                                        dispatcher;
 
 // Returns a new keyboard commands coordinator to handle keyboard commands.
 - (KeyCommandsProvider*)newKeyCommandsProvider;
-
-- (void)showSnackbarWithMessage:(NSString*)message;
 
 - (AlertCoordinator*)alertCoordinatorWithTitle:(NSString*)title
                                        message:(NSString*)message

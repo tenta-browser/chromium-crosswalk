@@ -6,17 +6,13 @@
 
 namespace payments {
 
-PaymentInstrument::PaymentInstrument(const std::string& method_name,
-                                     const base::string16& label,
-                                     const base::string16& sublabel,
-                                     int icon_resource_id,
-                                     Type type)
-    : method_name_(method_name),
-      label_(label),
-      sublabel_(sublabel),
-      icon_resource_id_(icon_resource_id),
-      type_(type) {}
+PaymentInstrument::PaymentInstrument(int icon_resource_id, Type type)
+    : icon_resource_id_(icon_resource_id), type_(type) {}
 
 PaymentInstrument::~PaymentInstrument() {}
+
+const gfx::ImageSkia* PaymentInstrument::icon_image_skia() const {
+  return nullptr;
+}
 
 }  // namespace payments

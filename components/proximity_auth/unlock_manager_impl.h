@@ -11,6 +11,7 @@
 #include "build/build_config.h"
 #include "components/proximity_auth/messenger_observer.h"
 #include "components/proximity_auth/proximity_auth_system.h"
+#include "components/proximity_auth/proximity_monitor_observer.h"
 #include "components/proximity_auth/remote_device_life_cycle.h"
 #include "components/proximity_auth/remote_status_update.h"
 #include "components/proximity_auth/screenlock_bridge.h"
@@ -26,12 +27,14 @@ namespace proximity_auth {
 
 class Messenger;
 class ProximityAuthClient;
+class ProximityAuthPrefManager;
 class ProximityMonitor;
 
 // The unlock manager is responsible for controlling the lock screen UI based on
 // the authentication status of the registered remote devices.
 class UnlockManagerImpl : public UnlockManager,
                           public MessengerObserver,
+                          public ProximityMonitorObserver,
                           public ScreenlockBridge::Observer,
 #if defined(OS_CHROMEOS)
                           chromeos::PowerManagerClient::Observer,
@@ -41,21 +44,22 @@ class UnlockManagerImpl : public UnlockManager,
   // The |proximity_auth_client| is not owned and should outlive the constructed
   // unlock manager.
   UnlockManagerImpl(ProximityAuthSystem::ScreenlockType screenlock_type,
-                    ProximityAuthClient* proximity_auth_client);
+                    ProximityAuthClient* proximity_auth_client,
+                    ProximityAuthPrefManager* pref_manager);
   ~UnlockManagerImpl() override;
 
   // UnlockManager:
   bool IsUnlockAllowed() override;
   void SetRemoteDeviceLifeCycle(RemoteDeviceLifeCycle* life_cycle) override;
   void OnLifeCycleStateChanged() override;
-  void OnAuthAttempted(
-      ScreenlockBridge::LockHandler::AuthType auth_type) override;
+  void OnAuthAttempted(mojom::AuthType auth_type) override;
 
  protected:
-  // Creates a ProximityMonitor instance for the given |remote_device|.
+  // Creates a ProximityMonitor instance for the given |connection|.
   // Exposed for testing.
   virtual std::unique_ptr<ProximityMonitor> CreateProximityMonitor(
-      const cryptauth::RemoteDevice& remote_device);
+      cryptauth::Connection* connection,
+      ProximityAuthPrefManager* pref_manager);
 
  private:
   // The possible lock screen states for the remote device.
@@ -72,6 +76,9 @@ class UnlockManagerImpl : public UnlockManager,
   void OnDecryptResponse(const std::string& decrypted_bytes) override;
   void OnUnlockResponse(bool success) override;
   void OnDisconnected() override;
+
+  // ProximityMonitorObserver:
+  void OnProximityStateChanged() override;
 
   // ScreenlockBridge::Observer
   void OnScreenDidLock(
@@ -150,6 +157,9 @@ class UnlockManagerImpl : public UnlockManager,
 
   // Used to call into the embedder. Expected to outlive |this| instance.
   ProximityAuthClient* proximity_auth_client_;
+
+  // Used to access the common prefs. Expected to outlive |this| instance.
+  ProximityAuthPrefManager* pref_manager_;
 
   // Whether the screen is currently locked.
   bool is_locked_;

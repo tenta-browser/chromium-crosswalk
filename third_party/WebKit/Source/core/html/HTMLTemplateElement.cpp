@@ -39,7 +39,7 @@ namespace blink {
 using namespace HTMLNames;
 
 inline HTMLTemplateElement::HTMLTemplateElement(Document& document)
-    : HTMLElement(templateTag, document), content_(this, nullptr) {}
+    : HTMLElement(templateTag, document) {}
 
 DEFINE_NODE_FACTORY(HTMLTemplateElement)
 
@@ -60,7 +60,7 @@ Node* HTMLTemplateElement::cloneNode(bool deep, ExceptionState&) {
 
   Node* clone = CloneElementWithChildren();
   if (content_)
-    content()->CloneChildNodes(toHTMLTemplateElement(clone)->content());
+    content()->CloneChildNodes(ToHTMLTemplateElement(clone)->content());
   return clone;
 }
 

@@ -18,7 +18,6 @@
 #include "base/version.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 #include "chrome/browser/extensions/crx_installer.h"
-#include "chrome/browser/extensions/extension_install_ui_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_tracker.h"
@@ -643,12 +642,12 @@ WebstorePrivateIsPendingCustodianApprovalFunction::Run() {
   ExtensionPrefs* extensions_prefs = ExtensionPrefs::Get(browser_context());
 
   if (extensions_prefs->HasDisableReason(
-          params->id, Extension::DISABLE_PERMISSIONS_INCREASE)) {
+          params->id, disable_reason::DISABLE_PERMISSIONS_INCREASE)) {
     return RespondNow(BuildResponse(true));
   }
 
   bool is_pending_approval = extensions_prefs->HasDisableReason(
-      params->id, Extension::DISABLE_CUSTODIAN_APPROVAL_REQUIRED);
+      params->id, disable_reason::DISABLE_CUSTODIAN_APPROVAL_REQUIRED);
 
   return RespondNow(BuildResponse(is_pending_approval));
 }

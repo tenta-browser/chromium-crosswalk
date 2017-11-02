@@ -9,6 +9,22 @@
 
 namespace net {
 
+// A general-purpose unordered map.
+template <typename Key,
+          typename Value,
+          typename Hash = typename QuicUnorderedMapImpl<Key, Value>::hasher,
+          typename Eq = typename QuicUnorderedMapImpl<Key, Value>::key_equal,
+          typename Alloc =
+              typename QuicUnorderedMapImpl<Key, Value>::allocator_type>
+using QuicUnorderedMap = QuicUnorderedMapImpl<Key, Value, Hash, Eq, Alloc>;
+
+// A general-purpose unordered set.
+template <typename Key,
+          typename Hash = typename QuicUnorderedSetImpl<Key>::hasher,
+          typename Eq = typename QuicUnorderedSetImpl<Key>::key_equal,
+          typename Alloc = typename QuicUnorderedSetImpl<Key>::allocator_type>
+using QuicUnorderedSet = QuicUnorderedSetImpl<Key, Hash, Eq, Alloc>;
+
 // A map which offers insertion-ordered iteration.
 template <typename Key, typename Value>
 using QuicLinkedHashMap = QuicLinkedHashMapImpl<Key, Value>;
@@ -23,6 +39,20 @@ using QuicSmallMap = QuicSmallMapImpl<Key, Value, Size>;
 // and mutually disjoint intervals.
 template <typename T>
 using QuicIntervalSet = QuicIntervalSetImpl<T>;
+
+// Represents a simple queue which may be backed by a list or
+// a flat circular buffer.
+//
+// DOES NOT GUARANTEE POINTER OR ITERATOR STABILITY!
+template <typename T>
+using QuicQueue = QuicQueueImpl<T>;
+
+// Represents a double-ended queue which may be backed by a list or
+// a flat circular buffer.
+//
+// DOES NOT GUARANTEE POINTER OR ITERATOR STABILITY!
+template <typename T>
+using QuicDeque = QuicDequeImpl<T>;
 
 }  // namespace net
 

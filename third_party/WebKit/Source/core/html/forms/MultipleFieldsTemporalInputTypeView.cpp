@@ -31,23 +31,22 @@
 #include "core/html/forms/MultipleFieldsTemporalInputTypeView.h"
 
 #include "core/CSSValueKeywords.h"
-#include "core/dom/StyleChangeReason.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/css/StyleChangeReason.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/events/KeyboardEvent.h"
-#include "core/events/ScopedEventQueue.h"
-#include "core/html/HTMLDataListElement.h"
-#include "core/html/HTMLInputElement.h"
-#include "core/html/HTMLOptionElement.h"
 #include "core/html/forms/BaseTemporalInputType.h"
 #include "core/html/forms/DateTimeFieldsState.h"
 #include "core/html/forms/FormController.h"
+#include "core/html/forms/HTMLDataListElement.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/html/forms/HTMLOptionElement.h"
 #include "core/html/shadow/ShadowElementNames.h"
 #include "core/layout/LayoutTheme.h"
 #include "core/page/FocusController.h"
 #include "core/page/Page.h"
 #include "core/style/ComputedStyle.h"
 #include "platform/DateComponents.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/text/DateTimeFormat.h"
 #include "platform/text/PlatformLocale.h"
 #include "platform/wtf/DateMath.h"
@@ -134,28 +133,28 @@ bool DateTimeFormatValidator::ValidateFormat(
 DateTimeEditElement*
 MultipleFieldsTemporalInputTypeView::GetDateTimeEditElement() const {
   return ToDateTimeEditElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::DateTimeEdit()));
 }
 
 SpinButtonElement* MultipleFieldsTemporalInputTypeView::GetSpinButtonElement()
     const {
   return ToSpinButtonElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::SpinButton()));
 }
 
 ClearButtonElement* MultipleFieldsTemporalInputTypeView::GetClearButtonElement()
     const {
   return ToClearButtonElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::ClearButton()));
 }
 
 PickerIndicatorElement*
 MultipleFieldsTemporalInputTypeView::GetPickerIndicatorElement() const {
   return ToPickerIndicatorElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::PickerIndicator()));
 }
 
@@ -331,9 +330,9 @@ void MultipleFieldsTemporalInputTypeView::Blur() {
     edit->BlurByOwner();
 }
 
-PassRefPtr<ComputedStyle>
+RefPtr<ComputedStyle>
 MultipleFieldsTemporalInputTypeView::CustomStyleForLayoutObject(
-    PassRefPtr<ComputedStyle> original_style) {
+    RefPtr<ComputedStyle> original_style) {
   EDisplay original_display = original_style->Display();
   EDisplay new_display = original_display;
   if (original_display == EDisplay::kInline ||
@@ -350,7 +349,7 @@ MultipleFieldsTemporalInputTypeView::CustomStyleForLayoutObject(
   style->SetDirection(content_direction);
   style->SetDisplay(new_display);
   style->SetUnique();
-  return style.Release();
+  return style;
 }
 
 void MultipleFieldsTemporalInputTypeView::CreateShadowSubtree() {

@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/LayoutTestHelper.h"
 #include "core/layout/LayoutView.h"
 #include "core/paint/PaintLayer.h"
+#include "platform/graphics/GraphicsLayer.h"
+#include "platform/graphics/paint/RasterInvalidationTracking.h"
 #include "platform/testing/RuntimeEnabledFeaturesTestHelpers.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -20,6 +22,15 @@ class PaintInvalidationTest : public ::testing::WithParamInterface<bool>,
   PaintInvalidationTest()
       : ScopedRootLayerScrollingForTest(GetParam()),
         RenderingTest(SingleChildLocalFrameClient::Create()) {}
+
+ protected:
+  const RasterInvalidationTracking* GetRasterInvalidationTracking() const {
+    // TODO(wangxianzhu): Test SPv2.
+    return GetLayoutView()
+        .Layer()
+        ->GraphicsLayerBacking()
+        ->GetRasterInvalidationTracking();
+  }
 };
 
 INSTANTIATE_TEST_CASE_P(All, PaintInvalidationTest, ::testing::Bool());
@@ -38,6 +49,7 @@ TEST_P(PaintInvalidationTest, RecalcOverflowInvalidatesBackground) {
       "    margin: 0px;"
       "  }"
       "  #container {"
+      "    will-change: transform;"
       "    width: 100%;"
       "    height: 100%;"
       "  }"
@@ -46,11 +58,12 @@ TEST_P(PaintInvalidationTest, RecalcOverflowInvalidatesBackground) {
 
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  ScrollableArea* scrollable_area = GetDocument().View();
+  ScrollableArea* scrollable_area =
+      GetDocument().View()->LayoutViewportScrollableArea();
   ASSERT_EQ(scrollable_area->MaximumScrollOffset().Height(), 0);
   EXPECT_FALSE(GetDocument().GetLayoutView()->MayNeedPaintInvalidation());
 
-  Element* container = GetDocument().GetElementById("container");
+  Element* container = GetDocument().getElementById("container");
   container->setAttribute(HTMLNames::styleAttr,
                           "transform: translateY(1000px);");
   GetDocument().UpdateStyleAndLayoutTree();
@@ -61,7 +74,7 @@ TEST_P(PaintInvalidationTest, RecalcOverflowInvalidatesBackground) {
 
 TEST_P(PaintInvalidationTest, UpdateVisualRectOnFrameBorderWidthChange) {
   // TODO(wangxianzhu): enable for SPv2.
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return;
 
   SetBodyInnerHTML(
@@ -71,7 +84,7 @@ TEST_P(PaintInvalidationTest, UpdateVisualRectOnFrameBorderWidthChange) {
       "</style>"
       "<iframe id='iframe'></iframe>");
 
-  Element* iframe = GetDocument().GetElementById("iframe");
+  Element* iframe = GetDocument().getElementById("iframe");
   LayoutView* child_layout_view = ChildDocument().GetLayoutView();
   EXPECT_EQ(GetDocument().GetLayoutView(),
             &child_layout_view->ContainerForPaintInvalidation());
@@ -111,10 +124,10 @@ TEST_P(PaintInvalidationTest, InvisibleTransformUnderFixedOnScroll) {
       "  <div id='transform'></div>"
       "</div>");
 
-  auto& fixed = *GetDocument().GetElementById("fixed");
+  auto& fixed = *GetDocument().getElementById("fixed");
   const auto& fixed_object = ToLayoutBox(*fixed.GetLayoutObject());
   const auto& fixed_layer = *fixed_object.Layer();
-  auto& transform = *GetDocument().GetElementById("transform");
+  auto& transform = *GetDocument().getElementById("transform");
   EXPECT_TRUE(fixed_layer.SubtreeIsInvisible());
   EXPECT_EQ(LayoutRect(0, 0, 110, 120), fixed_object.LayoutOverflowRect());
 
@@ -132,9 +145,10 @@ TEST_P(PaintInvalidationTest, InvisibleTransformUnderFixedOnScroll) {
   EXPECT_TRUE(fixed_object.MayNeedPaintInvalidation());
   EXPECT_EQ(LayoutRect(0, 0, 120, 130), fixed_object.LayoutOverflowRect());
 
-  // We should not repaint anything because all contents are invisible.
   GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
-  EXPECT_FALSE(fixed_layer.NeedsRepaint());
+  // Invalidation is still needed for invisible transformed content, because it
+  // may end up composited (in SPv2 mode) and move on screen.
+  EXPECT_TRUE(fixed_layer.NeedsRepaint());
   GetDocument().View()->UpdateAllLifecyclePhases();
 
   // The following ensures normal paint invalidation still works.
@@ -151,6 +165,88 @@ TEST_P(PaintInvalidationTest, InvisibleTransformUnderFixedOnScroll) {
   GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
   EXPECT_TRUE(fixed_layer.NeedsRepaint());
   GetDocument().View()->UpdateAllLifecyclePhases();
+}
+
+TEST_P(PaintInvalidationTest, DelayedFullPaintInvalidation) {
+  EnableCompositing();
+  SetBodyInnerHTML(
+      "<style>body { margin: 0 }</style>"
+      "<div style='height: 4000px'></div>"
+      "<div id='target' style='width: 100px; height: 100px; background: blue'>"
+      "</div>");
+
+  auto* target = GetLayoutObjectByElementId("target");
+  target->SetShouldDoFullPaintInvalidationWithoutGeometryChange(
+      PaintInvalidationReason::kDelayedFull);
+  EXPECT_EQ(PaintInvalidationReason::kDelayedFull,
+            target->FullPaintInvalidationReason());
+  EXPECT_FALSE(target->NeedsPaintOffsetAndVisualRectUpdate());
+
+  GetDocument().View()->SetTracksPaintInvalidations(true);
+  GetDocument().View()->UpdateAllLifecyclePhases();
+  EXPECT_FALSE(GetRasterInvalidationTracking()->HasInvalidations());
+  EXPECT_EQ(PaintInvalidationReason::kDelayedFull,
+            target->FullPaintInvalidationReason());
+  EXPECT_FALSE(target->NeedsPaintOffsetAndVisualRectUpdate());
+  GetDocument().View()->SetTracksPaintInvalidations(false);
+
+  GetDocument().View()->SetTracksPaintInvalidations(true);
+  // Scroll target into view.
+  GetDocument().domWindow()->scrollTo(0, 4000);
+  GetDocument().View()->UpdateAllLifecyclePhases();
+  const auto& raster_invalidations =
+      GetRasterInvalidationTracking()->Invalidations();
+  ASSERT_EQ(1u, raster_invalidations.size());
+  EXPECT_EQ(PaintInvalidationReason::kNone,
+            target->FullPaintInvalidationReason());
+  EXPECT_EQ(IntRect(0, 4000, 100, 100), raster_invalidations[0].rect);
+  EXPECT_EQ(PaintInvalidationReason::kFull, raster_invalidations[0].reason);
+  EXPECT_FALSE(target->NeedsPaintOffsetAndVisualRectUpdate());
+  GetDocument().View()->SetTracksPaintInvalidations(false);
+};
+
+TEST_P(PaintInvalidationTest, SVGHiddenContainer) {
+  EnableCompositing();
+  SetBodyInnerHTML(
+      "<svg style='position: absolute; top: 100px; left: 100px'>"
+      "  <mask id='mask'>"
+      "    <g transform='scale(2)'>"
+      "      <rect id='mask-rect' x='11' y='22' width='33' height='44'/>"
+      "    </g>"
+      "  </mask>"
+      "  <rect id='real-rect' x='55' y='66' width='7' height='8'"
+      "      mask='url(#mask)'/>"
+      "</svg>");
+
+  // mask_rect's visual rect is in coordinates of the mask.
+  auto* mask_rect = GetLayoutObjectByElementId("mask-rect");
+  EXPECT_EQ(LayoutRect(), mask_rect->VisualRect());
+
+  // real_rect's visual rect is in coordinates of its paint invalidation
+  // container (the view).
+  auto* real_rect = GetLayoutObjectByElementId("real-rect");
+  EXPECT_EQ(LayoutRect(155, 166, 7, 8), real_rect->VisualRect());
+
+  GetDocument().View()->SetTracksPaintInvalidations(true);
+  ToElement(mask_rect->GetNode())->setAttribute("x", "20");
+  GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
+  EXPECT_EQ(LayoutRect(), mask_rect->VisualRect());
+  EXPECT_EQ(LayoutRect(155, 166, 7, 8), real_rect->VisualRect());
+
+  // Should invalidate raster for real_rect only.
+  const auto& raster_invalidations =
+      GetRasterInvalidationTracking()->Invalidations();
+  ASSERT_EQ(1u, raster_invalidations.size());
+  EXPECT_EQ(IntRect(155, 166, 7, 8), raster_invalidations[0].rect);
+  EXPECT_EQ(PaintInvalidationReason::kFull, raster_invalidations[0].reason);
+  EXPECT_EQ(PaintInvalidationReason::kFull,
+            real_rect->GetPaintInvalidationReason());
+
+  // Should not invalidate DisplayItemClient of mask_rect.
+  EXPECT_EQ(PaintInvalidationReason::kNone,
+            mask_rect->GetPaintInvalidationReason());
+
+  GetDocument().View()->SetTracksPaintInvalidations(false);
 }
 
 }  // namespace

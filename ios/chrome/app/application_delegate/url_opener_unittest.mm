@@ -6,19 +6,21 @@
 
 #import <Foundation/Foundation.h>
 
+#include "base/test/scoped_task_environment.h"
 #include "ios/chrome/app/application_delegate/app_state.h"
 #include "ios/chrome/app/application_delegate/app_state_testing.h"
 #include "ios/chrome/app/application_delegate/mock_tab_opener.h"
-#include "ios/chrome/app/chrome_app_startup_parameters.h"
 #include "ios/chrome/app/main_application_delegate.h"
 #include "ios/chrome/app/main_controller.h"
 #include "ios/chrome/app/main_controller_private.h"
+#include "ios/chrome/app/startup/chrome_app_startup_parameters.h"
 #include "ios/chrome/browser/browser_state/test_chrome_browser_state.h"
 #import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/ui/browser_view_controller.h"
 #import "ios/chrome/test/base/scoped_block_swizzler.h"
 #import "ios/testing/ocmock_complex_type_helper.h"
 #import "net/base/mac/url_conversions.h"
+#include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
 #include "third_party/ocmock/gtest_support.h"
@@ -70,13 +72,18 @@ typedef Tab* (^mock_gurl_nsuinteger_pagetransition)(const GURL&,
 @property(nonatomic, assign) GURL tabURL;
 @property(nonatomic, assign) NSUInteger position;
 @property(nonatomic, assign) ui::PageTransition transition;
+@property(nonatomic, assign)
+    ProceduralBlock foregroundTabWasAddedCompletionBlock;
 
 - (Tab*)addSelectedTabWithURL:(const GURL&)url
                       atIndex:(NSUInteger)position
-                   transition:(ui::PageTransition)transition;
+                   transition:(ui::PageTransition)transition
+           tabAddedCompletion:(ProceduralBlock)completion;
 - (void)expectNewForegroundTab;
 - (void)setActive:(BOOL)active;
 - (TabModel*)tabModel;
+- (void)browserStateDestroyed;
+- (void)shutdown;
 @end
 
 @implementation URLOpenerMockBVC
@@ -84,13 +91,17 @@ typedef Tab* (^mock_gurl_nsuinteger_pagetransition)(const GURL&,
 @synthesize tabURL = _tabURL;
 @synthesize position = _position;
 @synthesize transition = _transition;
+@synthesize foregroundTabWasAddedCompletionBlock =
+    _foregroundTabWasAddedCompletionBlock;
 
 - (Tab*)addSelectedTabWithURL:(const GURL&)url
                       atIndex:(NSUInteger)position
-                   transition:(ui::PageTransition)transition {
+                   transition:(ui::PageTransition)transition
+           tabAddedCompletion:(ProceduralBlock)completion {
   self.tabURL = url;
   self.position = position;
   self.transition = transition;
+  self.foregroundTabWasAddedCompletionBlock = completion;
   return nil;
 }
 
@@ -110,10 +121,23 @@ typedef Tab* (^mock_gurl_nsuinteger_pagetransition)(const GURL&,
   return nil;
 }
 
+- (void)browserStateDestroyed {
+  // no-op
+}
+
+- (void)shutdown {
+  // no-op
+}
+
 @end
 
 class URLOpenerTest : public PlatformTest {
  protected:
+  void TearDown() override {
+    [main_controller_ stopChromeMain];
+    PlatformTest::TearDown();
+  }
+
   MainController* GetMainController() {
     if (!main_controller_) {
       main_controller_ = [[MainController alloc] init];
@@ -129,6 +153,7 @@ class URLOpenerTest : public PlatformTest {
   }
 
  private:
+  base::test::ScopedTaskEnvironment task_environment_;
   MainController* main_controller_;
 };
 
@@ -311,8 +336,9 @@ TEST_F(URLOpenerTest, HandleOpenURL) {
             else
               EXPECT_EQ(nil, controller.startupParameters);
           } else if (result) {
-            EXPECT_EQ(nil, controller.startupParameters);
             EXPECT_EQ([params externalURL], [tabOpener url]);
+            tabOpener.completionBlock();
+            EXPECT_EQ(nil, controller.startupParameters);
           }
         }
       }
@@ -343,9 +369,9 @@ TEST_F(URLOpenerTest, VerifyLaunchOptions) {
       id self, NSURL* urlArg, BOOL applicationActive, NSDictionary* options,
       id<TabOpening> tabOpener, id<StartupInformation> startupInformation) {
     hasBeenCalled = YES;
-    EXPECT_EQ([url absoluteString], [urlArg absoluteString]);
-    EXPECT_EQ(@"com.apple.mobilesafari",
-              options[UIApplicationOpenURLOptionsSourceApplicationKey]);
+    EXPECT_NSEQ([url absoluteString], [urlArg absoluteString]);
+    EXPECT_NSEQ(@"com.apple.mobilesafari",
+                options[UIApplicationOpenURLOptionsSourceApplicationKey]);
     EXPECT_EQ(startupInformationMock, startupInformation);
     EXPECT_EQ(tabOpenerMock, tabOpener);
     return YES;
@@ -455,9 +481,9 @@ TEST_F(URLOpenerTest, VerifyLaunchOptionsWithBadURL) {
       id self, NSURL* urlArg, BOOL applicationActive, NSDictionary* options,
       id<TabOpening> tabOpener, id<StartupInformation> startupInformation) {
     hasBeenCalled = YES;
-    EXPECT_EQ([url absoluteString], [urlArg absoluteString]);
-    EXPECT_EQ(@"com.apple.mobilesafari",
-              options[UIApplicationOpenURLOptionsSourceApplicationKey]);
+    EXPECT_NSEQ([url absoluteString], [urlArg absoluteString]);
+    EXPECT_NSEQ(@"com.apple.mobilesafari",
+                options[UIApplicationOpenURLOptionsSourceApplicationKey]);
     EXPECT_EQ(startupInformationMock, startupInformation);
     EXPECT_EQ(tabOpenerMock, tabOpener);
     return YES;

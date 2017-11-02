@@ -12,6 +12,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "content/common/gpu_stream_constants.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/web_preferences.h"
@@ -112,9 +113,11 @@ gpu::CommandBuffer::State PPB_Graphics3D_Impl::WaitForTokenInRange(
 }
 
 gpu::CommandBuffer::State PPB_Graphics3D_Impl::WaitForGetOffsetInRange(
+    uint32_t set_get_buffer_count,
     int32_t start,
     int32_t end) {
-  return GetCommandBuffer()->WaitForGetOffsetInRange(start, end);
+  return GetCommandBuffer()->WaitForGetOffsetInRange(set_get_buffer_count,
+                                                     start, end);
 }
 
 void PPB_Graphics3D_Impl::EnsureWorkVisible() {
@@ -135,6 +138,7 @@ void PPB_Graphics3D_Impl::ReturnFrontBuffer(const gpu::Mailbox& mailbox,
                                             const gpu::SyncToken& sync_token,
                                             bool is_lost) {
   command_buffer_->ReturnFrontBuffer(mailbox, sync_token, is_lost);
+  mailboxes_to_reuse_.push_back(mailbox);
 }
 
 bool PPB_Graphics3D_Impl::BindToInstance(bool bind) {
@@ -181,15 +185,15 @@ int32_t PPB_Graphics3D_Impl::DoSwapBuffers(const gpu::SyncToken& sync_token,
     // Don't need to check for NULL from GetPluginInstance since when we're
     // bound, we know our instance is valid.
     bool is_overlay_candidate = use_image_chromium_;
-    cc::TextureMailbox texture_mailbox(
+    viz::TextureMailbox texture_mailbox(
         taken_front_buffer_, sync_token,
 // TODO(reveman): Get texture target from browser process.
 #if defined(OS_MACOSX)
         use_image_chromium_ ? GL_TEXTURE_RECTANGLE_ARB : GL_TEXTURE_2D,
 #else
-        use_image_chromium_ ? GL_TEXTURE_EXTERNAL_OES : GL_TEXTURE_2D,
+        GL_TEXTURE_2D,
 #endif
-        size, is_overlay_candidate, false);
+        size, is_overlay_candidate);
     taken_front_buffer_.SetZero();
     HostGlobals::Get()
         ->GetInstance(pp_instance())
@@ -222,7 +226,7 @@ bool PPB_Graphics3D_Impl::InitRaw(
 
   const WebPreferences& prefs = render_frame->GetWebkitPreferences();
 
-  // 3D access might be disabled or blacklisted.
+  // 3D access might be disabled.
   if (!prefs.pepper_3d_enabled)
     return false;
 
@@ -239,6 +243,12 @@ bool PPB_Graphics3D_Impl::InitRaw(
       render_thread->EstablishGpuChannelSync();
   if (!channel)
     return false;
+  // 3D access might be blacklisted.
+  if (channel->gpu_feature_info()
+          .status_values[gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL] ==
+      gpu::kGpuFeatureStatusBlacklisted) {
+    return false;
+  }
 
   has_alpha_ = requested_attribs.alpha_size > 0;
 
@@ -257,7 +267,7 @@ bool PPB_Graphics3D_Impl::InitRaw(
 
   command_buffer_ = gpu::CommandBufferProxyImpl::Create(
       std::move(channel), gpu::kNullSurfaceHandle, share_buffer,
-      gpu::GPU_STREAM_DEFAULT, gpu::GpuStreamPriority::NORMAL, attrib_helper,
+      kGpuStreamIdDefault, kGpuStreamPriorityDefault, attrib_helper,
       GURL::EmptyGURL(), base::ThreadTaskRunnerHandle::Get());
   if (!command_buffer_)
     return false;
@@ -307,8 +317,8 @@ void PPB_Graphics3D_Impl::OnGpuControlLostContext() {
   // Send context lost to plugin. This may have been caused by a PPAPI call, so
   // avoid re-entering.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&PPB_Graphics3D_Impl::SendContextLost,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&PPB_Graphics3D_Impl::SendContextLost,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 void PPB_Graphics3D_Impl::OnGpuControlLostContextMaybeReentrant() {

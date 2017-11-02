@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.signin;
 
 import android.accounts.Account;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.AsyncTask;
 
@@ -21,7 +22,7 @@ import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.signin.SigninManager.SignInCallback;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.sync.AndroidSyncSettings;
 
@@ -53,6 +54,7 @@ public class SigninHelper {
     private static final String ACCOUNT_RENAME_EVENT_INDEX_PREFS_KEY =
             "prefs_sync_account_rename_event_index";
 
+    @SuppressLint("StaticFieldLeak")
     private static SigninHelper sInstance;
 
     /**
@@ -65,7 +67,7 @@ public class SigninHelper {
 
     /**
      * Uses GoogleAuthUtil.getAccountChangeEvents to detect if account
-     * renaming has occured.
+     * renaming has occurred.
      */
     public static final class SystemAccountChangeEventChecker
             implements SigninHelper.AccountChangeEventChecker {
@@ -144,7 +146,7 @@ public class SigninHelper {
             if (lastSyncAccountName != null && !lastSyncAccountName.isEmpty()) return;
 
             if (!chromePreferenceManager.getSigninPromoShown()
-                    && AccountManagerHelper.get().getGoogleAccountNames().size() > 0) {
+                    && AccountManagerFacade.get().tryGetGoogleAccountNames().size() > 0) {
                 chromePreferenceManager.setShowSigninPromo(true);
             }
 
@@ -238,7 +240,7 @@ public class SigninHelper {
 
     private void performResignin(String newName) {
         // This is the correct account now.
-        final Account account = AccountManagerHelper.createAccountFromName(newName);
+        final Account account = AccountManagerFacade.createAccountFromName(newName);
 
         mSigninManager.signIn(account, null, new SignInCallback() {
             @Override
@@ -255,7 +257,7 @@ public class SigninHelper {
     }
 
     private static boolean accountExists(Context context, Account account) {
-        Account[] accounts = AccountManagerHelper.get().getGoogleAccounts();
+        Account[] accounts = AccountManagerFacade.get().tryGetGoogleAccounts();
         for (Account a : accounts) {
             if (a.equals(account)) {
                 return true;
@@ -333,7 +335,7 @@ public class SigninHelper {
                         // We need to check if that account is further renamed.
                         newName = name;
                         if (!accountExists(
-                                context, AccountManagerHelper.createAccountFromName(newName))) {
+                                    context, AccountManagerFacade.createAccountFromName(newName))) {
                             newIndex = 0; // Start from the beginning of the new account.
                             continue outerLoop;
                         }

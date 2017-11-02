@@ -98,6 +98,9 @@ DownloadInterruptReason ConvertNetErrorToInterruptReason(
     case net::ERR_REQUEST_RANGE_NOT_SATISFIABLE:
       return DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE;
 
+    case net::ERR_CONTENT_LENGTH_MISMATCH:
+      return DOWNLOAD_INTERRUPT_REASON_SERVER_CONTENT_LENGTH_MISMATCH;
+
     default: break;
   }
 
@@ -115,6 +118,36 @@ DownloadInterruptReason ConvertNetErrorToInterruptReason(
 
   NOTREACHED();
 
+  return DOWNLOAD_INTERRUPT_REASON_NONE;
+}
+
+DownloadInterruptReason ConvertMojoNetworkRequestStatusToInterruptReason(
+    mojom::NetworkRequestStatus status) {
+  switch (status) {
+    case mojom::NetworkRequestStatus::OK:
+      return DOWNLOAD_INTERRUPT_REASON_NONE;
+    case mojom::NetworkRequestStatus::NETWORK_TIMEOUT:
+      return DOWNLOAD_INTERRUPT_REASON_NETWORK_TIMEOUT;
+    case mojom::NetworkRequestStatus::NETWORK_DISCONNECTED:
+      return DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED;
+    case mojom::NetworkRequestStatus::NETWORK_SERVER_DOWN:
+      return DOWNLOAD_INTERRUPT_REASON_NETWORK_SERVER_DOWN;
+    case mojom::NetworkRequestStatus::SERVER_NO_RANGE:
+      return DOWNLOAD_INTERRUPT_REASON_SERVER_NO_RANGE;
+    case mojom::NetworkRequestStatus::SERVER_CONTENT_LENGTH_MISMATCH:
+      return DOWNLOAD_INTERRUPT_REASON_SERVER_CONTENT_LENGTH_MISMATCH;
+    case mojom::NetworkRequestStatus::SERVER_UNREACHABLE:
+      return DOWNLOAD_INTERRUPT_REASON_SERVER_UNREACHABLE;
+    case mojom::NetworkRequestStatus::SERVER_CERT_PROBLEM:
+      return DOWNLOAD_INTERRUPT_REASON_SERVER_CERT_PROBLEM;
+    case mojom::NetworkRequestStatus::USER_CANCELED:
+      return DOWNLOAD_INTERRUPT_REASON_USER_CANCELED;
+    case mojom::NetworkRequestStatus::NETWORK_FAILED:
+      return DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED;
+    default:
+      NOTREACHED();
+      break;
+  }
   return DOWNLOAD_INTERRUPT_REASON_NONE;
 }
 

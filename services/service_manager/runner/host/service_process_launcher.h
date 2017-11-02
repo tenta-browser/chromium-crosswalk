@@ -15,9 +15,11 @@
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "base/synchronization/waitable_event.h"
-#include "mojo/edk/embedder/pending_process_connection.h"
+#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
 #include "mojo/edk/embedder/platform_channel_pair.h"
 #include "services/service_manager/public/interfaces/service_factory.mojom.h"
+#include "services/service_manager/runner/host/service_process_launcher_delegate.h"
+#include "services/service_manager/sandbox/sandbox_type.h"
 
 namespace base {
 class CommandLine;
@@ -41,30 +43,18 @@ class ServiceProcessLauncher {
  public:
   using ProcessReadyCallback = base::Callback<void(base::ProcessId)>;
 
-  class Delegate {
-   public:
-    // Called to adjust the commandline for launching the specified app.
-    // WARNING: this is called on a background thread.
-    virtual void AdjustCommandLineArgumentsForTarget(
-        const Identity& target,
-        base::CommandLine* command_line) = 0;
-
-   protected:
-    virtual ~Delegate() {}
-  };
-
   // |name| is just for debugging ease. We will spawn off a process so that it
   // can be sandboxed if |start_sandboxed| is true. |service_path| is a path to
   // the service executable we wish to start.
   ServiceProcessLauncher(base::TaskRunner* launch_process_runner,
-                         Delegate* delegate,
+                         ServiceProcessLauncherDelegate* delegate,
                          const base::FilePath& service_path);
   ~ServiceProcessLauncher();
 
   // |Start()|s the child process; calls |DidStart()| (on the thread on which
   // |Start()| was called) when the child has been started (or failed to start).
   mojom::ServicePtr Start(const Identity& target,
-                          bool start_sandboxed,
+                          SandboxType sandbox_type,
                           const ProcessReadyCallback& callback);
 
   // Waits for the child process to terminate.
@@ -75,8 +65,8 @@ class ServiceProcessLauncher {
   void DoLaunch(std::unique_ptr<base::CommandLine> child_command_line);
 
   scoped_refptr<base::TaskRunner> launch_process_runner_;
-  Delegate* delegate_ = nullptr;
-  bool start_sandboxed_ = false;
+  ServiceProcessLauncherDelegate* delegate_ = nullptr;
+  SandboxType sandbox_type_ = SANDBOX_TYPE_NO_SANDBOX;
   Identity target_;
   base::FilePath service_path_;
   base::Process child_process_;
@@ -84,7 +74,7 @@ class ServiceProcessLauncher {
   // Used to initialize the Mojo IPC channel between parent and child.
   std::unique_ptr<mojo::edk::PlatformChannelPair> mojo_ipc_channel_;
   mojo::edk::HandlePassingInformation handle_passing_info_;
-  mojo::edk::PendingProcessConnection process_connection_;
+  mojo::edk::OutgoingBrokerClientInvitation broker_client_invitation_;
 
   // Since Start() calls a method on another thread, we use an event to block
   // the main thread if it tries to destruct |this| while launching the process.
@@ -93,13 +83,6 @@ class ServiceProcessLauncher {
   base::WeakPtrFactory<ServiceProcessLauncher> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceProcessLauncher);
-};
-
-class ServiceProcessLauncherFactory {
- public:
-  virtual ~ServiceProcessLauncherFactory() {}
-  virtual std::unique_ptr<ServiceProcessLauncher> Create(
-      const base::FilePath& service_path) = 0;
 };
 
 }  // namespace service_manager

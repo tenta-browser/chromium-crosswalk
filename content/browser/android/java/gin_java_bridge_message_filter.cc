@@ -87,16 +87,17 @@ void GinJavaBridgeMessageFilter::RemoveHost(GinJavaBridgeDispatcherHost* host) {
 // static
 scoped_refptr<GinJavaBridgeMessageFilter> GinJavaBridgeMessageFilter::FromHost(
     GinJavaBridgeDispatcherHost* host, bool create_if_not_exists) {
-  RenderProcessHost* rph = host->web_contents()->GetRenderProcessHost();
+  RenderProcessHost* rph = host->web_contents()->GetMainFrame()->GetProcess();
   scoped_refptr<GinJavaBridgeMessageFilter> filter =
       base::UserDataAdapter<GinJavaBridgeMessageFilter>::Get(
           rph, kGinJavaBridgeMessageFilterKey);
   if (!filter && create_if_not_exists) {
     filter = new GinJavaBridgeMessageFilter();
     rph->AddFilter(filter.get());
-    rph->SetUserData(kGinJavaBridgeMessageFilterKey,
-                     new base::UserDataAdapter<GinJavaBridgeMessageFilter>(
-                         filter.get()));
+    rph->SetUserData(
+        kGinJavaBridgeMessageFilterKey,
+        base::MakeUnique<base::UserDataAdapter<GinJavaBridgeMessageFilter>>(
+            filter.get()));
   }
   return filter;
 }
@@ -172,7 +173,7 @@ void GinJavaBridgeMessageFilter::OnObjectWrapperDeleted(
 // static
 void GinJavaBridgeMessageFilter::RemoveFilter(
     GinJavaBridgeDispatcherHost* host) {
-  RenderProcessHost* rph = host->web_contents()->GetRenderProcessHost();
+  RenderProcessHost* rph = host->web_contents()->GetMainFrame()->GetProcess();
   rph->RemoveUserData(kGinJavaBridgeMessageFilterKey);
 }
 

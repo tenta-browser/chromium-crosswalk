@@ -7,15 +7,18 @@
 #include "base/bind.h"
 #include "base/environment.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/test_message_loop.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "media/audio/audio_device_description.h"
+#include "media/audio/audio_device_info_accessor_for_tests.h"
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_manager.h"
 #include "media/audio/audio_unittest_util.h"
+#include "media/audio/test_audio_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
@@ -24,17 +27,13 @@ namespace media {
 // expected and if any error has been reported.
 class TestInputCallback : public AudioInputStream::AudioInputCallback {
  public:
-  explicit TestInputCallback()
-      : callback_count_(0),
-        had_error_(0) {
-  }
-  void OnData(AudioInputStream* stream,
-              const AudioBus* source,
-              uint32_t hardware_delay_bytes,
+  TestInputCallback() : callback_count_(0), had_error_(0) {}
+  void OnData(const AudioBus* source,
+              base::TimeTicks capture_time,
               double volume) override {
     ++callback_count_;
   }
-  void OnError(AudioInputStream* stream) override { ++had_error_; }
+  void OnError() override { ++had_error_; }
   // Returns how many times OnData() has been called.
   int callback_count() const {
     return callback_count_;
@@ -54,16 +53,17 @@ class AudioInputTest : public testing::Test {
   AudioInputTest()
       : message_loop_(base::MessageLoop::TYPE_UI),
         audio_manager_(AudioManager::CreateForTesting(
-            base::ThreadTaskRunnerHandle::Get())),
+            base::MakeUnique<TestAudioThread>())),
         audio_input_stream_(NULL) {
     base::RunLoop().RunUntilIdle();
   }
 
-  ~AudioInputTest() override {}
+  ~AudioInputTest() override { audio_manager_->Shutdown(); }
 
  protected:
   bool InputDevicesAvailable() {
-    return audio_manager_->HasAudioInputDevices();
+    return AudioDeviceInfoAccessorForTests(audio_manager_.get())
+        .HasAudioInputDevices();
   }
 
   void MakeAudioInputStreamOnAudioThread() {
@@ -107,8 +107,9 @@ class AudioInputTest : public testing::Test {
 
   void MakeAudioInputStream() {
     DCHECK(audio_manager_->GetTaskRunner()->BelongsToCurrentThread());
-    AudioParameters params = audio_manager_->GetInputStreamParameters(
-        AudioDeviceDescription::kDefaultDeviceId);
+    AudioParameters params =
+        AudioDeviceInfoAccessorForTests(audio_manager_.get())
+            .GetInputStreamParameters(AudioDeviceDescription::kDefaultDeviceId);
     audio_input_stream_ = audio_manager_->MakeAudioInputStream(
         params, AudioDeviceDescription::kDefaultDeviceId,
         base::Bind(&AudioInputTest::OnLogMessage, base::Unretained(this)));
@@ -152,7 +153,7 @@ class AudioInputTest : public testing::Test {
   void OnLogMessage(const std::string& message) {}
 
   base::TestMessageLoop message_loop_;
-  ScopedAudioManagerPtr audio_manager_;
+  std::unique_ptr<AudioManager> audio_manager_;
   AudioInputStream* audio_input_stream_;
 
  private:

@@ -4,54 +4,55 @@
 
 cr.define('settings', function() {
   /** @interface */
-  function LifetimeBrowserProxy() {}
-
-  LifetimeBrowserProxy.prototype = {
+  class LifetimeBrowserProxy {
     // Triggers a browser restart.
-    restart: function() {},
+    restart() {}
 
     // Triggers a browser relaunch.
-    relaunch: function() {},
+    relaunch() {}
 
-// <if expr="chromeos">
+    // <if expr="chromeos">
     // First signs out current user and then performs a restart.
-    signOutAndRestart: function() {},
+    signOutAndRestart() {}
 
-    // Triggers a factory reset.
-    factoryReset: function() {},
-// </if>
-  };
+    /**
+     * Triggers a factory reset. The parameter indicates whether to install a
+     * TPM firmware update (if available) after the reset.
+     *
+     * @param {boolean=} requestTpmFirmwareUpdate
+     */
+    factoryReset(requestTpmFirmwareUpdate) {}
+    // </if>
+  }
 
   /**
-   * @constructor
    * @implements {settings.LifetimeBrowserProxy}
    */
-  function LifetimeBrowserProxyImpl() {}
-  cr.addSingletonGetter(LifetimeBrowserProxyImpl);
-
-  LifetimeBrowserProxyImpl.prototype = {
+  class LifetimeBrowserProxyImpl {
     /** @override */
-    restart: function() {
+    restart() {
       chrome.send('restart');
-    },
+    }
 
     /** @override */
-    relaunch: function() {
+    relaunch() {
       chrome.send('relaunch');
-    },
+    }
 
-// <if expr="chromeos">
+    // <if expr="chromeos">
     /** @override */
-    signOutAndRestart: function() {
+    signOutAndRestart() {
       chrome.send('signOutAndRestart');
-    },
+    }
 
     /** @override */
-    factoryReset: function() {
-      chrome.send('factoryReset');
-    },
-// </if>
-  };
+    factoryReset(requestTpmFirmwareUpdate) {
+      chrome.send('factoryReset', [requestTpmFirmwareUpdate]);
+    }
+    // </if>
+  }
+
+  cr.addSingletonGetter(LifetimeBrowserProxyImpl);
 
   return {
     LifetimeBrowserProxy: LifetimeBrowserProxy,

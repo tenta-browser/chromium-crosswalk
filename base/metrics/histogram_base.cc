@@ -91,15 +91,19 @@ void HistogramBase::AddBoolean(bool value) {
   Add(value ? 1 : 0);
 }
 
-bool HistogramBase::SerializeInfo(Pickle* pickle) const {
-  if (!pickle->WriteInt(GetHistogramType()))
-    return false;
-  return SerializeInfoImpl(pickle);
+void HistogramBase::SerializeInfo(Pickle* pickle) const {
+  pickle->WriteInt(GetHistogramType());
+  SerializeInfoImpl(pickle);
 }
 
 uint32_t HistogramBase::FindCorruption(const HistogramSamples& samples) const {
   // Not supported by default.
   return NO_INCONSISTENCIES;
+}
+
+bool HistogramBase::ValidateHistogramContents(bool crash_if_invalid,
+                                              int corrupted_count) const {
+  return true;
 }
 
 void HistogramBase::WriteJSON(std::string* output) const {

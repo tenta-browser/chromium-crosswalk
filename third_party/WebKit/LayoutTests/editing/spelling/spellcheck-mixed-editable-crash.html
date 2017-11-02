@@ -14,5 +14,8 @@ test(function() {
     selection.collapse(text, text.length);
     // Trigger spell checking
     selection.modify('move', 'right', 'character');
+
+    if (window.internals)
+      internals.runIdleTimeSpellChecker(document);
 });
 </script>

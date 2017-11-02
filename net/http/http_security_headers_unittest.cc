@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include <stdint.h>
-#include <algorithm>
 
 #include "base/base64.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "crypto/sha2.h"
 #include "net/base/host_port_pair.h"
@@ -19,6 +19,10 @@
 namespace net {
 
 namespace {
+
+namespace test_default {
+#include "net/http/transport_security_state_static_unittest_default.h"
+}
 
 HashValue GetTestHashValue(uint8_t label, HashValueTag tag) {
   HashValue hash_value(tag);
@@ -57,7 +61,7 @@ std::string GetTestPinUnquoted(uint8_t label, HashValueTag tag) {
   return GetTestPinImpl(label, tag, false);
 }
 
-};
+}  // anonymous namespace
 
 // Parses the given header |value| as both a Public-Key-Pins-Report-Only
 // and Public-Key-Pins header. Returns true if the value parses
@@ -88,6 +92,10 @@ bool ParseAsHPKPHeader(const std::string& value,
 }
 
 class HttpSecurityHeadersTest : public testing::Test {
+ public:
+  ~HttpSecurityHeadersTest() override {
+    SetTransportSecurityStateSourceForTesting(nullptr);
+  }
 };
 
 
@@ -653,12 +661,13 @@ TEST_F(HttpSecurityHeadersTest, ValidPKPHeadersSHA256) {
 }
 
 TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPOnly) {
+  SetTransportSecurityStateSourceForTesting(&test_default::kHSTSSource);
+
   TransportSecurityState state;
   TransportSecurityState::STSState static_sts_state;
   TransportSecurityState::PKPState static_pkp_state;
 
-  // docs.google.com has preloaded pins.
-  std::string domain = "docs.google.com";
+  std::string domain = "no-rejected-pins-pkp.preloaded.test";
   state.enable_static_pins_ = true;
   EXPECT_TRUE(
       state.GetStaticDomainState(domain, &static_sts_state, &static_pkp_state));
@@ -670,7 +679,7 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPOnly) {
   HashValue backup_hash = GetTestHashValue(2, HASH_VALUE_SHA256);
   std::string good_pin = GetTestPin(1, HASH_VALUE_SHA256);
   std::string backup_pin = GetTestPin(2, HASH_VALUE_SHA256);
-  GURL report_uri("http://google.com");
+  GURL report_uri("http://report-uri.test/pkp");
   std::string header = "max-age = 10000; " + good_pin + "; " + backup_pin +
                        ";report-uri=\"" + report_uri.spec() + "\"";
 
@@ -693,14 +702,9 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPOnly) {
   EXPECT_EQ(2UL, dynamic_pkp_state.spki_hashes.size());
   EXPECT_EQ(report_uri, dynamic_pkp_state.report_uri);
 
-  HashValueVector::const_iterator hash =
-      std::find(dynamic_pkp_state.spki_hashes.begin(),
-                dynamic_pkp_state.spki_hashes.end(), good_hash);
-  EXPECT_NE(dynamic_pkp_state.spki_hashes.end(), hash);
+  EXPECT_TRUE(base::ContainsValue(dynamic_pkp_state.spki_hashes, good_hash));
 
-  hash = std::find(dynamic_pkp_state.spki_hashes.begin(),
-                   dynamic_pkp_state.spki_hashes.end(), backup_hash);
-  EXPECT_NE(dynamic_pkp_state.spki_hashes.end(), hash);
+  EXPECT_TRUE(base::ContainsValue(dynamic_pkp_state.spki_hashes, backup_hash));
 
   // Expect the overall state to reflect the header, too.
   EXPECT_TRUE(state.HasPublicKeyPins(domain));
@@ -719,22 +723,21 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPOnly) {
   EXPECT_EQ(2UL, new_dynamic_pkp_state.spki_hashes.size());
   EXPECT_EQ(report_uri, new_dynamic_pkp_state.report_uri);
 
-  hash = std::find(new_dynamic_pkp_state.spki_hashes.begin(),
-                   new_dynamic_pkp_state.spki_hashes.end(), good_hash);
-  EXPECT_NE(new_dynamic_pkp_state.spki_hashes.end(), hash);
+  EXPECT_TRUE(
+      base::ContainsValue(new_dynamic_pkp_state.spki_hashes, good_hash));
 
-  hash = std::find(new_dynamic_pkp_state.spki_hashes.begin(),
-                   new_dynamic_pkp_state.spki_hashes.end(), backup_hash);
-  EXPECT_NE(new_dynamic_pkp_state.spki_hashes.end(), hash);
+  EXPECT_TRUE(
+      base::ContainsValue(new_dynamic_pkp_state.spki_hashes, backup_hash));
 }
 
 TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPMaxAge0) {
+  SetTransportSecurityStateSourceForTesting(&test_default::kHSTSSource);
+
   TransportSecurityState state;
   TransportSecurityState::STSState static_sts_state;
   TransportSecurityState::PKPState static_pkp_state;
 
-  // docs.google.com has preloaded pins.
-  std::string domain = "docs.google.com";
+  std::string domain = "no-rejected-pins-pkp.preloaded.test";
   state.enable_static_pins_ = true;
   ASSERT_TRUE(
       state.GetStaticDomainState(domain, &static_sts_state, &static_pkp_state));
@@ -807,12 +810,13 @@ TEST_F(HttpSecurityHeadersTest, UpdateDynamicPKPMaxAge0) {
 // dynamic HSTS header does not clobber the static HPKP entry. Further, adding a
 // dynamic HPKP entry could not affect the HSTS entry for the site.
 TEST_F(HttpSecurityHeadersTest, NoClobberPins) {
+  SetTransportSecurityStateSourceForTesting(&test_default::kHSTSSource);
+
   TransportSecurityState state;
   TransportSecurityState::STSState sts_state;
   TransportSecurityState::PKPState pkp_state;
 
-  // accounts.google.com has preloaded pins.
-  std::string domain = "accounts.google.com";
+  std::string domain = "hsts-hpkp-preloaded.test";
   state.enable_static_pins_ = true;
 
   // Retrieve the static STS and PKP states as it is by default, including its
@@ -905,4 +909,298 @@ TEST_F(HttpSecurityHeadersTest, IgnoreInvalidHeaders) {
                 TransportSecurityState::DISABLE_PIN_REPORTS, &failure_log));
 }
 
-};    // namespace net
+TEST_F(HttpSecurityHeadersTest, BogusExpectCTHeaders) {
+  base::TimeDelta max_age;
+  bool enforce = false;
+  GURL report_uri;
+  EXPECT_FALSE(
+      ParseExpectCTHeader(std::string(), &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("    ", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("abc", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("  abc", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("  abc   ", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("  max-age", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("  max-age  ", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-age=", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("   max-age=", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("   max-age  =", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("   max-age=   ", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("   max-age  =     ", &max_age, &enforce,
+                                   &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("   max-age  =     xy", &max_age, &enforce,
+                                   &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("   max-age  =     3488a923", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488a923  ", &max_age, &enforce,
+                                   &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-ag=3488923", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-aged=3488923", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-age==3488923", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("amax-age=3488923", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-age=-3488923", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-age=+3488923", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-age=13####", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=9223372036854775807#####", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=18446744073709551615####", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=999999999999999999999999$.&#!",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923     e", &max_age, &enforce,
+                                   &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923     includesubdomain",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923includesubdomains", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923=includesubdomains",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923 includesubdomainx",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader(
+      "max-age=3488923 includesubdomain=", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923 includesubdomain=true",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923 includesubdomainsx",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=3488923 includesubdomains x",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=34889.23 includesubdomains",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=34889 includesubdomains", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader(",,,, ,,,", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader(",,,, includeSubDomains,,,", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("   includeSubDomains,  ", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader(",", &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-age, ,", &max_age, &enforce, &report_uri));
+
+  // Test that the parser rejects misquoted or invalid report-uris.
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=999, report-uri=\"http://foo;bar\'",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=999, report-uri=\"foo;bar\"",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=999, report-uri=\"\"", &max_age,
+                                   &enforce, &report_uri));
+
+  // Test that the parser does not fix up misquoted values.
+  EXPECT_FALSE(
+      ParseExpectCTHeader("max-age=\"999", &max_age, &enforce, &report_uri));
+
+  // Test that the parser rejects headers that contain duplicate directives.
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=999, enforce, max-age=99999",
+                                   &max_age, &enforce, &report_uri));
+  EXPECT_FALSE(ParseExpectCTHeader("enforce, max-age=999, enforce", &max_age,
+                                   &enforce, &report_uri));
+  EXPECT_FALSE(
+      ParseExpectCTHeader("report-uri=\"http://foo\", max-age=999, enforce, "
+                          "report-uri=\"http://foo\"",
+                          &max_age, &enforce, &report_uri));
+
+  // Test that the parser rejects headers with values for the valueless
+  // 'enforce' directive.
+  EXPECT_FALSE(ParseExpectCTHeader("max-age=999, enforce=true", &max_age,
+                                   &enforce, &report_uri));
+
+  // Check the out args were not updated by checking the default
+  // values for its predictable fields.
+  EXPECT_EQ(0, max_age.InSeconds());
+  EXPECT_FALSE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+}
+
+TEST_F(HttpSecurityHeadersTest, ValidExpectCTHeaders) {
+  base::TimeDelta max_age;
+  bool enforce = false;
+  GURL report_uri;
+
+  EXPECT_TRUE(
+      ParseExpectCTHeader("max-age=243", &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(243), max_age);
+  EXPECT_FALSE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  EXPECT_TRUE(ParseExpectCTHeader("  Max-agE    = 567", &max_age, &enforce,
+                                  &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(567), max_age);
+  EXPECT_FALSE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  EXPECT_TRUE(ParseExpectCTHeader("  mAx-aGe    = 890      ", &max_age,
+                                  &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(890), max_age);
+  EXPECT_FALSE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  EXPECT_TRUE(ParseExpectCTHeader("max-age=123,enFoRce", &max_age, &enforce,
+                                  &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("enFoRCE, max-age=123", &max_age, &enforce,
+                                  &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("   enFORce, max-age=123", &max_age, &enforce,
+                                  &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader(
+      "report-uri=\"https://foo.test\",   enFORce, max-age=123", &max_age,
+      &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_EQ(GURL("https://foo.test"), report_uri);
+
+  enforce = false;
+  report_uri = GURL();
+  EXPECT_TRUE(
+      ParseExpectCTHeader("enforce,report-uri=\"https://foo.test\",max-age=123",
+                          &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_EQ(GURL("https://foo.test"), report_uri);
+
+  enforce = false;
+  report_uri = GURL();
+  EXPECT_TRUE(
+      ParseExpectCTHeader("enforce,report-uri=https://foo.test,max-age=123",
+                          &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_EQ(GURL("https://foo.test"), report_uri);
+
+  report_uri = GURL();
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("report-uri=\"https://foo.test\",max-age=123",
+                                  &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_FALSE(enforce);
+  EXPECT_EQ(GURL("https://foo.test"), report_uri);
+
+  report_uri = GURL();
+  EXPECT_TRUE(ParseExpectCTHeader("   enFORcE, max-age=123, pumpkin=kitten",
+                                  &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader(
+      "   pumpkin=894, report-uri=     \"https://bar\", enFORce, max-age=123  ",
+      &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_EQ(GURL("https://bar"), report_uri);
+
+  enforce = false;
+  report_uri = GURL();
+  EXPECT_TRUE(ParseExpectCTHeader("   pumpkin, enFoRcE, max-age=123  ",
+                                  &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("   pumpkin, enforce, max-age=\"123\"  ",
+                                  &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader(
+      "animal=\"squirrel, distinguished\", enFoRce, max-age=123", &max_age,
+      &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(123), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("max-age=394082,  enforce", &max_age,
+                                  &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(394082), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("max-age=39408299  ,enforce", &max_age,
+                                  &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(kMaxExpectCTAgeSecs), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  // Per RFC 7230, "a recipient MUST parse and ignore a reasonable number of
+  // empty list elements".
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader(",, max-age=394082038  , enfoRce, ,",
+                                  &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(kMaxExpectCTAgeSecs), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader(",, max-age=394082038  ,", &max_age, &enforce,
+                                  &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(kMaxExpectCTAgeSecs), max_age);
+  EXPECT_FALSE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  EXPECT_TRUE(
+      ParseExpectCTHeader(",,    , , max-age=394082038,,, enforce     ,,  ,",
+                          &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(kMaxExpectCTAgeSecs), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("enfORce   , max-age=394082038 ,,", &max_age,
+                                  &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(kMaxExpectCTAgeSecs), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader("  max-age=0  ,  enforce   ", &max_age,
+                                  &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(0), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+
+  enforce = false;
+  EXPECT_TRUE(ParseExpectCTHeader(
+      "  max-age=999999999999999999999999999999999999999999999  ,"
+      "  enforce   ",
+      &max_age, &enforce, &report_uri));
+  EXPECT_EQ(base::TimeDelta::FromSeconds(kMaxExpectCTAgeSecs), max_age);
+  EXPECT_TRUE(enforce);
+  EXPECT_TRUE(report_uri.is_empty());
+}
+
+}  // namespace net

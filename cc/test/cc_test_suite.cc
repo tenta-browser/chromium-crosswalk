@@ -6,7 +6,7 @@
 
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread_id_name_manager.h"
-#include "cc/test/paths.h"
+#include "components/viz/test/paths.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
 namespace cc {
@@ -18,10 +18,9 @@ CCTestSuite::~CCTestSuite() {}
 
 void CCTestSuite::Initialize() {
   base::TestSuite::Initialize();
+  message_loop_ = std::make_unique<base::MessageLoop>();
   gl::GLSurfaceTestSupport::InitializeOneOff();
-  CCPaths::RegisterPathProvider();
-
-  message_loop_.reset(new base::MessageLoop);
+  viz::Paths::RegisterPathProvider();
 
   base::ThreadIdNameManager::GetInstance()->SetName(
       base::PlatformThread::CurrentId(),

@@ -15,10 +15,17 @@ source_set("web_contents") {
   deps = [
     ":web_contents_ui",
     "//ios/chrome/browser",
-    "//ios/chrome/browser/web_state_list",
-    "//ios/clean/chrome/browser/ui/context_menu",
-    "//ios/shared/chrome/browser/ui/browser_list",
-    "//ios/shared/chrome/browser/ui/coordinators",
+    "//ios/chrome/browser/ui/browser_list",
+    "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/coordinators",
+    "//ios/chrome/browser/ui/sad_tab",
+    "//ios/chrome/browser/web",
+    "//ios/chrome/browser/web:tab_helper_delegates",
+    "//ios/clean/chrome/browser/ui/commands",
+    "//ios/clean/chrome/browser/ui/dialogs/context_menu",
+    "//ios/clean/chrome/browser/ui/dialogs/http_auth_dialogs",
+    "//ios/clean/chrome/browser/ui/dialogs/java_script_dialogs",
+    "//ios/clean/chrome/browser/ui/overlays",
     "//ios/web",
     "//ui/base",
     "//url",
@@ -39,6 +46,7 @@ source_set("unit_tests") {
   testonly = true
   sources = [
     "web_contents_mediator_unittest.mm",
+    "web_coordinator_unittest.mm",
   ]
 
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -48,10 +56,9 @@ source_set("unit_tests") {
     ":web_contents_ui",
     "//base",
     "//base/test:test_support",
-    "//ios/chrome/browser/web_state_list",
-    "//ios/chrome/browser/web_state_list:test_support",
+    "//ios/chrome/browser/ui/coordinators",
     "//ios/chrome/test/base",
-    "//ios/web:test_support",
+    "//ios/web/public/test/fakes",
     "//testing/gtest",
   ]
 }

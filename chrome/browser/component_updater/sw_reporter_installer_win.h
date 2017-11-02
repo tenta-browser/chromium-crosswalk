@@ -12,8 +12,8 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
-#include "chrome/browser/safe_browsing/srt_fetcher_win.h"
-#include "components/component_updater/default_component_installer.h"
+#include "chrome/browser/safe_browsing/chrome_cleaner/reporter_runner_win.h"
+#include "components/component_updater/component_installer.h"
 
 class PrefRegistrySimple;
 
@@ -31,6 +31,8 @@ namespace component_updater {
 
 class ComponentUpdateService;
 
+constexpr char kSwReporterComponentId[] = "gkmgaooipdjhmangpemjhigmamcehddo";
+
 // These MUST match the values for SwReporterExperimentError in histograms.xml.
 // Exposed for testing.
 enum SwReporterExperimentError {
@@ -44,13 +46,13 @@ using SwReporterRunner =
     base::Callback<void(const safe_browsing::SwReporterQueue& invocations,
                         const base::Version& version)>;
 
-class SwReporterInstallerTraits : public ComponentInstallerTraits {
+class SwReporterInstallerPolicy : public ComponentInstallerPolicy {
  public:
-  SwReporterInstallerTraits(const SwReporterRunner& reporter_runner,
+  SwReporterInstallerPolicy(const SwReporterRunner& reporter_runner,
                             bool is_experimental_engine_supported);
-  ~SwReporterInstallerTraits() override;
+  ~SwReporterInstallerPolicy() override;
 
-  // ComponentInstallerTraits implementation.
+  // ComponentInstallerPolicy implementation.
   bool VerifyInstallation(const base::DictionaryValue& manifest,
                           const base::FilePath& dir) const override;
   bool SupportsGroupPolicyEnabledComponentUpdates() const override;
@@ -77,7 +79,7 @@ class SwReporterInstallerTraits : public ComponentInstallerTraits {
   SwReporterRunner reporter_runner_;
   const bool is_experimental_engine_supported_;
 
-  DISALLOW_COPY_AND_ASSIGN(SwReporterInstallerTraits);
+  DISALLOW_COPY_AND_ASSIGN(SwReporterInstallerPolicy);
 };
 
 // Call once during startup to make the component update service aware of the

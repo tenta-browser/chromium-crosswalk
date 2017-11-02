@@ -50,4 +50,26 @@ class AccessibilityPrivateDarkenScreenFunction
                              ACCESSIBILITY_PRIVATE_DARKENSCREEN)
 };
 
+// API function that sets the keys to be captured by Switch Access.
+#if defined(OS_CHROMEOS)
+class AccessibilityPrivateSetSwitchAccessKeysFunction
+    : public UIThreadExtensionFunction {
+  ~AccessibilityPrivateSetSwitchAccessKeysFunction() override {}
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION("accessibilityPrivate.setSwitchAccessKeys",
+                             ACCESSIBILITY_PRIVATE_SETSWITCHACCESSKEYS)
+};
+
+// API function that sets native ChromeVox ARC support.
+class AccessibilityPrivateSetNativeChromeVoxArcSupportForCurrentAppFunction
+    : public UIThreadExtensionFunction {
+  ~AccessibilityPrivateSetNativeChromeVoxArcSupportForCurrentAppFunction()
+      override {}
+  ResponseAction Run() override;
+  DECLARE_EXTENSION_FUNCTION(
+      "accessibilityPrivate.setNativeChromeVoxArcSupportForCurrentApp",
+      ACCESSIBILITY_PRIVATE_SETNATIVECHROMEVOXARCSUPPORTFORCURRENTAPP)
+};
+#endif  // defined (OS_CHROMEOS)
+
 #endif  // CHROME_BROWSER_ACCESSIBILITY_ACCESSIBILITY_EXTENSION_API_H_

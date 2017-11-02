@@ -149,12 +149,17 @@ std::string FormatEntry(const base::FilePath& path,
 
   const base::Time last_modified = base::Time::FromInternalValue(
       file_info.last_modified());
+  const base::Time last_modified_by_me =
+      base::Time::FromInternalValue(entry.last_modified_by_me());
   const base::Time last_accessed = base::Time::FromInternalValue(
       file_info.last_accessed());
   const base::Time creation_time = base::Time::FromInternalValue(
       file_info.creation_time());
   StringAppendF(&out, "    last_modified: %s\n",
                 google_apis::util::FormatTimeAsString(last_modified).c_str());
+  StringAppendF(
+      &out, "    last_modified_by_me: %s\n",
+      google_apis::util::FormatTimeAsString(last_modified_by_me).c_str());
   StringAppendF(&out, "    last_accessed: %s\n",
                 google_apis::util::FormatTimeAsString(last_accessed).c_str());
   StringAppendF(&out, "    creation_time: %s\n",
@@ -352,7 +357,7 @@ void DriveInternalsWebUIHandler::OnGetAppList(
   base::DictionaryValue app_list;
   app_list.SetString("etag", parsed_app_list->etag());
 
-  base::ListValue* items = new base::ListValue();
+  auto items = base::MakeUnique<base::ListValue>();
   for (size_t i = 0; i < parsed_app_list->items().size(); ++i) {
     const google_apis::AppResource* app = parsed_app_list->items()[i].get();
     auto app_data = base::MakeUnique<base::DictionaryValue>();
@@ -363,7 +368,7 @@ void DriveInternalsWebUIHandler::OnGetAppList(
 
     items->Append(std::move(app_data));
   }
-  app_list.Set("items", items);
+  app_list.Set("items", std::move(items));
 
   web_ui()->CallJavascriptFunctionUnsafe("updateAppList", app_list);
 }
@@ -671,13 +676,13 @@ void DriveInternalsWebUIHandler::UpdateGCacheContentsSection() {
   base::ListValue* gcache_contents = new base::ListValue;
   base::DictionaryValue* gcache_summary = new base::DictionaryValue;
   base::PostTaskWithTraitsAndReply(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::USER_VISIBLE),
-      base::Bind(&GetGCacheContents, root_path, gcache_contents,
-                 gcache_summary),
-      base::Bind(&DriveInternalsWebUIHandler::OnGetGCacheContents,
-                 weak_ptr_factory_.GetWeakPtr(), base::Owned(gcache_contents),
-                 base::Owned(gcache_summary)));
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+      base::BindOnce(&GetGCacheContents, root_path, gcache_contents,
+                     gcache_summary),
+      base::BindOnce(&DriveInternalsWebUIHandler::OnGetGCacheContents,
+                     weak_ptr_factory_.GetWeakPtr(),
+                     base::Owned(gcache_contents),
+                     base::Owned(gcache_summary)));
 }
 
 void DriveInternalsWebUIHandler::UpdateFileSystemContentsSection() {
@@ -711,12 +716,11 @@ void DriveInternalsWebUIHandler::UpdateLocalStorageUsageSection() {
   if (PathService::Get(base::DIR_HOME, &home_path)) {
     base::DictionaryValue* local_storage_summary = new base::DictionaryValue;
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                       base::TaskPriority::USER_VISIBLE),
-        base::Bind(&GetFreeDiskSpace, home_path, local_storage_summary),
-        base::Bind(&DriveInternalsWebUIHandler::OnGetFreeDiskSpace,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   base::Owned(local_storage_summary)));
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
+        base::BindOnce(&GetFreeDiskSpace, home_path, local_storage_summary),
+        base::BindOnce(&DriveInternalsWebUIHandler::OnGetFreeDiskSpace,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       base::Owned(local_storage_summary)));
   } else {
     LOG(ERROR) << "Home directory not found";
   }

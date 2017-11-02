@@ -5,6 +5,7 @@
 import("//build/config/features.gni")
 
 if (is_android) {
+  import("//build/config/android/config.gni")
   import("//build/config/android/rules.gni")  # For generate_jni().
 }
 
@@ -13,20 +14,20 @@ component("geolocation") {
 
   sources = [
     "access_token_store.h",
-    "android/geolocation_jni_registrar.cc",
-    "android/geolocation_jni_registrar.h",
     "empty_wifi_data_provider.cc",
     "empty_wifi_data_provider.h",
+    "geolocation_config.cc",
+    "geolocation_config.h",
+    "geolocation_context.cc",
+    "geolocation_context.h",
     "geolocation_delegate.cc",
     "geolocation_delegate.h",
     "geolocation_export.h",
+    "geolocation_impl.cc",
+    "geolocation_impl.h",
     "geolocation_provider.h",
     "geolocation_provider_impl.cc",
     "geolocation_provider_impl.h",
-    "geolocation_service_context.cc",
-    "geolocation_service_context.h",
-    "geolocation_service_impl.cc",
-    "geolocation_service_impl.h",
     "geoposition.cc",
     "geoposition.h",
     "location_api_adapter_android.cc",
@@ -63,7 +64,6 @@ component("geolocation") {
 
   deps = [
     "//base",
-    "//google_apis:google_apis",
     "//mojo/edk/system",
     "//mojo/public/cpp/bindings",
     "//net",
@@ -127,11 +127,15 @@ if (is_android) {
       "android/java/src/org/chromium/device/geolocation/LocationProviderAdapter.java",
       "android/java/src/org/chromium/device/geolocation/LocationProviderAndroid.java",
       "android/java/src/org/chromium/device/geolocation/LocationProviderFactory.java",
+      "android/java/src/org/chromium/device/geolocation/LocationProviderGmsCore.java",
     ]
 
     deps = [
       ":geolocation",
       ":geolocation_jni_headers",
+      "$google_play_services_package:google_play_services_base_java",
+      "$google_play_services_package:google_play_services_basement_java",
+      "$google_play_services_package:google_play_services_location_java",
       "//base:base_java",
     ]
   }

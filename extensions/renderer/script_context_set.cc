@@ -43,7 +43,7 @@ ScriptContext* ScriptContextSet::Register(
   const Extension* effective_extension =
       GetExtensionFromFrameAndWorld(frame, world_id, true);
 
-  GURL frame_url = ScriptContext::GetDataSourceURLForFrame(frame);
+  GURL frame_url = ScriptContext::GetDocumentLoaderURLForFrame(frame);
   Feature::Context context_type = ClassifyJavaScriptContext(
       extension, world_id, frame_url, frame->GetDocument().GetSecurityOrigin());
   Feature::Context effective_context_type = ClassifyJavaScriptContext(
@@ -111,9 +111,6 @@ void ScriptContextSet::ForEach(
     }
 
     content::RenderFrame* context_render_frame = context->GetRenderFrame();
-    if (!context_render_frame)
-      continue;
-
     if (render_frame && render_frame != context_render_frame)
       continue;
 
@@ -131,7 +128,7 @@ void ScriptContextSet::AddForTesting(std::unique_ptr<ScriptContext> context) {
 }
 
 const Extension* ScriptContextSet::GetExtensionFromFrameAndWorld(
-    const blink::WebLocalFrame* frame,
+    blink::WebLocalFrame* frame,
     int world_id,
     bool use_effective_url) {
   std::string extension_id;
@@ -199,10 +196,13 @@ Feature::Context ScriptContextSet::ClassifyJavaScriptContext(
     // case this would usually be considered a (blessed) web page context,
     // unless the extension in question is a component extension, in which case
     // we cheat and call it blessed.
-    return (extension->is_hosted_app() &&
-            extension->location() != Manifest::COMPONENT)
-               ? Feature::BLESSED_WEB_PAGE_CONTEXT
-               : Feature::BLESSED_EXTENSION_CONTEXT;
+    if (extension->is_hosted_app() &&
+        extension->location() != Manifest::COMPONENT) {
+      return Feature::BLESSED_WEB_PAGE_CONTEXT;
+    }
+
+    return is_lock_screen_context_ ? Feature::LOCK_SCREEN_EXTENSION_CONTEXT
+                                   : Feature::BLESSED_EXTENSION_CONTEXT;
   }
 
   // TODO(kalman): This isUnique() check is wrong, it should be performed as

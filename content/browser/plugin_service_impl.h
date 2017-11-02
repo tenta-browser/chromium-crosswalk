@@ -15,8 +15,6 @@
 #endif
 
 #include <map>
-#include <memory>
-#include <set>
 #include <vector>
 
 #include "base/compiler_specific.h"
@@ -43,18 +41,13 @@
 #include "base/files/file_path_watcher.h"
 #endif
 
-namespace base {
-class SingleThreadTaskRunner;
-}
-
 namespace content {
 class BrowserContext;
 class PluginServiceFilter;
 class ResourceContext;
 struct PepperPluginInfo;
 
-class CONTENT_EXPORT PluginServiceImpl
-    : NON_EXPORTED_BASE(public PluginService) {
+class CONTENT_EXPORT PluginServiceImpl : public PluginService {
  public:
   // Returns the PluginServiceImpl singleton.
   static PluginServiceImpl* GetInstance();
@@ -80,7 +73,7 @@ class CONTENT_EXPORT PluginServiceImpl
                            WebPluginInfo* info) override;
   base::string16 GetPluginDisplayNameByPath(
       const base::FilePath& path) override;
-  void GetPlugins(const GetPluginsCallback& callback) override;
+  void GetPlugins(GetPluginsCallback callback) override;
   PepperPluginInfo* GetRegisteredPpapiPluginInfo(
       const base::FilePath& plugin_path) override;
   void SetFilter(PluginServiceFilter* filter) override;
@@ -142,9 +135,8 @@ class CONTENT_EXPORT PluginServiceImpl
 
   void RegisterPepperPlugins();
 
-  // Run on the blocking pool to load the plugins synchronously.
-  void GetPluginsInternal(base::SingleThreadTaskRunner* target_task_runner,
-                          const GetPluginsCallback& callback);
+  // Loads the plugins synchronously in a thread pool.
+  std::vector<WebPluginInfo> GetPluginsInternal();
 
   std::vector<PepperPluginInfo> ppapi_plugins_;
 

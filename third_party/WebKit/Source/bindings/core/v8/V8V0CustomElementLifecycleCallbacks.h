@@ -33,10 +33,10 @@
 
 #include <memory>
 
-#include "bindings/core/v8/ScopedPersistent.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "core/dom/custom/V0CustomElementLifecycleCallbacks.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "core/html/custom/V0CustomElementLifecycleCallbacks.h"
+#include "platform/bindings/ScopedPersistent.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/wtf/RefPtr.h"
 #include "v8/include/v8.h"
 
 namespace blink {

@@ -281,9 +281,8 @@ TEST(FileManagerFileTasksTest, ChooseAndSetDefaultTask_MultipleTasks) {
   // Set Text.app as default for "text/plain" in the preferences.
   base::DictionaryValue empty;
   base::DictionaryValue mime_types;
-  mime_types.SetStringWithoutPathExpansion(
-      "text/plain",
-      TaskDescriptorToId(text_app_task));
+  mime_types.SetKey("text/plain",
+                    base::Value(TaskDescriptorToId(text_app_task)));
   UpdateDefaultTaskPreferences(&pref_service, mime_types, empty);
 
   // Text.app should be chosen as default.
@@ -302,9 +301,7 @@ TEST(FileManagerFileTasksTest, ChooseAndSetDefaultTask_MultipleTasks) {
 
   // Set Nice.app as default for ".txt" in the preferences.
   base::DictionaryValue suffixes;
-  suffixes.SetStringWithoutPathExpansion(
-      ".txt",
-      TaskDescriptorToId(nice_app_task));
+  suffixes.SetKey(".txt", base::Value(TaskDescriptorToId(nice_app_task)));
   UpdateDefaultTaskPreferences(&pref_service, empty, suffixes);
 
   // Now Nice.app should be chosen as default.
@@ -334,6 +331,30 @@ TEST(FileManagerFileTasksTest, ChooseAndSetDefaultTask_FallbackFileBrowser) {
 
   // The internal file browser handler should be chosen as default, as it's a
   // fallback file browser handler.
+  ChooseAndSetDefaultTask(pref_service, entries, &tasks);
+  EXPECT_TRUE(tasks[0].is_default());
+}
+
+// Test that Text.app is chosen as default even if nothing is set in the
+// preferences.
+TEST(FileManagerFileTasksTest, ChooseAndSetDefaultTask_FallbackTextApp) {
+  TestingPrefServiceSimple pref_service;
+  RegisterDefaultTaskPreferences(&pref_service);
+
+  // The text editor app was found for "foo.txt".
+  TaskDescriptor files_app_task(kTextEditorAppId, TASK_TYPE_FILE_HANDLER,
+                                "Text");
+  std::vector<FullTaskDescriptor> tasks;
+  tasks.push_back(FullTaskDescriptor(
+      files_app_task, "Text", Verb::VERB_OPEN_WITH,
+      GURL("chrome://extension-icon/mmfbcljfglbokpmkimbfghdkjmjhdgbg/16/1"),
+      false /* is_default */, false /* is_generic_file_handler */));
+  std::vector<extensions::EntryInfo> entries;
+  entries.push_back(extensions::EntryInfo(
+      base::FilePath::FromUTF8Unsafe("foo.txt"), "text/plain", false));
+
+  // The text editor app should be chosen as default, as it's a fallback file
+  // browser handler.
   ChooseAndSetDefaultTask(pref_service, entries, &tasks);
   EXPECT_TRUE(tasks[0].is_default());
 }

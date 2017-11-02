@@ -18,9 +18,6 @@
 #include "components/ntp_snippets/category.h"
 #include "components/ntp_snippets/content_suggestion.h"
 #include "components/ntp_snippets/features.h"
-#include "components/ntp_snippets/pref_names.h"
-#include "components/prefs/pref_registry_simple.h"
-#include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/variations/variations_associated_data.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -34,16 +31,12 @@ namespace ntp_snippets {
 namespace {
 
 const int kMaxBookmarks = 10;
-const int kMaxBookmarkAgeInDays = 42;
+const int kMaxBookmarkAgeInDays = 7;
 
 const char* kMaxBookmarksParamName = "bookmarks_max_count";
 const char* kMaxBookmarkAgeInDaysParamName = "bookmarks_max_age_in_days";
 const char* kConsiderDesktopVisitsParamName =
     "bookmarks_consider_desktop_visits";
-
-// TODO(treib,jkrcal): Remove this after M57.
-const char kDeprecatedBookmarksFirstM54StartPref[] =
-    "ntp_suggestions.bookmarks.first_M54_start";
 
 // Any bookmark created or visited after this time will be considered recent.
 // Note that bookmarks can be shown that do not meet this threshold.
@@ -64,15 +57,14 @@ int GetMaxCount() {
 bool AreDesktopVisitsConsidered() {
   return variations::GetVariationParamByFeatureAsBool(
       ntp_snippets::kBookmarkSuggestionsFeature,
-      kConsiderDesktopVisitsParamName, false);
+      kConsiderDesktopVisitsParamName, true);
 }
 
 }  // namespace
 
 BookmarkSuggestionsProvider::BookmarkSuggestionsProvider(
     ContentSuggestionsProvider::Observer* observer,
-    bookmarks::BookmarkModel* bookmark_model,
-    PrefService* pref_service)
+    bookmarks::BookmarkModel* bookmark_model)
     : ContentSuggestionsProvider(observer),
       category_status_(CategoryStatus::AVAILABLE_LOADING),
       provided_category_(
@@ -82,19 +74,12 @@ BookmarkSuggestionsProvider::BookmarkSuggestionsProvider(
       end_of_list_last_visit_date_(GetThresholdTime()),
       consider_bookmark_visits_from_desktop_(AreDesktopVisitsConsidered()) {
   observer->OnCategoryStatusChanged(this, provided_category_, category_status_);
-  pref_service->ClearPref(kDeprecatedBookmarksFirstM54StartPref);
   bookmark_model_->AddObserver(this);
   FetchBookmarks();
 }
 
 BookmarkSuggestionsProvider::~BookmarkSuggestionsProvider() {
   bookmark_model_->RemoveObserver(this);
-}
-
-// static
-void BookmarkSuggestionsProvider::RegisterProfilePrefs(
-    PrefRegistrySimple* registry) {
-  registry->RegisterInt64Pref(kDeprecatedBookmarksFirstM54StartPref, 0);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -124,23 +109,23 @@ void BookmarkSuggestionsProvider::DismissSuggestion(
 
 void BookmarkSuggestionsProvider::FetchSuggestionImage(
     const ContentSuggestion::ID& suggestion_id,
-    const ImageFetchedCallback& callback) {
+    ImageFetchedCallback callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(callback, gfx::Image()));
+      FROM_HERE, base::BindOnce(std::move(callback), gfx::Image()));
 }
 
 void BookmarkSuggestionsProvider::Fetch(
     const Category& category,
     const std::set<std::string>& known_suggestion_ids,
-    const FetchDoneCallback& callback) {
+    FetchDoneCallback callback) {
   LOG(DFATAL) << "BookmarkSuggestionsProvider has no |Fetch| functionality!";
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(
-          callback,
+      base::BindOnce(
+          std::move(callback),
           Status(StatusCode::PERMANENT_ERROR,
                  "BookmarkSuggestionsProvider has no |Fetch| functionality!"),
-          base::Passed(std::vector<ContentSuggestion>())));
+          std::vector<ContentSuggestion>()));
 }
 
 void BookmarkSuggestionsProvider::ClearHistory(
@@ -165,7 +150,7 @@ void BookmarkSuggestionsProvider::ClearCachedSuggestions(Category category) {
 
 void BookmarkSuggestionsProvider::GetDismissedSuggestionsForDebugging(
     Category category,
-    const DismissedSuggestionsCallback& callback) {
+    DismissedSuggestionsCallback callback) {
   DCHECK_EQ(category, provided_category_);
   std::vector<const BookmarkNode*> bookmarks =
       GetDismissedBookmarksForDebugging(bookmark_model_);
@@ -174,7 +159,7 @@ void BookmarkSuggestionsProvider::GetDismissedSuggestionsForDebugging(
   for (const BookmarkNode* bookmark : bookmarks) {
     ConvertBookmark(*bookmark, &suggestions);
   }
-  callback.Run(std::move(suggestions));
+  std::move(callback).Run(std::move(suggestions));
 }
 
 void BookmarkSuggestionsProvider::ClearDismissedSuggestionsForDebugging(

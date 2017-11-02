@@ -8,7 +8,7 @@
 #include <memory>
 #include <string>
 
-#include "base/threading/thread_checker.h"
+#include "base/sequence_checker.h"
 #include "media/audio/audio_output_delegate.h"
 #include "media/mojo/interfaces/audio_output_stream.mojom.h"
 #include "media/mojo/services/media_mojo_export.h"
@@ -19,13 +19,13 @@ namespace media {
 
 // Provides a single AudioOutput, given the audio parameters to use.
 class MEDIA_MOJO_EXPORT MojoAudioOutputStreamProvider
-    : NON_EXPORTED_BASE(public mojom::AudioOutputStreamProvider) {
+    : public mojom::AudioOutputStreamProvider {
  public:
   using CreateDelegateCallback =
       base::OnceCallback<std::unique_ptr<AudioOutputDelegate>(
           const AudioParameters& params,
           AudioOutputDelegate::EventHandler*)>;
-  using DeleterCallback = base::Callback<void(AudioOutputStreamProvider*)>;
+  using DeleterCallback = base::OnceCallback<void(AudioOutputStreamProvider*)>;
 
   // |create_delegate_callback| is used to obtain an AudioOutputDelegate for the
   // AudioOutput when it's initialized and |deleter_callback| is called when
@@ -40,17 +40,19 @@ class MEDIA_MOJO_EXPORT MojoAudioOutputStreamProvider
  private:
   // mojom::AudioOutputStreamProvider implementation.
   void Acquire(mojom::AudioOutputStreamRequest stream_request,
+               mojom::AudioOutputStreamClientPtr client,
                const AudioParameters& params,
-               const AcquireCallback& acquire_callback) override;
+               AcquireCallback acquire_callback) override;
 
-  // The callback for the Acquire() must be stored until the response is ready.
-  AcquireCallback acquire_callback_;
+  // Called when |audio_output_| had an error.
+  void OnError();
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   base::Optional<MojoAudioOutputStream> audio_output_;
   mojo::Binding<AudioOutputStreamProvider> binding_;
   CreateDelegateCallback create_delegate_callback_;
-  base::Closure deleter_callback_;
-  base::ThreadChecker thread_checker_;
+  DeleterCallback deleter_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoAudioOutputStreamProvider);
 };

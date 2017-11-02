@@ -6,48 +6,53 @@ cr.exportPath('extensions');
 
 cr.define('extensions', function() {
   /** @interface */
-  var ToolbarDelegate = function() {};
-
-  ToolbarDelegate.prototype = {
+  class ToolbarDelegate {
     /**
      * Toggles whether or not the profile is in developer mode.
      * @param {boolean} inDevMode
      */
-    setProfileInDevMode: assertNotReached,
+    setProfileInDevMode(inDevMode) {}
 
     /** Opens the dialog to load unpacked extensions. */
-    loadUnpacked: assertNotReached,
+    loadUnpacked() {}
 
     /** Updates all extensions. */
-    updateAllExtensions: assertNotReached,
-  };
+    updateAllExtensions() {}
+  }
 
-  var Toolbar = Polymer({
+  const Toolbar = Polymer({
     is: 'extensions-toolbar',
 
     behaviors: [I18nBehavior],
 
     properties: {
+      /** @type {extensions.ToolbarDelegate} */
+      delegate: Object,
+
       inDevMode: {
         type: Boolean,
         value: false,
       },
+
+      isGuest: Boolean,
+
+      // <if expr="chromeos">
+      kioskEnabled: Boolean,
+      // </if>
     },
 
-    /** @param {extensions.ToolbarDelegate} delegate */
-    setDelegate: function(delegate) {
-      /** @private {extensions.ToolbarDelegate} */
-      this.delegate_ = delegate;
+    hostAttributes: {
+      role: 'banner',
     },
 
     /** @private */
     onDevModeChange_: function() {
-      this.delegate_.setProfileInDevMode(this.$['dev-mode'].checked);
+      this.delegate.setProfileInDevMode(this.$['dev-mode'].checked);
     },
 
     /** @private */
     onLoadUnpackedTap_: function() {
-      this.delegate_.loadUnpacked();
+      this.delegate.loadUnpacked();
     },
 
     /** @private */
@@ -55,9 +60,16 @@ cr.define('extensions', function() {
       this.fire('pack-tap');
     },
 
+    // <if expr="chromeos">
+    /** @private */
+    onKioskTap_: function() {
+      this.fire('kiosk-tap');
+    },
+    // </if>
+
     /** @private */
     onUpdateNowTap_: function() {
-      this.delegate_.updateAllExtensions();
+      this.delegate.updateAllExtensions();
     },
   });
 

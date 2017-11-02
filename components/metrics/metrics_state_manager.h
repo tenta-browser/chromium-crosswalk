@@ -12,6 +12,8 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
+#include "base/strings/string16.h"
+#include "components/metrics/clean_exit_beacon.h"
 #include "components/metrics/client_info.h"
 
 class PrefService;
@@ -21,6 +23,7 @@ namespace metrics {
 
 class ClonedInstallDetector;
 class EnabledStateProvider;
+class MetricsProvider;
 
 // Responsible for managing MetricsService state prefs, specifically the UMA
 // client id and low entropy source. Code outside the metrics directory should
@@ -39,14 +42,26 @@ class MetricsStateManager {
 
   virtual ~MetricsStateManager();
 
+  std::unique_ptr<MetricsProvider> GetProvider();
+
   // Returns true if the user has consented to sending metric reports, and there
   // is no other reason to disable reporting. One such reason is client
   // sampling, and this client isn't in the sample.
   bool IsMetricsReportingEnabled();
 
+  // Returns the install date of the application, in seconds since the epoch.
+  int64_t GetInstallDate() const;
+
   // Returns the client ID for this client, or the empty string if the user is
   // not opted in to metrics reporting.
   const std::string& client_id() const { return client_id_; }
+
+  // The CleanExitBeacon, used to determine whether the previous Chrome browser
+  // session terminated gracefully.
+  CleanExitBeacon* clean_exit_beacon() { return &clean_exit_beacon_; }
+  const CleanExitBeacon* clean_exit_beacon() const {
+    return &clean_exit_beacon_;
+  }
 
   // Forces the client ID to be generated. This is useful in case it's needed
   // before recording.
@@ -55,8 +70,7 @@ class MetricsStateManager {
   // Checks if this install was cloned or imaged from another machine. If a
   // clone is detected, resets the client id and low entropy source. This
   // should not be called more than once.
-  void CheckForClonedInstall(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
+  void CheckForClonedInstall();
 
   // Returns the preferred entropy provider used to seed persistent activities
   // based on whether or not metrics reporting is permitted on this client.
@@ -77,9 +91,12 @@ class MetricsStateManager {
 
   // Creates the MetricsStateManager, enforcing that only a single instance
   // of the class exists at a time. Returns NULL if an instance exists already.
+  // On Windows, |backup_registry_key| is used to store a backup of the clean
+  // exit beacon. It is ignored on other platforms.
   static std::unique_ptr<MetricsStateManager> Create(
       PrefService* local_state,
       EnabledStateProvider* enabled_state_provider,
+      const base::string16& backup_registry_key,
       const StoreClientInfoCallback& store_client_info,
       const LoadClientInfoCallback& load_client_info);
 
@@ -112,6 +129,7 @@ class MetricsStateManager {
   // that it is later retrievable by |load_client_info|.
   MetricsStateManager(PrefService* local_state,
                       EnabledStateProvider* enabled_state_provider,
+                      const base::string16& backup_registry_key,
                       const StoreClientInfoCallback& store_client_info,
                       const LoadClientInfoCallback& load_client_info);
 
@@ -163,6 +181,10 @@ class MetricsStateManager {
   // A callback run if this MetricsStateManager can't get the client id from
   // its typical location and wants to attempt loading it from this backup.
   const LoadClientInfoCallback load_client_info_;
+
+  // A beacon used to determine whether the previous Chrome browser session
+  // terminated gracefully.
+  CleanExitBeacon clean_exit_beacon_;
 
   // The identifier that's sent to the server with the log reports.
   std::string client_id_;

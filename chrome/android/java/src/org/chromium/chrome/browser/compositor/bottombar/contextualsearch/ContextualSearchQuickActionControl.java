@@ -26,6 +26,7 @@ import org.chromium.chrome.browser.contextualsearch.ContextualSearchUma;
 import org.chromium.chrome.browser.contextualsearch.QuickActionCategory;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.ColorUtils;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.IntentUtils;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
@@ -215,8 +216,7 @@ public class ContextualSearchQuickActionControl extends ViewResourceInflater {
 
         // On KitKat, calling PackageManager#resolveActivity() causes disk reads and writes.
         // Temporarily allow this while resolving the intent.
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-        StrictMode.allowThreadDiskWrites();
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
         try {
             possibleDefaultActivity = packageManager.resolveActivity(mIntent, 0);
         } finally {
@@ -291,7 +291,9 @@ public class ContextualSearchQuickActionControl extends ViewResourceInflater {
 
                 Resources res = mContext.getResources();
                 if (mToolbarBackgroundColor != 0
-                        && !ColorUtils.isUsingDefaultToolbarColor(res, mToolbarBackgroundColor)
+                        && !ColorUtils.isUsingDefaultToolbarColor(res,
+                                   FeatureUtilities.isChromeHomeEnabled(), false,
+                                   mToolbarBackgroundColor)
                         && ColorUtils.shouldUseLightForegroundOnBackground(
                                    mToolbarBackgroundColor)) {
                     // Tint the link icon to match the custom tab toolbar.

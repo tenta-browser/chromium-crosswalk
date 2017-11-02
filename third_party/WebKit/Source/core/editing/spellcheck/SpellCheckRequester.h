@@ -28,7 +28,7 @@
 
 #include "core/dom/Element.h"
 #include "core/dom/Range.h"
-#include "core/editing/EphemeralRange.h"
+#include "core/editing/Forward.h"
 #include "platform/Timer.h"
 #include "platform/text/TextChecking.h"
 #include "platform/wtf/Deque.h"
@@ -43,8 +43,7 @@ class LocalFrame;
 class SpellCheckRequester;
 class TextCheckerClient;
 
-// TODO(xiaochengh): Move this class to dedicated files.
-class SpellCheckRequest final : public TextCheckingRequest {
+class CORE_EXPORT SpellCheckRequest final : public TextCheckingRequest {
  public:
   static SpellCheckRequest* Create(const EphemeralRange& checking_range,
                                    int request_number);
@@ -76,7 +75,7 @@ class SpellCheckRequest final : public TextCheckingRequest {
   int request_number_;
 };
 
-class SpellCheckRequester final
+class CORE_EXPORT SpellCheckRequester final
     : public GarbageCollectedFinalized<SpellCheckRequester> {
   WTF_MAKE_NONCOPYABLE(SpellCheckRequester);
 
@@ -109,9 +108,10 @@ class SpellCheckRequester final
   void TimerFiredToProcessQueuedRequest(TimerBase*);
   void InvokeRequest(SpellCheckRequest*);
   void EnqueueRequest(SpellCheckRequest*);
+  bool EnsureValidRequestQueueFor(int sequence);
   void DidCheckSucceed(int sequence, const Vector<TextCheckingResult>&);
   void DidCheckCancel(int sequence);
-  void DidCheck(int sequence, const Vector<TextCheckingResult>&);
+  void DidCheck(int sequence);
 
   void ClearProcessingRequest();
 
@@ -123,6 +123,7 @@ class SpellCheckRequester final
 
   int last_request_sequence_;
   int last_processed_sequence_;
+  double last_request_time_;
 
   TaskRunnerTimer<SpellCheckRequester> timer_to_process_queued_request_;
 

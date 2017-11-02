@@ -7,14 +7,13 @@
 #include "core/css/CSSValueList.h"
 #include "core/css/properties/CSSPropertyFontUtils.h"
 
-class CSSParserContext;
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIFontFamily::parseSingleValue(
+const CSSValue* CSSPropertyAPIFontFamily::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext&,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   return CSSPropertyFontUtils::ConsumeFontFamily(range);
 }
 

@@ -4,8 +4,10 @@
 
 #include "components/password_manager/content/browser/content_password_manager_driver.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/content/common/autofill_agent.mojom.h"
@@ -43,6 +45,9 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
   ~MockPasswordManagerClient() override = default;
 
   MOCK_CONST_METHOD0(GetLogManager, const LogManager*());
+#if defined(SAFE_BROWSING_DB_LOCAL)
+  MOCK_METHOD2(CheckSafeBrowsingReputation, void(const GURL&, const GURL&));
+#endif
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockPasswordManagerClient);
@@ -59,8 +64,8 @@ class FakePasswordAutofillAgent
   ~FakePasswordAutofillAgent() override {}
 
   void BindRequest(mojo::ScopedMessagePipeHandle handle) {
-    binding_.Bind(mojo::MakeRequest<autofill::mojom::PasswordAutofillAgent>(
-        std::move(handle)));
+    binding_.Bind(
+        autofill::mojom::PasswordAutofillAgentRequest(std::move(handle)));
   }
 
   bool called_set_logging_state() { return called_set_logging_state_; }
@@ -76,6 +81,8 @@ class FakePasswordAutofillAgent
   MOCK_METHOD2(FillPasswordForm,
                void(int, const autofill::PasswordFormFillData&));
 
+  MOCK_METHOD0(BlacklistedFormFound, void());
+
  private:
   void SetLoggingState(bool active) override {
     called_set_logging_state_ = true;
@@ -86,7 +93,7 @@ class FakePasswordAutofillAgent
       const autofill::FormsPredictionsMap& predictions) override {}
 
   void FindFocusedPasswordForm(
-      const FindFocusedPasswordFormCallback& callback) override {}
+      FindFocusedPasswordFormCallback callback) override {}
 
   // Records whether SetLoggingState() gets called.
   bool called_set_logging_state_;
@@ -124,10 +131,8 @@ PasswordFormFillData GetTestPasswordFormFillData() {
   return result;
 }
 
-MATCHER_P(WerePasswordsCleared,
-          should_preferred_password_cleared,
-          "Passwords not cleared") {
-  if (should_preferred_password_cleared && !arg.password_field.value.empty())
+MATCHER(WerePasswordsCleared, "Passwords not cleared") {
+  if (!arg.password_field.value.empty())
     return false;
 
   for (auto& credentials : arg.additional_logins)
@@ -216,214 +221,37 @@ TEST_P(ContentPasswordManagerDriverTest, SendLoggingStateAfterLogManagerReady) {
   EXPECT_EQ(should_allow_logging, logging_activated);
 }
 
-// Tests that password visibility notifications are forwarded to the
-// WebContents.
-TEST_P(ContentPasswordManagerDriverTest, PasswordVisibility) {
-  std::unique_ptr<ContentPasswordManagerDriver> driver(
-      new ContentPasswordManagerDriver(main_rfh(), &password_manager_client_,
-                                       &autofill_client_));
-
-  // Do a mock navigation so that there is a navigation entry on which
-  // password visibility gets recorded.
-  GURL url("http://example.test");
-  NavigateAndCommit(url);
-  content::NavigationEntry* entry =
-      web_contents()->GetController().GetVisibleEntry();
-  ASSERT_TRUE(entry);
-  EXPECT_EQ(url, entry->GetURL());
-  EXPECT_FALSE(!!(entry->GetSSL().content_status &
-                  content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  driver->PasswordFieldVisibleInInsecureContext();
-
-  // Check that the password visibility notification was passed on to
-  // the WebContents (and from there to the SSLStatus).
-  entry = web_contents()->GetController().GetVisibleEntry();
-  ASSERT_TRUE(entry);
-  EXPECT_EQ(url, entry->GetURL());
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  // If the password field becomes hidden, then the flag should be unset
-  // on the SSLStatus.
-  driver->AllPasswordFieldsInInsecureContextInvisible();
-  EXPECT_FALSE(!!(entry->GetSSL().content_status &
-                  content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-}
-
-// Tests that password visibility notifications from subframes are
-// recorded correctly.
-TEST_P(ContentPasswordManagerDriverTest, PasswordVisibilityWithSubframe) {
-  // Do a mock navigation so that there is a navigation entry on which
-  // password visibility gets recorded.
-  GURL url("http://example.test");
-  NavigateAndCommit(url);
-
-  // Create a subframe with a password field and check that
-  // notifications for it are handled properly.
-  content::RenderFrameHost* subframe =
-      content::RenderFrameHostTester::For(main_rfh())->AppendChild("child");
-  auto subframe_driver = base::MakeUnique<ContentPasswordManagerDriver>(
-      subframe, &password_manager_client_, &autofill_client_);
-  content::RenderFrameHostTester* subframe_tester =
-      content::RenderFrameHostTester::For(subframe);
-  subframe_tester->SimulateNavigationStart(GURL("http://example2.test"));
-  subframe_tester->SimulateNavigationCommit(GURL("http://example2.test"));
-  subframe_driver->PasswordFieldVisibleInInsecureContext();
-
-  content::NavigationEntry* entry =
-      web_contents()->GetController().GetVisibleEntry();
-  ASSERT_TRUE(entry);
-  EXPECT_EQ(url, entry->GetURL());
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  subframe_driver->AllPasswordFieldsInInsecureContextInvisible();
-  EXPECT_FALSE(!!(entry->GetSSL().content_status &
-                  content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-}
-
-// Tests that password visibility notifications are recorded correctly
-// when there is a password field in both the main frame and a subframe.
-TEST_P(ContentPasswordManagerDriverTest,
-       PasswordVisibilityWithMainFrameAndSubframe) {
-  std::unique_ptr<ContentPasswordManagerDriver> driver(
-      new ContentPasswordManagerDriver(main_rfh(), &password_manager_client_,
-                                       &autofill_client_));
-  // Do a mock navigation so that there is a navigation entry on which
-  // password visibility gets recorded.
-  GURL url("http://example.test");
-  NavigateAndCommit(url);
-
-  driver->PasswordFieldVisibleInInsecureContext();
-  content::NavigationEntry* entry =
-      web_contents()->GetController().GetVisibleEntry();
-  ASSERT_TRUE(entry);
-  EXPECT_EQ(url, entry->GetURL());
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  // Create a subframe with a password field and check that
-  // notifications for it are handled properly.
-  content::RenderFrameHost* subframe =
-      content::RenderFrameHostTester::For(main_rfh())->AppendChild("child");
-  auto subframe_driver = base::MakeUnique<ContentPasswordManagerDriver>(
-      subframe, &password_manager_client_, &autofill_client_);
-  content::RenderFrameHostTester* subframe_tester =
-      content::RenderFrameHostTester::For(subframe);
-  subframe_tester->SimulateNavigationStart(GURL("http://example2.test"));
-  subframe_tester->SimulateNavigationCommit(GURL("http://example2.test"));
-  subframe_driver->PasswordFieldVisibleInInsecureContext();
-
-  entry = web_contents()->GetController().GetVisibleEntry();
-  ASSERT_TRUE(entry);
-  EXPECT_EQ(url, entry->GetURL());
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  subframe_driver->AllPasswordFieldsInInsecureContextInvisible();
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  driver->AllPasswordFieldsInInsecureContextInvisible();
-  EXPECT_FALSE(!!(entry->GetSSL().content_status &
-                  content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-}
-
-// Tests that when a frame is deleted, its password visibility flag gets
-// unset.
-TEST_P(ContentPasswordManagerDriverTest,
-       PasswordVisibilityWithSubframeDeleted) {
-  // Do a mock navigation so that there is a navigation entry on which
-  // password visibility gets recorded.
-  GURL url("http://example.test");
-  NavigateAndCommit(url);
-
-  // Create a subframe with a password field.
-  content::RenderFrameHost* subframe =
-      content::RenderFrameHostTester::For(main_rfh())->AppendChild("child");
-  auto subframe_driver = base::MakeUnique<ContentPasswordManagerDriver>(
-      subframe, &password_manager_client_, &autofill_client_);
-  content::RenderFrameHostTester* subframe_tester =
-      content::RenderFrameHostTester::For(subframe);
-  subframe_tester->SimulateNavigationStart(GURL("http://example2.test"));
-  subframe_tester->SimulateNavigationCommit(GURL("http://example2.test"));
-  subframe_driver->PasswordFieldVisibleInInsecureContext();
-
-  content::NavigationEntry* entry =
-      web_contents()->GetController().GetVisibleEntry();
-  ASSERT_TRUE(entry);
-  EXPECT_EQ(url, entry->GetURL());
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  subframe_tester->Detach();
-  EXPECT_FALSE(!!(entry->GetSSL().content_status &
-                  content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  // Check that the subframe's flag isn't hanging around preventing the
-  // warning from being removed.
-  std::unique_ptr<ContentPasswordManagerDriver> driver(
-      new ContentPasswordManagerDriver(main_rfh(), &password_manager_client_,
-                                       &autofill_client_));
-  driver->PasswordFieldVisibleInInsecureContext();
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-  driver->AllPasswordFieldsInInsecureContextInvisible();
-  EXPECT_FALSE(!!(entry->GetSSL().content_status &
-                  content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-}
-
-// Tests that a cross-process navigation does not remove the password
-// field flag when the RenderFrameHost for the original process goes
-// away. Regression test for https://crbug.com/664674
-TEST_F(ContentPasswordManagerDriverTest,
-       RenderFrameHostDeletionOnCrossProcessNavigation) {
-  NavigateAndCommit(GURL("http://example.test"));
-
-  content::RenderFrameHostTester* old_rfh_tester =
-      content::RenderFrameHostTester::For(web_contents()->GetMainFrame());
-  content::WebContentsTester* tester =
-      content::WebContentsTester::For(web_contents());
-
-  controller().LoadURL(GURL("http://example2.test"), content::Referrer(),
-                       ui::PAGE_TRANSITION_TYPED, std::string());
-  content::RenderFrameHost* pending_rfh = tester->GetPendingMainFrame();
-  ASSERT_TRUE(pending_rfh);
-  int entry_id = controller().GetPendingEntry()->GetUniqueID();
-  tester->TestDidNavigate(pending_rfh, entry_id, true,
-                          GURL("http://example2.test"),
-                          ui::PAGE_TRANSITION_TYPED);
-
-  auto driver = base::MakeUnique<ContentPasswordManagerDriver>(
-      main_rfh(), &password_manager_client_, &autofill_client_);
-  driver->PasswordFieldVisibleInInsecureContext();
-  content::NavigationEntry* entry =
-      web_contents()->GetController().GetVisibleEntry();
-  ASSERT_TRUE(entry);
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-
-  // After the old RenderFrameHost is deleted, the password flag should still be
-  // set.
-  old_rfh_tester->SimulateSwapOutACK();
-  EXPECT_TRUE(!!(entry->GetSSL().content_status &
-                 content::SSLStatus::DISPLAYED_PASSWORD_FIELD_ON_HTTP));
-}
 
 TEST_F(ContentPasswordManagerDriverTest, ClearPasswordsOnAutofill) {
   std::unique_ptr<ContentPasswordManagerDriver> driver(
       new ContentPasswordManagerDriver(main_rfh(), &password_manager_client_,
                                        &autofill_client_));
 
-  for (bool wait_for_username : {false, true}) {
     PasswordFormFillData fill_data = GetTestPasswordFormFillData();
-    fill_data.wait_for_username = wait_for_username;
-    EXPECT_CALL(fake_agent_,
-                FillPasswordForm(_, WerePasswordsCleared(wait_for_username)));
+    fill_data.wait_for_username = true;
+    EXPECT_CALL(fake_agent_, FillPasswordForm(_, WerePasswordsCleared()));
     driver->FillPasswordForm(fill_data);
-  }
 }
+
+TEST_F(ContentPasswordManagerDriverTest, NotInformAboutBlacklistedForm) {
+  std::unique_ptr<ContentPasswordManagerDriver> driver(
+      new ContentPasswordManagerDriver(main_rfh(), &password_manager_client_,
+                                       &autofill_client_));
+
+  PasswordFormFillData fill_data = GetTestPasswordFormFillData();
+  EXPECT_CALL(fake_agent_, BlacklistedFormFound()).Times(0);
+  driver->FillPasswordForm(fill_data);
+}
+
+#if defined(SAFE_BROWSING_DB_LOCAL)
+TEST_F(ContentPasswordManagerDriverTest, CheckSafeBrowsingReputationCalled) {
+  std::unique_ptr<ContentPasswordManagerDriver> driver(
+      new ContentPasswordManagerDriver(main_rfh(), &password_manager_client_,
+                                       &autofill_client_));
+  EXPECT_CALL(password_manager_client_, CheckSafeBrowsingReputation(_, _));
+  driver->CheckSafeBrowsingReputation(GURL(), GURL());
+}
+#endif
 
 INSTANTIATE_TEST_CASE_P(,
                         ContentPasswordManagerDriverTest,

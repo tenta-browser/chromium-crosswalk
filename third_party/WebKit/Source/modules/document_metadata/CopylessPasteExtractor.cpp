@@ -8,11 +8,10 @@
 #include <memory>
 #include <utility>
 
-#include "core/HTMLNames.h"
-#include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/HTMLElement.h"
+#include "core/html_names.h"
 #include "platform/Histogram.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/json/JSONParser.h"
@@ -199,7 +198,7 @@ void extractEntity(const JSONObject& val, Entity& entity, int recursionLevel) {
         property->values->set_entity_values(Vector<EntityPtr>());
         property->values->get_entity_values().push_back(Entity::New());
 
-        extractEntity(*(val.GetObject(entry.first)),
+        extractEntity(*(val.GetJSONObject(entry.first)),
                       *(property->values->get_entity_values().at(0)),
                       recursionLevel + 1);
       } break;

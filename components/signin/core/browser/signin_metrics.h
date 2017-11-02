@@ -48,12 +48,14 @@ enum ProfileSignout {
   TRANSFER_CREDENTIALS,
   // Signed out because credentials are invalid and force-sign-in is enabled.
   AUTHENTICATION_FAILED_WITH_FORCE_SIGNIN,
+  // The user disables sync from the DICE UI.
+  USER_TUNED_OFF_SYNC_FROM_DICE_UI,
   // Keep this as the last enum.
   NUM_PROFILE_SIGNOUT_METRICS,
 };
 
 // Enum values used for use with "AutoLogin.Reverse" histograms.
-enum {
+enum AccessPointAction {
   // The infobar was shown to the user.
   HISTOGRAM_SHOWN,
   // The user pressed the accept button to perform the suggested action.
@@ -82,7 +84,7 @@ enum {
 
 // Enum values used with the "Signin.OneClickConfirmation" histogram, which
 // tracks the actions used in the OneClickConfirmation bubble.
-enum {
+enum ConfirmationUsage {
   HISTOGRAM_CONFIRM_SHOWN,
   HISTOGRAM_CONFIRM_OK,
   HISTOGRAM_CONFIRM_RETURN,
@@ -143,7 +145,16 @@ enum class AccessPoint : int {
   ACCESS_POINT_NTP_CONTENT_SUGGESTIONS,
   ACCESS_POINT_RESIGNIN_INFOBAR,
   ACCESS_POINT_TAB_SWITCHER,
+  ACCESS_POINT_FORCE_SIGNIN_WARNING,
   ACCESS_POINT_MAX,  // This must be last.
+};
+
+// Enum values which enumerates all user actions on the mobile sign-in promo.
+enum class PromoAction : int {
+  PROMO_ACTION_NO_SIGNIN_PROMO = 0,
+  PROMO_ACTION_WITH_DEFAULT,
+  PROMO_ACTION_NOT_DEFAULT,
+  PROMO_ACTION_NEW_ACCOUNT,
 };
 
 // Enum values which enumerates all reasons to start sign in process.
@@ -285,9 +296,15 @@ enum class AccountRelation : int {
 // Different types of reporting. This is used as a histogram suffix.
 enum class ReportingType { PERIODIC, ON_CHANGE };
 
-// Tracks the access point of sign in.
+// Tracks the access point of sign in on desktop.
 void LogSigninAccessPointStarted(AccessPoint access_point);
 void LogSigninAccessPointCompleted(AccessPoint access_point);
+
+// Tracks the access point of sign in on iOS.
+void LogSigninAccessPointStarted(AccessPoint access_point,
+                                 PromoAction promo_action);
+void LogSigninAccessPointCompleted(AccessPoint access_point,
+                                   PromoAction promo_action);
 
 // Tracks the reason of sign in.
 void LogSigninReason(Reason reason);
@@ -338,7 +355,7 @@ void LogExternalCcResultFetches(
 // Track when the current authentication error changed.
 void LogAuthError(GoogleServiceAuthError::State auth_error);
 
-void LogSigninConfirmHistogramValue(int action);
+void LogSigninConfirmHistogramValue(ConfirmationUsage action);
 
 void LogXDevicePromoEligible(CrossDevicePromoEligibility metric);
 

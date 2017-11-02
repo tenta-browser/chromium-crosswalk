@@ -4,7 +4,8 @@
 
 #include "net/http/http_cache_lookup_manager.h"
 
-#include "base/memory/ptr_util.h"
+#include <memory>
+
 #include "base/values.h"
 #include "net/base/load_flags.h"
 
@@ -72,7 +73,7 @@ void HttpCacheLookupManager::OnPush(
   if (base::ContainsKey(lookup_transactions_, pushed_url))
     return;
 
-  auto lookup = base::MakeUnique<LookupTransaction>(std::move(push_helper),
+  auto lookup = std::make_unique<LookupTransaction>(std::move(push_helper),
                                                     session_net_log.net_log());
   // TODO(zhongyi): add events in session net log to log the creation of
   // LookupTransaction.

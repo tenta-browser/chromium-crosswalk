@@ -6,29 +6,20 @@ package org.chromium.chrome.browser.suggestions;
 
 import org.chromium.base.annotations.CalledByNative;
 
+import java.util.List;
+
+import javax.annotation.Nullable;
+
 /**
  * Methods to provide most recent urls, titles and thumbnails.
  */
-interface MostVisitedSites {
+public interface MostVisitedSites {
     /**
      * An interface for handling events in {@link MostVisitedSites}.
      */
     interface Observer {
-        /**
-         * This is called when the list of most visited URLs is initially available or updated.
-         * Parameters guaranteed to be non-null.
-         *
-         * @param titles Array of most visited url page titles.
-         * @param urls Array of most visited URLs, including popular URLs if
-         *             available and necessary (i.e. there aren't enough most
-         *             visited URLs).
-         * @param whitelistIconPaths The paths to the icon image files for whitelisted tiles, empty
-         *                           strings otherwise.
-         * @param sources For each tile, the {@code TileSource} that generated the tile.
-         */
-        @CalledByNative("Observer")
-        void onMostVisitedURLsAvailable(
-                String[] titles, String[] urls, String[] whitelistIconPaths, int[] sources);
+        /** This is called when the list of most visited URLs is initially available or updated. */
+        void onSiteSuggestionsAvailable(List<SiteSuggestion> siteSuggestions);
 
         /**
          * This is called when a previously uncached icon has been fetched.
@@ -36,8 +27,31 @@ interface MostVisitedSites {
          *
          * @param siteUrl URL of site with newly-cached icon.
          */
-        @CalledByNative("Observer")
         void onIconMadeAvailable(String siteUrl);
+    }
+
+    /**
+     * An interface to provide {@link MostVisitedSites} with platform-specific home page data.
+     */
+    interface HomePageClient {
+        /**
+         * @return True if a home page is active and set.
+         */
+        @CalledByNative("HomePageClient")
+        boolean isHomePageEnabled();
+
+        /**
+         * @return True if the new tab page was set as home page.
+         */
+        @CalledByNative("HomePageClient")
+        boolean isNewTabPageUsedAsHomePage();
+
+        /**
+         * @return The raw URL of the currently set home page.
+         */
+        @CalledByNative("HomePageClient")
+        @Nullable
+        String getHomePageUrl();
     }
 
     /**
@@ -64,21 +78,24 @@ interface MostVisitedSites {
     void removeBlacklistedUrl(String url);
 
     /**
-     * Records metrics about an impression, including the sources (local, server, ...) and visual
-     * types of the tiles that are shown.
-     * @param tileTypes An array of values from {@link TileVisualType} indicating the type of each
-     *                  tile that's currently showing.
-     * @param sources An array of values from {@link TileSource} indicating the source of each tile
-     *                that's currently showing.
-     * @param tileUrls An array of strings indicating the URL of each tile.
+     * Records metrics about an impression of the surface with tiles.
+     * @param tilesCount Count of tiles available on the surface at the moment.
      */
-    void recordPageImpression(int[] tileTypes, int[] sources, String[] tileUrls);
+    void recordPageImpression(int tilesCount);
+
+    /**
+     * Records metrics about an impression of a tile including its source (local, server, ...) and
+     * its visual type.
+     * @param tile Object holding the details of a tile.
+     */
+    void recordTileImpression(Tile tile);
 
     /**
      * Records the opening of a Most Visited Item.
      * @param index The index of the item that was opened.
      * @param type The visual type of the item as defined in {@link TileVisualType}.
+     * @param titleSource The {@link TileTitleSource} where the item's title originated from.
      * @param source The {@link TileSource} that generated this item.
      */
-    void recordOpenedMostVisitedItem(int index, @TileVisualType int type, @TileSource int source);
+    void recordOpenedMostVisitedItem(Tile tile);
 }

@@ -26,57 +26,59 @@ bool IsValidVariableReference(CSSParserTokenRange, bool& has_at_apply_rule);
 
 bool ClassifyBlock(CSSParserTokenRange range,
                    bool& has_references,
-                   bool& has_at_apply_rule,
-                   bool is_top_level_block = true) {
+                   bool& has_at_apply_rule) {
+  size_t block_stack_size = 0;
+
   while (!range.AtEnd()) {
-    if (range.Peek().GetBlockType() == CSSParserToken::kBlockStart) {
-      const CSSParserToken& token = range.Peek();
+    // First check if this is a valid variable reference, then handle the next
+    // token accordingly.
+    if (range.Peek().GetBlockType() == CSSParserToken::kBlockStart &&
+        range.Peek().FunctionId() == CSSValueVar) {
       CSSParserTokenRange block = range.ConsumeBlock();
-      if (token.FunctionId() == CSSValueVar) {
-        if (!IsValidVariableReference(block, has_at_apply_rule))
-          return false;  // Bail if any references are invalid
-        has_references = true;
-        continue;
-      }
-      if (!ClassifyBlock(block, has_references, has_at_apply_rule, false))
-        return false;
+      if (!IsValidVariableReference(block, has_at_apply_rule))
+        return false;  // Bail if any references are invalid
+      has_references = true;
       continue;
     }
 
-    DCHECK_NE(range.Peek().GetBlockType(), CSSParserToken::kBlockEnd);
-
     const CSSParserToken& token = range.Consume();
-    switch (token.GetType()) {
-      case kAtKeywordToken: {
-        if (EqualIgnoringASCIICase(token.Value(), "apply")) {
-          range.ConsumeWhitespace();
-          const CSSParserToken& variable_name =
-              range.ConsumeIncludingWhitespace();
-          if (!CSSVariableParser::IsValidVariableName(variable_name) ||
-              !(range.AtEnd() || range.Peek().GetType() == kSemicolonToken ||
-                range.Peek().GetType() == kRightBraceToken))
-            return false;
-          has_at_apply_rule = true;
+    if (token.GetBlockType() == CSSParserToken::kBlockStart) {
+      ++block_stack_size;
+    } else if (token.GetBlockType() == CSSParserToken::kBlockEnd) {
+      --block_stack_size;
+    } else {
+      switch (token.GetType()) {
+        case kAtKeywordToken: {
+          if (EqualIgnoringASCIICase(token.Value(), "apply")) {
+            range.ConsumeWhitespace();
+            const CSSParserToken& variable_name =
+                range.ConsumeIncludingWhitespace();
+            if (!CSSVariableParser::IsValidVariableName(variable_name) ||
+                !(range.AtEnd() || range.Peek().GetType() == kSemicolonToken ||
+                  range.Peek().GetType() == kRightBraceToken))
+              return false;
+            has_at_apply_rule = true;
+          }
+          break;
         }
-        break;
-      }
-      case kDelimiterToken: {
-        if (token.Delimiter() == '!' && is_top_level_block)
+        case kDelimiterToken: {
+          if (token.Delimiter() == '!' && block_stack_size == 0)
+            return false;
+          break;
+        }
+        case kRightParenthesisToken:
+        case kRightBraceToken:
+        case kRightBracketToken:
+        case kBadStringToken:
+        case kBadUrlToken:
           return false;
-        break;
+        case kSemicolonToken:
+          if (block_stack_size == 0)
+            return false;
+          break;
+        default:
+          break;
       }
-      case kRightParenthesisToken:
-      case kRightBraceToken:
-      case kRightBracketToken:
-      case kBadStringToken:
-      case kBadUrlToken:
-        return false;
-      case kSemicolonToken:
-        if (is_top_level_block)
-          return false;
-        break;
-      default:
-        break;
     }
   }
   return true;
@@ -154,6 +156,7 @@ CSSCustomPropertyDeclaration* CSSVariableParser::ParseDeclarationValue(
 
 CSSVariableReferenceValue* CSSVariableParser::ParseRegisteredPropertyValue(
     CSSParserTokenRange range,
+    const CSSParserContext& context,
     bool require_var_reference,
     bool is_animation_tainted) {
   if (range.AtEnd())
@@ -170,7 +173,8 @@ CSSVariableReferenceValue* CSSVariableParser::ParseRegisteredPropertyValue(
     return nullptr;
   // TODO(timloh): Should this be hasReferences || hasAtApplyRule?
   return CSSVariableReferenceValue::Create(
-      CSSVariableData::Create(range, is_animation_tainted, has_references));
+      CSSVariableData::Create(range, is_animation_tainted, has_references),
+      context);
 }
 
 }  // namespace blink

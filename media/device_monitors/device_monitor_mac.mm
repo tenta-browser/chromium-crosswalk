@@ -12,7 +12,6 @@
 #include "base/mac/bind_objc_block.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_checker.h"
 
@@ -437,7 +436,9 @@ void AVFoundationMonitorImpl::OnDeviceChanged() {
 
 namespace media {
 
-DeviceMonitorMac::DeviceMonitorMac() {
+DeviceMonitorMac::DeviceMonitorMac(
+    scoped_refptr<base::SingleThreadTaskRunner> device_task_runner)
+    : device_task_runner_(std::move(device_task_runner)) {
   // AVFoundation do not need to be fired up until the user
   // exercises a GetUserMedia. Bringing up either library and enumerating the
   // devices in the system is an operation taking in the range of hundred of ms,
@@ -446,18 +447,11 @@ DeviceMonitorMac::DeviceMonitorMac() {
 
 DeviceMonitorMac::~DeviceMonitorMac() {}
 
-void DeviceMonitorMac::StartMonitoring(
-    const scoped_refptr<base::SingleThreadTaskRunner>& device_task_runner) {
+void DeviceMonitorMac::StartMonitoring() {
   DCHECK(thread_checker_.CalledOnValidThread());
-
-    // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/458404
-    // is fixed.
-    tracked_objects::ScopedTracker tracking_profile(
-        FROM_HERE_WITH_EXPLICIT_FUNCTION(
-            "458404 DeviceMonitorMac::StartMonitoring::AVFoundation"));
-    DVLOG(1) << "Monitoring via AVFoundation";
-    device_monitor_impl_.reset(
-        new AVFoundationMonitorImpl(this, device_task_runner));
+  DVLOG(1) << "Monitoring via AVFoundation";
+  device_monitor_impl_.reset(
+      new AVFoundationMonitorImpl(this, device_task_runner_));
 }
 
 void DeviceMonitorMac::NotifyDeviceChanged(

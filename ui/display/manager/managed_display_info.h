@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,10 @@
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
+
+namespace ui {
+struct TouchscreenDevice;
+}  // namespace ui
 
 namespace display {
 
@@ -40,6 +45,14 @@ struct DISPLAY_MANAGER_EXPORT TouchCalibrationData {
                ? true
                : pair_1.first.x() < pair_2.first.x();
   }
+
+  // Returns a hash that can be used as a key for storing display preferences
+  // for a display associated with a touch device.
+  static uint32_t GenerateTouchDeviceIdentifier(
+      const ui::TouchscreenDevice& device);
+
+  // Returns a touch device identifier used as a default or a fallback option.
+  static uint32_t GetFallbackTouchDeviceIdentifier();
 
   bool operator==(TouchCalibrationData other) const;
 
@@ -153,11 +166,6 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   static ManagedDisplayInfo CreateFromSpecWithID(const std::string& spec,
                                                  int64_t id);
 
-  // When this is set to true on the device whose internal display has
-  // 1.25 dsf, Chrome uses 1.0f as a default scale factor, and uses
-  // dsf 1.25 when UI scaling is set to 0.8f.
-  static void SetUse125DSFForUIScalingForTest(bool enable);
-
   ManagedDisplayInfo();
   ManagedDisplayInfo(int64_t id, const std::string& name, bool has_overscan);
   ManagedDisplayInfo(const ManagedDisplayInfo& other);
@@ -181,14 +189,21 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   }
   Display::TouchSupport touch_support() const { return touch_support_; }
 
-  // Associate the input device with identifier |id| with this display.
-  void AddInputDevice(int id);
+  // Associate the touch device with identifier |touch_device_identifier| to
+  // this display.
+  void AddTouchDevice(uint32_t touch_device_identifier);
 
-  // Clear the list of input devices associated with this display.
-  void ClearInputDevices();
+  // Clear the list of touch devices associated with this display.
+  void ClearTouchDevices();
 
-  // The input device ids that are associated with this display.
-  std::vector<int> input_devices() const { return input_devices_; }
+  // Returns true if the touch device with identifer |touch_device_identifier|
+  // is associated with this display.
+  bool HasTouchDevice(uint32_t touch_device_identifier) const;
+
+  // The identifiers of touch devices that are associated with this display.
+  std::set<uint32_t> touch_device_identifiers() const {
+    return touch_device_identifiers_;
+  }
 
   // Gets/Sets the device scale factor of the display.
   float device_scale_factor() const { return device_scale_factor_; }
@@ -232,6 +247,10 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   // Returns the rotation set by a given |source|.
   Display::Rotation GetRotation(Display::RotationSource source) const;
 
+  // Returns a measure of density relative to a display with 1.0 DSF. Unlike the
+  // effective DSF, this is independent from the UI scale.
+  float GetDensityRatio() const;
+
   // Returns the ui scale and device scale factor actually used to create
   // display that chrome sees. This can be different from one obtained
   // from dispaly or one specified by a user in following situation.
@@ -273,36 +292,23 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   // display.
   void SetManagedDisplayModes(const ManagedDisplayModeList& display_modes);
 
-
-  // Sets/Gets the touch calibration data for the display.
-  void SetTouchCalibrationData(const TouchCalibrationData& calibration_data);
-  TouchCalibrationData
-      GetTouchCalibrationData() const & { return touch_calibration_data_; }
-  bool has_touch_calibration_data() const
-      { return has_touch_calibration_data_; }
-  void clear_touch_calibration_data() { has_touch_calibration_data_ = false; }
+  void SetTouchCalibrationData(uint32_t touch_device_identifier,
+                               const TouchCalibrationData& calibration_data);
+  const TouchCalibrationData& GetTouchCalibrationData(
+      uint32_t touch_device_identifier) const;
+  const std::map<uint32_t, TouchCalibrationData>& touch_calibration_data_map()
+      const {
+    return touch_calibration_data_map_;
+  }
+  void SetTouchCalibrationDataMap(
+      const std::map<uint32_t, TouchCalibrationData>& data_map);
+  bool HasTouchCalibrationData(uint32_t touch_device_identifier) const;
+  void ClearTouchCalibrationData(uint32_t touch_device_identifier);
+  void ClearAllTouchCalibrationData();
 
   // Returns the native mode size. If a native mode is not present, return an
   // empty size.
   gfx::Size GetNativeModeSize() const;
-
-  ColorCalibrationProfile color_profile() const { return color_profile_; }
-
-  // Sets the color profile. It will ignore if the specified |profile| is not in
-  // |available_color_profiles_|.
-  void SetColorProfile(ColorCalibrationProfile profile);
-
-  // Returns true if |profile| is in |available_color_profiles_|.
-  bool IsColorProfileAvailable(ColorCalibrationProfile profile) const;
-
-  const std::vector<ColorCalibrationProfile>& available_color_profiles() const {
-    return available_color_profiles_;
-  }
-
-  void set_available_color_profiles(
-      const std::vector<ColorCalibrationProfile>& profiles) {
-    available_color_profiles_ = profiles;
-  }
 
   bool is_aspect_preserving_scaling() const {
     return is_aspect_preserving_scaling_;
@@ -340,10 +346,9 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   std::map<Display::RotationSource, Display::Rotation> rotations_;
   Display::RotationSource active_rotation_source_;
   Display::TouchSupport touch_support_;
-  bool has_touch_calibration_data_;
 
-  // The set of input devices associated with this display.
-  std::vector<int> input_devices_;
+  // Identifiers for touch devices that are associated with this display.
+  std::set<uint32_t> touch_device_identifiers_;
 
   // This specifies the device's pixel density. (For example, a
   // display whose DPI is higher than the threshold is considered to have
@@ -384,17 +389,13 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   // The list of modes supported by this display.
   ManagedDisplayModeList display_modes_;
 
-  // The current profile of the color calibration.
-  ColorCalibrationProfile color_profile_;
-
-  // The list of available variations for the color calibration.
-  std::vector<ColorCalibrationProfile> available_color_profiles_;
-
   // Maximum cursor size.
   gfx::Size maximum_cursor_size_;
 
-  // Information associated to touch calibration for the display.
-  TouchCalibrationData touch_calibration_data_;
+  // Information associated to touch calibration for the display. Stores a
+  // mapping of each touch device, identified by its unique touch device
+  // identifier, with the touch calibration data associated with the display.
+  std::map<uint32_t, TouchCalibrationData> touch_calibration_data_map_;
 
   // If you add a new member, you need to update Copy().
 };

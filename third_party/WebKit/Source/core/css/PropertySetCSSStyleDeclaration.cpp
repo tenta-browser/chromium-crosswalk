@@ -23,21 +23,20 @@
 #include "core/css/PropertySetCSSStyleDeclaration.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
 #include "core/StylePropertyShorthand.h"
 #include "core/css/CSSCustomPropertyDeclaration.h"
 #include "core/css/CSSKeyframesRule.h"
 #include "core/css/CSSStyleSheet.h"
+#include "core/css/StyleChangeReason.h"
+#include "core/css/StyleEngine.h"
 #include "core/css/StylePropertySet.h"
 #include "core/dom/Element.h"
 #include "core/dom/MutationObserverInterestGroup.h"
 #include "core/dom/MutationRecord.h"
-#include "core/dom/StyleChangeReason.h"
-#include "core/dom/StyleEngine.h"
-#include "core/dom/custom/CustomElement.h"
-#include "core/dom/custom/CustomElementDefinition.h"
+#include "core/html/custom/CustomElement.h"
+#include "core/html/custom/CustomElementDefinition.h"
+#include "core/html_names.h"
 #include "core/probe/CoreProbes.h"
-#include "platform/RuntimeEnabledFeatures.h"
 
 namespace blink {
 
@@ -392,6 +391,11 @@ PropertyRegistry* StyleRuleCSSStyleDeclaration::GetPropertyRegistry() const {
 DEFINE_TRACE(StyleRuleCSSStyleDeclaration) {
   visitor->Trace(parent_rule_);
   PropertySetCSSStyleDeclaration::Trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(StyleRuleCSSStyleDeclaration) {
+  visitor->TraceWrappers(parent_rule_);
+  PropertySetCSSStyleDeclaration::TraceWrappers(visitor);
 }
 
 MutableStylePropertySet& InlineCSSStyleDeclaration::PropertySet() const {

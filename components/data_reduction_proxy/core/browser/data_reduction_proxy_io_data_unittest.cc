@@ -12,6 +12,7 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_prefs.h"
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_request_options.h"
@@ -27,6 +28,7 @@
 #include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_info.h"
 #include "net/proxy/proxy_service.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -64,15 +66,15 @@ namespace data_reduction_proxy {
 
 class DataReductionProxyIODataTest : public testing::Test {
  public:
+  DataReductionProxyIODataTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::IO) {}
+
   void SetUp() override {
     RegisterSimpleProfilePrefs(prefs_.registry());
   }
 
   void RequestCallback(int err) {
-  }
-
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner() {
-    return loop_.task_runner();
   }
 
   net::TestDelegate* delegate() {
@@ -91,8 +93,10 @@ class DataReductionProxyIODataTest : public testing::Test {
     return &prefs_;
   }
 
+ protected:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+
  private:
-  base::MessageLoopForIO loop_;
   net::TestDelegate delegate_;
   net::TestURLRequestContext context_;
   net::NetLog net_log_;
@@ -101,10 +105,12 @@ class DataReductionProxyIODataTest : public testing::Test {
 
 TEST_F(DataReductionProxyIODataTest, TestConstruction) {
   std::unique_ptr<DataReductionProxyIOData> io_data(
-      new DataReductionProxyIOData(Client::UNKNOWN, 0, net_log(), task_runner(),
-                                   task_runner(), false /* enabled */,
-                                   std::string() /* user_agent */,
-                                   std::string() /* channel */));
+      new DataReductionProxyIOData(
+          Client::UNKNOWN, net_log(),
+          scoped_task_environment_.GetMainThreadTaskRunner(),
+          scoped_task_environment_.GetMainThreadTaskRunner(),
+          false /* enabled */, std::string() /* user_agent */,
+          std::string() /* channel */));
 
   // Check that the SimpleURLRequestContextGetter uses vanilla HTTP.
   net::URLRequestContext* request_context =
@@ -123,8 +129,9 @@ TEST_F(DataReductionProxyIODataTest, TestConstruction) {
   // When creating a network delegate, expect that it properly wraps a
   // network delegate. Such a network delegate is thoroughly tested by
   // DataReductionProxyNetworkDelegateTest.
-  std::unique_ptr<net::URLRequest> fake_request = context().CreateRequest(
-      GURL("http://www.foo.com/"), net::IDLE, delegate());
+  std::unique_ptr<net::URLRequest> fake_request =
+      context().CreateRequest(GURL("http://www.foo.com/"), net::IDLE,
+                              delegate(), TRAFFIC_ANNOTATION_FOR_TESTS);
   CountingNetworkDelegate* wrapped_network_delegate =
       new CountingNetworkDelegate();
   std::unique_ptr<DataReductionProxyNetworkDelegate> network_delegate =
@@ -150,7 +157,6 @@ TEST_F(DataReductionProxyIODataTest, TestResetBadProxyListOnDisableDataSaver) {
   net::TestURLRequestContext context(false);
   std::unique_ptr<DataReductionProxyTestContext> drp_test_context =
       DataReductionProxyTestContext::Builder()
-          .WithParamsFlags(DataReductionProxyParams::kPromoAllowed)
           .WithURLRequestContext(&context)
           .SkipSettingsInitialization()
           .Build();
@@ -188,10 +194,11 @@ TEST_F(DataReductionProxyIODataTest, TestResetBadProxyListOnDisableDataSaver) {
 
 TEST_F(DataReductionProxyIODataTest, HoldbackConfiguresProxies) {
   net::TestURLRequestContext context(false);
+  base::FieldTrialList field_trial_list(nullptr);
+  ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
+      "DataCompressionProxyHoldback", "Enabled"));
   std::unique_ptr<DataReductionProxyTestContext> drp_test_context =
       DataReductionProxyTestContext::Builder()
-          .WithParamsFlags(DataReductionProxyParams::kPromoAllowed |
-                           DataReductionProxyParams::kHoldback)
           .WithURLRequestContext(&context)
           .SkipSettingsInitialization()
           .Build();

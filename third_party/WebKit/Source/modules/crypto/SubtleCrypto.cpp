@@ -31,14 +31,15 @@
 #include "modules/crypto/SubtleCrypto.h"
 
 #include "bindings/core/v8/Dictionary.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMArrayBufferView.h"
-#include "core/dom/DOMArrayPiece.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/frame/Deprecation.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayBufferView.h"
+#include "core/typed_arrays/DOMArrayPiece.h"
 #include "modules/crypto/CryptoHistograms.h"
 #include "modules/crypto/CryptoKey.h"
 #include "modules/crypto/CryptoResultImpl.h"
+#include "modules/crypto/CryptoUtilities.h"
 #include "modules/crypto/NormalizeAlgorithm.h"
 #include "platform/json/JSONValues.h"
 #include "public/platform/Platform.h"
@@ -56,25 +57,6 @@ static bool ParseAlgorithm(const AlgorithmIdentifier& raw,
   if (!success)
     result->CompleteWithError(error.error_type, error.error_details);
   return success;
-}
-
-static bool CanAccessWebCrypto(ScriptState* script_state,
-                               CryptoResult* result) {
-  String error_message;
-  if (!ExecutionContext::From(script_state)
-           ->IsSecureContext(error_message,
-                             ExecutionContext::kWebCryptoSecureContextCheck)) {
-    result->CompleteWithError(kWebCryptoErrorTypeNotSupported, error_message);
-    return false;
-  }
-
-  if (!ExecutionContext::From(script_state)->IsSecureContext()) {
-    Deprecation::CountDeprecation(
-        ExecutionContext::From(script_state),
-        UseCounter::kSubtleCryptoOnlyStrictSecureContextCheckFailed);
-  }
-
-  return true;
 }
 
 static bool CopyStringProperty(const char* property,
@@ -169,13 +151,8 @@ static bool ParseJsonWebKey(const Dictionary& dict,
     CopyStringProperty(kPropertyNames[i], dict, json_object.get());
 
   String json = json_object->ToJSONString();
-  json_utf8 = WebVector<uint8_t>(json.Utf8().Data(), json.Utf8().length());
+  json_utf8 = WebVector<uint8_t>(json.Utf8().data(), json.Utf8().length());
   return true;
-}
-
-static WebVector<uint8_t> CopyBytes(const DOMArrayPiece& source) {
-  return WebVector<uint8_t>(static_cast<uint8_t*>(source.Data()),
-                            source.ByteLength());
 }
 
 SubtleCrypto::SubtleCrypto() {}
@@ -189,9 +166,6 @@ ScriptPromise SubtleCrypto::encrypt(ScriptState* script_state,
 
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
-
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
 
   // 14.3.1.2: Let data be the result of getting a copy of the bytes held by
   //           the data parameter passed to the encrypt method.
@@ -231,9 +205,6 @@ ScriptPromise SubtleCrypto::decrypt(ScriptState* script_state,
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
 
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
-
   // 14.3.2.2: Let data be the result of getting a copy of the bytes held by
   //           the data parameter passed to the decrypt method.
   WebVector<uint8_t> data = CopyBytes(raw_data);
@@ -271,9 +242,6 @@ ScriptPromise SubtleCrypto::sign(ScriptState* script_state,
 
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
-
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
 
   // 14.3.3.2: Let data be the result of getting a copy of the bytes held by
   //           the data parameter passed to the sign method.
@@ -314,9 +282,6 @@ ScriptPromise SubtleCrypto::verifySignature(
 
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
-
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
 
   // 14.3.4.2: Let signature be the result of getting a copy of the bytes
   //           held by the signature parameter passed to the verify method.
@@ -360,9 +325,6 @@ ScriptPromise SubtleCrypto::digest(ScriptState* script_state,
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
 
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
-
   // 14.3.5.2: Let data be the result of getting a copy of the bytes held
   //              by the data parameter passed to the digest method.
   WebVector<uint8_t> data = CopyBytes(raw_data);
@@ -391,9 +353,6 @@ ScriptPromise SubtleCrypto::generateKey(
 
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
-
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
 
   WebCryptoKeyUsageMask key_usages;
   if (!CryptoKey::ParseUsageMask(raw_key_usages, key_usages, result))
@@ -431,9 +390,6 @@ ScriptPromise SubtleCrypto::importKey(
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
 
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
-
   WebCryptoKeyFormat format;
   if (!CryptoKey::ParseFormat(raw_format, format, result))
     return promise;
@@ -457,10 +413,10 @@ ScriptPromise SubtleCrypto::importKey(
     case kWebCryptoKeyFormatRaw:
     case kWebCryptoKeyFormatPkcs8:
     case kWebCryptoKeyFormatSpki:
-      if (raw_key_data.isArrayBuffer()) {
-        key_data = CopyBytes(raw_key_data.getAsArrayBuffer());
-      } else if (raw_key_data.isArrayBufferView()) {
-        key_data = CopyBytes(raw_key_data.getAsArrayBufferView().View());
+      if (raw_key_data.IsArrayBuffer()) {
+        key_data = CopyBytes(raw_key_data.GetAsArrayBuffer());
+      } else if (raw_key_data.IsArrayBufferView()) {
+        key_data = CopyBytes(raw_key_data.GetAsArrayBufferView().View());
       } else {
         result->CompleteWithError(
             kWebCryptoErrorTypeType,
@@ -476,11 +432,11 @@ ScriptPromise SubtleCrypto::importKey(
     //  (2) Let keyData be the keyData parameter passed to the importKey
     //      method.
     case kWebCryptoKeyFormatJwk:
-      if (raw_key_data.isDictionary()) {
+      if (raw_key_data.IsDictionary()) {
         // TODO(eroman): To match the spec error order, parsing of the
         // JsonWebKey should be done earlier (at the WebIDL layer of
         // parameter checking), regardless of the format being "jwk".
-        if (!ParseJsonWebKey(raw_key_data.getAsDictionary(), key_data, result))
+        if (!ParseJsonWebKey(raw_key_data.GetAsDictionary(), key_data, result))
           return promise;
       } else {
         result->CompleteWithError(kWebCryptoErrorTypeType,
@@ -515,9 +471,6 @@ ScriptPromise SubtleCrypto::exportKey(ScriptState* script_state,
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
 
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
-
   WebCryptoKeyFormat format;
   if (!CryptoKey::ParseFormat(raw_format, format, result))
     return promise;
@@ -547,9 +500,6 @@ ScriptPromise SubtleCrypto::wrapKey(
 
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
-
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
 
   WebCryptoKeyFormat format;
   if (!CryptoKey::ParseFormat(raw_format, format, result))
@@ -612,9 +562,6 @@ ScriptPromise SubtleCrypto::unwrapKey(
 
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
-
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
 
   WebCryptoKeyFormat format;
   if (!CryptoKey::ParseFormat(raw_format, format, result))
@@ -685,9 +632,6 @@ ScriptPromise SubtleCrypto::deriveBits(ScriptState* script_state,
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
 
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
-
   // 14.3.8.2: Let normalizedAlgorithm be the result of normalizing an
   //           algorithm, with alg set to algorithm and op set to
   //           "deriveBits".
@@ -725,9 +669,6 @@ ScriptPromise SubtleCrypto::deriveKey(
 
   CryptoResultImpl* result = CryptoResultImpl::Create(script_state);
   ScriptPromise promise = result->Promise();
-
-  if (!CanAccessWebCrypto(script_state, result))
-    return promise;
 
   WebCryptoKeyUsageMask key_usages;
   if (!CryptoKey::ParseUsageMask(raw_key_usages, key_usages, result))

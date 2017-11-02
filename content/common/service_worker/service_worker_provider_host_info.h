@@ -5,18 +5,29 @@
 #ifndef CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_PROVIDER_HOST_INFO_H_
 #define CONTENT_COMMON_SERVICE_WORKER_SERVICE_WORKER_PROVIDER_HOST_INFO_H_
 
+#include "content/common/service_worker/service_worker_container.mojom.h"
 #include "content/common/service_worker/service_worker_types.h"
 
 namespace content {
 
+// ServiceWorkerProviderHostInfo contains params for creating a
+// ServiceWorkerProviderHost.
+// mojom::ServiceWorkerProviderHostInfo is mapped to this struct.
 struct CONTENT_EXPORT ServiceWorkerProviderHostInfo {
   ServiceWorkerProviderHostInfo();
   ServiceWorkerProviderHostInfo(ServiceWorkerProviderHostInfo&& other);
+  ServiceWorkerProviderHostInfo(
+      ServiceWorkerProviderHostInfo&& other,
+      mojom::ServiceWorkerContainerHostAssociatedRequest host_request,
+      mojom::ServiceWorkerContainerAssociatedPtrInfo client_ptr_info);
   ServiceWorkerProviderHostInfo(int provider_id,
                                 int route_id,
                                 ServiceWorkerProviderType type,
                                 bool is_parent_frame_secure);
   ~ServiceWorkerProviderHostInfo();
+
+  ServiceWorkerProviderHostInfo& operator=(
+      ServiceWorkerProviderHostInfo&& other);
 
   // This is unique within its child process except for PlzNavigate. When
   // PlzNavigate is on, |provider_id| is managed on the browser process and it
@@ -43,6 +54,19 @@ struct CONTENT_EXPORT ServiceWorkerProviderHostInfo {
   // not created for a document, or the document does not have a parent frame,
   // is_parent_frame_secure| is true.
   bool is_parent_frame_secure;
+
+  // Mojo endpoint to send a message from the renderer to the browser. This
+  // will be associated with ServiceWorkerDisptacherHost. |host_request| should
+  // be valid when ServiceWorkerProviderHostInfo is passed to any Mojo methods.
+  // After used to create the ServiceWorkerProviderHost, this will be invalid.
+  mojom::ServiceWorkerContainerHostAssociatedRequest host_request;
+
+  // Mojo endpoint to send a message from the browser to the renderer. This
+  // will be associated with ServiceWorkerDisptacherHost. |client_ptr_info|
+  // should be valid when ServiceWorkerProviderHostInfo is passed to any Mojo
+  // methods.
+  // After used to create the ServiceWorkerProviderHost, this will be invalid.
+  mojom::ServiceWorkerContainerAssociatedPtrInfo client_ptr_info;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerProviderHostInfo);

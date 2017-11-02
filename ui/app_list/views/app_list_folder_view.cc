@@ -8,6 +8,7 @@
 
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/app_list/app_list_constants.h"
+#include "ui/app_list/app_list_features.h"
 #include "ui/app_list/app_list_folder_item.h"
 #include "ui/app_list/app_list_model.h"
 #include "ui/app_list/views/app_list_item_view.h"
@@ -30,6 +31,10 @@ namespace app_list {
 
 namespace {
 
+// The preferred width/height for AppListFolderView.
+constexpr int kAppsFolderPreferredWidth = 576;
+constexpr int kAppsFolderPreferredHeight = 504;
+
 // Indexes of interesting views in ViewModel of AppListFolderView.
 const int kIndexFolderHeader = 0;
 const int kIndexChildItems = 1;
@@ -50,12 +55,14 @@ AppListFolderView::AppListFolderView(AppsContainerView* container_view,
       view_model_(new views::ViewModel),
       model_(model),
       folder_item_(NULL),
-      hide_for_reparent_(false) {
+      hide_for_reparent_(false),
+      is_fullscreen_app_list_enabled_(features::IsFullscreenAppListEnabled()),
+      is_app_list_focus_enabled_(features::IsAppListFocusEnabled()) {
   AddChildView(folder_header_view_);
   view_model_->Add(folder_header_view_, kIndexFolderHeader);
 
-  items_grid_view_ = new AppsGridView(app_list_main_view_);
-  items_grid_view_->set_folder_delegate(this);
+  items_grid_view_ =
+      new AppsGridView(app_list_main_view_->contents_view(), this);
   items_grid_view_->SetLayout(
       container_view->apps_grid_view()->cols(),
       container_view->apps_grid_view()->rows_per_page());
@@ -111,9 +118,13 @@ void AppListFolderView::ScheduleShowHideAnimation(bool show,
       show ? kFolderTransitionInDurationMs : kFolderTransitionOutDurationMs));
 
   layer()->SetOpacity(show ? 1.0f : 0.0f);
+  app_list_main_view_->search_box_view()->ShowBackOrGoogleIcon(show);
 }
 
-gfx::Size AppListFolderView::GetPreferredSize() const {
+gfx::Size AppListFolderView::CalculatePreferredSize() const {
+  if (is_fullscreen_app_list_enabled_)
+    return gfx::Size(kAppsFolderPreferredWidth, kAppsFolderPreferredHeight);
+
   const gfx::Size header_size = folder_header_view_->GetPreferredSize();
   const gfx::Size grid_size = items_grid_view_->GetPreferredSize();
   int width = std::max(header_size.width(), grid_size.width());
@@ -127,6 +138,11 @@ void AppListFolderView::Layout() {
 }
 
 bool AppListFolderView::OnKeyPressed(const ui::KeyEvent& event) {
+  if (is_app_list_focus_enabled_) {
+    // TODO(weidongg/766807) Remove this function when the flag is enabled by
+    // default.
+    return false;
+  }
   // Process TAB if focus should go to header; otherwise, AppsGridView will do
   // the right thing.
   if (event.key_code() == ui::VKEY_TAB) {

@@ -10,7 +10,6 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
@@ -60,6 +59,7 @@ const char AccountTrackerService::kNoPictureURLFound[] = "NO_PICTURE_URL";
 AccountTrackerService::AccountTrackerService() : signin_client_(nullptr) {}
 
 AccountTrackerService::~AccountTrackerService() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 // static

@@ -249,7 +249,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     const base::FilePath& directory_path) {
   base::ThreadRestrictions::AssertIOAllowed();
   static_assert(
-      kDBVersion == 13,
+      kDBVersion == 15,
       "database version and this function must be updated at the same time");
 
   const base::FilePath resource_map_path =
@@ -269,14 +269,14 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     return false;
 
   // Open DB.
-  leveldb::DB* db = NULL;
-  leveldb::Options options;
+  std::unique_ptr<leveldb::DB> resource_map;
+  leveldb_env::Options options;
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = false;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
-  if (!leveldb::DB::Open(options, resource_map_path.AsUTF8Unsafe(), &db).ok())
+  leveldb::Status status = leveldb_env::OpenDB(
+      options, resource_map_path.AsUTF8Unsafe(), &resource_map);
+  if (!status.ok())
     return false;
-  std::unique_ptr<leveldb::DB> resource_map(db);
 
   // Check DB version.
   std::string serialized_header;
@@ -290,33 +290,7 @@ bool ResourceMetadataStorage::UpgradeOldDB(
                               header.version());
 
   if (header.version() == kDBVersion) {
-    // Before r272134, UpgradeOldDB() was not deleting unused ID entries.
-    // Delete unused ID entries to fix crbug.com/374648.
-    std::set<std::string> used_ids;
-
-    std::unique_ptr<leveldb::Iterator> it(
-        resource_map->NewIterator(leveldb::ReadOptions()));
-    it->Seek(leveldb::Slice(GetHeaderDBKey()));
-    it->Next();
-    for (; it->Valid(); it->Next()) {
-      if (IsCacheEntryKey(it->key())) {
-        used_ids.insert(GetIdFromCacheEntryKey(it->key()));
-      } else if (!IsChildEntryKey(it->key()) && !IsIdEntryKey(it->key())) {
-        used_ids.insert(it->key().ToString());
-      }
-    }
-    if (!it->status().ok())
-      return false;
-
-    leveldb::WriteBatch batch;
-    for (it->SeekToFirst(); it->Valid(); it->Next()) {
-      if (IsIdEntryKey(it->key()) && !used_ids.count(it->value().ToString()))
-        batch.Delete(it->key());
-    }
-    if (!it->status().ok())
-      return false;
-
-    return resource_map->Write(leveldb::WriteOptions(), &batch).ok();
+    return true;
   } else if (header.version() < 6) {  // Too old, nothing can be done.
     return false;
   } else if (header.version() < 11) {  // Cache entries can be reused.
@@ -363,7 +337,8 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     if (!it->status().ok())
       return false;
 
-    // Put header with the latest version number.
+    // Put header with the latest version number. This also clears
+    // largest_changestamp and triggers refresh of metadata.
     std::string serialized_header;
     if (!GetDefaultHeaderEntry().SerializeToString(&serialized_header))
       return false;
@@ -432,7 +407,8 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     if (!it->status().ok())
       return false;
 
-    // Put header with the latest version number.
+    // Put header with the latest version number. This also clears
+    // largest_changestamp and triggers refresh of metadata.
     std::string serialized_header;
     if (!GetDefaultHeaderEntry().SerializeToString(&serialized_header))
       return false;
@@ -503,13 +479,58 @@ bool ResourceMetadataStorage::UpgradeOldDB(
     if (!it->status().ok())
       return false;
 
-    // Put header with the latest version number.
-    header.set_version(ResourceMetadataStorage::kDBVersion);
+    // Put header with the latest version number. This also clears
+    // largest_changestamp and triggers refresh of metadata.
     std::string serialized_header;
-    if (!header.SerializeToString(&serialized_header))
+    if (!GetDefaultHeaderEntry().SerializeToString(&serialized_header))
       return false;
     batch.Put(GetHeaderDBKey(), serialized_header);
 
+    return resource_map->Write(leveldb::WriteOptions(), &batch).ok();
+  } else if (header.version() < 14) {
+    // Before r272134, UpgradeOldDB() was not deleting unused ID entries.
+    // Delete unused ID entries to fix crbug.com/374648.
+    std::set<std::string> used_ids;
+
+    std::unique_ptr<leveldb::Iterator> it(
+        resource_map->NewIterator(leveldb::ReadOptions()));
+    it->Seek(leveldb::Slice(GetHeaderDBKey()));
+    it->Next();
+    for (; it->Valid(); it->Next()) {
+      if (IsCacheEntryKey(it->key())) {
+        used_ids.insert(GetIdFromCacheEntryKey(it->key()));
+      } else if (!IsChildEntryKey(it->key()) && !IsIdEntryKey(it->key())) {
+        used_ids.insert(it->key().ToString());
+      }
+    }
+    if (!it->status().ok())
+      return false;
+
+    leveldb::WriteBatch batch;
+    for (it->SeekToFirst(); it->Valid(); it->Next()) {
+      if (IsIdEntryKey(it->key()) && !used_ids.count(it->value().ToString()))
+        batch.Delete(it->key());
+    }
+    if (!it->status().ok())
+      return false;
+
+    // Put header with the latest version number. This also clears
+    // largest_changestamp and triggers refresh of metadata.
+    std::string serialized_header;
+    if (!GetDefaultHeaderEntry().SerializeToString(&serialized_header))
+      return false;
+    batch.Put(GetHeaderDBKey(), serialized_header);
+
+    return resource_map->Write(leveldb::WriteOptions(), &batch).ok();
+  } else if (header.version() < 15) {
+    // Just need to clear largest_changestamp.
+    // Put header with the latest version number.
+    std::string serialized_header;
+    if (!GetDefaultHeaderEntry().SerializeToString(&serialized_header))
+      return false;
+
+    leveldb::WriteBatch batch;
+    batch.Put(GetHeaderDBKey(), serialized_header);
     return resource_map->Write(leveldb::WriteOptions(), &batch).ok();
   }
 
@@ -552,22 +573,19 @@ bool ResourceMetadataStorage::Initialize() {
   }
 
   // Try to open the existing DB.
-  leveldb::DB* db = NULL;
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = false;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
 
   DBInitStatus open_existing_result = DB_INIT_NOT_FOUND;
   leveldb::Status status;
   if (base::PathExists(resource_map_path)) {
-    status = leveldb::DB::Open(options, resource_map_path.AsUTF8Unsafe(), &db);
+    status = leveldb_env::OpenDB(options, resource_map_path.AsUTF8Unsafe(),
+                                 &resource_map_);
     open_existing_result = LevelDBStatusToDBInitStatus(status);
   }
 
   if (open_existing_result == DB_INIT_SUCCESS) {
-    resource_map_.reset(db);
-
     // Check the validity of existing DB.
     int db_version = -1;
     ResourceMetadataHeader header;
@@ -605,15 +623,14 @@ bool ResourceMetadataStorage::Initialize() {
     MoveIfPossible(resource_map_path, preserved_resource_map_path);
 
     // Create DB.
+    options = leveldb_env::Options();
     options.max_open_files = 0;  // Use minimum.
     options.create_if_missing = true;
     options.error_if_exists = true;
-    options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
 
-    status = leveldb::DB::Open(options, resource_map_path.AsUTF8Unsafe(), &db);
+    status = leveldb_env::OpenDB(options, resource_map_path.AsUTF8Unsafe(),
+                                 &resource_map_);
     if (status.ok()) {
-      resource_map_.reset(db);
-
       // Set up header and trash the old DB.
       if (PutHeader(GetDefaultHeaderEntry()) == FILE_ERROR_OK &&
           MoveIfPossible(preserved_resource_map_path,
@@ -627,24 +644,6 @@ bool ResourceMetadataStorage::Initialize() {
     } else {
       LOG(ERROR) << "Failed to create resource map DB: " << status.ToString();
       init_result = LevelDBStatusToDBInitStatus(status);
-    }
-  }
-
-  // Update local resouces if 'starred' property has not been initialized.
-  if (resource_map_) {
-    ResourceMetadataHeader header;
-    if (GetHeader(&header) != FILE_ERROR_OK)
-      return false;
-
-    if (!header.starred_property_initialized()) {
-      // largest changestamp == 0 means data in DB is obsolete.
-      // So data for all entries will be reloaded.
-      header.set_largest_changestamp(0);
-      header.set_starred_property_initialized(true);
-      FileError error = PutHeader(header);
-
-      if (error != FILE_ERROR_OK)
-        return false;
     }
   }
 
@@ -662,10 +661,10 @@ void ResourceMetadataStorage::RecoverCacheInfoFromTrashedResourceMap(
   if (!base::PathExists(trashed_resource_map_path))
     return;
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = false;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
+  options.reuse_logs = false;
 
   // Trashed DB may be broken, repair it first.
   leveldb::Status status;
@@ -676,14 +675,13 @@ void ResourceMetadataStorage::RecoverCacheInfoFromTrashedResourceMap(
   }
 
   // Open it.
-  leveldb::DB* db = NULL;
-  status = leveldb::DB::Open(options, trashed_resource_map_path.AsUTF8Unsafe(),
-                             &db);
+  std::unique_ptr<leveldb::DB> resource_map;
+  status = leveldb_env::OpenDB(
+      options, trashed_resource_map_path.AsUTF8Unsafe(), &resource_map);
   if (!status.ok()) {
     LOG(ERROR) << "Failed to open trashed DB: " << status.ToString();
     return;
   }
-  std::unique_ptr<leveldb::DB> resource_map(db);
 
   // Check DB version.
   std::string serialized_header;

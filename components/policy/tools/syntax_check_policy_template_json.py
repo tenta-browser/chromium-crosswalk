@@ -185,7 +185,8 @@ class PolicyTemplateChecker(object):
                      'supported_on', 'label', 'policies', 'items',
                      'example_value', 'features', 'deprecated', 'future',
                      'id', 'schema', 'max_size', 'tags',
-                     'default_for_enterprise_users', 'arc_support'):
+                     'default_for_enterprise_users', 'arc_support',
+                     'supported_chrome_os_management'):
         self.warning_count += 1
         print ('In policy %s: Warning: Unknown key: %s' %
                (policy.get('name'), key))
@@ -281,10 +282,37 @@ class PolicyTemplateChecker(object):
                             container_name='features',
                             identifier=policy.get('name'))
 
+      # If 'device only' policy is on, feature 'per_profile' shouldn't exist.
+      if (policy.get('device_only', False) and
+          features.get('per_profile', False)):
+        self._Error('per_profile attribute should not be set '
+                    'for policies with device_only=True')
+
       # All policies must declare whether they allow changes at runtime.
       self._CheckContains(features, 'dynamic_refresh', bool,
                           container_name='features',
                           identifier=policy.get('name'))
+
+      # Chrome OS policies may have a non-empty supported_chrome_os_management
+      # list with either 'active_directory' or 'google_cloud' or both.
+      supported_chrome_os_management = self._CheckContains(
+          policy, 'supported_chrome_os_management', list, True)
+      if supported_chrome_os_management is not None:
+        # Must be on Chrome OS.
+        if (supported_on is not None and
+            not any('chrome_os:' in str for str in supported_on)):
+          self._Error('"supported_chrome_os_management" is only supported on '
+                      'Chrome OS', 'policy', policy, supported_on)
+        # Must be non-empty.
+        if len(supported_chrome_os_management) == 0:
+          self._Error('"supported_chrome_os_management" must be non-empty',
+                      'policy', policy)
+        # Must be either 'active_directory' or 'google_cloud'.
+        if (any(str != 'google_cloud' and str != 'active_directory'
+                for str in supported_chrome_os_management)):
+          self._Error('Values in "supported_chrome_os_management" must be '
+                      'either "active_directory" or "google_cloud"', 'policy',
+                      policy, supported_chrome_os_management)
 
       # Each policy must have an 'example_value' of appropriate type.
       if policy_type == 'main':
@@ -444,8 +472,8 @@ class PolicyTemplateChecker(object):
 
   def Main(self, filename, options):
     try:
-      with open(filename) as f:
-        data = eval(f.read())
+      with open(filename, "rb") as f:
+        data = eval(f.read().decode("UTF-8"))
     except:
       import traceback
       traceback.print_exc(file=sys.stdout)

@@ -4,7 +4,6 @@
       "name": "LayoutView #document",
       "bounds": [874, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#3F3F3F",
       "paintInvalidations": [
         {
@@ -15,12 +14,17 @@
         {
           "object": "LayoutBlockFlow DIV",
           "rect": [8, 8, 866, 764],
-          "reason": "border box change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutBlockFlow BODY",
           "rect": [8, 224, 784, 548],
           "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV",
+          "rect": [137, 88, 607, 604],
+          "reason": "geometry"
         }
       ]
     }
@@ -36,11 +40,11 @@
     },
     {
       "object": "LayoutBlockFlow DIV",
-      "reason": "border box change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow DIV",
-      "reason": "border box change"
+      "reason": "geometry"
     }
   ]
 }

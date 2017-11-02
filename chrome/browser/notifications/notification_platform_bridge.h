@@ -22,16 +22,21 @@ class Notification;
 // TODO(miguelg): Add support for click and close events.
 class NotificationPlatformBridge {
  public:
+  using NotificationBridgeReadyCallback =
+      base::OnceCallback<void(bool /* success */)>;
+
   static NotificationPlatformBridge* Create();
 
   virtual ~NotificationPlatformBridge() {}
 
   // Shows a toast on screen using the data passed in |notification|.
-  virtual void Display(NotificationCommon::Type notification_type,
-                       const std::string& notification_id,
-                       const std::string& profile_id,
-                       bool is_incognito,
-                       const Notification& notification) = 0;
+  virtual void Display(
+      NotificationCommon::Type notification_type,
+      const std::string& notification_id,
+      const std::string& profile_id,
+      bool is_incognito,
+      const Notification& notification,
+      std::unique_ptr<NotificationCommon::Metadata> metadata) = 0;
 
   // Closes a nofication with |notification_id| and |profile_id| if being
   // displayed.
@@ -44,6 +49,11 @@ class NotificationPlatformBridge {
       const std::string& profile_id,
       bool incognito,
       const GetDisplayedNotificationsCallback& callback) const = 0;
+
+  // Calls |callback| once |this| is initialized. The argument is
+  // true if |this| is ready to be used and false if initialization
+  // failed. |callback| may be called directly or from a posted task.
+  virtual void SetReadyCallback(NotificationBridgeReadyCallback callback) = 0;
 
  protected:
   NotificationPlatformBridge() {}

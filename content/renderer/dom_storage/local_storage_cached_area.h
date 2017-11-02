@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/nullable_string16.h"
+#include "content/common/content_export.h"
 #include "content/common/leveldb_wrapper.mojom.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "url/gurl.h"
@@ -32,8 +33,9 @@ class StoragePartitionService;
 // callbacks.
 // There is one LocalStorageCachedArea for potentially many LocalStorageArea
 // objects.
-class LocalStorageCachedArea : public mojom::LevelDBObserver,
-                               public base::RefCounted<LocalStorageCachedArea> {
+class CONTENT_EXPORT LocalStorageCachedArea
+    : public mojom::LevelDBObserver,
+      public base::RefCounted<LocalStorageCachedArea> {
  public:
   LocalStorageCachedArea(
       const url::Origin& origin,
@@ -64,6 +66,13 @@ class LocalStorageCachedArea : public mojom::LevelDBObserver,
   friend class base::RefCounted<LocalStorageCachedArea>;
   ~LocalStorageCachedArea() override;
 
+  friend class LocalStorageCachedAreaTest;
+
+  static base::string16 Uint8VectorToString16(
+      const std::vector<uint8_t>& input);
+  static std::vector<uint8_t> String16ToUint8Vector(
+      const base::string16& input);
+
   // LevelDBObserver:
   void KeyAdded(const std::vector<uint8_t>& key,
                 const std::vector<uint8_t>& value,
@@ -76,6 +85,7 @@ class LocalStorageCachedArea : public mojom::LevelDBObserver,
                   const std::vector<uint8_t>& old_value,
                   const std::string& source) override;
   void AllDeleted(const std::string& source) override;
+  void ShouldSendOldValueOnMutations(bool value) override;
 
   // Common helper for KeyAdded() and KeyChanged()
   void KeyAddedOrChanged(const std::vector<uint8_t>& key,
@@ -99,6 +109,8 @@ class LocalStorageCachedArea : public mojom::LevelDBObserver,
   scoped_refptr<DOMStorageMap> map_;
   std::map<base::string16, int> ignore_key_mutations_;
   bool ignore_all_mutations_ = false;
+  // See ShouldSendOldValueOnMutations().
+  bool should_send_old_value_on_mutations_ = true;
   mojom::LevelDBWrapperPtr leveldb_;
   mojo::AssociatedBinding<mojom::LevelDBObserver> binding_;
   LocalStorageCachedAreas* cached_areas_;

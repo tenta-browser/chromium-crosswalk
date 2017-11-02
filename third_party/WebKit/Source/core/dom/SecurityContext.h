@@ -33,7 +33,6 @@
 #include "platform/weborigin/Suborigin.h"
 #include "platform/wtf/HashSet.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/StringHash.h"
 #include "platform/wtf/text/WTFString.h"
@@ -57,7 +56,7 @@ class CORE_EXPORT SecurityContext : public GarbageCollectedMixin {
 
   using InsecureNavigationsSet = HashSet<unsigned, WTF::AlreadyHashed>;
 
-  SecurityOrigin* GetSecurityOrigin() const { return security_origin_.Get(); }
+  SecurityOrigin* GetSecurityOrigin() const { return security_origin_.get(); }
   ContentSecurityPolicy* GetContentSecurityPolicy() const {
     return content_security_policy_.Get();
   }
@@ -65,7 +64,7 @@ class CORE_EXPORT SecurityContext : public GarbageCollectedMixin {
   // Explicitly override the security origin for this security context.
   // Note: It is dangerous to change the security origin of a script context
   //       that already contains content.
-  void SetSecurityOrigin(PassRefPtr<SecurityOrigin>);
+  void SetSecurityOrigin(RefPtr<SecurityOrigin>);
   virtual void DidUpdateSecurityOrigin() = 0;
 
   SandboxFlags GetSandboxFlags() const { return sandbox_flags_; }
@@ -75,6 +74,9 @@ class CORE_EXPORT SecurityContext : public GarbageCollectedMixin {
   void SetAddressSpace(WebAddressSpace space) { address_space_ = space; }
   WebAddressSpace AddressSpace() const { return address_space_; }
   String addressSpaceForBindings() const;
+
+  void SetRequireTrustedTypes() { require_safe_types_ = true; }
+  bool RequireTrustedTypes() const { return require_safe_types_; }
 
   void AddInsecureNavigationUpgrade(unsigned hashed_host) {
     insecure_navigations_to_upgrade_.insert(hashed_host);
@@ -98,13 +100,13 @@ class CORE_EXPORT SecurityContext : public GarbageCollectedMixin {
                                const WebFeaturePolicy* parent_feature_policy);
   void UpdateFeaturePolicyOrigin();
 
+  void ApplySandboxFlags(SandboxFlags mask);
+
  protected:
   SecurityContext();
   virtual ~SecurityContext();
 
   void SetContentSecurityPolicy(ContentSecurityPolicy*);
-
-  void ApplySandboxFlags(SandboxFlags mask);
 
  private:
   RefPtr<SecurityOrigin> security_origin_;
@@ -116,6 +118,7 @@ class CORE_EXPORT SecurityContext : public GarbageCollectedMixin {
   WebAddressSpace address_space_;
   WebInsecureRequestPolicy insecure_request_policy_;
   InsecureNavigationsSet insecure_navigations_to_upgrade_;
+  bool require_safe_types_;
 };
 
 }  // namespace blink

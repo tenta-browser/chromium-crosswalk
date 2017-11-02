@@ -180,6 +180,10 @@ class SSLConnectJob : public ConnectJob {
   // none was triggered.
   int version_interference_error_;
 
+  // Details for the error which triggered a TLS 1.3 interference probe, or
+  // kOther if not applicable.
+  SSLErrorDetails version_interference_details_;
+
   DISALLOW_COPY_AND_ASSIGN(SSLConnectJob);
 };
 
@@ -221,7 +225,8 @@ class NET_EXPORT_PRIVATE SSLClientSocketPool
   void RequestSockets(const std::string& group_name,
                       const void* params,
                       int num_sockets,
-                      const NetLogWithSource& net_log) override;
+                      const NetLogWithSource& net_log,
+                      HttpRequestInfo::RequestMotivation motivation) override;
 
   void SetPriority(const std::string& group_name,
                    ClientSocketHandle* handle,

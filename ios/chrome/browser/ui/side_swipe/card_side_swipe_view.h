@@ -36,13 +36,13 @@
   CGFloat topMargin_;
 
   // Tab model.
-  TabModel* model_;  // weak
+  __weak TabModel* model_;
 
   // The image view containing the background image.
   base::scoped_nsobject<UIImageView> backgroundView_;
 }
 
-@property(nonatomic, assign) id<SideSwipeControllerDelegate> delegate;
+@property(nonatomic, weak) id<SideSwipeControllerDelegate> delegate;
 @property(nonatomic, assign) CGFloat topMargin;
 
 - (id)initWithFrame:(CGRect)frame

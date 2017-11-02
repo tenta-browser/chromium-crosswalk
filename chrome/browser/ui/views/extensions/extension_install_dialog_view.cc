@@ -24,6 +24,7 @@
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
@@ -38,6 +39,7 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/native_theme/common_theme.h"
@@ -80,6 +82,9 @@ constexpr int kNoPermissionsLeftColumnWidth = 200;
 // this case, so make it wider than normal.
 constexpr int kExternalInstallLeftColumnWidth = 350;
 
+// Time delay before the install button is enabled after initial display.
+int g_install_delay_in_ms = 500;
+
 // Get the appropriate indentation for an item if its parent is using bullet
 // points. If the parent is using bullets for its items, then a padding of one
 // unit will make the child item (which has no bullet) look like a sibling of
@@ -90,9 +95,6 @@ int GetLeftPaddingForBulletedItems(bool parent_bulleted) {
              views::DISTANCE_RELATED_CONTROL_HORIZONTAL) *
          (parent_bulleted ? 2 : 1);
 }
-
-// Time delay before the install button is enabled after initial display.
-int g_install_delay_in_ms = 500;
 
 void AddResourceIcon(const gfx::ImageSkia* skia_image, void* data) {
   views::View* parent = static_cast<views::View*>(data);
@@ -106,8 +108,8 @@ void AddResourceIcon(const gfx::ImageSkia* skia_image, void* data) {
 base::string16 PrepareForDisplay(const base::string16& message,
                                  bool bullet_point) {
   return bullet_point ? l10n_util::GetStringFUTF16(
-      IDS_EXTENSION_PERMISSION_LINE,
-      message) : message;
+                            IDS_EXTENSION_PERMISSION_LINE, message)
+                      : message;
 }
 
 void ShowExtensionInstallDialogImpl(
@@ -154,19 +156,12 @@ class CustomScrollableView : public views::View {
 }  // namespace
 
 BulletedView::BulletedView(views::View* view) {
-  views::GridLayout* layout = new views::GridLayout(this);
-  SetLayoutManager(layout);
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
   views::ColumnSet* column_set = layout->AddColumnSet(0);
-  column_set->AddColumn(views::GridLayout::CENTER,
-                        views::GridLayout::LEADING,
-                        0,
-                        views::GridLayout::FIXED,
-                        kBulletWidth,
-                        0);
-  column_set->AddColumn(views::GridLayout::LEADING,
-                        views::GridLayout::LEADING,
-                        0,
-                        views::GridLayout::USE_PREF,
+  column_set->AddColumn(views::GridLayout::CENTER, views::GridLayout::LEADING,
+                        0, views::GridLayout::FIXED, kBulletWidth, 0);
+  column_set->AddColumn(views::GridLayout::LEADING, views::GridLayout::LEADING,
+                        0, views::GridLayout::USE_PREF,
                         0,  // No fixed width.
                         0);
   layout->StartRow(0, 0);
@@ -188,6 +183,7 @@ ExtensionInstallDialogView::ExtensionInstallDialogView(
       handled_result_(false),
       install_button_enabled_(false) {
   InitView();
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::EXTENSION_INSTALL);
 }
 
 ExtensionInstallDialogView::~ExtensionInstallDialogView() {
@@ -243,8 +239,8 @@ void ExtensionInstallDialogView::InitView() {
   if (prompt_->has_webstore_data()) {
     layout->StartRow(0, column_set_id);
     views::View* rating = new views::View();
-    rating->SetLayoutManager(new views::BoxLayout(
-        views::BoxLayout::kHorizontal, 0, 0, 0));
+    rating->SetLayoutManager(
+        new views::BoxLayout(views::BoxLayout::kHorizontal));
     layout->AddView(rating);
     prompt_->AppendRatingStars(AddResourceIcon, rating);
 
@@ -281,13 +277,14 @@ void ExtensionInstallDialogView::InitView() {
 
   const int content_width =
       left_column_width +
-      provider->GetDistanceMetric(DISTANCE_PANEL_CONTENT_MARGIN) + kIconSize;
+      provider->GetDistanceMetric(DISTANCE_UNRELATED_CONTROL_HORIZONTAL) +
+      kIconSize;
 
   // Create the scrollable view which will contain the permissions and retained
   // files/devices. It will span the full content width.
   CustomScrollableView* scrollable = new CustomScrollableView();
-  views::GridLayout* scroll_layout = new views::GridLayout(scrollable);
-  scrollable->SetLayoutManager(scroll_layout);
+  views::GridLayout* scroll_layout =
+      views::GridLayout::CreateAndInstall(scrollable);
 
   views::ColumnSet* scrollable_column_set =
       scroll_layout->AddColumnSet(column_set_id);
@@ -298,9 +295,9 @@ void ExtensionInstallDialogView::InitView() {
       views::GridLayout::USE_PREF, content_width, content_width);
 
   // Pad to the very right of the dialog, so the scrollbar will be on the edge.
-  const int button_margin =
-      provider->GetDistanceMetric(DISTANCE_DIALOG_BUTTON_MARGIN);
-  scrollable_column_set->AddPaddingColumn(0, button_margin);
+  const gfx::Insets dialog_insets =
+      provider->GetInsetsMetric(views::INSETS_DIALOG);
+  scrollable_column_set->AddPaddingColumn(0, dialog_insets.right());
 
   layout->StartRow(0, column_set_id);
   scroll_view_ = new views::ScrollView();
@@ -382,8 +379,8 @@ void ExtensionInstallDialogView::InitView() {
       0,
       std::min(kScrollViewMaxHeight, scrollable->GetPreferredSize().height()));
 
-  dialog_size_ = gfx::Size(content_width + 2 * button_margin,
-                           container_->GetPreferredSize().height());
+  SetPreferredSize(gfx::Size(content_width + dialog_insets.width(),
+                             container_->GetPreferredSize().height()));
 
   std::string event_name = ExperienceSamplingEvent::kExtensionInstallDialog;
   event_name.append(
@@ -442,20 +439,24 @@ views::GridLayout* ExtensionInstallDialogView::CreateLayout(
     int column_set_id) {
   container_ = new views::View();
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
-  const int horizontal_margin =
-      provider->GetDistanceMetric(DISTANCE_DIALOG_BUTTON_MARGIN);
-  const int bottom_margin =
-      provider->GetDistanceMetric(DISTANCE_PANEL_CONTENT_MARGIN);
+  const gfx::Insets dialog_insets =
+      provider->GetInsetsMetric(views::INSETS_DIALOG);
+  // TODO(crbug.com/702196): Give this dialog a standard title and use
+  // ChromeLayoutProvider::GetDialogInsetsForContentType instead.
+  const gfx::Insets content_insets(
+      dialog_insets.top(), dialog_insets.left(),
+      provider->GetDistanceMetric(
+          views::DISTANCE_DIALOG_CONTENT_MARGIN_BOTTOM_TEXT),
+      dialog_insets.right());
 
-  // This is views::GridLayout::CreatePanel(), but without a top or right
-  // margin. The empty dialog title will then become the top margin, and a
-  // padding column will be manually added to handle a right margin. This is
-  // done so that the extension icon can be shown on the right of the dialog
-  // title, but on the same y-axis, and the scroll view used to contain other
-  // content can have its scrollbar aligned with the right edge of the dialog.
-  views::GridLayout* layout = new views::GridLayout(container_);
-  layout->SetInsets(0, horizontal_margin, bottom_margin, 0);
-  container_->SetLayoutManager(layout);
+  // The empty dialog title will become the top margin, and a padding column
+  // will be manually added to handle a right margin. This is done so that the
+  // extension icon can be shown on the right of the dialog title, but on the
+  // same y-axis, and the scroll view used to contain other content can have its
+  // scrollbar aligned with the right edge of the dialog.
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(container_);
+  container_->SetBorder(views::CreateEmptyBorder(0, content_insets.left(),
+                                                 content_insets.bottom(), 0));
   AddChildView(container_);
 
   views::ColumnSet* column_set = layout->AddColumnSet(column_set_id);
@@ -471,7 +472,7 @@ views::GridLayout* ExtensionInstallDialogView::CreateLayout(
                         views::GridLayout::USE_PREF,
                         0,  // no fixed width
                         kIconSize);
-  column_set->AddPaddingColumn(0, horizontal_margin);
+  column_set->AddPaddingColumn(0, content_insets.right());
 
   layout->StartRow(0, column_set_id);
   views::Label* title = new views::Label(prompt_->GetDialogTitle(),
@@ -499,12 +500,6 @@ views::GridLayout* ExtensionInstallDialogView::CreateLayout(
   layout->AddView(icon, 1, icon_row_span);
 
   return layout;
-}
-
-void ExtensionInstallDialogView::OnNativeThemeChanged(
-    const ui::NativeTheme* theme) {
-  scroll_view_->SetBackgroundColor(
-      theme->GetSystemColor(ui::NativeTheme::kColorId_DialogBackground));
 }
 
 int ExtensionInstallDialogView::GetDialogButtons() const {
@@ -584,10 +579,6 @@ void ExtensionInstallDialogView::Layout() {
   DialogDelegateView::Layout();
 }
 
-gfx::Size ExtensionInstallDialogView::GetPreferredSize() const {
-  return dialog_size_;
-}
-
 views::View* ExtensionInstallDialogView::CreateExtraView() {
   if (!prompt_->has_webstore_data())
     return nullptr;
@@ -637,9 +628,7 @@ void ExtensionInstallDialogView::UpdateInstallResultHistogram(bool accepted)
 
 ExpandableContainerView::DetailsView::DetailsView(int horizontal_space,
                                                   bool parent_bulleted)
-    : layout_(new views::GridLayout(this)),
-      state_(0) {
-  SetLayoutManager(layout_);
+    : layout_(views::GridLayout::CreateAndInstall(this)), state_(0) {
   views::ColumnSet* column_set = layout_->AddColumnSet(0);
   const int padding = GetLeftPaddingForBulletedItems(parent_bulleted);
   column_set->AddPaddingColumn(0, padding);
@@ -660,8 +649,8 @@ void ExpandableContainerView::DetailsView::AddDetail(
   layout_->AddView(detail_label);
 }
 
-gfx::Size ExpandableContainerView::DetailsView::GetPreferredSize() const {
-  gfx::Size size = views::View::GetPreferredSize();
+gfx::Size ExpandableContainerView::DetailsView::CalculatePreferredSize() const {
+  gfx::Size size = views::View::CalculatePreferredSize();
   return gfx::Size(size.width(), size.height() * state_);
 }
 
@@ -682,8 +671,7 @@ ExpandableContainerView::ExpandableContainerView(
       more_details_(NULL),
       arrow_toggle_(NULL),
       expanded_(false) {
-  views::GridLayout* layout = new views::GridLayout(this);
-  SetLayoutManager(layout);
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
   int column_set_id = 0;
   views::ColumnSet* column_set = layout->AddColumnSet(column_set_id);
   column_set->AddColumn(views::GridLayout::LEADING, views::GridLayout::LEADING,

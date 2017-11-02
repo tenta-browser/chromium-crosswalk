@@ -19,13 +19,9 @@ QuicHeadersStream* QuicSpdySessionPeer::GetHeadersStream(
 void QuicSpdySessionPeer::SetHeadersStream(QuicSpdySession* session,
                                            QuicHeadersStream* headers_stream) {
   session->headers_stream_.reset(headers_stream);
-  session->static_streams()[headers_stream->id()] = headers_stream;
-}
-
-// static
-void QuicSpdySessionPeer::SetForceHolBlocking(QuicSpdySession* session,
-                                              bool value) {
-  session->force_hol_blocking_ = value;
+  if (headers_stream != nullptr) {
+    session->static_streams()[headers_stream->id()] = headers_stream;
+  }
 }
 
 // static
@@ -62,6 +58,25 @@ size_t QuicSpdySessionPeer::WriteHeadersImpl(
     QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener) {
   return session->WriteHeadersImpl(id, std::move(headers), fin, priority,
                                    std::move(ack_listener));
+}
+
+//  static
+QuicStreamId QuicSpdySessionPeer::NextStreamId(const QuicSpdySession& session) {
+  return 2;
+}
+
+//  static
+QuicStreamId QuicSpdySessionPeer::GetNthClientInitiatedStreamId(
+    const QuicSpdySession& session,
+    int n) {
+  return 5 + QuicSpdySessionPeer::NextStreamId(session) * n;
+}
+
+//  static
+QuicStreamId QuicSpdySessionPeer::GetNthServerInitiatedStreamId(
+    const QuicSpdySession& session,
+    int n) {
+  return 2 + QuicSpdySessionPeer::NextStreamId(session) * n;
 }
 
 }  // namespace test

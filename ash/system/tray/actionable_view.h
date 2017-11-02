@@ -9,7 +9,7 @@
 #include "ash/system/tray/tray_popup_ink_drop_style.h"
 #include "base/macros.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 
 namespace ash {
 class SystemTrayItem;
@@ -22,9 +22,9 @@ class SystemTrayItem;
 // Exported for SystemTray.
 //
 // TODO(bruthig): Consider removing ActionableView and make clients use
-// CustomButtons instead. (See crbug.com/614453)
+// Buttons instead. (See crbug.com/614453)
 class ASH_EXPORT ActionableView : public views::ButtonListener,
-                                  public views::CustomButton {
+                                  public views::Button {
  public:
   static const char kViewClassName[];
 
@@ -34,19 +34,11 @@ class ASH_EXPORT ActionableView : public views::ButtonListener,
 
   ~ActionableView() override;
 
-  void SetAccessibleName(const base::string16& name);
-  const base::string16& accessible_name() const { return accessible_name_; }
-
   // Closes the system tray bubble. The |owner_| must not be nullptr.
   void CloseSystemBubble();
 
  protected:
   SystemTrayItem* owner() { return owner_; }
-
-  // Draws focus rectangle on the canvas.
-  // Default implementation draws the focus rectangle with certain inset and
-  // color. Subclasses can override to change the default settings.
-  virtual void OnPaintFocus(gfx::Canvas* canvas);
 
   // Performs an action when user clicks on the view (on mouse-press event), or
   // presses a key when this view is in focus. Returns true if the event has
@@ -61,13 +53,10 @@ class ASH_EXPORT ActionableView : public views::ButtonListener,
   virtual void HandlePerformActionResult(bool action_performed,
                                          const ui::Event& event);
 
-  // Overridden from views::CustomButton.
+  // Overridden from views::Button.
   const char* GetClassName() const override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  void OnPaint(gfx::Canvas* canvas) override;
-  void OnFocus() override;
-  void OnBlur() override;
   std::unique_ptr<views::InkDrop> CreateInkDrop() override;
   std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
   std::unique_ptr<views::InkDropHighlight> CreateInkDropHighlight()
@@ -84,8 +73,6 @@ class ASH_EXPORT ActionableView : public views::ButtonListener,
   bool* destroyed_;
 
   SystemTrayItem* owner_;
-
-  base::string16 accessible_name_;
 
   // Defines the flavor of ink drop ripple/highlight that should be constructed.
   TrayPopupInkDropStyle ink_drop_style_;

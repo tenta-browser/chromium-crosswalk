@@ -37,21 +37,6 @@
 
 namespace policy {
 
-namespace {
-
-std::string GetStoreManagementDomain(const CloudPolicyStore* policy_store) {
-  if (policy_store) {
-    CHECK(policy_store->is_initialized())
-        << "Cloud policy management domain must be "
-           "requested only after the policy system is fully initialized";
-    if (policy_store->is_managed() && policy_store->policy()->has_username())
-      return gaia::ExtractDomainName(policy_store->policy()->username());
-  }
-  return std::string();
-}
-
-}  // namespace
-
 ProfilePolicyConnector::ProfilePolicyConnector() {}
 
 ProfilePolicyConnector::~ProfilePolicyConnector() {}
@@ -98,11 +83,12 @@ void ProfilePolicyConnector::Init(
 #if defined(OS_CHROMEOS)
   if (!user) {
     DCHECK(schema_registry);
-    // This case occurs for the signin profile.
+    // This case occurs for the signin and the lock screen app profiles.
     special_user_policy_provider_.reset(
         new LoginProfilePolicyProvider(connector->GetPolicyService()));
   } else {
-    // |user| should never be nullptr except for the signin profile.
+    // |user| should never be nullptr except for the signin and the lock screen
+    // app profile.
     is_primary_user_ =
         user == user_manager::UserManager::Get()->GetPrimaryUser();
     // Note that |DeviceLocalAccountPolicyProvider::Create| returns nullptr when
@@ -125,6 +111,13 @@ void ProfilePolicyConnector::Init(
       connector->SetUserPolicyDelegate(configuration_policy_provider);
     else if (special_user_policy_provider_)
       connector->SetUserPolicyDelegate(special_user_policy_provider_.get());
+  }
+#endif
+
+#if defined(OS_CHROMEOS)
+  if (user && user->IsActiveDirectoryUser()) {
+    management_realm_ =
+        gaia::ExtractDomainName(user->GetAccountId().GetUserEmail());
   }
 #endif
 }
@@ -163,8 +156,22 @@ bool ProfilePolicyConnector::IsManaged() const {
 
 std::string ProfilePolicyConnector::GetManagementDomain() const {
   const CloudPolicyStore* actual_policy_store = GetActualPolicyStore();
-  if (actual_policy_store)
-    return GetStoreManagementDomain(actual_policy_store);
+  if (!actual_policy_store)
+    return std::string();
+  CHECK(actual_policy_store->is_initialized())
+      << "Cloud policy management domain must be "
+         "requested only after the policy system is fully initialized";
+  if (!actual_policy_store->is_managed())
+    return std::string();
+
+#if defined(OS_CHROMEOS)
+  if (!management_realm_.empty())
+    return management_realm_;
+#endif  // defined(OS_CHROMEOS)
+
+  if (actual_policy_store->policy()->has_username())
+    return gaia::ExtractDomainName(actual_policy_store->policy()->username());
+
   return std::string();
 }
 
@@ -179,8 +186,8 @@ const CloudPolicyStore* ProfilePolicyConnector::GetActualPolicyStore() const {
     return policy_store_;
 #if defined(OS_CHROMEOS)
   if (special_user_policy_provider_) {
-    // |special_user_policy_provider_| is non-null for device-local accounts and
-    // for the login profile.
+    // |special_user_policy_provider_| is non-null for device-local accounts,
+    // for the login profile, and the lock screen app profile.
     const DeviceCloudPolicyManagerChromeOS* const device_cloud_policy_manager =
         g_browser_process->platform_part()
             ->browser_policy_connector_chromeos()

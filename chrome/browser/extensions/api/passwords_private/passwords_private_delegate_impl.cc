@@ -4,75 +4,26 @@
 
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_delegate_impl.h"
 
+#include <utility>
+
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_event_router.h"
 #include "chrome/browser/extensions/api/passwords_private/passwords_private_event_router_factory.h"
+#include "chrome/browser/extensions/api/passwords_private/passwords_private_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
+#include "chrome/common/extensions/api/passwords_private.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/password_manager/core/browser/affiliation_utils.h"
+#include "components/password_manager/core/browser/android_affiliation/affiliation_utils.h"
 #include "components/password_manager/core/browser/password_ui_utils.h"
+#include "components/password_manager/core/common/password_manager_features.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
-
-namespace {
-
-const char kAndroidAppScheme[] = "android://";
-const char kPlayStoreAppPrefix[] =
-    "https://play.google.com/store/apps/details?id=";
-
-std::string LoginPairToMapKey(const std::string& origin_url,
-                              const std::string& username) {
-  // Concatenate origin URL and username to form a unique key.
-  return origin_url + ',' + username;
-}
-
-// Conveniece struct that mirrors the UrlCollection dictionary in
-// passwords_private.idl.
-struct URLs {
-  std::string origin;
-  std::string shown;
-  std::string link;
-};
-
-// Obtains origin and link URL from the passed in form. In case the origin
-// corresponds to the identifier of an Android app, it tries to create a human
-// readable version of the origin URL.
-URLs CreateURLFromForm(const autofill::PasswordForm& form) {
-  bool is_android_uri = false;
-  GURL link_url;
-  bool origin_is_clickable = false;
-  std::string shown_url = password_manager::GetShownOriginAndLinkUrl(
-      form, &is_android_uri, &link_url, &origin_is_clickable);
-  std::string link_str = link_url.spec();
-
-  if (is_android_uri) {
-    if (!origin_is_clickable) {
-      // e.g. android://com.example.r => r.example.com.
-      shown_url = password_manager::StripAndroidAndReverse(shown_url);
-      // Turn human unfriendly string into a clickable link to the PlayStore.
-      base::ReplaceFirstSubstringAfterOffset(&link_str, 0, kAndroidAppScheme,
-                                             kPlayStoreAppPrefix);
-    }
-
-    // Currently we use "direction=rtl" in CSS to elide long origins from the
-    // left. This does not play nice with appending strings that end in
-    // punctuation symbols, which is why the bidirectional override tag is
-    // necessary.
-    // TODO(crbug.com/679434): Clean this up.
-    shown_url += "\u202D" +  // equivalent to <bdo dir = "ltr">
-                 l10n_util::GetStringUTF8(IDS_PASSWORDS_ANDROID_URI_SUFFIX) +
-                 "\u202C";  // equivalent to </bdo>
-  }
-
-  return {form.signon_realm, shown_url, link_str};
-}
-
-}  // namespace
 
 namespace extensions {
 
@@ -119,66 +70,49 @@ void PasswordsPrivateDelegateImpl::GetPasswordExceptionsList(
     get_password_exception_list_callbacks_.push_back(callback);
 }
 
-void PasswordsPrivateDelegateImpl::RemoveSavedPassword(
-    const std::string& origin_url, const std::string& username) {
-  ExecuteFunction(base::Bind(
-      &PasswordsPrivateDelegateImpl::RemoveSavedPasswordInternal,
-      base::Unretained(this),
-      origin_url,
-      username));
+void PasswordsPrivateDelegateImpl::RemoveSavedPassword(size_t index) {
+  ExecuteFunction(
+      base::Bind(&PasswordsPrivateDelegateImpl::RemoveSavedPasswordInternal,
+                 base::Unretained(this), index));
 }
 
-void PasswordsPrivateDelegateImpl::RemoveSavedPasswordInternal(
-    const std::string& origin_url, const std::string& username) {
-  std::string key = LoginPairToMapKey(origin_url, username);
-  if (login_pair_to_index_map_.find(key) == login_pair_to_index_map_.end()) {
-    // If the URL/username pair does not exist in the map, do nothing.
-    return;
-  }
-
-  password_manager_presenter_->RemoveSavedPassword(
-      login_pair_to_index_map_[key]);
+void PasswordsPrivateDelegateImpl::RemoveSavedPasswordInternal(size_t index) {
+  password_manager_presenter_->RemoveSavedPassword(index);
 }
 
-void PasswordsPrivateDelegateImpl::RemovePasswordException(
-    const std::string& exception_url) {
-  ExecuteFunction(base::Bind(
-      &PasswordsPrivateDelegateImpl::RemovePasswordExceptionInternal,
-      base::Unretained(this),
-      exception_url));
+void PasswordsPrivateDelegateImpl::RemovePasswordException(size_t index) {
+  ExecuteFunction(
+      base::Bind(&PasswordsPrivateDelegateImpl::RemovePasswordExceptionInternal,
+                 base::Unretained(this), index));
 }
 
 void PasswordsPrivateDelegateImpl::RemovePasswordExceptionInternal(
-    const std::string& exception_url) {
-  if (exception_url_to_index_map_.find(exception_url) ==
-      exception_url_to_index_map_.end()) {
-    // If the exception URL does not exist in the map, do nothing.
-    return;
-  }
+    size_t index) {
+  password_manager_presenter_->RemovePasswordException(index);
+}
 
-  password_manager_presenter_->RemovePasswordException(
-      exception_url_to_index_map_[exception_url]);
+void PasswordsPrivateDelegateImpl::UndoRemoveSavedPasswordOrException() {
+  ExecuteFunction(base::Bind(
+      &PasswordsPrivateDelegateImpl::UndoRemoveSavedPasswordOrExceptionInternal,
+      base::Unretained(this)));
+}
+
+void PasswordsPrivateDelegateImpl::
+    UndoRemoveSavedPasswordOrExceptionInternal() {
+  password_manager_presenter_->UndoRemoveSavedPasswordOrException();
 }
 
 void PasswordsPrivateDelegateImpl::RequestShowPassword(
-    const std::string& origin_url,
-    const std::string& username,
+    size_t index,
     content::WebContents* web_contents) {
   ExecuteFunction(
       base::Bind(&PasswordsPrivateDelegateImpl::RequestShowPasswordInternal,
-                 base::Unretained(this), origin_url, username, web_contents));
+                 base::Unretained(this), index, web_contents));
 }
 
 void PasswordsPrivateDelegateImpl::RequestShowPasswordInternal(
-    const std::string& origin_url,
-    const std::string& username,
+    size_t index,
     content::WebContents* web_contents) {
-  std::string key = LoginPairToMapKey(origin_url, username);
-  if (login_pair_to_index_map_.find(key) == login_pair_to_index_map_.end()) {
-    // If the URL/username pair does not exist in the map, do nothing.
-    return;
-  }
-
   // Save |web_contents| so that the call to RequestShowPassword() below
   // can use this value by calling GetNativeWindow(). Note: This is safe because
   // GetNativeWindow() will only be called immediately from
@@ -188,8 +122,7 @@ void PasswordsPrivateDelegateImpl::RequestShowPasswordInternal(
   web_contents_ = web_contents;
 
   // Request the password. When it is retrieved, ShowPassword() will be called.
-  password_manager_presenter_->RequestShowPassword(
-      login_pair_to_index_map_[key]);
+  password_manager_presenter_->RequestShowPassword(index);
 }
 
 Profile* PasswordsPrivateDelegateImpl::GetProfile() {
@@ -198,37 +131,29 @@ Profile* PasswordsPrivateDelegateImpl::GetProfile() {
 
 void PasswordsPrivateDelegateImpl::ShowPassword(
     size_t index,
-    const std::string& origin_url,
-    const std::string& username,
     const base::string16& password_value) {
   PasswordsPrivateEventRouter* router =
       PasswordsPrivateEventRouterFactory::GetForProfile(profile_);
   if (router) {
-    router->OnPlaintextPasswordFetched(origin_url, username,
+    router->OnPlaintextPasswordFetched(index,
                                        base::UTF16ToUTF8(password_value));
   }
 }
 
 void PasswordsPrivateDelegateImpl::SetPasswordList(
     const std::vector<std::unique_ptr<autofill::PasswordForm>>& password_list) {
-  // Rebuild |login_pair_to_index_map_| so that it reflects the contents of the
-  // new list.
-  // Also, create a list of PasswordUiEntry objects to send to observers.
-  login_pair_to_index_map_.clear();
+  // Create a list of PasswordUiEntry objects to send to observers.
   current_entries_.clear();
 
   for (size_t i = 0; i < password_list.size(); i++) {
     const auto& form = password_list[i];
-    URLs urls = CreateURLFromForm(*form);
-    std::string key =
-        LoginPairToMapKey(urls.origin, base::UTF16ToUTF8(form->username_value));
-    login_pair_to_index_map_[key] = i;
+    api::passwords_private::UrlCollection urls =
+        CreateUrlCollectionFromForm(*form);
 
     api::passwords_private::PasswordUiEntry entry;
-    entry.login_pair.urls.origin = std::move(urls.origin);
-    entry.login_pair.urls.shown = std::move(urls.shown);
-    entry.login_pair.urls.link = std::move(urls.link);
+    entry.login_pair.urls = std::move(urls);
     entry.login_pair.username = base::UTF16ToUTF8(form->username_value);
+    entry.index = base::checked_cast<int>(i);
     entry.num_characters_in_password = form->password_value.length();
 
     if (!form->federation_origin.unique()) {
@@ -256,21 +181,17 @@ void PasswordsPrivateDelegateImpl::SetPasswordList(
 void PasswordsPrivateDelegateImpl::SetPasswordExceptionList(
     const std::vector<std::unique_ptr<autofill::PasswordForm>>&
         password_exception_list) {
-  // Rebuild |exception_url_to_index_map_| so that it reflects the contents of
-  // the new list.
-  // Also, create a list of exceptions to send to observers.
-  exception_url_to_index_map_.clear();
+  // Creates a list of exceptions to send to observers.
   current_exceptions_.clear();
 
   for (size_t i = 0; i < password_exception_list.size(); i++) {
     const auto& form = password_exception_list[i];
-    URLs urls = CreateURLFromForm(*form);
-    exception_url_to_index_map_[urls.origin] = i;
+    api::passwords_private::UrlCollection urls =
+        CreateUrlCollectionFromForm(*form);
 
     api::passwords_private::ExceptionEntry current_exception_entry;
-    current_exception_entry.urls.origin = std::move(urls.origin);
-    current_exception_entry.urls.shown = std::move(urls.shown);
-    current_exception_entry.urls.link = std::move(urls.link);
+    current_exception_entry.urls = std::move(urls);
+    current_exception_entry.index = base::checked_cast<int>(i);
     current_exceptions_.push_back(std::move(current_exception_entry));
   }
 
@@ -285,6 +206,16 @@ void PasswordsPrivateDelegateImpl::SetPasswordExceptionList(
   for (const auto& callback : get_password_exception_list_callbacks_)
     callback.Run(current_exceptions_);
   get_password_exception_list_callbacks_.clear();
+}
+
+void PasswordsPrivateDelegateImpl::ImportPasswords(
+    content::WebContents* web_contents) {
+  password_manager_presenter_->ImportPasswords(web_contents);
+}
+
+void PasswordsPrivateDelegateImpl::ExportPasswords(
+    content::WebContents* web_contents) {
+  password_manager_presenter_->ExportPasswords(web_contents);
 }
 
 #if !defined(OS_ANDROID)

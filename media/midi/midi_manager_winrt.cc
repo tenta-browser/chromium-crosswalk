@@ -11,6 +11,7 @@
 #include <cfgmgr32.h>
 #include <comdef.h>
 #include <devpkey.h>
+#include <objbase.h>
 #include <robuffer.h>
 #include <windows.devices.enumeration.h>
 #include <windows.devices.midi.h>
@@ -22,12 +23,15 @@
 
 #include "base/bind.h"
 #include "base/scoped_generic.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/timer/timer.h"
+#include "base/win/core_winrt_util.h"
 #include "base/win/scoped_comptr.h"
+#include "base/win/scoped_hstring.h"
 #include "media/midi/midi_scheduler.h"
 
 namespace midi {
@@ -41,6 +45,7 @@ using namespace ABI::Windows::Foundation;
 using namespace ABI::Windows::Storage::Streams;
 
 using base::win::ScopedComPtr;
+using base::win::ScopedHString;
 using mojom::PortState;
 using mojom::Result;
 
@@ -58,140 +63,26 @@ std::ostream& operator<<(std::ostream& os, const PrintHr& phr) {
   return os;
 }
 
-// Provides access to functions in combase.dll which may not be available on
-// Windows 7. Loads functions dynamically at runtime to prevent library
-// dependencies.
-class CombaseFunctions {
- public:
-  CombaseFunctions() = default;
-
-  ~CombaseFunctions() {
-    if (combase_dll_)
-      ::FreeLibrary(combase_dll_);
-  }
-
-  bool LoadFunctions() {
-    combase_dll_ = ::LoadLibrary(L"combase.dll");
-    if (!combase_dll_)
-      return false;
-
-    get_factory_func_ = reinterpret_cast<decltype(&::RoGetActivationFactory)>(
-        ::GetProcAddress(combase_dll_, "RoGetActivationFactory"));
-    if (!get_factory_func_)
-      return false;
-
-    create_string_func_ = reinterpret_cast<decltype(&::WindowsCreateString)>(
-        ::GetProcAddress(combase_dll_, "WindowsCreateString"));
-    if (!create_string_func_)
-      return false;
-
-    delete_string_func_ = reinterpret_cast<decltype(&::WindowsDeleteString)>(
-        ::GetProcAddress(combase_dll_, "WindowsDeleteString"));
-    if (!delete_string_func_)
-      return false;
-
-    get_string_raw_buffer_func_ =
-        reinterpret_cast<decltype(&::WindowsGetStringRawBuffer)>(
-            ::GetProcAddress(combase_dll_, "WindowsGetStringRawBuffer"));
-    if (!get_string_raw_buffer_func_)
-      return false;
-
-    return true;
-  }
-
-  HRESULT RoGetActivationFactory(HSTRING class_id,
-                                 const IID& iid,
-                                 void** out_factory) {
-    DCHECK(get_factory_func_);
-    return get_factory_func_(class_id, iid, out_factory);
-  }
-
-  HRESULT WindowsCreateString(const base::char16* src,
-                              uint32_t len,
-                              HSTRING* out_hstr) {
-    DCHECK(create_string_func_);
-    return create_string_func_(src, len, out_hstr);
-  }
-
-  HRESULT WindowsDeleteString(HSTRING hstr) {
-    DCHECK(delete_string_func_);
-    return delete_string_func_(hstr);
-  }
-
-  const base::char16* WindowsGetStringRawBuffer(HSTRING hstr,
-                                                uint32_t* out_len) {
-    DCHECK(get_string_raw_buffer_func_);
-    return get_string_raw_buffer_func_(hstr, out_len);
-  }
-
- private:
-  HMODULE combase_dll_ = nullptr;
-
-  decltype(&::RoGetActivationFactory) get_factory_func_ = nullptr;
-  decltype(&::WindowsCreateString) create_string_func_ = nullptr;
-  decltype(&::WindowsDeleteString) delete_string_func_ = nullptr;
-  decltype(&::WindowsGetStringRawBuffer) get_string_raw_buffer_func_ = nullptr;
-};
-
-CombaseFunctions* GetCombaseFunctions() {
-  static CombaseFunctions* functions = new CombaseFunctions();
-  return functions;
-}
-
-// Scoped HSTRING class to maintain lifetime of HSTRINGs allocated with
-// WindowsCreateString().
-class ScopedHStringTraits {
- public:
-  static HSTRING InvalidValue() { return nullptr; }
-
-  static void Free(HSTRING hstr) {
-    GetCombaseFunctions()->WindowsDeleteString(hstr);
-  }
-};
-
-class ScopedHString : public base::ScopedGeneric<HSTRING, ScopedHStringTraits> {
- public:
-  explicit ScopedHString(const base::char16* str) : ScopedGeneric(nullptr) {
-    HSTRING hstr;
-    HRESULT hr = GetCombaseFunctions()->WindowsCreateString(
-        str, static_cast<uint32_t>(wcslen(str)), &hstr);
-    if (FAILED(hr))
-      VLOG(1) << "WindowsCreateString failed: " << PrintHr(hr);
-    else
-      reset(hstr);
-  }
-};
-
 // Factory functions that activate and create WinRT components. The caller takes
 // ownership of the returning ComPtr.
 template <typename InterfaceType, base::char16 const* runtime_class_id>
 ScopedComPtr<InterfaceType> WrlStaticsFactory() {
   ScopedComPtr<InterfaceType> com_ptr;
 
-  ScopedHString class_id_hstring(runtime_class_id);
+  ScopedHString class_id_hstring = ScopedHString::Create(runtime_class_id);
   if (!class_id_hstring.is_valid()) {
     com_ptr = nullptr;
     return com_ptr;
   }
 
-  HRESULT hr = GetCombaseFunctions()->RoGetActivationFactory(
-      class_id_hstring.get(), __uuidof(InterfaceType), com_ptr.ReceiveVoid());
+  HRESULT hr = base::win::RoGetActivationFactory(class_id_hstring.get(),
+                                                 IID_PPV_ARGS(&com_ptr));
   if (FAILED(hr)) {
     VLOG(1) << "RoGetActivationFactory failed: " << PrintHr(hr);
     com_ptr = nullptr;
   }
 
   return com_ptr;
-}
-
-std::string HStringToString(HSTRING hstr) {
-  // Note: empty HSTRINGs are represent as nullptr, and instantiating
-  // std::string with nullptr (in base::WideToUTF8) is undefined behavior.
-  const base::char16* buffer =
-      GetCombaseFunctions()->WindowsGetStringRawBuffer(hstr, nullptr);
-  if (buffer)
-    return base::WideToUTF8(buffer);
-  return std::string();
 }
 
 template <typename T>
@@ -202,7 +93,7 @@ std::string GetIdString(T* obj) {
     VLOG(1) << "get_Id failed: " << PrintHr(hr);
     return std::string();
   }
-  return HStringToString(result);
+  return ScopedHString(result).GetAsUTF8();
 }
 
 template <typename T>
@@ -213,7 +104,7 @@ std::string GetDeviceIdString(T* obj) {
     VLOG(1) << "get_DeviceId failed: " << PrintHr(hr);
     return std::string();
   }
-  return HStringToString(result);
+  return ScopedHString(result).GetAsUTF8();
 }
 
 std::string GetNameString(IDeviceInformation* info) {
@@ -223,13 +114,13 @@ std::string GetNameString(IDeviceInformation* info) {
     VLOG(1) << "get_Name failed: " << PrintHr(hr);
     return std::string();
   }
-  return HStringToString(result);
+  return ScopedHString(result).GetAsUTF8();
 }
 
 HRESULT GetPointerToBufferData(IBuffer* buffer, uint8_t** out) {
   ScopedComPtr<Windows::Storage::Streams::IBufferByteAccess> buffer_byte_access;
 
-  HRESULT hr = buffer_byte_access.QueryFrom(buffer);
+  HRESULT hr = buffer->QueryInterface(IID_PPV_ARGS(&buffer_byte_access));
   if (FAILED(hr)) {
     VLOG(1) << "QueryInterface failed: " << PrintHr(hr);
     return hr;
@@ -386,7 +277,7 @@ class MidiManagerWinrt::MidiPortManager {
       return false;
 
     hr = dev_info_statics->CreateWatcherAqsFilter(device_selector,
-                                                  watcher_.Receive());
+                                                  watcher_.GetAddressOf());
     if (FAILED(hr)) {
       VLOG(1) << "CreateWatcherAqsFilter failed: " << PrintHr(hr);
       return false;
@@ -418,8 +309,8 @@ class MidiManagerWinrt::MidiPortManager {
                           dev_name = GetNameString(info);
 
               task_runner->PostTask(
-                  FROM_HERE, base::Bind(&MidiPortManager::OnAdded, weak_ptr,
-                                        dev_id, dev_name));
+                  FROM_HERE, base::BindOnce(&MidiPortManager::OnAdded, weak_ptr,
+                                            dev_id, dev_name));
 
               return S_OK;
             })
@@ -436,8 +327,8 @@ class MidiManagerWinrt::MidiPortManager {
                                     IInspectable* insp) {
               task_runner->PostTask(
                   FROM_HERE,
-                  base::Bind(&MidiPortManager::OnEnumerationCompleted,
-                             weak_ptr));
+                  base::BindOnce(&MidiPortManager::OnEnumerationCompleted,
+                                 weak_ptr));
 
               return S_OK;
             })
@@ -461,9 +352,9 @@ class MidiManagerWinrt::MidiPortManager {
 
               std::string dev_id = GetIdString(update);
 
-              task_runner->PostTask(
-                  FROM_HERE,
-                  base::Bind(&MidiPortManager::OnRemoved, weak_ptr, dev_id));
+              task_runner->PostTask(FROM_HERE,
+                                    base::BindOnce(&MidiPortManager::OnRemoved,
+                                                   weak_ptr, dev_id));
 
               return S_OK;
             })
@@ -589,7 +480,7 @@ class MidiManagerWinrt::MidiPortManager {
 
     port_names_[dev_id] = dev_name;
 
-    ScopedHString dev_id_hstring(base::UTF8ToWide(dev_id).c_str());
+    ScopedHString dev_id_hstring = ScopedHString::Create(dev_id);
     if (!dev_id_hstring.is_valid())
       return;
 
@@ -613,8 +504,9 @@ class MidiManagerWinrt::MidiPortManager {
               // outside.
               task_runner->PostTask(
                   FROM_HERE,
-                  base::Bind(&MidiPortManager::OnCompletedGetPortFromIdAsync,
-                             weak_ptr, async_op));
+                  base::BindOnce(
+                      &MidiPortManager::OnCompletedGetPortFromIdAsync, weak_ptr,
+                      async_op));
 
               return S_OK;
             })
@@ -793,21 +685,21 @@ class MidiManagerWinrt::MidiInPortManager final
               std::string dev_id = GetDeviceIdString(handle);
 
               ScopedComPtr<IMidiMessage> message;
-              HRESULT hr = args->get_Message(message.Receive());
+              HRESULT hr = args->get_Message(message.GetAddressOf());
               if (FAILED(hr)) {
                 VLOG(1) << "get_Message failed: " << PrintHr(hr);
                 return hr;
               }
 
               ScopedComPtr<IBuffer> buffer;
-              hr = message->get_RawData(buffer.Receive());
+              hr = message->get_RawData(buffer.GetAddressOf());
               if (FAILED(hr)) {
                 VLOG(1) << "get_RawData failed: " << PrintHr(hr);
                 return hr;
               }
 
               uint8_t* p_buffer_data = nullptr;
-              hr = GetPointerToBufferData(buffer.get(), &p_buffer_data);
+              hr = GetPointerToBufferData(buffer.Get(), &p_buffer_data);
               if (FAILED(hr))
                 return hr;
 
@@ -822,8 +714,9 @@ class MidiManagerWinrt::MidiInPortManager final
                                         p_buffer_data + data_length);
 
               task_runner->PostTask(
-                  FROM_HERE, base::Bind(&MidiInPortManager::OnMessageReceived,
-                                        weak_ptr, dev_id, data, now));
+                  FROM_HERE,
+                  base::BindOnce(&MidiInPortManager::OnMessageReceived,
+                                 weak_ptr, dev_id, data, now));
 
               return S_OK;
             })
@@ -924,14 +817,14 @@ void MidiManagerWinrt::StartInitialization() {
   com_thread_.Start();
 
   com_thread_.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&MidiManagerWinrt::InitializeOnComThread,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&MidiManagerWinrt::InitializeOnComThread,
+                                base::Unretained(this)));
 }
 
 void MidiManagerWinrt::Finalize() {
   com_thread_.task_runner()->PostTask(
-      FROM_HERE, base::Bind(&MidiManagerWinrt::FinalizeOnComThread,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&MidiManagerWinrt::FinalizeOnComThread,
+                                base::Unretained(this)));
 
   // Blocks until FinalizeOnComThread() returns. Delayed MIDI send data tasks
   // will be ignored.
@@ -946,18 +839,17 @@ void MidiManagerWinrt::DispatchSendMidiData(MidiManagerClient* client,
 
   scheduler_->PostSendDataTask(
       client, data.size(), timestamp,
-      base::Bind(&MidiManagerWinrt::SendOnComThread, base::Unretained(this),
-                 port_index, data));
+      base::BindOnce(&MidiManagerWinrt::SendOnComThread, base::Unretained(this),
+                     port_index, data));
 }
 
 void MidiManagerWinrt::InitializeOnComThread() {
   base::AutoLock auto_lock(lazy_init_member_lock_);
 
   com_thread_checker_.reset(new base::ThreadChecker);
-
-  if (!GetCombaseFunctions()->LoadFunctions()) {
-    VLOG(1) << "Failed loading functions from combase.dll: "
-            << PrintHr(HRESULT_FROM_WIN32(GetLastError()));
+  bool preload_success = base::win::ResolveCoreWinRTDelayload() &&
+                         ScopedHString::ResolveCoreWinRTStringDelayload();
+  if (!preload_success) {
     CompleteInitialization(Result::INITIALIZATION_ERROR);
     return;
   }
@@ -1013,7 +905,7 @@ void MidiManagerWinrt::SendOnComThread(uint32_t port_index,
 
   ScopedComPtr<IBuffer> buffer;
   HRESULT hr = buffer_factory->Create(static_cast<UINT32>(data.size()),
-                                      buffer.Receive());
+                                      buffer.GetAddressOf());
   if (FAILED(hr)) {
     VLOG(1) << "Create failed: " << PrintHr(hr);
     return;
@@ -1026,13 +918,13 @@ void MidiManagerWinrt::SendOnComThread(uint32_t port_index,
   }
 
   uint8_t* p_buffer_data = nullptr;
-  hr = GetPointerToBufferData(buffer.get(), &p_buffer_data);
+  hr = GetPointerToBufferData(buffer.Get(), &p_buffer_data);
   if (FAILED(hr))
     return;
 
   std::copy(data.begin(), data.end(), p_buffer_data);
 
-  hr = port->handle->SendBuffer(buffer.get());
+  hr = port->handle->SendBuffer(buffer.Get());
   if (FAILED(hr)) {
     VLOG(1) << "SendBuffer failed: " << PrintHr(hr);
     return;

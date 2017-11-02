@@ -71,7 +71,7 @@ class TestWallpaperObserver : public WallpaperManager::Observer {
 
   void OnWallpaperAnimationFinished(const AccountId&) override {
     finished_ = true;
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   void WaitForWallpaperAnimationFinished() {

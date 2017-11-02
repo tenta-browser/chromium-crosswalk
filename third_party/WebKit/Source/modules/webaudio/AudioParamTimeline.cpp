@@ -24,15 +24,18 @@
  */
 
 #include "modules/webaudio/AudioParamTimeline.h"
+
 #include <algorithm>
+#include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
+#include "build/build_config.h"
 #include "core/dom/ExceptionCode.h"
 #include "platform/audio/AudioUtilities.h"
 #include "platform/wtf/CPU.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/PtrUtil.h"
 
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
 #include <emmintrin.h>
 #endif
 
@@ -60,9 +63,9 @@ static bool IsNonNegativeAudioParamTime(double time,
   if (time >= 0)
     return true;
 
-  exception_state.ThrowDOMException(
-      kInvalidAccessError, message + " must be a finite non-negative number: " +
-                               String::Number(time));
+  exception_state.ThrowRangeError(
+      message +
+      " must be a finite non-negative number: " + String::Number(time));
   return false;
 }
 
@@ -72,8 +75,7 @@ static bool IsPositiveAudioParamTime(double time,
   if (time > 0)
     return true;
 
-  exception_state.ThrowDOMException(
-      kInvalidAccessError,
+  exception_state.ThrowRangeError(
       message + " must be a finite positive number: " + String::Number(time));
   return false;
 }
@@ -206,7 +208,7 @@ AudioParamTimeline::ParamEvent::CreateSetValueCurveEvent(
     double time,
     double duration) {
   double curve_points = (curve.size() - 1) / duration;
-  float end_value = curve.Data()[curve.size() - 1];
+  float end_value = curve.data()[curve.size() - 1];
 
   return WTF::WrapUnique(new ParamEvent(ParamEvent::kSetValueCurve, time,
                                         duration, curve, curve_points,
@@ -378,8 +380,8 @@ AudioParamTimeline::ParamEvent::ParamEvent(ParamEvent::Type type,
       has_default_cancelled_value_(false) {
   DCHECK_EQ(type, ParamEvent::kSetValueCurve);
   unsigned curve_length = curve.size();
-  curve_.Resize(curve_length);
-  memcpy(curve_.Data(), curve.Data(), curve_length * sizeof(float));
+  curve_.resize(curve_length);
+  memcpy(curve_.data(), curve.data(), curve_length * sizeof(float));
 }
 
 // Create CancelValues event
@@ -443,12 +445,11 @@ void AudioParamTimeline::ExponentialRampToValueAtTime(
     return;
 
   if (!value) {
-    exception_state.ThrowDOMException(
-        kInvalidAccessError,
+    exception_state.ThrowRangeError(
         "The float target value provided (" + String::Number(value) +
-            ") should not be in the range (" +
-            String::Number(-std::numeric_limits<float>::denorm_min()) + ", " +
-            String::Number(std::numeric_limits<float>::denorm_min()) + ").");
+        ") should not be in the range (" +
+        String::Number(-std::numeric_limits<float>::denorm_min()) + ", " +
+        String::Number(std::numeric_limits<float>::denorm_min()) + ").");
     return;
   }
 
@@ -506,7 +507,7 @@ void AudioParamTimeline::SetValueCurveAtTime(const Vector<float>& curve,
   // Insert a setValueAtTime event too to establish an event so that all
   // following events will process from the end of the curve instead of the
   // beginning.
-  InsertEvent(ParamEvent::CreateSetValueEvent(curve.Data()[curve.size() - 1],
+  InsertEvent(ParamEvent::CreateSetValueEvent(curve.data()[curve.size() - 1],
                                               time + duration),
               exception_state);
 }
@@ -611,7 +612,7 @@ void AudioParamTimeline::CancelScheduledValues(
   // Remove all events starting at startTime.
   for (unsigned i = 0; i < events_.size(); ++i) {
     if (events_[i]->Time() >= start_time) {
-      events_.erase(i, events_.size() - i);
+      events_.EraseAt(i, events_.size() - i);
       break;
     }
   }
@@ -697,7 +698,7 @@ void AudioParamTimeline::CancelAndHoldAtTime(double cancel_time,
         // the timeline.
         float end_value = ValueCurveAtTime(
             cancel_time, cancelled_event->Time(), cancelled_event->Duration(),
-            cancelled_event->Curve().Data(), cancelled_event->Curve().size());
+            cancelled_event->Curve().data(), cancelled_event->Curve().size());
 
         // Replace the existing SetValueCurve with this new one that is
         // identical except for the duration.
@@ -722,9 +723,10 @@ void AudioParamTimeline::CancelAndHoldAtTime(double cancel_time,
   }
 
   // Now remove all the following events from the timeline.
-  if (cancelled_event_index < events_.size())
-    events_.erase(cancelled_event_index,
-                  events_.size() - cancelled_event_index);
+  if (cancelled_event_index < events_.size()) {
+    events_.EraseAt(cancelled_event_index,
+                    events_.size() - cancelled_event_index);
+  }
 
   // Insert the new event, if any.
   if (new_event) {
@@ -983,7 +985,7 @@ float AudioParamTimeline::ValuesForFrameRangeImpl(size_t start_frame,
   // running with the m_events lock so we can safely modify the m_events
   // array.)
   if (last_skipped_event_index > 0)
-    events_.erase(0, last_skipped_event_index - 1);
+    events_.EraseAt(0, last_skipped_event_index - 1);
 
   // If there's any time left after processing the last event then just
   // propagate the last value to the end of the values buffer.
@@ -1127,7 +1129,7 @@ bool AudioParamTimeline::HandleAllEventsInThePast(double current_time,
     // value.
     FillWithDefault(values, default_value, number_of_values, 0);
     smoothed_value_ = default_value;
-    events_.Clear();
+    events_.clear();
     return true;
   }
 
@@ -1289,7 +1291,7 @@ std::tuple<size_t, float, unsigned> AudioParamTimeline::ProcessLinearRamp(
     size_t current_frame,
     float value,
     unsigned write_index) {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   auto number_of_values = current_state.number_of_values;
 #endif
   auto fill_to_frame = current_state.fill_to_frame;
@@ -1302,7 +1304,7 @@ std::tuple<size_t, float, unsigned> AudioParamTimeline::ProcessLinearRamp(
   double delta_time = time2 - time1;
   float k = delta_time > 0 ? 1 / delta_time : 0;
   const float value_delta = value2 - value1;
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   if (fill_to_frame > write_index) {
     // Minimize in-loop operations. Calculate starting value and increment.
     // Next step: value += inc.
@@ -1401,10 +1403,10 @@ std::tuple<size_t, float, unsigned> AudioParamTimeline::ProcessExponentialRamp(
 
     // Compute the per-sample multiplier.
     float multiplier = powf(value2 / value1, 1 / num_sample_frames);
-    // Set the starting value of the exponential ramp.
-    value = value1 * powf(value2 / value1,
-                          (current_frame / sample_rate - time1) / delta_time);
-
+    // Set the starting value of the exponential ramp.  Do not attempt
+    // to optimize pow to powf.  See crbug.com/771306.
+    value = value1 * pow(value2 / static_cast<double>(value1),
+                         (current_frame / sample_rate - time1) / delta_time);
     for (; write_index < fill_to_frame; ++write_index) {
       values[write_index] = value;
       value *= multiplier;
@@ -1430,7 +1432,7 @@ std::tuple<size_t, float, unsigned> AudioParamTimeline::ProcessSetTarget(
     size_t current_frame,
     float value,
     unsigned write_index) {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   auto number_of_values = current_state.number_of_values;
 #endif
   auto fill_to_frame = current_state.fill_to_frame;
@@ -1481,7 +1483,7 @@ std::tuple<size_t, float, unsigned> AudioParamTimeline::ProcessSetTarget(
     for (; write_index < fill_to_frame; ++write_index)
       values[write_index] = target;
   } else {
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
     if (fill_to_frame > write_index) {
       // Resolve recursion by expanding constants to achieve a 4-step
       // loop unrolling.
@@ -1550,7 +1552,7 @@ std::tuple<size_t, float, unsigned> AudioParamTimeline::ProcessSetValueCurve(
   auto event = current_state.event;
 
   const Vector<float> curve = event->Curve();
-  const float* curve_data = curve.Data();
+  const float* curve_data = curve.data();
   unsigned number_of_curve_points = curve.size();
 
   float curve_end_value = event->CurveEndValue();
@@ -1615,7 +1617,7 @@ std::tuple<size_t, float, unsigned> AudioParamTimeline::ProcessSetValueCurve(
   // Oversampled curve data can be provided if sharp discontinuities are
   // desired.
   unsigned k = 0;
-#if CPU(X86) || CPU(X86_64)
+#if defined(ARCH_CPU_X86_FAMILY)
   if (fill_to_frame > write_index) {
     const __m128 v_curve_virtual_index = _mm_set_ps1(curve_virtual_index);
     const __m128 v_curve_points_per_frame = _mm_set_ps1(curve_points_per_frame);

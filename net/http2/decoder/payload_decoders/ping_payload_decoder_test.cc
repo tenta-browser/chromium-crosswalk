@@ -28,11 +28,6 @@ class PingPayloadDecoderPeer {
   // Returns the mask of flags that affect the decoding of the payload (i.e.
   // flags that that indicate the presence of certain fields or padding).
   static constexpr uint8_t FlagsAffectingPayloadDecoding() { return 0; }
-
-  static void Randomize(PingPayloadDecoder* p, RandomBase* rng) {
-    VLOG(1) << "PingPayloadDecoderPeer::Randomize";
-    test::Randomize(&p->ping_fields_, rng);
-  }
 };
 
 namespace {
@@ -87,8 +82,7 @@ TEST_F(PingPayloadDecoderTest, Ping) {
     Http2FrameBuilder fb;
     fb.Append(fields);
     Http2FrameHeader header(fb.size(), Http2FrameType::PING,
-                            RandFlags() & ~Http2FrameFlag::FLAG_ACK,
-                            RandStreamId());
+                            RandFlags() & ~Http2FrameFlag::ACK, RandStreamId());
     set_frame_header(header);
     FrameParts expected(header);
     expected.opt_ping = fields;
@@ -103,8 +97,7 @@ TEST_F(PingPayloadDecoderTest, PingAck) {
     Http2FrameBuilder fb;
     fb.Append(fields);
     Http2FrameHeader header(fb.size(), Http2FrameType::PING,
-                            RandFlags() | Http2FrameFlag::FLAG_ACK,
-                            RandStreamId());
+                            RandFlags() | Http2FrameFlag::ACK, RandStreamId());
     set_frame_header(header);
     FrameParts expected(header);
     expected.opt_ping = fields;

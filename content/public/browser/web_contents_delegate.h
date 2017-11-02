@@ -7,8 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/strings/string16.h"
@@ -17,6 +19,7 @@
 #include "content/public/browser/bluetooth_chooser.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/common/media_stream_request.h"
+#include "content/public/common/previews_state.h"
 #include "content/public/common/window_container_type.mojom.h"
 #include "third_party/WebKit/public/platform/WebDisplayMode.h"
 #include "third_party/WebKit/public/platform/WebDragOperation.h"
@@ -34,7 +37,6 @@ class GURL;
 
 namespace base {
 class FilePath;
-class ListValue;
 }
 
 namespace content {
@@ -57,13 +59,8 @@ struct SecurityStyleExplanations;
 }  // namespace content
 
 namespace gfx {
-class Point;
 class Rect;
 class Size;
-}
-
-namespace net {
-class X509Certificate;
 }
 
 namespace url {
@@ -160,12 +157,10 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual void UpdateTargetURL(WebContents* source,
                                const GURL& url) {}
 
-  // Notification that there was a mouse event, along with the absolute
-  // coordinates of the mouse pointer and the type of event. If |motion| is
-  // true, this is a normal motion event. If |exited| is true, the pointer left
-  // the contents area.
+  // Notification that there was a mouse event, along with the type of event.
+  // If |motion| is true, this is a normal motion event. If |exited| is true,
+  // the pointer left the contents area.
   virtual void ContentsMouseEvent(WebContents* source,
-                                  const gfx::Point& location,
                                   bool motion,
                                   bool exited) {}
 
@@ -175,13 +170,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Called to determine if the WebContents can be overscrolled with touch/wheel
   // gestures.
   virtual bool CanOverscrollContent() const;
-
-  // Callback that allows vertical overscroll activies to be communicated to the
-  // delegate. |delta_y| is the total amount of overscroll.
-  virtual void OverscrollUpdate(float delta_y) {}
-
-  // Invoked when a vertical overscroll completes.
-  virtual void OverscrollComplete() {}
 
   // Invoked prior to showing before unload handler confirmation dialog.
   virtual void WillRunBeforeUnloadConfirm() {}
@@ -318,6 +306,7 @@ class CONTENT_EXPORT WebContentsDelegate {
   //       RenderViewHost in |source_site_instance| with |route_id|.
   virtual bool ShouldCreateWebContents(
       WebContents* web_contents,
+      RenderFrameHost* opener,
       SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
@@ -450,12 +439,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual void ResizeDueToAutoResize(WebContents* web_contents,
                                      const gfx::Size& new_size) {}
 
-  // Notification message from HTML UI.
-  virtual void WebUISend(WebContents* web_contents,
-                         const GURL& source_url,
-                         const std::string& name,
-                         const base::ListValue& args) {}
-
   // Requests to lock the mouse. Once the request is approved or rejected,
   // GotResponseToLockMouseRequest() will be called on the requesting tab
   // contents.
@@ -496,6 +479,12 @@ class CONTENT_EXPORT WebContentsDelegate {
 
   // Returns true if the given media should be blocked to load.
   virtual bool ShouldBlockMediaRequest(const GURL& url);
+
+  // Tells the delegate to enter overlay mode.
+  // Overlay mode means that we are currently using AndroidOverlays to display
+  // video, and that the compositor's surface should support alpha and not be
+  // marked as opaque. See media/base/android/android_overlay.h.
+  virtual void SetOverlayMode(bool use_overlay_mode);
 #endif
 
   // Requests permission to access the PPAPI broker. The delegate should return
@@ -545,13 +534,18 @@ class CONTENT_EXPORT WebContentsDelegate {
       WebContents* web_contents,
       SecurityStyleExplanations* security_style_explanations);
 
-  // Displays platform-specific (OS) dialog with the certificate details.
-  virtual void ShowCertificateViewerInDevTools(
-      WebContents* web_contents,
-      scoped_refptr<net::X509Certificate> certificate);
-
   // Requests the app banner. This method is called from the DevTools.
   virtual void RequestAppBannerFromDevTools(content::WebContents* web_contents);
+
+  // Called when audio change occurs
+  virtual void OnAudioStateChanged(bool audible) {}
+
+  // Called when a suspicious navigation of the main frame has been blocked.
+  // Allows the delegate to provide some UI to let the user know about the
+  // blocked navigation and give them the option to recover from it. The given
+  // URL is the blocked navigation target.
+  virtual void OnDidBlockFramebust(content::WebContents* web_contents,
+                                   const GURL& url) {}
 
   // Reports that passive mixed content was found at the specified url.
   virtual void PassiveInsecureContentFound(const GURL& resource_url) {}
@@ -562,6 +556,10 @@ class CONTENT_EXPORT WebContentsDelegate {
                                                  bool allowed_per_prefs,
                                                  const url::Origin& origin,
                                                  const GURL& resource_url);
+
+  // Give WebContentsDelegates the opportunity to adjust the previews state.
+  virtual void AdjustPreviewsStateForNavigation(PreviewsState* previews_state) {
+  }
 
  protected:
   virtual ~WebContentsDelegate();

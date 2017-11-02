@@ -8,7 +8,9 @@
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/FrameSelection.h"
+#include "core/editing/SelectionTemplate.h"
 #include "core/editing/VisibleSelection.h"
 #include "core/editing/VisibleUnits.h"
 #include "core/editing/commands/UndoStack.h"
@@ -19,8 +21,8 @@
 #include "core/editing/spellcheck/SpellCheckRequester.h"
 #include "core/editing/spellcheck/SpellChecker.h"
 #include "core/frame/LocalFrame.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
+#include "platform/runtime_enabled_features.h"
 #include "platform/wtf/CurrentTime.h"
 
 namespace blink {
@@ -41,8 +43,8 @@ IdleSpellCheckCallback::~IdleSpellCheckCallback() {}
 DEFINE_TRACE(IdleSpellCheckCallback) {
   visitor->Trace(frame_);
   visitor->Trace(cold_mode_requester_);
-  IdleRequestCallback::Trace(visitor);
-  SynchronousMutationObserver::Trace(visitor);
+  DocumentShutdownObserver::Trace(visitor);
+  ScriptedIdleTaskController::IdleTask::Trace(visitor);
 }
 
 IdleSpellCheckCallback* IdleSpellCheckCallback::Create(LocalFrame& frame) {
@@ -103,7 +105,8 @@ void IdleSpellCheckCallback::SetNeedsInvocation() {
 }
 
 void IdleSpellCheckCallback::SetNeedsColdModeInvocation() {
-  if (!IsSpellCheckingEnabled()) {
+  if (!RuntimeEnabledFeatures::IdleTimeColdModeSpellCheckingEnabled() ||
+      !IsSpellCheckingEnabled()) {
     Deactivate();
     return;
   }
@@ -121,6 +124,7 @@ void IdleSpellCheckCallback::SetNeedsColdModeInvocation() {
 }
 
 void IdleSpellCheckCallback::ColdModeTimerFired(TimerBase*) {
+  DCHECK(RuntimeEnabledFeatures::IdleTimeColdModeSpellCheckingEnabled());
   DCHECK_EQ(State::kColdModeTimerStarted, state_);
 
   if (!IsSpellCheckingEnabled()) {
@@ -153,12 +157,16 @@ void IdleSpellCheckCallback::HotModeInvocation(IdleDeadline* deadline) {
         std::max(step->SequenceNumber(), last_processed_undo_step_sequence_);
     if (deadline->timeRemaining() == 0)
       break;
+    // The ending selection stored in undo stack can be invalid, disconnected
+    // or have been moved to another document, so we should check its validity
+    // before using it.
+    if (!step->EndingSelection().IsValidFor(*GetFrame().GetDocument()))
+      continue;
     requester.CheckSpellingAt(step->EndingSelection().Extent());
   }
 }
 
-void IdleSpellCheckCallback::handleEvent(IdleDeadline* deadline) {
-  DCHECK(RuntimeEnabledFeatures::idleTimeSpellCheckingEnabled());
+void IdleSpellCheckCallback::invoke(IdleDeadline* deadline) {
   DCHECK(GetFrame().GetDocument());
   DCHECK(GetFrame().GetDocument()->IsActive());
   DCHECK_NE(idle_callback_handle_, kInvalidHandle);
@@ -174,6 +182,7 @@ void IdleSpellCheckCallback::handleEvent(IdleDeadline* deadline) {
     HotModeInvocation(deadline);
     SetNeedsColdModeInvocation();
   } else if (state_ == State::kColdModeRequested) {
+    DCHECK(RuntimeEnabledFeatures::IdleTimeColdModeSpellCheckingEnabled());
     state_ = State::kInColdModeInvocation;
     cold_mode_requester_->Invoke(deadline);
     if (cold_mode_requester_->FullDocumentChecked())
@@ -207,12 +216,12 @@ void IdleSpellCheckCallback::ForceInvocationForTesting() {
       cold_mode_timer_.Stop();
       state_ = State::kColdModeRequested;
       idle_callback_handle_ = kDummyHandleForForcedInvocation;
-      handleEvent(deadline);
+      invoke(deadline);
       break;
     case State::kHotModeRequested:
     case State::kColdModeRequested:
       GetFrame().GetDocument()->CancelIdleCallback(idle_callback_handle_);
-      handleEvent(deadline);
+      invoke(deadline);
       break;
     case State::kInactive:
     case State::kInHotModeInvocation:

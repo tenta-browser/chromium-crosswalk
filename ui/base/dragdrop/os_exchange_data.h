@@ -113,7 +113,7 @@ class UI_BASE_EXPORT OSExchangeData {
     virtual bool HasFile() const = 0;
     virtual bool HasCustomFormat(const Clipboard::FormatType& format) const = 0;
 
-#if (!defined(OS_CHROMEOS) && defined(USE_X11)) || defined(OS_WIN)
+#if defined(USE_X11) || defined(OS_WIN)
     virtual void SetFileContents(const base::FilePath& filename,
                                  const std::string& file_contents) = 0;
 #endif
@@ -133,8 +133,8 @@ class UI_BASE_EXPORT OSExchangeData {
 #if defined(USE_AURA) || defined(OS_MACOSX)
     virtual void SetDragImage(const gfx::ImageSkia& image,
                               const gfx::Vector2d& cursor_offset) = 0;
-    virtual const gfx::ImageSkia& GetDragImage() const = 0;
-    virtual const gfx::Vector2d& GetDragImageOffset() const = 0;
+    virtual gfx::ImageSkia GetDragImage() const = 0;
+    virtual gfx::Vector2d GetDragImageOffset() const = 0;
 #endif
   };
 

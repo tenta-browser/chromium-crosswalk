@@ -7,6 +7,7 @@ package org.chromium.chrome.test.util.browser;
 import android.support.v7.widget.RecyclerView;
 import android.view.View;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
@@ -35,6 +36,11 @@ public final class RecyclerViewTestUtils {
 
                 if (viewHolder.itemView.getParent() == null) {
                     updateFailureReason("The view is not attached for position " + position + ".");
+                    return false;
+                }
+
+                if (!viewHolder.itemView.isShown()) {
+                    updateFailureReason("The view is not visible for position " + position + ".");
                     return false;
                 }
 
@@ -88,8 +94,30 @@ public final class RecyclerViewTestUtils {
                     return false;
                 }
 
+                if (recyclerView.isDirty()) {
+                    updateFailureReason("The recycler view is dirty.");
+                    return false;
+                }
+
+                if (recyclerView.isLayoutRequested()) {
+                    updateFailureReason("The recycler view has layout requested.");
+                    return false;
+                }
+
                 return true;
             }
         });
+    }
+
+    /**
+     * Scrolls the {@link View} at the given adapter position into view and returns
+     * its {@link RecyclerView.ViewHolder}.
+     * @param recyclerView the {@link RecyclerView} to scroll.
+     * @param position the adapter position for which to return the {@link RecyclerView.ViewHolder}.
+     * @return the ViewHolder for the given {@code position}.
+     */
+    public static RecyclerView.ViewHolder scrollToView(RecyclerView recyclerView, int position) {
+        ThreadUtils.runOnUiThreadBlocking(() -> recyclerView.scrollToPosition(position));
+        return waitForView(recyclerView, position);
     }
 }

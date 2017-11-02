@@ -5,16 +5,35 @@
 #ifndef ScriptModule_h
 #define ScriptModule_h
 
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/SharedPersistent.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/SharedPersistent.h"
 #include "platform/loader/fetch/AccessControlStatus.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Vector.h"
+#include "platform/wtf/text/TextPosition.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebURLRequest.h"
 #include "v8/include/v8.h"
 
 namespace blink {
+
+class ExceptionState;
+
+// Correspond to TC39 ModuleRecord.[[Status]]
+// TODO(kouhei): Add URL after https://github.com/tc39/ecma262/pull/916 is
+// merged.
+using ScriptModuleState = v8::Module::Status;
+const char* ScriptModuleStateToString(ScriptModuleState);
+
+// CaptureEvalErrorFlag is used to implement "rethrow errors" parameter in
+// run-a-module-script. When "rethrow errors" is to be set, use kCapture for
+// ScriptModule::Evaluate()/Modulator::EvaluateModule(), and rethrow the
+// returned exception (if any) in the caller of these methods. When "rethrow
+// errors" is not to be set, use kReport, and Evaluate()/EvaluateModule()
+// "report the error".
+enum class CaptureEvalErrorFlag : bool { kReport, kCapture };
 
 // ScriptModule wraps a handle to a v8::Module for use in core.
 //
@@ -30,48 +49,52 @@ class CORE_EXPORT ScriptModule final {
   static ScriptModule Compile(v8::Isolate*,
                               const String& source,
                               const String& file_name,
-                              AccessControlStatus);
+                              AccessControlStatus,
+                              WebURLRequest::FetchCredentialsMode,
+                              const String& nonce,
+                              ParserDisposition,
+                              const TextPosition&,
+                              ExceptionState&);
 
   // TODO(kouhei): Remove copy ctor
-  ScriptModule() {}
-  ScriptModule(WTF::HashTableDeletedValueType)
-      : module_(WTF::kHashTableDeletedValue) {}
+  ScriptModule();
   ~ScriptModule();
 
   // Returns exception, if any.
   ScriptValue Instantiate(ScriptState*);
-  void Evaluate(ScriptState*);
+
+  // Returns exception if CaptureEvalErrorFlag::kCapture is specified.
+  // Otherwise, "report the error" to console.
+  ScriptValue Evaluate(ScriptState*, CaptureEvalErrorFlag) const;
+  static void ReportException(ScriptState*, v8::Local<v8::Value> exception);
 
   Vector<String> ModuleRequests(ScriptState*);
+  Vector<TextPosition> ModuleRequestPositions(ScriptState*);
+  ScriptModuleState Status(ScriptState*);
 
-  bool IsHashTableDeletedValue() const {
-    return module_.IsHashTableDeletedValue();
-  }
+  // Returns record's [[ErrorCompletion]] field's [[Value]].
+  // Should only be used via ModulatorImpl::GetError()
+  v8::Local<v8::Value> ErrorCompletion(ScriptState*);
 
-  bool operator==(const blink::ScriptModule& other) const {
-    if (IsHashTableDeletedValue() && other.IsHashTableDeletedValue())
-      return true;
-
-    if (IsHashTableDeletedValue() || other.IsHashTableDeletedValue())
-      return false;
-
-    blink::SharedPersistent<v8::Module>* left = module_.Get();
-    blink::SharedPersistent<v8::Module>* right = other.module_.Get();
-    if (left == right)
-      return true;
-    if (!left || !right)
-      return false;
-    return *left == *right;
-  }
-
+  inline bool operator==(const blink::ScriptModule& other) const;
   bool operator!=(const blink::ScriptModule& other) const {
     return !(*this == other);
   }
 
   bool IsNull() const { return !module_ || module_->IsEmpty(); }
 
+  v8::Local<v8::Value> V8Namespace(v8::Isolate*);
+
  private:
+  // ModuleScript instances store their record as
+  // TraceWrapperV8Reference<v8::Module>, and reconstructs ScriptModule from it.
+  friend class ModuleScript;
+
   ScriptModule(v8::Isolate*, v8::Local<v8::Module>);
+
+  v8::Local<v8::Module> NewLocal(v8::Isolate* isolate) {
+    return module_->NewLocal(isolate);
+  }
 
   static v8::MaybeLocal<v8::Module> ResolveModuleCallback(
       v8::Local<v8::Context>,
@@ -82,6 +105,7 @@ class CORE_EXPORT ScriptModule final {
   unsigned identity_hash_ = 0;
 
   friend struct ScriptModuleHash;
+  friend struct WTF::HashTraits<blink::ScriptModule>;
 };
 
 struct ScriptModuleHash {
@@ -111,8 +135,41 @@ struct DefaultHash<blink::ScriptModule> {
 
 template <>
 struct HashTraits<blink::ScriptModule>
-    : public SimpleClassHashTraits<blink::ScriptModule> {};
+    : public SimpleClassHashTraits<blink::ScriptModule> {
+  static bool IsDeletedValue(const blink::ScriptModule& value) {
+    return HashTraits<RefPtr<blink::SharedPersistent<v8::Module>>>::
+        IsDeletedValue(value.module_);
+  }
+
+  static void ConstructDeletedValue(blink::ScriptModule& slot,
+                                    bool zero_value) {
+    HashTraits<RefPtr<blink::SharedPersistent<v8::Module>>>::
+        ConstructDeletedValue(slot.module_, zero_value);
+  }
+};
 
 }  // namespace WTF
+
+namespace blink {
+
+inline bool ScriptModule::operator==(const ScriptModule& other) const {
+  if (HashTraits<ScriptModule>::IsDeletedValue(*this) &&
+      HashTraits<ScriptModule>::IsDeletedValue(other))
+    return true;
+
+  if (HashTraits<ScriptModule>::IsDeletedValue(*this) ||
+      HashTraits<ScriptModule>::IsDeletedValue(other))
+    return false;
+
+  blink::SharedPersistent<v8::Module>* left = module_.get();
+  blink::SharedPersistent<v8::Module>* right = other.module_.get();
+  if (left == right)
+    return true;
+  if (!left || !right)
+    return false;
+  return *left == *right;
+}
+
+}  // namespace blink
 
 #endif  // ScriptModule_h

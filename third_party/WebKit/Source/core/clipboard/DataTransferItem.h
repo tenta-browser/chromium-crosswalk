@@ -31,18 +31,20 @@
 #ifndef DataTransferItem_h
 #define DataTransferItem_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Forward.h"
+#include "platform/wtf/Forward.h"
 
 namespace blink {
 
 class DataObjectItem;
 class DataTransfer;
+class ExecutionContext;
 class File;
 class ScriptState;
-class StringCallback;
+class V8FunctionStringCallback;
 
 class CORE_EXPORT DataTransferItem final
     : public GarbageCollected<DataTransferItem>,
@@ -56,19 +58,25 @@ class CORE_EXPORT DataTransferItem final
   String kind() const;
   String type() const;
 
-  void getAsString(ScriptState*, StringCallback*) const;
+  void getAsString(ScriptState*, V8FunctionStringCallback*);
   File* getAsFile() const;
 
   DataTransfer* GetDataTransfer() { return data_transfer_.Get(); }
   DataObjectItem* GetDataObjectItem() { return item_.Get(); }
 
   DECLARE_TRACE();
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
  private:
   DataTransferItem(DataTransfer*, DataObjectItem*);
 
+  void RunGetAsStringTask(ExecutionContext*,
+                          V8FunctionStringCallback*,
+                          const String& data);
+
   Member<DataTransfer> data_transfer_;
   Member<DataObjectItem> item_;
+  HeapVector<TraceWrapperMember<V8FunctionStringCallback>> callbacks_;
 };
 
 }  // namespace blink

@@ -8,9 +8,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/run_loop.h"
-#include "base/threading/sequenced_worker_pool.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/test/scoped_task_environment.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 #include "ui/gfx/geometry/size.h"
@@ -61,17 +59,13 @@ class IOSImageDecoderImplTest : public PlatformTest {
   void OnImageDecoded(const gfx::Image& image) { decoded_image_ = image; }
 
  protected:
-  IOSImageDecoderImplTest()
-      : pool_(new base::SequencedWorkerPool(2,
-                                            "TestPool",
-                                            base::TaskPriority::USER_VISIBLE)) {
-    ios_image_decoder_impl_ = CreateIOSImageDecoder(pool_);
+  IOSImageDecoderImplTest() {
+    ios_image_decoder_impl_ = CreateIOSImageDecoder();
   }
 
-  ~IOSImageDecoderImplTest() override { pool_->Shutdown(); }
+  ~IOSImageDecoderImplTest() override {}
 
-  base::MessageLoop loop_;
-  scoped_refptr<base::SequencedWorkerPool> pool_;
+  base::test::ScopedTaskEnvironment scoped_task_evironment_;
   std::unique_ptr<ImageDecoder> ios_image_decoder_impl_;
 
   gfx::Image decoded_image_;
@@ -87,8 +81,7 @@ TEST_F(IOSImageDecoderImplTest, JPGImage) {
       base::Bind(&IOSImageDecoderImplTest::OnImageDecoded,
                  base::Unretained(this)));
 
-  pool_->FlushForTesting();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_evironment_.RunUntilIdle();
 
   EXPECT_FALSE(decoded_image_.IsEmpty());
 }
@@ -103,8 +96,7 @@ TEST_F(IOSImageDecoderImplTest, WebpImage) {
       base::Bind(&IOSImageDecoderImplTest::OnImageDecoded,
                  base::Unretained(this)));
 
-  pool_->FlushForTesting();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_evironment_.RunUntilIdle();
 
   EXPECT_FALSE(decoded_image_.IsEmpty());
 }

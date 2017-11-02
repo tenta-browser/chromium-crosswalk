@@ -4,9 +4,12 @@
 
 #include "core/paint/SVGImagePainter.h"
 
-#include "core/layout/ImageQualityController.h"
+#include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/LayoutImageResource.h"
 #include "core/layout/svg/LayoutSVGImage.h"
+#include "core/page/ChromeClient.h"
+#include "core/page/Page.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
 #include "core/paint/ObjectPainter.h"
 #include "core/paint/PaintInfo.h"
@@ -62,26 +65,21 @@ void SVGImagePainter::PaintForeground(const PaintInfo& paint_info) {
   if (image_viewport_size.IsEmpty())
     return;
 
-  RefPtr<Image> image = image_resource->GetImage(
-      image_viewport_size, layout_svg_image_.Style()->EffectiveZoom());
+  RefPtr<Image> image = image_resource->GetImage(image_viewport_size);
   FloatRect dest_rect = layout_svg_image_.ObjectBoundingBox();
   FloatRect src_rect(0, 0, image->width(), image->height());
 
   SVGImageElement* image_element =
-      toSVGImageElement(layout_svg_image_.GetElement());
+      ToSVGImageElement(layout_svg_image_.GetElement());
   image_element->preserveAspectRatio()->CurrentValue()->TransformRect(dest_rect,
                                                                       src_rect);
-
-  InterpolationQuality interpolation_quality = kInterpolationDefault;
-  interpolation_quality = ImageQualityController::GetImageQualityController()
-                              ->ChooseInterpolationQuality(
-                                  layout_svg_image_, image.Get(), image.Get(),
-                                  LayoutSize(dest_rect.Size()));
-
+  InterpolationQuality interpolation_quality =
+      layout_svg_image_.StyleRef().GetInterpolationQuality();
   InterpolationQuality previous_interpolation_quality =
       paint_info.context.ImageInterpolationQuality();
   paint_info.context.SetImageInterpolationQuality(interpolation_quality);
-  paint_info.context.DrawImage(image.Get(), dest_rect, &src_rect);
+  Image::ImageDecodingMode decode_mode = image_element->GetDecodingMode();
+  paint_info.context.DrawImage(image.get(), decode_mode, dest_rect, &src_rect);
   paint_info.context.SetImageInterpolationQuality(
       previous_interpolation_quality);
 }
@@ -89,7 +87,7 @@ void SVGImagePainter::PaintForeground(const PaintInfo& paint_info) {
 FloatSize SVGImagePainter::ComputeImageViewportSize() const {
   DCHECK(layout_svg_image_.ImageResource()->HasImage());
 
-  if (toSVGImageElement(layout_svg_image_.GetElement())
+  if (ToSVGImageElement(layout_svg_image_.GetElement())
           ->preserveAspectRatio()
           ->CurrentValue()
           ->Align() != SVGPreserveAspectRatio::kSvgPreserveaspectratioNone)

@@ -74,12 +74,13 @@ Polymer({
      * Dictionary defining page visibility.
      * @type {!GuestModePageVisibility}
      */
-    pageVisibility: {
-      type: Object,
-      value: function() { return {}; },
-    },
+    pageVisibility: Object,
 
     showAndroidApps: Boolean,
+
+    showMultidevice: Boolean,
+
+    havePlayStoreApp: Boolean,
   },
 
   /** @override */
@@ -106,10 +107,10 @@ Polymer({
       window.removeEventListener('resize', this.boundScroll_);
       this.boundScroll_ = null;
     } else if (this.overscroll_ && !this.boundScroll_) {
-      this.boundScroll_ = function() {
+      this.boundScroll_ = () => {
         if (!this.ignoreScroll_)
           this.setOverscroll_(0);
-      }.bind(this);
+      };
       this.offsetParent.addEventListener('scroll', this.boundScroll_);
       window.addEventListener('resize', this.boundScroll_);
     }
@@ -129,8 +130,8 @@ Polymer({
     var visibleBottom = scroller.scrollTop + scroller.clientHeight;
     var overscrollBottom = overscroll.offsetTop + overscroll.scrollHeight;
     // How much of the overscroll is visible (may be negative).
-    var visibleOverscroll = overscroll.scrollHeight -
-                            (overscrollBottom - visibleBottom);
+    var visibleOverscroll =
+        overscroll.scrollHeight - (overscrollBottom - visibleBottom);
     this.overscroll_ =
         Math.max(opt_minHeight || 0, Math.ceil(visibleOverscroll));
   },
@@ -176,18 +177,18 @@ Polymer({
    * @private
    */
   updatePagesShown_: function() {
-    var inAbout = settings.Route.ABOUT.contains(settings.getCurrentRoute());
+    var inAbout = settings.routes.ABOUT.contains(settings.getCurrentRoute());
     this.showPages_ = {about: inAbout, settings: !inAbout};
 
     // Calculate and set the overflow padding.
     this.updateOverscrollForPage_();
 
     // Wait for any other changes, then calculate the overflow padding again.
-    setTimeout(function() {
+    setTimeout(() => {
       // Ensure any dom-if reflects the current properties.
       Polymer.dom.flush();
       this.updateOverscrollForPage_();
-    }.bind(this));
+    });
   },
 
   /**
@@ -196,7 +197,7 @@ Polymer({
    * @private
    */
   updateOverscrollForPage_: function() {
-    if (this.showPages_.about) {
+    if (this.showPages_.about || this.inSearchMode_) {
       // Set overscroll directly to remove any existing overscroll that
       // setOverscroll_ would otherwise preserve.
       this.overscroll_ = 0;
@@ -236,13 +237,14 @@ Polymer({
    * @return {(?SettingsAboutPageElement|?SettingsBasicPageElement)}
    */
   getPage_: function(route) {
-    if (settings.Route.ABOUT.contains(route)) {
-      return /** @type {?SettingsAboutPageElement} */(
+    if (settings.routes.ABOUT.contains(route)) {
+      return /** @type {?SettingsAboutPageElement} */ (
           this.$$('settings-about-page'));
     }
-    if (settings.Route.BASIC.contains(route) ||
-        settings.Route.ADVANCED.contains(route)) {
-      return /** @type {?SettingsBasicPageElement} */(
+    if (settings.routes.BASIC.contains(route) ||
+        (settings.routes.ADVANCED &&
+         settings.routes.ADVANCED.contains(route))) {
+      return /** @type {?SettingsBasicPageElement} */ (
           this.$$('settings-basic-page'));
     }
     assertNotReached();
@@ -257,11 +259,11 @@ Polymer({
     this.inSearchMode_ = true;
     this.toolbarSpinnerActive = true;
 
-    return new Promise(function(resolve, reject) {
-      setTimeout(function() {
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
         var whenSearchDone =
-            assert(this.getPage_(settings.Route.BASIC)).searchContents(query);
-        whenSearchDone.then(function(result) {
+            assert(this.getPage_(settings.routes.BASIC)).searchContents(query);
+        whenSearchDone.then(result => {
           resolve();
           if (result.canceled) {
             // Nothing to do here. A previous search request was canceled
@@ -273,7 +275,7 @@ Polymer({
           this.toolbarSpinnerActive = false;
           this.inSearchMode_ = !result.wasClearSearch;
           this.showNoResultsFound_ =
-              this.inSearchMode_ && result.didFindMatches;
+              this.inSearchMode_ && !result.didFindMatches;
 
           if (this.inSearchMode_) {
             Polymer.IronA11yAnnouncer.requestAvailability();
@@ -283,8 +285,8 @@ Polymer({
                   loadTimeData.getStringF('searchResults', query)
             });
           }
-        }.bind(this));
-      }.bind(this), 0);
-    }.bind(this));
+        });
+      }, 0);
+    });
   },
 });

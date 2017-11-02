@@ -11,15 +11,19 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/sequenced_task_runner_helpers.h"
+#include "components/viz/common/surfaces/frame_sink_id.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
+#include "components/viz/common/surfaces/local_surface_id_allocator.h"
 #include "content/renderer/mouse_lock_dispatcher.h"
 #include "content/renderer/render_view_impl.h"
-#include "third_party/WebKit/public/web/WebCompositionUnderline.h"
 #include "third_party/WebKit/public/web/WebDragStatus.h"
+#include "third_party/WebKit/public/web/WebImeTextSpan.h"
 #include "third_party/WebKit/public/web/WebInputMethodController.h"
 #include "third_party/WebKit/public/web/WebNode.h"
 
-namespace cc {
+namespace viz {
 class SurfaceInfo;
 struct SurfaceSequence;
 }
@@ -30,9 +34,8 @@ class BrowserPluginDelegate;
 class BrowserPluginManager;
 class ChildFrameCompositingHelper;
 
-class CONTENT_EXPORT BrowserPlugin :
-    NON_EXPORTED_BASE(public blink::WebPlugin),
-    public MouseLockDispatcher::LockTarget {
+class CONTENT_EXPORT BrowserPlugin : public blink::WebPlugin,
+                                     public MouseLockDispatcher::LockTarget {
  public:
   static BrowserPlugin* GetFromNode(blink::WebNode& node);
 
@@ -56,11 +59,8 @@ class CONTENT_EXPORT BrowserPlugin :
   // Indicates whether the guest should be focused.
   bool ShouldGuestBeFocused() const;
 
-  // A request to enable hardware compositing.
-  void EnableCompositing(bool enable);
-
   // Called by CompositingHelper to send current SurfaceSequence to browser.
-  void SendSatisfySequence(const cc::SurfaceSequence& sequence);
+  void SendSatisfySequence(const viz::SurfaceSequence& sequence);
 
   // Provided that a guest instance ID has been allocated, this method attaches
   // this BrowserPlugin instance to that guest.
@@ -91,12 +91,11 @@ class CONTENT_EXPORT BrowserPlugin :
   void UpdateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
                       const blink::WebRect& unobscured_rect,
-                      const blink::WebVector<blink::WebRect>& cut_outs_rects,
                       bool is_visible) override;
   void UpdateFocus(bool focused, blink::WebFocusType focus_type) override;
   void UpdateVisibility(bool visible) override;
   blink::WebInputEventResult HandleInputEvent(
-      const blink::WebInputEvent& event,
+      const blink::WebCoalescedInputEvent& event,
       blink::WebCursorInfo& cursor_info) override;
   bool HandleDragStatusUpdate(blink::WebDragStatus drag_status,
                               const blink::WebDragData& drag_data,
@@ -112,15 +111,14 @@ class CONTENT_EXPORT BrowserPlugin :
                           const blink::WebString& value) override;
   bool SetComposition(
       const blink::WebString& text,
-      const blink::WebVector<blink::WebCompositionUnderline>& underlines,
+      const blink::WebVector<blink::WebImeTextSpan>& ime_text_spans,
       const blink::WebRange& replacementRange,
       int selectionStart,
       int selectionEnd) override;
-  bool CommitText(
-      const blink::WebString& text,
-      const blink::WebVector<blink::WebCompositionUnderline>& underlines,
-      const blink::WebRange& replacementRange,
-      int relative_cursor_pos) override;
+  bool CommitText(const blink::WebString& text,
+                  const blink::WebVector<blink::WebImeTextSpan>& ime_text_spans,
+                  const blink::WebRange& replacementRange,
+                  int relative_cursor_pos) override;
   bool FinishComposingText(
       blink::WebInputMethodController::ConfirmCompositionBehavior
           selection_behavior) override;
@@ -148,18 +146,20 @@ class CONTENT_EXPORT BrowserPlugin :
 
   ~BrowserPlugin() override;
 
-  gfx::Rect view_rect() const { return view_rect_; }
+  gfx::Rect view_rect() const { return view_rect_.value_or(gfx::Rect()); }
 
   void UpdateInternalInstanceId();
+
+  void ViewRectsChanged(const gfx::Rect& view_rect);
 
   // IPC message handlers.
   // Please keep in alphabetical order.
   void OnAdvanceFocus(int instance_id, bool reverse);
   void OnGuestGone(int instance_id);
-  void OnGuestReady(int instance_id);
+  void OnGuestReady(int instance_id, const viz::FrameSinkId& frame_sink_id);
   void OnSetChildFrameSurface(int instance_id,
-                              const cc::SurfaceInfo& surface_info,
-                              const cc::SurfaceSequence& sequence);
+                              const viz::SurfaceInfo& surface_info,
+                              const viz::SurfaceSequence& sequence);
   void OnSetContentsOpaque(int instance_id, bool opaque);
   void OnSetCursor(int instance_id, const WebCursor& cursor);
   void OnSetMouseLock(int instance_id, bool enable);
@@ -176,7 +176,7 @@ class CONTENT_EXPORT BrowserPlugin :
   const int render_frame_routing_id_;
   blink::WebPluginContainer* container_;
   // The plugin's rect in css pixels.
-  gfx::Rect view_rect_;
+  base::Optional<gfx::Rect> view_rect_;
   bool guest_crashed_;
   bool plugin_focused_;
   // Tracks the visibility of the browser plugin regardless of the whole
@@ -191,13 +191,18 @@ class CONTENT_EXPORT BrowserPlugin :
   bool ready_;
 
   // Used for HW compositing.
-  scoped_refptr<ChildFrameCompositingHelper> compositing_helper_;
+  std::unique_ptr<ChildFrameCompositingHelper> compositing_helper_;
 
   // URL for the embedder frame.
   int browser_plugin_instance_id_;
 
   std::vector<EditCommand> edit_commands_;
 
+  viz::FrameSinkId frame_sink_id_;
+  viz::LocalSurfaceId local_surface_id_;
+  viz::LocalSurfaceIdAllocator local_surface_id_allocator_;
+
+  bool enable_surface_synchronization_ = false;
   // We call lifetime managing methods on |delegate_|, but we do not directly
   // own this. The delegate destroys itself.
   base::WeakPtr<BrowserPluginDelegate> delegate_;

@@ -123,6 +123,7 @@ struct NavigateParams {
   // [in]:                Condition:                        [out]:
   // NEW_BACKGROUND_TAB   target browser tabstrip is empty  NEW_FOREGROUND_TAB
   // CURRENT_TAB          "     "     "                     NEW_FOREGROUND_TAB
+  // NEW_BACKGROUND_TAB   target browser is an app browser  NEW_FOREGROUND_TAB
   // OFF_THE_RECORD       target browser profile is incog.  NEW_FOREGROUND_TAB
   //
   // If disposition is NEW_BACKGROUND_TAB, TabStripModel::ADD_ACTIVE is
@@ -131,6 +132,12 @@ struct NavigateParams {
   // SINGLETON_TAB, then TabStripModel::ADD_ACTIVE is automatically added to
   // |tabstrip_add_types|.
   WindowOpenDisposition disposition;
+
+  // Controls creation of new web contents (in case |disposition| asks for a new
+  // tab or window).  If |force_new_process_for_new_contents| is true, then we
+  // try to put the new contents in a new renderer, even if they are same-site
+  // as |source_site_instance| (this is subject to renderer process limits).
+  bool force_new_process_for_new_contents;
 
   // Sets browser->is_trusted_source. Default is false.
   bool trusted_source;

@@ -32,12 +32,12 @@
 #define ServiceWorker_h
 
 #include <memory>
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "core/workers/AbstractWorker.h"
 #include "modules/ModulesExport.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
+#include "platform/wtf/RefPtr.h"
 #include "public/platform/modules/serviceworker/WebServiceWorker.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerProxy.h"
 
@@ -63,7 +63,7 @@ class MODULES_EXPORT ServiceWorker final
   EAGERLY_FINALIZE();
 
   void postMessage(ScriptState*,
-                   PassRefPtr<SerializedScriptValue> message,
+                   RefPtr<SerializedScriptValue> message,
                    const MessagePortArray&,
                    ExceptionState&);
   static bool CanTransferArrayBuffersAndImageBitmaps() { return false; }

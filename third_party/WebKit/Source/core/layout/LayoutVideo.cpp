@@ -25,9 +25,9 @@
 
 #include "core/layout/LayoutVideo.h"
 
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/html/HTMLVideoElement.h"
+#include "core/html_names.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutFullScreen.h"
 #include "core/paint/VideoPainter.h"
@@ -138,7 +138,7 @@ void LayoutVideo::UpdateLayout() {
 }
 
 HTMLVideoElement* LayoutVideo::VideoElement() const {
-  return toHTMLVideoElement(GetNode());
+  return ToHTMLVideoElement(GetNode());
 }
 
 void LayoutVideo::UpdateFromElement() {
@@ -180,9 +180,9 @@ LayoutRect LayoutVideo::ReplacedContentRect() const {
   if (ShouldDisplayVideo()) {
     // Video codecs may need to restart from an I-frame when the output is
     // resized. Round size in advance to avoid 1px snap difference.
-    // TODO(trchen): The way of rounding is different from LayoutPart just to
-    // match existing behavior. This is probably a bug and We should unify it
-    // with LayoutPart.
+    // TODO(trchen): The way of rounding is different from LayoutEmbeddedContent
+    // just to match existing behavior. This is probably a bug and We should
+    // unify it with LayoutEmbeddedContent.
     return LayoutRect(PixelSnappedIntRect(ComputeObjectFit()));
   }
   // If we are displaying the poster image no pre-rounding is needed, but the

@@ -5,48 +5,60 @@
 /**
  * @fileoverview Active Directory password change screen implementation.
  */
-login.createScreen('ActiveDirectoryPasswordChangeScreen', 'ad-password-change',
-    function() {
-  return {
-    EXTERNAL_API: [
-      'show'
-    ],
+login.createScreen(
+    'ActiveDirectoryPasswordChangeScreen', 'ad-password-change', function() {
+      return {
+        EXTERNAL_API: [],
 
-    adPasswordChanged_: null,
+        adPasswordChanged_: null,
 
-    /** @override */
-    decorate: function() {
-      this.adPasswordChanged_ = $('active-directory-password-change');
-      this.adPasswordChanged_.addEventListener('cancel',
-                                               this.cancel.bind(this));
+        /** @override */
+        decorate: function() {
+          this.adPasswordChanged_ = $('active-directory-password-change');
+          this.adPasswordChanged_.addEventListener(
+              'cancel', this.cancel.bind(this));
 
-      this.adPasswordChanged_.addEventListener('authCompleted',
-          function(e) {
-            chrome.send('completeAdPasswordChange',
-                [e.detail.username,
-                 e.detail.oldPassword,
-                 e.detail.newPassword]);
-          });
-    },
+          this.adPasswordChanged_.addEventListener(
+              'authCompleted', function(e) {
+                chrome.send('completeActiveDirectoryPasswordChange', [
+                  e.detail.username, e.detail.oldPassword, e.detail.newPassword
+                ]);
+              });
+        },
 
-    /**
-     * Cancels password changing and drops the user back to the login screen.
-     */
-    cancel: function() {
-      Oobe.showUserPods();
-    },
+        /**
+         * Cancels password changing and drops the user back to the login
+         * screen.
+         */
+        cancel: function() {
+          chrome.send('cancelActiveDirectoryPasswordChange');
+          Oobe.showUserPods();
+        },
 
-    /**
-     * Shows password changed screen.
-     * @param {string} username Name of user that should change the password.
-     */
-    show: function(username) {
-      // Active Directory password change screen is similar to Active Directory
-      // login screen. So we restore bottom bar controls.
-      Oobe.getInstance().headerHidden = false;
-      Oobe.showScreen({id: SCREEN_ACTIVE_DIRECTORY_PASSWORD_CHANGE});
-      this.adPasswordChanged_.reset();
-      this.adPasswordChanged_.username = username;
-    }
-  };
-});
+        /**
+         * @override
+         * Event handler that is invoked just before the frame is shown.
+         * @param {Object} data Screen init payload
+         */
+        onBeforeShow: function(data) {
+          // Active Directory password change screen is similar to Active
+          // Directory login screen. So we restore bottom bar controls.
+          Oobe.getInstance().headerHidden = false;
+          this.adPasswordChanged_.reset();
+          if ('username' in data)
+            this.adPasswordChanged_.username = data.username;
+          if ('error' in data)
+            this.adPasswordChanged_.setInvalid(data.error);
+        },
+
+        /**
+         * Shows sign-in error bubble.
+         * @param {number} loginAttempts Number of login attemps tried.
+         * @param {HTMLElement} content Content to show in bubble.
+         */
+        showErrorBubble: function(loginAttempts, error) {
+          $('bubble').showContentForElement(
+              $('ad-password-change'), cr.ui.Bubble.Attachment.LEFT, error);
+        },
+      };
+    });

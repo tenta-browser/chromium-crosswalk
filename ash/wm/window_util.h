@@ -8,22 +8,29 @@
 #include <stdint.h>
 
 #include "ash/ash_export.h"
-#include "base/compiler_specific.h"
 #include "ui/base/ui_base_types.h"
 
 namespace aura {
 class Window;
 }
 
+namespace gfx {
+class Point;
+}
+
 namespace ui {
 class Event;
+class EventHandler;
 }
 
 namespace ash {
 
+class ImmersiveFullscreenController;
+
 namespace wm {
 
 // Utility functions for window activation.
+// DEPRECATED: Prefer the functions in ui/wm/core/window_util.h.
 ASH_EXPORT void ActivateWindow(aura::Window* window);
 ASH_EXPORT void DeactivateWindow(aura::Window* window);
 ASH_EXPORT bool IsActiveWindow(aura::Window* window);
@@ -40,6 +47,18 @@ ASH_EXPORT aura::Window* GetActivatableWindow(aura::Window* window);
 
 // Returns the window with capture, null if no window currently has capture.
 ASH_EXPORT aura::Window* GetCaptureWindow();
+
+// Returns the Windows that may block events.
+// If |min_container| is non-null then windows that are not children of
+// |min_container| or not stacked above (z-order) will not receive events.
+// |system_modal_container| is the window system modal windows appear in. If
+// there is a system modal window in it, then events that are not targetted
+// at the active modal window (or an ancestor or transient ancestor) will not
+// receive events.
+ASH_EXPORT void GetBlockingContainersForRoot(
+    aura::Window* root_window,
+    aura::Window** min_container,
+    aura::Window** system_modal_container);
 
 // Returns true if |window|'s location can be controlled by the user.
 ASH_EXPORT bool IsWindowUserPositionable(aura::Window* window);
@@ -67,6 +86,38 @@ ASH_EXPORT void SnapWindowToPixelBoundary(aura::Window* window);
 // installs the SnapToPixelLayoutManager.
 ASH_EXPORT void SetSnapsChildrenToPhysicalPixelBoundary(
     aura::Window* container);
+
+// Convenience for window->delegate()->GetNonClientComponent(location) that
+// returns HTNOWHERE if window->delegate() is null.
+ASH_EXPORT int GetNonClientComponent(aura::Window* window,
+                                     const gfx::Point& location);
+
+// When set, the child windows should get a slightly larger hit region to make
+// resizing easier.
+ASH_EXPORT void SetChildrenUseExtendedHitRegionForWindow(aura::Window* window);
+
+// Requests the |window| to close and destroy itself. This is intended to
+// forward to an associated widget.
+ASH_EXPORT void CloseWidgetForWindow(aura::Window* window);
+
+// Adds or removes a handler to receive events targeted at this window, before
+// this window handles the events itself; the handler does not receive events
+// from embedded windows. This only supports windows with internal widgets;
+// see ash::GetInternalWidgetForWindow(). Ownership of the handler is not
+// transferred.
+//
+// Also note that the target of these events is always an aura::Window.
+ASH_EXPORT void AddLimitedPreTargetHandlerForWindow(ui::EventHandler* handler,
+                                                    aura::Window* window);
+ASH_EXPORT void RemoveLimitedPreTargetHandlerForWindow(
+    ui::EventHandler* handler,
+    aura::Window* window);
+
+// Installs a resize handler on the window that makes it easier to resize
+// the window. See ResizeHandleWindowTargeter for the specifics.
+ASH_EXPORT void InstallResizeHandleWindowTargeterForWindow(
+    aura::Window* window,
+    ImmersiveFullscreenController* immersive_fullscreen_controller);
 
 }  // namespace wm
 }  // namespace ash

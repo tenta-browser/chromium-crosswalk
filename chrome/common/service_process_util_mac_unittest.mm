@@ -13,6 +13,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/message_loop/message_loop.h"
 #include "base/process/launch.h"
 #include "base/run_loop.h"
 #include "base/strings/sys_string_conversions.h"
@@ -21,17 +22,6 @@
 #include "chrome/common/mac/launchd.h"
 #include "chrome/common/mac/mock_launchd.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-// Once Chrome no longer supports OSX 10.7, everything within this
-// preprocessor block can be removed.
-#if !defined(MAC_OS_X_VERSION_10_8) || \
-    MAC_OS_X_VERSION_MIN_REQUIRED < MAC_OS_X_VERSION_10_8
-@interface NSFileManager (Chrome)
-- (BOOL)trashItemAtURL:(NSURL*)url
-      resultingItemURL:(NSURL* __nullable* __nullable)outResultingURL
-                 error:(NSError**)error;
-@end
-#endif
 
 class ServiceProcessStateFileManipulationTest : public ::testing::Test {
  public:

@@ -35,12 +35,11 @@
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/style/CachedUAStyle.h"
-#include "core/style/ComputedStyle.h"
-#include "core/style/StyleInheritedData.h"
 #include <memory>
 
 namespace blink {
 
+class ComputedStyle;
 class FontDescription;
 
 class CORE_EXPORT StyleResolverState {
@@ -73,18 +72,18 @@ class CORE_EXPORT StyleResolverState {
   EInsideLink ElementLinkState() const {
     return element_context_.ElementLinkState();
   }
-  bool DistributedToInsertionPoint() const {
-    return element_context_.DistributedToInsertionPoint();
+  bool DistributedToV0InsertionPoint() const {
+    return element_context_.DistributedToV0InsertionPoint();
   }
 
   const ElementResolveContext& ElementContext() const {
     return element_context_;
   }
 
-  void SetStyle(PassRefPtr<ComputedStyle>);
-  const ComputedStyle* Style() const { return style_.Get(); }
-  ComputedStyle* Style() { return style_.Get(); }
-  PassRefPtr<ComputedStyle> TakeStyle() { return std::move(style_); }
+  void SetStyle(RefPtr<ComputedStyle>);
+  const ComputedStyle* Style() const { return style_.get(); }
+  ComputedStyle* Style() { return style_.get(); }
+  RefPtr<ComputedStyle> TakeStyle();
 
   ComputedStyle& MutableStyleRef() const { return *style_; }
   const ComputedStyle& StyleRef() const { return MutableStyleRef(); }
@@ -103,6 +102,9 @@ class CORE_EXPORT StyleResolverState {
   }
 
   CSSAnimationUpdate& AnimationUpdate() { return animation_update_; }
+  const CSSAnimationUpdate& AnimationUpdate() const {
+    return animation_update_;
+  }
 
   bool IsAnimationInterpolationMapReady() const {
     return is_animation_interpolation_map_ready_;
@@ -118,17 +120,20 @@ class CORE_EXPORT StyleResolverState {
     is_animating_custom_properties_ = value;
   }
 
-  void SetParentStyle(PassRefPtr<ComputedStyle> parent_style) {
-    parent_style_ = std::move(parent_style);
+  HashSet<PropertyHandle>& AnimationPendingCustomProperties() {
+    return animation_pending_custom_properties_;
   }
-  const ComputedStyle* ParentStyle() const { return parent_style_.Get(); }
-  ComputedStyle* ParentStyle() { return parent_style_.Get(); }
 
-  void SetLayoutParentStyle(PassRefPtr<ComputedStyle> parent_style) {
-    layout_parent_style_ = std::move(parent_style);
+  const HashSet<PropertyHandle>& AnimationPendingCustomProperties() const {
+    return animation_pending_custom_properties_;
   }
+
+  void SetParentStyle(RefPtr<const ComputedStyle>);
+  const ComputedStyle* ParentStyle() const { return parent_style_.get(); }
+
+  void SetLayoutParentStyle(RefPtr<const ComputedStyle>);
   const ComputedStyle* LayoutParentStyle() const {
-    return layout_parent_style_.Get();
+    return layout_parent_style_.get();
   }
 
   // FIXME: These are effectively side-channel "out parameters" for the various
@@ -150,14 +155,7 @@ class CORE_EXPORT StyleResolverState {
     return apply_property_to_visited_link_style_;
   }
 
-  void CacheUserAgentBorderAndBackground() {
-    // LayoutTheme only needs the cached style if it has an appearance,
-    // and constructing it is expensive so we avoid it if possible.
-    if (!Style()->HasAppearance())
-      return;
-
-    cached_ua_style_ = CachedUAStyle::Create(Style());
-  }
+  void CacheUserAgentBorderAndBackground();
 
   const CachedUAStyle* GetCachedUAStyle() const {
     return cached_ua_style_.get();
@@ -183,29 +181,12 @@ class CORE_EXPORT StyleResolverState {
   // some callers set these directly on the ComputedStyle w/o telling us.
   // Presumably we'll want to design a better wrapper around ComputedStyle for
   // tracking these mutations and separate it from StyleResolverState.
-  const FontDescription& ParentFontDescription() const {
-    return parent_style_->GetFontDescription();
-  }
+  const FontDescription& ParentFontDescription() const;
 
-  void SetZoom(float f) {
-    if (style_->SetZoom(f))
-      font_builder_.DidChangeEffectiveZoom();
-  }
-  void SetEffectiveZoom(float f) {
-    if (style_->SetEffectiveZoom(f))
-      font_builder_.DidChangeEffectiveZoom();
-  }
-  void SetWritingMode(WritingMode new_writing_mode) {
-    if (style_->GetWritingMode() == new_writing_mode) {
-      return;
-    }
-    style_->SetWritingMode(new_writing_mode);
-    font_builder_.DidChangeWritingMode();
-  }
-  void SetTextOrientation(TextOrientation text_orientation) {
-    if (style_->SetTextOrientation(text_orientation))
-      font_builder_.DidChangeTextOrientation();
-  }
+  void SetZoom(float);
+  void SetEffectiveZoom(float);
+  void SetWritingMode(WritingMode);
+  void SetTextOrientation(ETextOrientation);
 
   void SetHasDirAutoAttribute(bool value) { has_dir_auto_attribute_ = value; }
   bool HasDirAutoAttribute() const { return has_dir_auto_attribute_; }
@@ -228,7 +209,7 @@ class CORE_EXPORT StyleResolverState {
 
   // parent_style_ is not always just ElementResolveContext::ParentStyle(),
   // so we keep it separate.
-  RefPtr<ComputedStyle> parent_style_;
+  RefPtr<const ComputedStyle> parent_style_;
   // This will almost-always be the same that parent_style_, except in the
   // presence of display: contents. This is the style against which we have to
   // do adjustment.
@@ -237,6 +218,7 @@ class CORE_EXPORT StyleResolverState {
   CSSAnimationUpdate animation_update_;
   bool is_animation_interpolation_map_ready_;
   bool is_animating_custom_properties_;
+  HashSet<PropertyHandle> animation_pending_custom_properties_;
 
   bool apply_property_to_regular_style_;
   bool apply_property_to_visited_link_style_;

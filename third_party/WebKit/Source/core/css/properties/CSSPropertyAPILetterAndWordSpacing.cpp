@@ -9,10 +9,10 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPILetterAndWordSpacing::parseSingleValue(
+const CSSValue* CSSPropertyAPILetterAndWordSpacing::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   if (range.Peek().Id() == CSSValueNormal)
     return CSSPropertyParserHelpers::ConsumeIdent(range);
   // TODO(timloh): allow <percentage>s in word-spacing.

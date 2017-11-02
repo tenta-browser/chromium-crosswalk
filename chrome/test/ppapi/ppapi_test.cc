@@ -13,6 +13,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -27,6 +28,7 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
+#include "components/nacl/common/features.h"
 #include "components/nacl/common/nacl_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
@@ -153,6 +155,7 @@ void PPAPITestBase::SetUpOnMainThread() {
 }
 
 GURL PPAPITestBase::GetTestFileUrl(const std::string& test_case) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_setup;
   base::FilePath test_path;
   EXPECT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &test_path));
   test_path = test_path.Append(FILE_PATH_LITERAL("ppapi"));
@@ -207,7 +210,6 @@ void PPAPITestBase::RunTestWithWebSocketServer(const std::string& test_case) {
   net::EmbeddedTestServer http_server;
   http_server.AddDefaultHandlers(http_document_root);
   net::SpawnedTestServer ws_server(net::SpawnedTestServer::TYPE_WS,
-                                   net::SpawnedTestServer::kLocalhost,
                                    net::GetWebSocketTestDataDirectory());
   ASSERT_TRUE(http_server.Start());
   ASSERT_TRUE(ws_server.Start());
@@ -307,7 +309,7 @@ void OutOfProcessPPAPIPrivateTest::SetUpCommandLine(
 
 void PPAPINaClTest::SetUpCommandLine(base::CommandLine* command_line) {
   PPAPITestBase::SetUpCommandLine(command_line);
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   // Enable running (non-portable) NaCl outside of the Chrome web store.
   command_line->AppendSwitch(switches::kEnableNaCl);
   command_line->AppendSwitchASCII(switches::kAllowNaClSocketAPI, "127.0.0.1");
@@ -320,39 +322,39 @@ void PPAPINaClTest::SetUpOnMainThread() {
 }
 
 void PPAPINaClTest::RunTest(const std::string& test_case) {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   PPAPITestBase::RunTest(test_case);
 #endif
 }
 
 void PPAPINaClTest::RunTestViaHTTP(const std::string& test_case) {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   PPAPITestBase::RunTestViaHTTP(test_case);
 #endif
 }
 
 void PPAPINaClTest::RunTestWithSSLServer(const std::string& test_case) {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   PPAPITestBase::RunTestWithSSLServer(test_case);
 #endif
 }
 
 void PPAPINaClTest::RunTestWithWebSocketServer(const std::string& test_case) {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   PPAPITestBase::RunTestWithWebSocketServer(test_case);
 #endif
 }
 
 void PPAPINaClTest::RunTestIfAudioOutputAvailable(
     const std::string& test_case) {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   PPAPITestBase::RunTestIfAudioOutputAvailable(test_case);
 #endif
 }
 
 void PPAPINaClTest::RunTestViaHTTPIfAudioOutputAvailable(
     const std::string& test_case) {
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   PPAPITestBase::RunTestViaHTTPIfAudioOutputAvailable(test_case);
 #endif
 }
@@ -399,7 +401,7 @@ void PPAPIPrivateNaClPNaClTest::SetUpCommandLine(
 void PPAPINaClPNaClNonSfiTest::SetUpCommandLine(
     base::CommandLine* command_line) {
   PPAPINaClTest::SetUpCommandLine(command_line);
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   command_line->AppendSwitch(switches::kEnableNaClNonSfiMode);
 #endif
 }

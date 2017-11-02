@@ -31,15 +31,15 @@
 #ifndef HTMLTemplateElement_h
 #define HTMLTemplateElement_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/html/HTMLElement.h"
+#include "platform/bindings/TraceWrapperMember.h"
 
 namespace blink {
 
 class DocumentFragment;
 class TemplateContentDocumentFragment;
 
-class HTMLTemplateElement final : public HTMLElement {
+class CORE_EXPORT HTMLTemplateElement final : public HTMLElement {
   DEFINE_WRAPPERTYPEINFO();
 
  public:

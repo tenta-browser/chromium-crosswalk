@@ -8,7 +8,6 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.os.AsyncTask;
 import android.os.Environment;
-import android.os.StrictMode;
 import android.os.SystemClock;
 import org.chromium.base.Log;
 
@@ -26,12 +25,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @MainDex
 public abstract class PathUtils {
     private static final String THUMBNAIL_DIRECTORY_NAME = "textures";
+    private static final String DOWNLOAD_INTERNAL_DIRECTORY_NAME = "download_internal";
 
     private static final int DATA_DIRECTORY = 0;
     private static final int THUMBNAIL_DIRECTORY = 1;
     private static final int DATABASE_DIRECTORY = 2;
     private static final int CACHE_DIRECTORY = 3;
-    private static final int NUM_DIRECTORIES = 4;
+    private static final int DOWNLOAD_INTERNAL_DIRECTORY = 4;
+    private static final int NUM_DIRECTORIES = 5;
     private static final AtomicBoolean sInitializationStarted = new AtomicBoolean();
     private static AsyncTask<Void, Void, String[]> sDirPathFetchTask;
 
@@ -67,14 +68,10 @@ public abstract class PathUtils {
             // already finished.
             if (sDirPathFetchTask.cancel(false)) {
                 // Allow disk access here because we have no other choice.
-                StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-                StrictMode.allowThreadDiskWrites();
-                try {
+                try (StrictModeContext unused = StrictModeContext.allowDiskWrites()) {
                     // sDirPathFetchTask did not complete. We have to run the code it was supposed
                     // to be responsible for synchronously on the UI thread.
                     return PathUtils.setPrivateDataDirectorySuffixInternal();
-                } finally {
-                    StrictMode.setThreadPolicy(oldPolicy);
                 }
             } else {
                 // sDirPathFetchTask succeeded, and the values we need should be ready to access
@@ -103,6 +100,8 @@ public abstract class PathUtils {
                 sDataDirectorySuffix, Context.MODE_PRIVATE).getPath();
         paths[THUMBNAIL_DIRECTORY] = appContext.getDir(
                 THUMBNAIL_DIRECTORY_NAME, Context.MODE_PRIVATE).getPath();
+        paths[DOWNLOAD_INTERNAL_DIRECTORY] =
+                appContext.getDir(DOWNLOAD_INTERNAL_DIRECTORY_NAME, Context.MODE_PRIVATE).getPath();
         paths[DATABASE_DIRECTORY] = appContext.getDatabasePath("foo").getParent();
         if (appContext.getCacheDir() != null) {
             paths[CACHE_DIRECTORY] = appContext.getCacheDir().getPath();
@@ -179,6 +178,12 @@ public abstract class PathUtils {
         return getDirectoryPath(THUMBNAIL_DIRECTORY);
     }
 
+    @CalledByNative
+    public static String getDownloadInternalDirectory() {
+        assert sDirPathFetchTask != null : "setDataDirectorySuffix must be called first.";
+        return getDirectoryPath(DOWNLOAD_INTERNAL_DIRECTORY);
+    }
+
     /**
      * @return the public downloads directory.
      */
@@ -186,18 +191,15 @@ public abstract class PathUtils {
     @CalledByNative
     private static String getDownloadsDirectory() {
         // Temporarily allowing disk access while fixing. TODO: http://crbug.com/508615
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-        String downloadsPath;
-        try {
+        try (StrictModeContext unused = StrictModeContext.allowDiskReads()) {
             long time = SystemClock.elapsedRealtime();
-            downloadsPath = Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DOWNLOADS).getPath();
+            String downloadsPath =
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                            .getPath();
             RecordHistogram.recordTimesHistogram("Android.StrictMode.DownloadsDir",
                     SystemClock.elapsedRealtime() - time, TimeUnit.MILLISECONDS);
-        } finally {
-            StrictMode.setThreadPolicy(oldPolicy);
+            return downloadsPath;
         }
-        return downloadsPath;
     }
 
     /**

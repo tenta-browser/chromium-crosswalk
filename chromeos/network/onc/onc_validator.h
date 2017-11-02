@@ -164,6 +164,7 @@ class CHROMEOS_EXPORT Validator : public Mapper {
   bool ValidateIPsec(base::DictionaryValue* result);
   bool ValidateOpenVPN(base::DictionaryValue* result);
   bool ValidateThirdPartyVPN(base::DictionaryValue* result);
+  bool ValidateARCVPN(base::DictionaryValue* result);
   bool ValidateVerifyX509(base::DictionaryValue* result);
   bool ValidateCertificatePattern(base::DictionaryValue* result);
   bool ValidateGlobalNetworkConfiguration(base::DictionaryValue* result);
@@ -171,6 +172,7 @@ class CHROMEOS_EXPORT Validator : public Mapper {
   bool ValidateProxyLocation(base::DictionaryValue* result);
   bool ValidateEAP(base::DictionaryValue* result);
   bool ValidateCertificate(base::DictionaryValue* result);
+  bool ValidateTether(base::DictionaryValue* result);
 
   bool IsValidValue(const std::string& field_value,
                     const std::vector<const char*>& valid_values);
@@ -205,10 +207,6 @@ class CHROMEOS_EXPORT Validator : public Mapper {
   bool CheckGuidIsUniqueAndAddToSet(const base::DictionaryValue& dict,
                                     const std::string& kGUID,
                                     std::set<std::string> *guids);
-
-  // Prohibit certificate patterns for device policy ONC so that an unmanaged
-  // user won't have a certificate presented for them involuntarily.
-  bool IsCertPatternInDevicePolicy(const std::string& cert_type);
 
   // Prohibit global network configuration in user ONC imports.
   bool IsGlobalNetworkConfigInUserImport(

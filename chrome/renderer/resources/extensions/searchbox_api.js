@@ -13,10 +13,7 @@ if (!chrome.embeddedSearch) {
       // =======================================================================
       //                            Private functions
       // =======================================================================
-      native function GetQuery();
-      native function GetSearchRequestParams();
       native function GetRightToLeft();
-      native function GetSuggestionToPrefetch();
       native function IsFocused();
       native function IsKeyCaptureEnabled();
       native function Paste();
@@ -26,13 +23,9 @@ if (!chrome.embeddedSearch) {
       // =======================================================================
       //                           Exported functions
       // =======================================================================
+      Object.defineProperty(this, 'rtl', { get: GetRightToLeft });
       this.__defineGetter__('isFocused', IsFocused);
       this.__defineGetter__('isKeyCaptureEnabled', IsKeyCaptureEnabled);
-      this.__defineGetter__('rtl', GetRightToLeft);
-      this.__defineGetter__('suggestion', GetSuggestionToPrefetch);
-      this.__defineGetter__('value', GetQuery);
-      Object.defineProperty(this, 'requestParams',
-                            { get: GetSearchRequestParams });
 
       this.paste = function(value) {
         Paste(value);
@@ -48,8 +41,6 @@ if (!chrome.embeddedSearch) {
 
       this.onfocuschange = null;
       this.onkeycapturechange = null;
-      this.onsubmit = null;
-      this.onsuggestionchange = null;
     };
 
     this.newTabPage = new function() {
@@ -117,22 +108,29 @@ if (!chrome.embeddedSearch) {
         return GetMostVisitedItemData(restrictedId);
       };
 
-      // This method is restricted to chrome-search://most-visited pages by
-      // checking the invoking context's origin in searchbox_extension.cc.
+      // This method is restricted to chrome-search://most-visited and
+      // chrome-search://local-ntp pages by checking the invoking context's
+      // origin in searchbox_extension.cc.
       this.logEvent = function(histogram_name) {
         LogEvent(histogram_name);
       };
 
       // This method is restricted to chrome-search://most-visited pages by
       // checking the invoking context's origin in searchbox_extension.cc.
-      this.logMostVisitedImpression = function(position, tileSource, tileType) {
-        LogMostVisitedImpression(position, tileSource, tileType);
+      this.logMostVisitedImpression = function(position, tileTitleSource,
+                                               tileSource, tileType,
+                                               dataGenerationTime) {
+        LogMostVisitedImpression(position, tileTitleSource, tileSource,
+                                 tileType, dataGenerationTime);
       };
 
       // This method is restricted to chrome-search://most-visited pages by
       // checking the invoking context's origin in searchbox_extension.cc.
-      this.logMostVisitedNavigation = function(position, tileSource, tileType) {
-        LogMostVisitedNavigation(position, tileSource, tileType);
+      this.logMostVisitedNavigation = function(position, tileTitleSource,
+                                               tileSource, tileType,
+                                               dataGenerationTime) {
+        LogMostVisitedNavigation(position, tileTitleSource, tileSource,
+                                 tileType, dataGenerationTime);
       };
 
       this.undoAllMostVisitedDeletions = function() {

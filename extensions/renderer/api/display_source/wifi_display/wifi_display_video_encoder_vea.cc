@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "content/public/renderer/video_encode_accelerator.h"
 #include "media/base/bind_to_current_loop.h"
@@ -97,7 +98,7 @@ void WiFiDisplayVideoEncoderVEA::Create(
   base::PostTaskAndReplyWithResult(
       media_task_runner.get(), FROM_HERE,
       base::Bind(&WiFiDisplayVideoEncoderVEA::InitOnMediaThread,
-                 make_scoped_refptr(new WiFiDisplayVideoEncoderVEA(
+                 base::WrapRefCounted(new WiFiDisplayVideoEncoderVEA(
                      std::move(media_task_runner), vea.release(),
                      params.create_memory_callback)),
                  params),

@@ -13,12 +13,12 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/test/histogram_tester.h"
@@ -192,7 +192,7 @@ class SyncerTest : public testing::Test,
   void OnTypesBackedOff(ModelTypeSet types) override {
     scheduler_->OnTypesBackedOff(types);
   }
-  bool IsCurrentlyThrottled() override { return false; }
+  bool IsAnyThrottleOrBackoff() override { return false; }
   void OnReceivedLongPollIntervalUpdate(
       const base::TimeDelta& new_interval) override {
     last_long_poll_interval_received_ = new_interval;
@@ -238,7 +238,9 @@ class SyncerTest : public testing::Test,
   void OnBackedOffTypesChanged(ModelTypeSet backed_off_types) override {}
   void OnMigrationRequested(ModelTypeSet types) override {}
 
-  void ResetCycle() { cycle_.reset(SyncCycle::Build(context_.get(), this)); }
+  void ResetCycle() {
+    cycle_ = std::make_unique<SyncCycle>(context_.get(), this);
+  }
 
   bool SyncShareNudge() {
     ResetCycle();
@@ -262,17 +264,17 @@ class SyncerTest : public testing::Test,
 
   void SetUp() override {
     test_user_share_.SetUp();
-    mock_server_ = base::MakeUnique<MockConnectionManager>(
+    mock_server_ = std::make_unique<MockConnectionManager>(
         directory(), &cancelation_signal_);
-    debug_info_getter_ = base::MakeUnique<MockDebugInfoGetter>();
+    debug_info_getter_ = std::make_unique<MockDebugInfoGetter>();
     workers_.push_back(
         scoped_refptr<ModelSafeWorker>(new FakeModelWorker(GROUP_PASSIVE)));
     std::vector<SyncEngineEventListener*> listeners;
     listeners.push_back(this);
 
-    model_type_registry_ = base::MakeUnique<ModelTypeRegistry>(
+    model_type_registry_ = std::make_unique<ModelTypeRegistry>(
         workers_, test_user_share_.user_share(), &mock_nudge_handler_,
-        UssMigrator());
+        UssMigrator(), &cancelation_signal_);
     model_type_registry_->RegisterDirectoryTypeDebugInfoObserver(
         &debug_info_cache_);
 
@@ -281,14 +283,14 @@ class SyncerTest : public testing::Test,
     EnableDatatype(NIGORI);
     EnableDatatype(PREFERENCES);
 
-    context_ = base::MakeUnique<SyncCycleContext>(
+    context_ = std::make_unique<SyncCycleContext>(
         mock_server_.get(), directory(), extensions_activity_.get(), listeners,
         debug_info_getter_.get(), model_type_registry_.get(),
         true,   // enable keystore encryption
         false,  // force enable pre-commit GU avoidance experiment
         "fake_invalidator_client_id");
     syncer_ = new Syncer(&cancelation_signal_);
-    scheduler_ = base::MakeUnique<SyncSchedulerImpl>(
+    scheduler_ = std::make_unique<SyncSchedulerImpl>(
         "TestSyncScheduler", BackoffDelayProvider::FromDefaults(),
         context_.get(),
         // scheduler_ owned syncer_ now and will manage the memory of syncer_
@@ -569,10 +571,10 @@ class SyncerTest : public testing::Test,
 
 TEST_F(SyncerTest, TestCallGatherUnsyncedEntries) {
   {
-    Syncer::UnsyncedMetaHandles handles;
+    syncable::Directory::Metahandles handles;
     {
       syncable::ReadTransaction trans(FROM_HERE, directory());
-      GetUnsyncedEntries(&trans, &handles);
+      syncable::GetUnsyncedEntries(&trans, &handles);
     }
     ASSERT_EQ(0u, handles.size());
   }
@@ -4139,7 +4141,7 @@ TEST_F(SyncerTest, DirectoryCommitTest) {
 TEST_F(SyncerTest, TestClientCommandDuringUpdate) {
   using sync_pb::ClientCommand;
 
-  ClientCommand* command = new ClientCommand();
+  auto command = std::make_unique<ClientCommand>();
   command->set_set_sync_poll_interval(8);
   command->set_set_sync_long_poll_interval(800);
   command->set_sessions_commit_delay_seconds(3141);
@@ -4151,7 +4153,7 @@ TEST_F(SyncerTest, TestClientCommandDuringUpdate) {
   command->set_client_invalidation_hint_buffer_size(11);
   mock_server_->AddUpdateDirectory(1, 0, "in_root", 1, 1, foreign_cache_guid(),
                                    "-1");
-  mock_server_->SetGUClientCommand(command);
+  mock_server_->SetGUClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
   EXPECT_EQ(TimeDelta::FromSeconds(8), last_short_poll_interval_received_);
@@ -4160,7 +4162,7 @@ TEST_F(SyncerTest, TestClientCommandDuringUpdate) {
   EXPECT_EQ(TimeDelta::FromMilliseconds(950), last_bookmarks_commit_delay_);
   EXPECT_EQ(11, last_client_invalidation_hint_buffer_size_);
 
-  command = new ClientCommand();
+  command = std::make_unique<ClientCommand>();
   command->set_set_sync_poll_interval(180);
   command->set_set_sync_long_poll_interval(190);
   command->set_sessions_commit_delay_seconds(2718);
@@ -4171,7 +4173,7 @@ TEST_F(SyncerTest, TestClientCommandDuringUpdate) {
   command->set_client_invalidation_hint_buffer_size(9);
   mock_server_->AddUpdateDirectory(1, 0, "in_root", 1, 1, foreign_cache_guid(),
                                    "-1");
-  mock_server_->SetGUClientCommand(command);
+  mock_server_->SetGUClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
   EXPECT_EQ(TimeDelta::FromSeconds(180), last_short_poll_interval_received_);
@@ -4184,7 +4186,7 @@ TEST_F(SyncerTest, TestClientCommandDuringUpdate) {
 TEST_F(SyncerTest, TestClientCommandDuringCommit) {
   using sync_pb::ClientCommand;
 
-  ClientCommand* command = new ClientCommand();
+  auto command = std::make_unique<ClientCommand>();
   command->set_set_sync_poll_interval(8);
   command->set_set_sync_long_poll_interval(800);
   command->set_sessions_commit_delay_seconds(3141);
@@ -4195,7 +4197,7 @@ TEST_F(SyncerTest, TestClientCommandDuringCommit) {
   bookmark_delay->set_delay_ms(950);
   command->set_client_invalidation_hint_buffer_size(11);
   CreateUnsyncedDirectory("X", "id_X");
-  mock_server_->SetCommitClientCommand(command);
+  mock_server_->SetCommitClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
   EXPECT_EQ(TimeDelta::FromSeconds(8), last_short_poll_interval_received_);
@@ -4204,7 +4206,7 @@ TEST_F(SyncerTest, TestClientCommandDuringCommit) {
   EXPECT_EQ(TimeDelta::FromMilliseconds(950), last_bookmarks_commit_delay_);
   EXPECT_EQ(11, last_client_invalidation_hint_buffer_size_);
 
-  command = new ClientCommand();
+  command = std::make_unique<ClientCommand>();
   command->set_set_sync_poll_interval(180);
   command->set_set_sync_long_poll_interval(190);
   command->set_sessions_commit_delay_seconds(2718);
@@ -4214,7 +4216,7 @@ TEST_F(SyncerTest, TestClientCommandDuringCommit) {
   bookmark_delay->set_delay_ms(1050);
   command->set_client_invalidation_hint_buffer_size(9);
   CreateUnsyncedDirectory("Y", "id_Y");
-  mock_server_->SetCommitClientCommand(command);
+  mock_server_->SetCommitClientCommand(std::move(command));
   EXPECT_TRUE(SyncShareNudge());
 
   EXPECT_EQ(TimeDelta::FromSeconds(180), last_short_poll_interval_received_);
@@ -5083,6 +5085,48 @@ TEST_F(SyncerTest, ProgressMarkerOnlyUpdateCreatesRootFolder) {
   }
 
   EXPECT_TRUE(directory()->InitialSyncEndedForType(PREFERENCES));
+}
+
+// Verify that commit only types are never requested in GetUpdates, but still
+// make it into the commit messages. Additionally, make sure failing GU types
+// are correctly removed before commit.
+TEST_F(SyncerTest, CommitOnlyTypes) {
+  mock_server_->set_partial_failure(true);
+  mock_server_->SetPartialFailureTypes(ModelTypeSet(PREFERENCES));
+
+  EnableDatatype(USER_EVENTS);
+  {
+    syncable::WriteTransaction trans(FROM_HERE, UNITTEST, directory());
+
+    MutableEntry pref(&trans, CREATE, PREFERENCES, ids_.root(), "name");
+    ASSERT_TRUE(pref.good());
+    pref.PutUniqueClientTag("tag1");
+    pref.PutIsUnsynced(true);
+
+    MutableEntry ext(&trans, CREATE, EXTENSIONS, ids_.root(), "name");
+    ASSERT_TRUE(ext.good());
+    ext.PutUniqueClientTag("tag2");
+    ext.PutIsUnsynced(true);
+
+    MutableEntry event(&trans, CREATE, USER_EVENTS, ids_.root(), "name");
+    ASSERT_TRUE(event.good());
+    event.PutUniqueClientTag("tag3");
+    event.PutIsUnsynced(true);
+  }
+
+  EXPECT_TRUE(SyncShareNudge());
+
+  ASSERT_EQ(2U, mock_server_->requests().size());
+  ASSERT_TRUE(mock_server_->requests()[0].has_get_updates());
+  // MockConnectionManager will ensure USER_EVENTS was not included in the GU.
+  EXPECT_EQ(
+      4, mock_server_->requests()[0].get_updates().from_progress_marker_size());
+
+  ASSERT_TRUE(mock_server_->requests()[1].has_commit());
+  const sync_pb::CommitMessage commit = mock_server_->requests()[1].commit();
+  EXPECT_EQ(2, commit.entries_size());
+  EXPECT_TRUE(commit.entries(0).specifics().has_extension());
+  EXPECT_TRUE(commit.entries(1).specifics().has_user_event());
 }
 
 // Tests specifically related to bookmark (and therefore no client tags) sync

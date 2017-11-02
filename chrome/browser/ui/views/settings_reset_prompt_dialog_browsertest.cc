@@ -22,6 +22,7 @@
 #include "chrome/browser/safe_browsing/settings_reset_prompt/settings_reset_prompt_model.h"
 #include "chrome/browser/safe_browsing/settings_reset_prompt/settings_reset_prompt_test_utils.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -68,8 +69,6 @@ class MockSettingsResetPromptModel
       : SettingsResetPromptModel(
             profile,
             base::MakeUnique<NiceMock<MockSettingsResetPromptConfig>>(),
-            base::MakeUnique<ResettableSettingsSnapshot>(profile),
-            base::MakeUnique<BrandcodedDefaultSettings>(),
             base::MakeUnique<NiceMock<MockProfileResetter>>(profile)) {
     EXPECT_LE(params.startup_pages, arraysize(kStartupUrls));
 
@@ -91,7 +90,7 @@ class MockSettingsResetPromptModel
     }
 
     ON_CALL(*this, ShouldPromptForReset()).WillByDefault(Return(true));
-    ON_CALL(*this, PerformReset(_)).WillByDefault(Return());
+    ON_CALL(*this, MockPerformReset(_, _)).WillByDefault(Return());
     ON_CALL(*this, DialogShown()).WillByDefault(Return());
 
     ON_CALL(*this, homepage()).WillByDefault(Return(GURL(kHomepageUrl)));
@@ -122,7 +121,12 @@ class MockSettingsResetPromptModel
   }
   ~MockSettingsResetPromptModel() override {}
 
-  MOCK_METHOD1(PerformReset, void(const base::Closure&));
+  void PerformReset(std::unique_ptr<BrandcodedDefaultSettings> default_settings,
+                    const base::Closure& callback) override {
+    MockPerformReset(default_settings.get(), callback);
+  }
+  MOCK_METHOD2(MockPerformReset,
+               void(BrandcodedDefaultSettings*, const base::Closure&));
   MOCK_CONST_METHOD0(ShouldPromptForReset, bool());
   MOCK_METHOD0(DialogShown, void());
   MOCK_CONST_METHOD0(homepage, GURL());
@@ -164,9 +168,10 @@ class SettingsResetPromptDialogTest : public DialogBrowserTest {
     auto model = base::MakeUnique<NiceMock<MockSettingsResetPromptModel>>(
         browser()->profile(), name_to_model_params.find(name)->second);
 
-    safe_browsing::SettingsResetPromptController::ShowSettingsResetPrompt(
+    chrome::ShowSettingsResetPrompt(
         browser(),
-        new safe_browsing::SettingsResetPromptController(std::move(model)));
+        new safe_browsing::SettingsResetPromptController(
+            std::move(model), base::MakeUnique<BrandcodedDefaultSettings>()));
   }
 };
 

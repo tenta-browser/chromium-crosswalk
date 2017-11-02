@@ -5,16 +5,16 @@
 #include "components/password_manager/core/browser/webdata/password_web_data_service_win.h"
 
 #include "base/bind.h"
+#include "base/single_thread_task_runner.h"
 #include "components/os_crypt/ie7_password_win.h"
 #include "components/password_manager/core/browser/webdata/logins_table.h"
 #include "components/webdata/common/web_database_service.h"
 
 PasswordWebDataService::PasswordWebDataService(
     scoped_refptr<WebDatabaseService> wdbs,
-    scoped_refptr<base::SingleThreadTaskRunner> ui_thread,
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     const ProfileErrorCallback& callback)
-    : WebDataServiceBase(wdbs, callback, ui_thread) {
-}
+    : WebDataServiceBase(wdbs, callback, ui_task_runner) {}
 
 void PasswordWebDataService::AddIE7Login(const IE7PasswordInfo& info) {
   wdbs_->ScheduleDBTask(
@@ -63,9 +63,8 @@ std::unique_ptr<WDTypedResult> PasswordWebDataService::GetIE7LoginImpl(
 ////////////////////////////////////////////////////////////////////////////////
 
 PasswordWebDataService::PasswordWebDataService(
-    scoped_refptr<base::SingleThreadTaskRunner> ui_thread)
-    : WebDataServiceBase(nullptr, ProfileErrorCallback(), ui_thread) {
-}
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner)
+    : WebDataServiceBase(nullptr, ProfileErrorCallback(), ui_task_runner) {}
 
 PasswordWebDataService::~PasswordWebDataService() {
 }

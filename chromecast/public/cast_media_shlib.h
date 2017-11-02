@@ -119,6 +119,19 @@ class CHROMECAST_EXPORT CastMediaShlib {
   // This function is optional to implement.
   static void RemoveLoopbackAudioObserver(LoopbackAudioObserver* observer)
       __attribute__((__weak__));
+
+  // Updates all postprocessors with the given |name| to have new configuration
+  // |config|.
+  static void SetPostProcessorConfig(const std::string& name,
+                                     const std::string& config)
+      __attribute__((__weak__));
+
+  // Only used on Chromecast: set and clear an image on the video plane.
+  // Image data is 8-bit ARGB format; |data| buffer byte length must be
+  // |width|*|height|*4. Returns whether the image could be successfully set.
+  static bool SetVideoPlaneImage(int width, int height, const uint8_t* data)
+      __attribute__((__weak__));
+  static void ClearVideoPlaneImage() __attribute__((__weak__));
 };
 
 }  // namespace media

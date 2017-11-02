@@ -36,7 +36,7 @@ namespace offline_pages {
 // does not happen.
 //
 // If the page is not completely loaded, it is up to the implementation of the
-// archiver whether to respond with ERROR_CONTENT_UNAVAILBLE, wait longer to
+// archiver whether to respond with ERROR_CONTENT_UNAVAILABLE, wait longer to
 // actually snapshot a complete page, or snapshot whatever is available at that
 // point in time (what the user sees).
 class OfflinePageArchiver {
@@ -52,14 +52,20 @@ class OfflinePageArchiver {
                                     // there was a security error.
     ERROR_ERROR_PAGE,               // We detected an error page.
     ERROR_INTERSTITIAL_PAGE,        // We detected an interstitial page.
+    ERROR_SKIPPED,                  // Page shouldn't be archived like NTP or
+                                    // file urls.
   };
 
   // Describes the parameters to control how to create an archive.
   struct CreateArchiveParams {
-    CreateArchiveParams() : remove_popup_overlay(false) {}
+    CreateArchiveParams()
+        : remove_popup_overlay(false), use_page_problem_detectors(false) {}
 
     // Whether to remove popup overlay that obstructs viewing normal content.
     bool remove_popup_overlay;
+
+    // Run page problem detectors while generating MTHML if true.
+    bool use_page_problem_detectors;
   };
 
   typedef base::Callback<void(OfflinePageArchiver* /* archiver */,

@@ -55,9 +55,9 @@
 
 #include "bindings/core/v8/ScriptController.h"
 #include "bindings/core/v8/WindowProxy.h"
-#include "core/HTMLNames.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/HTMLBodyElement.h"
+#include "core/html_names.h"
 
 namespace blink {
 
@@ -76,8 +76,7 @@ HTMLDocument::HTMLDocument(const DocumentInit& initializer,
 HTMLDocument::~HTMLDocument() {}
 
 HTMLBodyElement* HTMLDocument::HtmlBodyElement() const {
-  HTMLElement* body = this->body();
-  return isHTMLBodyElement(body) ? toHTMLBodyElement(body) : 0;
+  return ToHTMLBodyElementOrNull(body());
 }
 
 const AtomicString& HTMLDocument::BodyAttributeValue(
@@ -140,19 +139,20 @@ void HTMLDocument::setVlinkColor(const AtomicString& value) {
 }
 
 Document* HTMLDocument::CloneDocumentWithoutChildren() {
-  return Create(
-      DocumentInit(Url()).WithRegistrationContext(RegistrationContext()));
+  return Create(DocumentInit::Create()
+                    .WithContextDocument(ContextDocument())
+                    .WithURL(Url())
+                    .WithRegistrationContext(RegistrationContext()));
 }
 
 // --------------------------------------------------------------------------
 // not part of the DOM
 // --------------------------------------------------------------------------
 
-void HTMLDocument::AddItemToMap(HashCountedSet<AtomicString>& map,
-                                const AtomicString& name) {
+void HTMLDocument::AddNamedItem(const AtomicString& name) {
   if (name.IsEmpty())
     return;
-  map.insert(name);
+  named_item_counts_.insert(name);
   if (LocalFrame* f = GetFrame()) {
     f->GetScriptController()
         .WindowProxy(DOMWrapperWorld::MainWorld())
@@ -160,32 +160,15 @@ void HTMLDocument::AddItemToMap(HashCountedSet<AtomicString>& map,
   }
 }
 
-void HTMLDocument::RemoveItemFromMap(HashCountedSet<AtomicString>& map,
-                                     const AtomicString& name) {
+void HTMLDocument::RemoveNamedItem(const AtomicString& name) {
   if (name.IsEmpty())
     return;
-  map.erase(name);
+  named_item_counts_.erase(name);
   if (LocalFrame* f = GetFrame()) {
     f->GetScriptController()
         .WindowProxy(DOMWrapperWorld::MainWorld())
         ->NamedItemRemoved(this, name);
   }
-}
-
-void HTMLDocument::AddNamedItem(const AtomicString& name) {
-  AddItemToMap(named_item_counts_, name);
-}
-
-void HTMLDocument::RemoveNamedItem(const AtomicString& name) {
-  RemoveItemFromMap(named_item_counts_, name);
-}
-
-void HTMLDocument::AddExtraNamedItem(const AtomicString& name) {
-  AddItemToMap(extra_named_item_counts_, name);
-}
-
-void HTMLDocument::RemoveExtraNamedItem(const AtomicString& name) {
-  RemoveItemFromMap(extra_named_item_counts_, name);
 }
 
 static HashSet<StringImpl*>* CreateHtmlCaseInsensitiveAttributesSet() {

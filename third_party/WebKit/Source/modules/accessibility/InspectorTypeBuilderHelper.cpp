@@ -22,20 +22,20 @@ String IgnoredReasonName(AXIgnoredReason reason) {
   switch (reason) {
     case kAXActiveModalDialog:
       return "activeModalDialog";
-    case kAXAncestorDisallowsChild:
-      return "ancestorDisallowsChild";
     case kAXAncestorIsLeafNode:
       return "ancestorIsLeafNode";
-    case kAXAriaHidden:
-      return "ariaHidden";
-    case kAXAriaHiddenRoot:
-      return "ariaHiddenRoot";
+    case kAXAriaHiddenElement:
+      return "ariaHiddenElement";
+    case kAXAriaHiddenSubtree:
+      return "ariaHiddenSubtree";
     case kAXEmptyAlt:
       return "emptyAlt";
     case kAXEmptyText:
       return "emptyText";
-    case kAXInert:
-      return "inert";
+    case kAXInertElement:
+      return "inertElement";
+    case kAXInertSubtree:
+      return "inertSubtree";
     case kAXInheritsPresentation:
       return "inheritsPresentation";
     case kAXLabelContainer:
@@ -55,7 +55,7 @@ String IgnoredReasonName(AXIgnoredReason reason) {
     case kAXUninteresting:
       return "uninteresting";
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return "";
 }
 
@@ -170,6 +170,7 @@ std::unique_ptr<AXValue> CreateRelatedNodeListValue(
 String ValueSourceType(AXNameFrom name_from) {
   switch (name_from) {
     case kAXNameFromAttribute:
+    case kAXNameFromAttributeExplicitlyEmpty:
     case kAXNameFromTitle:
     case kAXNameFromValue:
       return AXValueSourceTypeEnum::Attribute;

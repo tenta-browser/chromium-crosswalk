@@ -13,8 +13,8 @@
 #include "core/layout/LayoutImage.h"
 #include "core/layout/LayoutReplaced.h"
 #include "core/layout/TextRunConstructor.h"
+#include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
-#include "core/paint/BoxPainter.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
 #include "core/paint/PaintInfo.h"
 #include "platform/geometry/LayoutPoint.h"
@@ -35,14 +35,14 @@ void ImagePainter::PaintAreaElementFocusRing(const PaintInfo& paint_info,
   Document& document = layout_image_.GetDocument();
 
   if (paint_info.IsPrinting() ||
-      !document.GetFrame()->Selection().IsFocusedAndActive())
+      !document.GetFrame()->Selection().FrameIsFocusedAndActive())
     return;
 
   Element* focused_element = document.FocusedElement();
-  if (!isHTMLAreaElement(focused_element))
+  if (!IsHTMLAreaElement(focused_element))
     return;
 
-  HTMLAreaElement& area_element = toHTMLAreaElement(*focused_element);
+  HTMLAreaElement& area_element = ToHTMLAreaElement(*focused_element);
   if (area_element.ImageElement() != layout_image_.GetNode())
     return;
 
@@ -143,17 +143,13 @@ void ImagePainter::PaintIntoRect(GraphicsContext& context,
   if (pixel_snapped_dest_rect.IsEmpty())
     return;
 
-  RefPtr<Image> image = layout_image_.ImageResource()->GetImage(
-      pixel_snapped_dest_rect.Size(), layout_image_.Style()->EffectiveZoom());
+  RefPtr<Image> image =
+      layout_image_.ImageResource()->GetImage(pixel_snapped_dest_rect.Size());
   if (!image || image->IsNull())
     return;
 
-  // FIXME: why is interpolation quality selection not included in the
-  // Instrumentation reported cost of drawing an image?
   InterpolationQuality interpolation_quality =
-      BoxPainter::ChooseInterpolationQuality(
-          layout_image_, image.Get(), image.Get(),
-          LayoutSize(pixel_snapped_dest_rect.Size()));
+      layout_image_.StyleRef().GetInterpolationQuality();
 
   FloatRect src_rect = image->Rect();
   // If the content rect requires clipping, adjust |srcRect| and
@@ -169,13 +165,21 @@ void ImagePainter::PaintIntoRect(GraphicsContext& context,
   }
 
   TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("devtools.timeline"), "PaintImage",
-               "data", InspectorPaintImageEvent::Data(layout_image_));
+               "data",
+               InspectorPaintImageEvent::Data(layout_image_, src_rect,
+                                              FloatRect(dest_rect)));
 
   InterpolationQuality previous_interpolation_quality =
       context.ImageInterpolationQuality();
   context.SetImageInterpolationQuality(interpolation_quality);
+
+  Node* node = layout_image_.GetNode();
+  Image::ImageDecodingMode decode_mode =
+      IsHTMLImageElement(node) ? ToHTMLImageElement(node)->GetDecodingMode()
+                               : Image::kUnspecifiedDecode;
   context.DrawImage(
-      image.Get(), pixel_snapped_dest_rect, &src_rect, SkBlendMode::kSrcOver,
+      image.get(), decode_mode, pixel_snapped_dest_rect, &src_rect,
+      SkBlendMode::kSrcOver,
       LayoutObject::ShouldRespectImageOrientation(&layout_image_));
   context.SetImageInterpolationQuality(previous_interpolation_quality);
 }

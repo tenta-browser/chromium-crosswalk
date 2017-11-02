@@ -7,16 +7,22 @@
 
 #include "core/CoreExport.h"
 #include "core/layout/LayoutBox.h"
+#include "core/layout/LayoutTable.h"
 #include "core/paint/PaintResult.h"
 #include "platform/graphics/paint/CullRect.h"
 
 namespace blink {
 
-class LayoutTable;
-
 // Common super class for LayoutTableCol, LayoutTableSection and LayoutTableRow.
+// Also provides utility functions for all table parts.
 class CORE_EXPORT LayoutTableBoxComponent : public LayoutBox {
  public:
+  static void InvalidateCollapsedBordersOnStyleChange(
+      const LayoutObject& table_part,
+      LayoutTable&,
+      const StyleDifference&,
+      const ComputedStyle& old_style);
+
   static bool DoCellsHaveDirtyWidth(const LayoutObject& table_part,
                                     const LayoutTable&,
                                     const StyleDifference&,
@@ -33,6 +39,22 @@ class CORE_EXPORT LayoutTableBoxComponent : public LayoutBox {
   };
   MutableForPainting GetMutableForPainting() const {
     return MutableForPainting(*this);
+  }
+
+  // Should use TableStyle() instead of own style to determine cell order.
+  const ComputedStyle& TableStyle() const { return Table()->StyleRef(); }
+
+  BorderValue BorderStartInTableDirection() const {
+    return StyleRef().BorderStartUsing(TableStyle());
+  }
+  BorderValue BorderEndInTableDirection() const {
+    return StyleRef().BorderEndUsing(TableStyle());
+  }
+  BorderValue BorderBeforeInTableDirection() const {
+    return StyleRef().BorderBeforeUsing(TableStyle());
+  }
+  BorderValue BorderAfterInTableDirection() const {
+    return StyleRef().BorderAfterUsing(TableStyle());
   }
 
  protected:
@@ -52,6 +74,12 @@ class CORE_EXPORT LayoutTableBoxComponent : public LayoutBox {
   }
 
  private:
+  // Column, section and row's visibility has rules different from other
+  // elements. For example, column's visibility:hidden doesn't apply; row's
+  // visibility:hidden shouldn't hide row's background painted behind visible
+  // cells, etc.
+  bool VisualRectRespectsVisibility() const final { return false; }
+
   // If you have a LayoutTableBoxComponent, use firstChild or lastChild instead.
   void SlowFirstChild() const = delete;
   void SlowLastChild() const = delete;
@@ -60,6 +88,8 @@ class CORE_EXPORT LayoutTableBoxComponent : public LayoutBox {
   const LayoutObjectChildList* VirtualChildren() const override {
     return Children();
   }
+
+  virtual LayoutTable* Table() const = 0;
 
   LayoutObjectChildList children_;
 

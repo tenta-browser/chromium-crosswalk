@@ -13,7 +13,6 @@
 #include "components/arc/arc_bridge_service.h"
 #include "components/arc/arc_service_manager.h"
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
-#include "components/arc/intent_helper/local_activity_resolver.h"
 #include "components/arc/intent_helper/page_transition_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
@@ -26,6 +25,8 @@
 namespace arc {
 
 namespace {
+
+constexpr char kGoogleCom[] = "google.com";
 
 // Compares the host name of the referrer and target URL to decide whether
 // the navigation needs to be overriden.
@@ -50,9 +51,23 @@ bool ShouldOverrideUrlLoading(const GURL& previous_url,
     return false;
   }
 
-  return !net::registry_controlled_domains::SameDomainOrHost(
-      current_url, previous_url,
-      net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+  if (net::registry_controlled_domains::SameDomainOrHost(
+          current_url, previous_url,
+          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES)) {
+    if (net::registry_controlled_domains::GetDomainAndRegistry(
+            current_url,
+            net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES) ==
+        kGoogleCom) {
+      // Navigation within the google.com domain are good candidates for this
+      // throttle (and consecuently the picker UI) only if they have different
+      // hosts, this is because multiple services are hosted within the same
+      // domain e.g. play.google.com, mail.google.com and so on.
+      return current_url.host_piece() != previous_url.host_piece();
+    }
+
+    return false;
+  }
+  return true;
 }
 
 // Returns true if |handlers| contain one or more apps. When this function is
@@ -96,6 +111,10 @@ ArcNavigationThrottle::ArcNavigationThrottle(
       weak_ptr_factory_(this) {}
 
 ArcNavigationThrottle::~ArcNavigationThrottle() = default;
+
+const char* ArcNavigationThrottle::GetNameForLogging() {
+  return "ArcNavigationThrottle";
+}
 
 content::NavigationThrottle::ThrottleCheckResult
 ArcNavigationThrottle::WillStartRequest() {
@@ -175,9 +194,12 @@ ArcNavigationThrottle::HandleRequest() {
   if (!arc_service_manager)
     return content::NavigationThrottle::PROCEED;
 
-  scoped_refptr<LocalActivityResolver> local_resolver =
-      arc_service_manager->activity_resolver();
-  if (local_resolver->ShouldChromeHandleUrl(url)) {
+  auto* intent_helper_bridge = ArcIntentHelperBridge::GetForBrowserContext(
+      navigation_handle()->GetWebContents()->GetBrowserContext());
+  if (!intent_helper_bridge)
+    return content::NavigationThrottle::PROCEED;
+
+  if (intent_helper_bridge->ShouldChromeHandleUrl(url)) {
     // Allow navigation to proceed if there isn't an android app that handles
     // the given URL.
     return content::NavigationThrottle::PROCEED;
@@ -222,7 +244,7 @@ void ArcNavigationThrottle::OnAppCandidatesReceived(
     // iff there are ARC apps which can actually handle the given URL.
     DVLOG(1) << "There are no app candidates for this URL: "
              << navigation_handle()->GetURL();
-    navigation_handle()->Resume();
+    Resume();
     return;
   }
 
@@ -241,11 +263,11 @@ void ArcNavigationThrottle::OnAppCandidatesReceived(
   if (IsSwapElementsNeeded(handlers, &indices))
     std::swap(handlers[indices.first], handlers[indices.second]);
 
-  auto* intent_helper_bridge =
-      ArcServiceManager::GetGlobalService<ArcIntentHelperBridge>();
+  auto* intent_helper_bridge = ArcIntentHelperBridge::GetForBrowserContext(
+      navigation_handle()->GetWebContents()->GetBrowserContext());
   if (!intent_helper_bridge) {
     LOG(ERROR) << "Cannot get an instance of ArcIntentHelperBridge";
-    navigation_handle()->Resume();
+    Resume();
     return;
   }
   std::vector<ArcIntentHelperBridge::ActivityName> activities;
@@ -316,7 +338,7 @@ void ArcNavigationThrottle::OnIntentPickerClosed(
       // an error or if |selected_app_index| is not a valid index, then resume
       // the navigation in Chrome.
       DVLOG(1) << "User didn't select a valid option, resuming navigation.";
-      handle->Resume();
+      Resume();
       break;
     }
     case CloseReason::ALWAYS_PRESSED: {
@@ -335,10 +357,10 @@ void ArcNavigationThrottle::OnIntentPickerClosed(
     case CloseReason::PREFERRED_ACTIVITY_FOUND: {
       if (ArcIntentHelperBridge::IsIntentHelperPackage(
               handlers[selected_app_index]->package_name)) {
-        handle->Resume();
+        Resume();
       } else {
         instance->HandleUrl(url.spec(), selected_app_package);
-        handle->CancelDeferredNavigation(
+        CancelDeferredNavigation(
             content::NavigationThrottle::CANCEL_AND_IGNORE);
         if (handle->GetWebContents()->GetController().IsInitialNavigation())
           handle->GetWebContents()->Close();

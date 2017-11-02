@@ -34,13 +34,13 @@
 #include <memory>
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseProperty.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "modules/ModulesExport.h"
 #include "modules/serviceworkers/RegistrationOptions.h"
 #include "modules/serviceworkers/ServiceWorker.h"
 #include "modules/serviceworkers/ServiceWorkerRegistration.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerProvider.h"
@@ -92,7 +92,7 @@ class MODULES_EXPORT ServiceWorkerContainer final
                      bool should_notify_controller_change) override;
   void DispatchMessageEvent(std::unique_ptr<WebServiceWorker::Handle>,
                             const WebString& message,
-                            WebMessagePortChannelArray) override;
+                            WebVector<MessagePortChannel>) override;
   void CountFeature(uint32_t feature) override;
 
   // EventTarget overrides.

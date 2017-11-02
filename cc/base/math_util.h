@@ -5,12 +5,12 @@
 #ifndef CC_BASE_MATH_UTIL_H_
 #define CC_BASE_MATH_UTIL_H_
 
-#include <algorithm>
-#include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 
 #include "base/logging.h"
+#include "build/build_config.h"
 #include "cc/base/base_export.h"
 #include "ui/gfx/geometry/box_f.h"
 #include "ui/gfx/geometry/point3_f.h"
@@ -81,22 +81,6 @@ struct HomogeneousCoordinate {
 
 class CC_BASE_EXPORT MathUtil {
  public:
-  static const double kPiDouble;
-  static const float kPiFloat;
-
-  static double Deg2Rad(double deg) { return deg * kPiDouble / 180.0; }
-  static double Rad2Deg(double rad) { return rad * 180.0 / kPiDouble; }
-
-  static float Deg2Rad(float deg) { return deg * kPiFloat / 180.0f; }
-  static float Rad2Deg(float rad) { return rad * 180.0f / kPiFloat; }
-
-  static float Round(float f) {
-    return (f > 0.f) ? std::floor(f + 0.5f) : std::ceil(f - 0.5f);
-  }
-  static double Round(double d) {
-    return (d > 0.0) ? std::floor(d + 0.5) : std::ceil(d - 0.5);
-  }
-
   // Returns true if rounded up value does not overflow, false otherwise.
   template <typename T>
   static bool VerifyRoundup(T n, T mul) {
@@ -112,7 +96,6 @@ class CC_BASE_EXPORT MathUtil {
   static T UncheckedRoundUp(T n, T mul) {
     static_assert(std::numeric_limits<T>::is_integer,
                   "T must be an integer type");
-    DCHECK(VerifyRoundup(n, mul));
     return RoundUpInternal(n, mul);
   }
 
@@ -141,7 +124,6 @@ class CC_BASE_EXPORT MathUtil {
   static T UncheckedRoundDown(T n, T mul) {
     static_assert(std::numeric_limits<T>::is_integer,
                   "T must be an integer type");
-    DCHECK(VerifyRoundDown(n, mul));
     return RoundDownInternal(n, mul);
   }
 
@@ -155,8 +137,9 @@ class CC_BASE_EXPORT MathUtil {
     return RoundDownInternal(n, mul);
   }
 
-  template <typename T> static T ClampToRange(T value, T min, T max) {
-    return std::min(std::max(value, min), max);
+  template <typename T>
+  static bool IsWithinEpsilon(T a, T b) {
+    return std::abs(a - b) < std::numeric_limits<T>::epsilon();
   }
 
   // Background: Existing transform code does not do the right thing in
@@ -219,6 +202,10 @@ class CC_BASE_EXPORT MathUtil {
 
   static gfx::Vector2dF ComputeTransform2dScaleComponents(const gfx::Transform&,
                                                           float fallbackValue);
+  // Returns an approximate max scale value of the transform even if it has
+  // perspective. Prefer to use ComputeTransform2dScaleComponents if there is no
+  // perspective, since it can produce more accurate results.
+  static float ComputeApproximateMaxScale(const gfx::Transform& transform);
 
   // Makes a rect that has the same relationship to input_outer_rect as
   // scale_inner_rect has to scale_outer_rect. scale_inner_rect should be
@@ -296,7 +283,7 @@ class CC_BASE_EXPORT MathUtil {
   // Returns vector that y axis (0,1,0) transforms to under given transform.
   static gfx::Vector3dF GetYAxis(const gfx::Transform& transform);
 
-  static bool IsNearlyTheSameForTesting(float left, float right);
+  static bool IsFloatNearlyTheSame(float left, float right);
   static bool IsNearlyTheSameForTesting(const gfx::PointF& l,
                                         const gfx::PointF& r);
   static bool IsNearlyTheSameForTesting(const gfx::Point3F& l,
@@ -321,7 +308,7 @@ class CC_BASE_EXPORT ScopedSubnormalFloatDisabler {
   ~ScopedSubnormalFloatDisabler();
 
  private:
-#ifdef __SSE__
+#if defined(ARCH_CPU_X86_FAMILY)
   unsigned int orig_state_;
 #endif
   DISALLOW_COPY_AND_ASSIGN(ScopedSubnormalFloatDisabler);

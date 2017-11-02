@@ -99,7 +99,6 @@ scoped_refptr<base::RefCountedMemory> CreateTestPNG(
   SkBitmap bitmap;
   bitmap.allocN32Pixels(colors.size(), 1);
 
-  SkAutoLockPixels lock(bitmap);
   for (size_t i = 0; i < colors.size(); ++i) {
     bitmap.eraseArea(SkIRect::MakeXYWH(i, 0, 1, 1), colors[i]);
   }
@@ -149,7 +148,6 @@ bool ChannelApproximatelyEqual(int expected, uint8_t channel) {
 void Calculate8bitBitmapMinMax(const SkBitmap& bitmap,
                                uint8_t* min_gl,
                                uint8_t* max_gl) {
-  SkAutoLockPixels bitmap_lock(bitmap);
   DCHECK(bitmap.getPixels());
   DCHECK_EQ(bitmap.colorType(), kAlpha_8_SkColorType);
   DCHECK(min_gl);
@@ -499,16 +497,15 @@ TEST_F(ColorAnalysisTest, ComputePrincipalComponentImage) {
   EXPECT_EQ(93U, SkColorGetA(result.getColor(150, 0)));
 }
 
-TEST_F(ColorAnalysisTest, ComputeProminentColor) {
-  struct {
-    LumaRange luma;
-    SaturationRange saturation;
-  } color_profiles[] = {{LumaRange::DARK, SaturationRange::VIBRANT},
-                        {LumaRange::NORMAL, SaturationRange::VIBRANT},
-                        {LumaRange::LIGHT, SaturationRange::VIBRANT},
-                        {LumaRange::DARK, SaturationRange::MUTED},
-                        {LumaRange::NORMAL, SaturationRange::MUTED},
-                        {LumaRange::LIGHT, SaturationRange::MUTED}};
+TEST_F(ColorAnalysisTest, ComputeProminentColors) {
+  LumaRange lumas[] = {LumaRange::DARK, LumaRange::NORMAL, LumaRange::LIGHT};
+  SaturationRange saturations[] = {SaturationRange::VIBRANT,
+                                   SaturationRange::MUTED};
+  std::vector<ColorProfile> color_profiles;
+  for (auto s : saturations) {
+    for (auto l : lumas)
+      color_profiles.emplace_back(l, s);
+  }
 
   // A totally dark gray image, which yields no prominent color as it's too
   // close to black.
@@ -517,12 +514,10 @@ TEST_F(ColorAnalysisTest, ComputeProminentColor) {
   SkBitmap bitmap = canvas.GetBitmap();
 
   // All expectations start at SK_ColorTRANSPARENT (i.e. 0).
-  SkColor expectations[arraysize(color_profiles)] = {};
-  for (size_t i = 0; i < arraysize(color_profiles); ++i) {
-    EXPECT_EQ(expectations[i],
-              CalculateProminentColorOfBitmap(bitmap, color_profiles[i].luma,
-                                              color_profiles[i].saturation));
-  }
+  std::vector<SkColor> expectations(color_profiles.size(), 0);
+  std::vector<SkColor> computations =
+      CalculateProminentColorsOfBitmap(bitmap, color_profiles);
+  EXPECT_EQ(expectations, computations);
 
   // Add a green that could hit a couple values.
   const SkColor kVibrantGreen = SkColorSetRGB(25, 200, 25);
@@ -530,22 +525,16 @@ TEST_F(ColorAnalysisTest, ComputeProminentColor) {
   bitmap = canvas.GetBitmap();
   expectations[0] = kVibrantGreen;
   expectations[1] = kVibrantGreen;
-  for (size_t i = 0; i < arraysize(color_profiles); ++i) {
-    EXPECT_EQ(expectations[i],
-              CalculateProminentColorOfBitmap(bitmap, color_profiles[i].luma,
-                                              color_profiles[i].saturation));
-  }
+  computations = CalculateProminentColorsOfBitmap(bitmap, color_profiles);
+  EXPECT_EQ(expectations, computations);
 
   // Add a stripe of a dark, muted green (saturation .33, luma .29).
   const SkColor kDarkGreen = SkColorSetRGB(50, 100, 50);
   canvas.FillRect(gfx::Rect(0, 2, 300, 1), kDarkGreen);
   bitmap = canvas.GetBitmap();
   expectations[3] = kDarkGreen;
-  for (size_t i = 0; i < arraysize(color_profiles); ++i) {
-    EXPECT_EQ(expectations[i],
-              CalculateProminentColorOfBitmap(bitmap, color_profiles[i].luma,
-                                              color_profiles[i].saturation));
-  }
+  computations = CalculateProminentColorsOfBitmap(bitmap, color_profiles);
+  EXPECT_EQ(expectations, computations);
 
   // Now draw a little bit of pure green. That should be closer to the goal for
   // normal vibrant, but is out of range for other color profiles.
@@ -553,11 +542,8 @@ TEST_F(ColorAnalysisTest, ComputeProminentColor) {
   canvas.FillRect(gfx::Rect(0, 3, 300, 1), kPureGreen);
   bitmap = canvas.GetBitmap();
   expectations[1] = kPureGreen;
-  for (size_t i = 0; i < arraysize(color_profiles); ++i) {
-    EXPECT_EQ(expectations[i],
-              CalculateProminentColorOfBitmap(bitmap, color_profiles[i].luma,
-                                              color_profiles[i].saturation));
-  }
+  computations = CalculateProminentColorsOfBitmap(bitmap, color_profiles);
+  EXPECT_EQ(expectations, computations);
 }
 
 }  // namespace color_utils

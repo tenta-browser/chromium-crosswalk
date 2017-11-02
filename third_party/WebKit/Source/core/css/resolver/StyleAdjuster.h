@@ -29,6 +29,7 @@ namespace blink {
 
 class Element;
 class ComputedStyle;
+class StyleResolverState;
 
 // Certain CSS Properties/Values do not apply to certain elements
 // and the web expects that we expose "adjusted" values when
@@ -37,13 +38,8 @@ class StyleAdjuster {
   STATIC_ONLY(StyleAdjuster);
 
  public:
-  static void AdjustComputedStyle(ComputedStyle& style_to_adjust,
-                                  const ComputedStyle& parent_style,
-                                  const ComputedStyle& layout_parent_style,
-                                  Element*);
+  static void AdjustComputedStyle(StyleResolverState&, Element*);
   static void AdjustStyleForEditing(ComputedStyle&);
-  static void AdjustStyleForAlignment(ComputedStyle&,
-                                      const ComputedStyle& parent_style);
 };
 
 }  // namespace blink

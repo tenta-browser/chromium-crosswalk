@@ -10,7 +10,6 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/memory/free_deleter.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "net/base/net_errors.h"
 #include "net/proxy/dhcp_proxy_script_adapter_fetcher_win.h"
@@ -63,6 +62,7 @@ DhcpProxyScriptFetcherWin::DhcpProxyScriptFetcherWin(
 }
 
 DhcpProxyScriptFetcherWin::~DhcpProxyScriptFetcherWin() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   // Count as user-initiated if we are not yet in STATE_DONE.
   Cancel();
 
@@ -71,26 +71,20 @@ DhcpProxyScriptFetcherWin::~DhcpProxyScriptFetcherWin() {
 
 int DhcpProxyScriptFetcherWin::Fetch(base::string16* utf16_text,
                                      const CompletionCallback& callback) {
-  // TODO(joi): Remove ScopedTracker below once crbug.com/476182 is fixed.
-  tracked_objects::ScopedTracker tracking_profile1(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "476182 DhcpProxyScriptFetcherWin::Fetch 1"));
-
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (state_ != STATE_START && state_ != STATE_DONE) {
     NOTREACHED();
     return ERR_UNEXPECTED;
   }
+
+  if (!url_request_context_)
+    return ERR_CONTEXT_SHUT_DOWN;
 
   state_ = STATE_WAIT_ADAPTERS;
   callback_ = callback;
   destination_string_ = utf16_text;
 
   last_query_ = ImplCreateAdapterQuery();
-  // TODO(joi): Remove ScopedTracker below once crbug.com/476182 is fixed.
-  tracked_objects::ScopedTracker tracking_profile2(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "476182 DhcpProxyScriptFetcherWin::Fetch 2"));
   GetTaskRunner()->PostTaskAndReply(
       FROM_HERE,
       base::Bind(
@@ -105,13 +99,30 @@ int DhcpProxyScriptFetcherWin::Fetch(base::string16* utf16_text,
 }
 
 void DhcpProxyScriptFetcherWin::Cancel() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   CancelImpl();
 }
 
+void DhcpProxyScriptFetcherWin::OnShutdown() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  // Back up callback, if there is one, as CancelImpl() will destroy it.
+  net::CompletionCallback callback = std::move(callback_);
+
+  // Cancel current request, if there is one.
+  CancelImpl();
+
+  // Prevent future network requests.
+  url_request_context_ = nullptr;
+
+  // Invoke callback with error, if present.
+  if (callback)
+    callback.Run(ERR_CONTEXT_SHUT_DOWN);
+}
+
 void DhcpProxyScriptFetcherWin::CancelImpl() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (state_ != STATE_DONE) {
     callback_.Reset();
@@ -130,13 +141,7 @@ void DhcpProxyScriptFetcherWin::CancelImpl() {
 
 void DhcpProxyScriptFetcherWin::OnGetCandidateAdapterNamesDone(
     scoped_refptr<AdapterQuery> query) {
-  // TODO(joi): Remove ScopedTracker below once crbug.com/476182 is fixed.
-  tracked_objects::ScopedTracker tracking_profile1(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "476182 "
-          "DhcpProxyScriptFetcherWin::OnGetCandidateAdapterNamesDone 1"));
-
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   // This can happen if this object is reused for multiple queries,
   // and a previous query was cancelled before it completed.
@@ -154,24 +159,12 @@ void DhcpProxyScriptFetcherWin::OnGetCandidateAdapterNamesDone(
 
   state_ = STATE_NO_RESULTS;
 
-  // TODO(joi): Remove ScopedTracker below once crbug.com/476182 is fixed.
-  tracked_objects::ScopedTracker tracking_profile2(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "476182 "
-          "DhcpProxyScriptFetcherWin::OnGetCandidateAdapterNamesDone 2"));
-
   const std::set<std::string>& adapter_names = query->adapter_names();
 
   if (adapter_names.empty()) {
     TransitionToDone();
     return;
   }
-
-  // TODO(joi): Remove ScopedTracker below once crbug.com/476182 is fixed.
-  tracked_objects::ScopedTracker tracking_profile3(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "476182 "
-          "DhcpProxyScriptFetcherWin::OnGetCandidateAdapterNamesDone 3"));
 
   for (std::set<std::string>::const_iterator it = adapter_names.begin();
        it != adapter_names.end();
@@ -187,12 +180,12 @@ void DhcpProxyScriptFetcherWin::OnGetCandidateAdapterNamesDone(
 }
 
 std::string DhcpProxyScriptFetcherWin::GetFetcherName() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   return "win";
 }
 
 const GURL& DhcpProxyScriptFetcherWin::GetPacURL() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_EQ(state_, STATE_DONE);
 
   return pac_url_;

@@ -185,7 +185,7 @@ void LayoutObjectChildList::InsertChildNode(LayoutObject* owner,
   new_child->SetNeedsLayoutAndPrefWidthsRecalc(
       LayoutInvalidationReason::kAddedToLayout);
   new_child->SetShouldDoFullPaintInvalidation(
-      kPaintInvalidationLayoutObjectInsertion);
+      PaintInvalidationReason::kAppeared);
   new_child->SetSubtreeNeedsPaintPropertyUpdate();
   if (!owner->NormalChildNeedsLayout())
     owner->SetChildNeedsLayout();  // We may supply the static position for an
@@ -205,9 +205,14 @@ void LayoutObjectChildList::InvalidatePaintOnRemoval(LayoutObject& old_child) {
     old_child.View()->SetShouldDoFullPaintInvalidation();
   ObjectPaintInvalidator paint_invalidator(old_child);
   paint_invalidator.SlowSetPaintingLayerNeedsRepaint();
+
+  // For SPv2 raster invalidation will be done in PaintController.
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
+    return;
+
   paint_invalidator.InvalidatePaintOfPreviousVisualRect(
       old_child.ContainerForPaintInvalidation(),
-      kPaintInvalidationLayoutObjectRemoval);
+      PaintInvalidationReason::kDisappeared);
 }
 
 }  // namespace blink

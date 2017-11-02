@@ -122,6 +122,15 @@ $ gn gen out/Default
 This section contains some things you can change to speed up your builds,
 sorted so that the things that make the biggest difference are first.
 
+#### Jumbo/Unity builds
+
+Jumbo builds merge many translation units ("source files") and compile them
+together. Since a large portion of Chromium's code is in shared header files,
+this dramatically reduces the total amount of work needed. Check out the
+[Jumbo / Unity builds](jumbo.md) for more information.
+
+Enable jumbo builds by setting the GN arg `use_jumbo_build=true`.
+
 #### Disable NaCl
 
 By default, the build includes support for
@@ -155,7 +164,6 @@ In order to use `icecc`, set the following GN args:
 linux_use_bundled_binutils=false
 use_debug_fission=false
 is_clang=false
-use_sysroot=false
 ```
 
 See these links for more on the 

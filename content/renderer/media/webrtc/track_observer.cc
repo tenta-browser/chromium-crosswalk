@@ -6,19 +6,19 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/threading/thread_checker.h"
 
 namespace content {
 
 class CONTENT_EXPORT TrackObserver::TrackObserverImpl
     : public base::RefCountedThreadSafe<TrackObserver::TrackObserverImpl>,
-      NON_EXPORTED_BASE(public webrtc::ObserverInterface) {
+      public webrtc::ObserverInterface {
  public:
   TrackObserverImpl(
       const scoped_refptr<base::SingleThreadTaskRunner>& main_thread,
       const scoped_refptr<webrtc::MediaStreamTrackInterface>& track)
       : main_thread_(main_thread), track_(track) {
     // We're on the signaling thread.
+    DCHECK(!main_thread_->BelongsToCurrentThread());
     track->RegisterObserver(this);
   }
 
@@ -65,10 +65,11 @@ class CONTENT_EXPORT TrackObserver::TrackObserverImpl
 
   // webrtc::ObserverInterface implementation.
   void OnChanged() override {
-    DCHECK(signaling_thread_.CalledOnValidThread());
+    DCHECK(!main_thread_->BelongsToCurrentThread());
     webrtc::MediaStreamTrackInterface::TrackState state = track_->state();
-    main_thread_->PostTask(FROM_HERE,
-        base::Bind(&TrackObserverImpl::OnChangedOnMainThread, this, state));
+    main_thread_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&TrackObserverImpl::OnChangedOnMainThread, this, state));
   }
 
   void OnChangedOnMainThread(
@@ -81,7 +82,6 @@ class CONTENT_EXPORT TrackObserver::TrackObserverImpl
   const scoped_refptr<base::SingleThreadTaskRunner> main_thread_;
   scoped_refptr<webrtc::MediaStreamTrackInterface> track_;
   OnChangedCallback callback_;  // Only touched on the main thread.
-  base::ThreadChecker signaling_thread_;
 };
 
 TrackObserver::TrackObserver(

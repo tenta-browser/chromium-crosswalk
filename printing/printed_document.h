@@ -18,14 +18,12 @@
 
 namespace base {
 class RefCountedMemory;
-class TaskRunner;
 }
 
 namespace printing {
 
 class MetafilePlayer;
 class PrintedPage;
-class PrintedPagesSource;
 class PrintingContext;
 
 // A collection of rendered pages. The settings are immutable. If the print
@@ -40,9 +38,8 @@ class PRINTING_EXPORT PrintedDocument
   // The cookie shall be unique and has a specific relationship with its
   // originating source and settings.
   PrintedDocument(const PrintSettings& settings,
-                  PrintedPagesSource* source,
-                  int cookie,
-                  base::TaskRunner* blocking_runner);
+                  const base::string16& name,
+                  int cookie);
 
   // Sets a page's data. 0-based. Takes metafile ownership.
   // Note: locks for a short amount of time.
@@ -63,7 +60,7 @@ class PRINTING_EXPORT PrintedDocument
   // Note: locks for a short amount of time in debug only.
 #if defined(OS_WIN) || defined(OS_MACOSX) && !defined(USE_AURA)
   void RenderPrintedPage(const PrintedPage& page,
-                         skia::NativeDrawingContext context) const;
+                         printing::NativeDrawingContext context) const;
 #elif defined(OS_POSIX)
   void RenderPrintedPage(const PrintedPage& page,
                          PrintingContext* context) const;
@@ -73,10 +70,6 @@ class PRINTING_EXPORT PrintedDocument
   // rendered.
   // Note: locks while parsing the whole tree.
   bool IsComplete() const;
-
-  // Disconnects the PrintedPage source (PrintedPagesSource). It is done when
-  // the source is being destroyed.
-  void DisconnectSource();
 
   // Sets the number of pages in the document to be rendered. Can only be set
   // once.
@@ -124,12 +117,8 @@ class PRINTING_EXPORT PrintedDocument
   // Contains all the mutable stuff. All this stuff MUST be accessed with the
   // lock held.
   struct Mutable {
-    explicit Mutable(PrintedPagesSource* source);
+    Mutable();
     ~Mutable();
-
-    // Source that generates the PrintedPage's (i.e. a TabContents). It will be
-    // set back to NULL if the source is deleted before this object.
-    PrintedPagesSource* source_;
 
     // Contains the pages' representation. This is a collection of PrintedPage.
     // Warning: Lock must be held when accessing this member.
@@ -153,9 +142,8 @@ class PRINTING_EXPORT PrintedDocument
   // construction.
   struct Immutable {
     Immutable(const PrintSettings& settings,
-              PrintedPagesSource* source,
-              int cookie,
-              base::TaskRunner* blocking_runner);
+              const base::string16& name,
+              int cookie);
     ~Immutable();
 
     // Print settings used to generate this document. Immutable.
@@ -171,9 +159,6 @@ class PRINTING_EXPORT PrintedDocument
     // simpler hash of PrintSettings since a new document is made each time the
     // print settings change.
     int cookie_;
-
-    // Native thread for blocking operations, like file access.
-    scoped_refptr<base::TaskRunner> blocking_runner_;
   };
 
   // All writable data member access must be guarded by this lock. Needs to be

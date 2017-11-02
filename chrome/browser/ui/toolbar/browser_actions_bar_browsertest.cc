@@ -15,7 +15,6 @@
 #include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "chrome/browser/extensions/extension_action_manager.h"
-#include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
@@ -71,10 +70,6 @@ void BrowserActionsBarBrowserTest::SetUpCommandLine(
     base::CommandLine* command_line) {
   ExtensionBrowserTest::SetUpCommandLine(command_line);
   ToolbarActionsBar::disable_animations_for_testing_ = true;
-  // These tests are deliberately testing behavior without the redesign.
-  // Forcefully disable it.
-  override_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
-      extensions::FeatureSwitch::extension_action_redesign(), true));
 }
 
 void BrowserActionsBarBrowserTest::SetUpOnMainThread() {
@@ -112,40 +107,24 @@ void BrowserActionsBarBrowserTest::LoadExtensions() {
   }
 }
 
-// BrowserActionsBarLegacyBrowserTest:
-
-BrowserActionsBarLegacyBrowserTest::BrowserActionsBarLegacyBrowserTest() {
-}
-
-BrowserActionsBarLegacyBrowserTest::~BrowserActionsBarLegacyBrowserTest() {
-}
-
-void BrowserActionsBarLegacyBrowserTest::SetUpCommandLine(
-    base::CommandLine* command_line) {
-  BrowserActionsBarBrowserTest::SetUpCommandLine(command_line);
-  // Override to force the redesign. Completely clear the previous override
-  // first, since doing so resets the value of the switch.
-  override_redesign_.reset();
-  override_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
-      extensions::FeatureSwitch::extension_action_redesign(), false));
-}
-
 // Test the basic functionality.
-IN_PROC_BROWSER_TEST_F(BrowserActionsBarLegacyBrowserTest, Basic) {
+IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, Basic) {
   // Load an extension with no browser action.
   extension_service()->AddExtension(CreateExtension("alpha", false).get());
-  // This extension should not be in the model (has no browser action).
-  EXPECT_EQ(0, browser_actions_bar()->NumberOfBrowserActions());
-
-  // Load an extension with a browser action.
-  extension_service()->AddExtension(CreateExtension("beta", true).get());
+  // This extension should be present in the model (it will receive a
+  // synthesized action).
   EXPECT_EQ(1, browser_actions_bar()->NumberOfBrowserActions());
   EXPECT_TRUE(browser_actions_bar()->HasIcon(0));
 
-  // Unload the extension.
-  std::string id = browser_actions_bar()->GetExtensionId(0);
+  // Load an extension with a browser action; it will also be in the toolbar.
+  extension_service()->AddExtension(CreateExtension("beta", true).get());
+  EXPECT_EQ(2, browser_actions_bar()->NumberOfBrowserActions());
+  EXPECT_TRUE(browser_actions_bar()->HasIcon(1));
+
+  // Unload the extension; the icon should be removed.
+  std::string id = browser_actions_bar()->GetExtensionId(1);
   UnloadExtension(id);
-  EXPECT_EQ(0, browser_actions_bar()->NumberOfBrowserActions());
+  EXPECT_EQ(1, browser_actions_bar()->NumberOfBrowserActions());
 }
 
 // Test moving various browser actions. This is not to check the logic of the
@@ -178,21 +157,6 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, MoveBrowserActions) {
   EXPECT_EQ(extension_c()->id(), browser_actions_bar()->GetExtensionId(0));
   EXPECT_EQ(extension_b()->id(), browser_actions_bar()->GetExtensionId(1));
   EXPECT_EQ(extension_a()->id(), browser_actions_bar()->GetExtensionId(2));
-}
-
-// Test that explicitly hiding an extension action results in it disappearing
-// from the browser actions bar.
-IN_PROC_BROWSER_TEST_F(BrowserActionsBarLegacyBrowserTest, ForceHide) {
-  LoadExtensions();
-
-  EXPECT_EQ(3, browser_actions_bar()->VisibleBrowserActions());
-  EXPECT_EQ(extension_a()->id(), browser_actions_bar()->GetExtensionId(0));
-  // Force hide one of the extensions' browser action.
-  extensions::ExtensionActionAPI::Get(browser()->profile())->
-      SetBrowserActionVisibility(extension_a()->id(), false);
-  // The browser action for Extension A should be removed.
-  EXPECT_EQ(2, browser_actions_bar()->VisibleBrowserActions());
-  EXPECT_EQ(extension_b()->id(), browser_actions_bar()->GetExtensionId(0));
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, Visibility) {
@@ -299,8 +263,10 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest,
 
   // Load an extension with a page action.
   scoped_refptr<const extensions::Extension> page_action_extension =
-      extensions::extension_action_test_util::CreateActionExtension(
-          "page action", extensions::extension_action_test_util::PAGE_ACTION);
+      extensions::ExtensionBuilder("page action")
+          .SetAction(extensions::ExtensionBuilder::ActionType::PAGE_ACTION)
+          .SetLocation(extensions::Manifest::INTERNAL)
+          .Build();
   extension_service()->AddExtension(page_action_extension.get());
 
   // Verify that the extension was added at the last index.
@@ -525,8 +491,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest,
         content::NotificationService::AllSources());
     // Remove the extension. Nothing should crash.
     extension_service()->UnloadExtension(
-        extension->id(),
-        extensions::UnloadedExtensionInfo::REASON_UNINSTALL);
+        extension->id(), extensions::UnloadedExtensionReason::UNINSTALL);
     observer.Wait();
   }
 
@@ -552,7 +517,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest,
   EXPECT_TRUE(browser_actions_bar()->HasPopup());
   // Cleanup the popup (to avoid having windows open at tear down).
   browser_actions_bar()->HidePopup();
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   EXPECT_FALSE(browser_actions_bar()->HasPopup());
 }
 
@@ -561,16 +526,22 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, RemovePoppedOutAction) {
   // First, load up three separate extensions and reduce the visible count to
   // one (so that two are in the overflow).
   scoped_refptr<const extensions::Extension> extension1 =
-      extensions::extension_action_test_util::CreateActionExtension(
-          "extension1", extensions::extension_action_test_util::BROWSER_ACTION);
+      extensions::ExtensionBuilder("extension1")
+          .SetAction(extensions::ExtensionBuilder::ActionType::BROWSER_ACTION)
+          .SetLocation(extensions::Manifest::INTERNAL)
+          .Build();
   extension_service()->AddExtension(extension1.get());
   scoped_refptr<const extensions::Extension> extension2 =
-      extensions::extension_action_test_util::CreateActionExtension(
-          "extension2", extensions::extension_action_test_util::BROWSER_ACTION);
+      extensions::ExtensionBuilder("extension2")
+          .SetAction(extensions::ExtensionBuilder::ActionType::BROWSER_ACTION)
+          .SetLocation(extensions::Manifest::INTERNAL)
+          .Build();
   extension_service()->AddExtension(extension2.get());
   scoped_refptr<const extensions::Extension> extension3 =
-      extensions::extension_action_test_util::CreateActionExtension(
-          "extension3", extensions::extension_action_test_util::BROWSER_ACTION);
+      extensions::ExtensionBuilder("extension3")
+          .SetAction(extensions::ExtensionBuilder::ActionType::BROWSER_ACTION)
+          .SetLocation(extensions::Manifest::INTERNAL)
+          .Build();
   extension_service()->AddExtension(extension3.get());
 
   toolbar_model()->SetVisibleIconCount(1);
@@ -593,7 +564,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, RemovePoppedOutAction) {
   // Remove extension 2 - there should still be one left in the overflow
   // (extension 2) and one left on the main bar (extension 1).
   extension_service()->UnloadExtension(
-      extension3->id(), extensions::UnloadedExtensionInfo::REASON_DISABLE);
+      extension3->id(), extensions::UnloadedExtensionReason::DISABLE);
   EXPECT_EQ(1, browser_actions_bar()->VisibleBrowserActions());
   EXPECT_EQ(2, browser_actions_bar()->NumberOfBrowserActions());
   EXPECT_FALSE(toolbar_actions_bar->popped_out_action());
@@ -615,7 +586,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, RemovePoppedOutAction) {
 
   // Remove extension 2 - the remaining two should both be overflowed.
   extension_service()->UnloadExtension(
-      extension2->id(), extensions::UnloadedExtensionInfo::REASON_DISABLE);
+      extension2->id(), extensions::UnloadedExtensionReason::DISABLE);
   EXPECT_EQ(0, browser_actions_bar()->VisibleBrowserActions());
   EXPECT_EQ(2, browser_actions_bar()->NumberOfBrowserActions());
   EXPECT_FALSE(toolbar_actions_bar->popped_out_action());
@@ -632,7 +603,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, RemovePoppedOutAction) {
   EXPECT_EQ(extension3->id(),
             toolbar_actions_bar->popped_out_action()->GetId());
   extension_service()->UnloadExtension(
-      extension3->id(), extensions::UnloadedExtensionInfo::REASON_DISABLE);
+      extension3->id(), extensions::UnloadedExtensionReason::DISABLE);
   EXPECT_EQ(1, browser_actions_bar()->VisibleBrowserActions());
   EXPECT_EQ(1, browser_actions_bar()->NumberOfBrowserActions());
   EXPECT_FALSE(toolbar_actions_bar->popped_out_action());

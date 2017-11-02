@@ -4,13 +4,27 @@
 
 package org.chromium.net;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+
+import static org.chromium.net.CronetTestRule.assertContains;
+import static org.chromium.net.CronetTestRule.getContext;
+
 import android.os.ConditionVariable;
 import android.os.ParcelFileDescriptor;
-import android.os.StrictMode;
 import android.support.test.filters.SmallTest;
 
-import org.chromium.base.annotations.SuppressFBWarnings;
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
+import org.chromium.net.CronetTestRule.CronetTestFramework;
+import org.chromium.net.CronetTestRule.OnlyRunNativeCronet;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -18,28 +32,21 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /** Test the default provided implementations of {@link UploadDataProvider} */
-public class UploadDataProvidersTest extends CronetTestBase {
+@RunWith(BaseJUnit4ClassRunner.class)
+public class UploadDataProvidersTest {
     private static final String LOREM = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
             + "Proin elementum, libero laoreet fringilla faucibus, metus tortor vehicula ante, "
             + "lacinia lorem eros vel sapien.";
+    @Rule
+    public final CronetTestRule mTestRule = new CronetTestRule();
     private CronetTestFramework mTestFramework;
     private File mFile;
-    private StrictMode.VmPolicy mOldVmPolicy;
-    private MockUrlRequestJobFactory mMockUrlRequestJobFactory;
 
-    @Override
-    protected void setUp() throws Exception {
-        super.setUp();
-        mOldVmPolicy = StrictMode.getVmPolicy();
-        StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
-                                       .detectLeakedClosableObjects()
-                                       .penaltyLog()
-                                       .penaltyDeath()
-                                       .build());
-        mTestFramework = startCronetTestFramework();
+    @Before
+    public void setUp() throws Exception {
+        mTestFramework = mTestRule.startCronetTestFramework();
         assertTrue(NativeTestServer.startNativeTestServer(getContext()));
         // Add url interceptors after native application context is initialized.
-        mMockUrlRequestJobFactory = new MockUrlRequestJobFactory(mTestFramework.mCronetEngine);
         mFile = new File(getContext().getCacheDir().getPath() + "/tmpfile");
         FileOutputStream fileOutputStream = new FileOutputStream(mFile);
         try {
@@ -49,27 +56,14 @@ public class UploadDataProvidersTest extends CronetTestBase {
         }
     }
 
-    @SuppressFBWarnings("DM_GC") // Used to trigger strictmode detecting leaked closeables
-    @Override
-    protected void tearDown() throws Exception {
-        try {
-            mMockUrlRequestJobFactory.shutdown();
-            NativeTestServer.shutdownNativeTestServer();
-            mTestFramework.mCronetEngine.shutdown();
-            assertTrue(mFile.delete());
-            // Run GC and finalizers a few times to pick up leaked closeables
-            for (int i = 0; i < 10; i++) {
-                System.gc();
-                System.runFinalization();
-            }
-            System.gc();
-            System.runFinalization();
-            super.tearDown();
-        } finally {
-            StrictMode.setVmPolicy(mOldVmPolicy);
-        }
+    @After
+    public void tearDown() throws Exception {
+        NativeTestServer.shutdownNativeTestServer();
+        mTestFramework.mCronetEngine.shutdown();
+        assertTrue(mFile.delete());
     }
 
+    @Test
     @SmallTest
     @Feature({"Cronet"})
     public void testFileProvider() throws Exception {
@@ -85,6 +79,7 @@ public class UploadDataProvidersTest extends CronetTestBase {
         assertEquals(LOREM, callback.mResponseAsString);
     }
 
+    @Test
     @SmallTest
     @Feature({"Cronet"})
     public void testFileDescriptorProvider() throws Exception {
@@ -103,6 +98,7 @@ public class UploadDataProvidersTest extends CronetTestBase {
         assertEquals(LOREM, callback.mResponseAsString);
     }
 
+    @Test
     @SmallTest
     @Feature({"Cronet"})
     public void testBadFileDescriptorProvider() throws Exception {
@@ -123,6 +119,7 @@ public class UploadDataProvidersTest extends CronetTestBase {
         }
     }
 
+    @Test
     @SmallTest
     @Feature({"Cronet"})
     public void testBufferProvider() throws Exception {
@@ -139,6 +136,48 @@ public class UploadDataProvidersTest extends CronetTestBase {
         assertEquals(LOREM, callback.mResponseAsString);
     }
 
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunNativeCronet
+    // Tests that ByteBuffer's limit cannot be changed by the caller.
+    public void testUploadChangeBufferLimit() throws Exception {
+        TestUrlRequestCallback callback = new TestUrlRequestCallback();
+        UrlRequest.Builder builder = mTestFramework.mCronetEngine.newUrlRequestBuilder(
+                NativeTestServer.getEchoBodyURL(), callback, callback.getExecutor());
+        builder.addHeader("Content-Type", "useless/string");
+        builder.setUploadDataProvider(new UploadDataProvider() {
+            private static final String CONTENT = "hello";
+            @Override
+            public long getLength() throws IOException {
+                return CONTENT.length();
+            }
+
+            @Override
+            public void read(UploadDataSink uploadDataSink, ByteBuffer byteBuffer)
+                    throws IOException {
+                int oldPos = byteBuffer.position();
+                int oldLimit = byteBuffer.limit();
+                byteBuffer.put(CONTENT.getBytes());
+                assertEquals(oldPos + CONTENT.length(), byteBuffer.position());
+                assertEquals(oldLimit, byteBuffer.limit());
+                // Now change the limit to something else. This should give an error.
+                byteBuffer.limit(oldLimit - 1);
+                uploadDataSink.onReadSucceeded(false);
+            }
+
+            @Override
+            public void rewind(UploadDataSink uploadDataSink) throws IOException {}
+        }, callback.getExecutor());
+        UrlRequest urlRequest = builder.build();
+        urlRequest.start();
+        callback.blockForDone();
+        assertTrue(callback.mOnErrorCalled);
+        assertContains("Exception received from UploadDataProvider", callback.mError.getMessage());
+        assertContains("ByteBuffer limit changed", callback.mError.getCause().getMessage());
+    }
+
+    @Test
     @SmallTest
     @Feature({"Cronet"})
     public void testNoErrorWhenCanceledDuringStart() throws Exception {
@@ -172,6 +211,7 @@ public class UploadDataProvidersTest extends CronetTestBase {
         assertTrue(callback.mOnCanceledCalled);
     }
 
+    @Test
     @SmallTest
     @Feature({"Cronet"})
     public void testNoErrorWhenExceptionDuringStart() throws Exception {
@@ -205,6 +245,7 @@ public class UploadDataProvidersTest extends CronetTestBase {
         assertContains(exceptionMessage, callback.mError.getCause().getMessage());
     }
 
+    @Test
     @SmallTest
     @Feature({"Cronet"})
     // Tests that creating a ByteBufferUploadProvider using a byte array with an

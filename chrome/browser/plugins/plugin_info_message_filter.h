@@ -19,9 +19,10 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/keyed_service/core/keyed_service_shutdown_notifier.h"
 #include "components/prefs/pref_member.h"
+#include "components/ukm/ukm_service.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "extensions/features/features.h"
-#include "ppapi/features/features.h"
+#include "media/media_features.h"
 
 struct ChromeViewHostMsg_GetPluginInfo_Output;
 enum class ChromeViewHostMsg_GetPluginInfo_Status;
@@ -33,6 +34,10 @@ namespace base {
 class SingleThreadTaskRunner;
 }
 
+namespace component_updater {
+struct ComponentInfo;
+}
+
 namespace content {
 class ResourceContext;
 struct WebPluginInfo;
@@ -42,8 +47,8 @@ namespace extensions {
 class ExtensionRegistry;
 }
 
-namespace component_updater {
-struct ComponentInfo;
+namespace user_prefs {
+class PrefRegistrySyncable;
 }
 
 namespace url {
@@ -85,6 +90,7 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
     bool IsPluginEnabled(const content::WebPluginInfo& plugin) const;
 
     void ShutdownOnUIThread();
+
    private:
     int render_process_id_;
     content::ResourceContext* resource_context_;
@@ -96,6 +102,7 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
 
     BooleanPrefMember allow_outdated_plugins_;
     BooleanPrefMember always_authorize_plugins_;
+    BooleanPrefMember run_all_flash_in_allow_mode_;
   };
 
   PluginInfoMessageFilter(int render_process_id, Profile* profile);
@@ -103,6 +110,8 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
   // content::BrowserMessageFilter methods:
   bool OnMessageReceived(const IPC::Message& message) override;
   void OnDestruct() const override;
+
+  static void RegisterUserPrefs(user_prefs::PrefRegistrySyncable* registry);
 
  private:
   friend struct content::BrowserThread::DeleteOnThread<
@@ -137,7 +146,7 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
       std::unique_ptr<PluginMetadata> plugin_metadata,
       IPC::Message* reply_msg);
 
-#if BUILDFLAG(ENABLE_PEPPER_CDMS)
+#if BUILDFLAG(ENABLE_LIBRARY_CDMS)
   // Returns whether any internal plugin supporting |mime_type| is registered
   // and enabled. Does not determine whether the plugin can actually be
   // instantiated (e.g. whether it has all its dependencies).
@@ -158,7 +167,7 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
                      const base::StringPiece& mime_type,
                      const GURL& url,
                      const url::Origin& main_frame_origin,
-                     int32_t ukm_source_id);
+                     ukm::SourceId ukm_source_id);
 
   Context context_;
   std::unique_ptr<KeyedServiceShutdownNotifier::Subscription>
@@ -166,7 +175,7 @@ class PluginInfoMessageFilter : public content::BrowserMessageFilter {
 
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
 
-  const int32_t ukm_source_id_;
+  const ukm::SourceId ukm_source_id_;
 
   DISALLOW_COPY_AND_ASSIGN(PluginInfoMessageFilter);
 };

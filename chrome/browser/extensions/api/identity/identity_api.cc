@@ -36,8 +36,6 @@
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/signin/core/common/profile_management_switches.h"
-#include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function_dispatcher.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_l10n_util.h"
@@ -114,8 +112,7 @@ IdentityAPI::IdentityAPI(content::BrowserContext* context)
           LoginUIServiceFactory::GetShowLoginPopupCallbackForProfile(
               Profile::FromBrowserContext(context))),
       account_tracker_(&profile_identity_provider_,
-                       g_browser_process->system_request_context()),
-      get_auth_token_function_(nullptr) {
+                       g_browser_process->system_request_context()) {
   account_tracker_.AddObserver(this);
 }
 
@@ -156,47 +153,18 @@ const IdentityAPI::CachedTokens& IdentityAPI::GetAllCachedTokens() {
   return token_cache_;
 }
 
-std::vector<std::string> IdentityAPI::GetAccounts() const {
-  const std::vector<gaia::AccountIds> ids = account_tracker_.GetAccounts();
-  std::vector<std::string> gaia_ids;
-
-  if (switches::IsExtensionsMultiAccount()) {
-    for (std::vector<gaia::AccountIds>::const_iterator it = ids.begin();
-         it != ids.end();
-         ++it) {
-      gaia_ids.push_back(it->gaia);
-    }
-  } else if (ids.size() >= 1) {
-    gaia_ids.push_back(ids[0].gaia);
-  }
-
-  return gaia_ids;
-}
-
-std::string IdentityAPI::FindAccountKeyByGaiaId(const std::string& gaia_id) {
-  return account_tracker_.FindAccountIdsByGaiaId(gaia_id).account_key;
-}
-
 void IdentityAPI::Shutdown() {
-  if (get_auth_token_function_)
-    get_auth_token_function_->Shutdown();
+  on_shutdown_callback_list_.Notify();
   account_tracker_.RemoveObserver(this);
   account_tracker_.Shutdown();
 }
 
-static base::LazyInstance<
-    BrowserContextKeyedAPIFactory<IdentityAPI>>::DestructorAtExit g_factory =
-    LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<IdentityAPI>>::
+    DestructorAtExit g_identity_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 // static
 BrowserContextKeyedAPIFactory<IdentityAPI>* IdentityAPI::GetFactoryInstance() {
-  return g_factory.Pointer();
-}
-
-void IdentityAPI::OnAccountAdded(const gaia::AccountIds& ids) {
-}
-
-void IdentityAPI::OnAccountRemoved(const gaia::AccountIds& ids) {
+  return g_identity_api_factory.Pointer();
 }
 
 void IdentityAPI::OnAccountSignInChanged(const gaia::AccountIds& ids,
@@ -211,12 +179,19 @@ void IdentityAPI::OnAccountSignInChanged(const gaia::AccountIds& ids,
                 api::identity::OnSignInChanged::kEventName, std::move(args),
                 browser_context_));
 
+  if (on_signin_changed_callback_for_testing_)
+    on_signin_changed_callback_for_testing_.Run(event.get());
+
   EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
 }
 
-void IdentityAPI::SetAccountStateForTest(gaia::AccountIds ids,
-                                         bool is_signed_in) {
-  account_tracker_.SetAccountStateForTest(ids, is_signed_in);
+void IdentityAPI::SetAccountStateForTesting(const std::string& account_id,
+                                         bool signed_in) {
+  gaia::AccountIds ids;
+  ids.account_key = account_id;
+  ids.email = account_id;
+  ids.gaia = account_id;
+  account_tracker_.SetAccountStateForTest(ids, signed_in);
 }
 
 template <>

@@ -38,7 +38,7 @@ base::WeakPtr<BluetoothAdapter> BluetoothAdapter::GetWeakPtrForTesting() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
+#if defined(OS_LINUX)
 void BluetoothAdapter::Shutdown() {
   NOTIMPLEMENTED();
 }
@@ -423,7 +423,7 @@ void BluetoothAdapter::RecordBluetoothDiscoverySessionStopOutcome(
 }
 
 // static
-const base::TimeDelta BluetoothAdapter::timeoutSec =
+constexpr base::TimeDelta BluetoothAdapter::timeoutSec =
     base::TimeDelta::FromSeconds(180);
 
 }  // namespace device

@@ -80,7 +80,8 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
                          ClientSocketHandle* socket_handle,
                          HttpNetworkSession::SocketPoolType socket_pool_type,
                          const OnHostResolutionCallback& resolution_callback,
-                         const CompletionCallback& callback) {
+                         const CompletionCallback& callback,
+                         HttpRequestInfo::RequestMotivation motivation) {
   scoped_refptr<HttpProxySocketParams> http_proxy_params;
   scoped_refptr<SOCKSSocketParams> socks_params;
   std::unique_ptr<HostPortPair> proxy_host_port;
@@ -114,27 +115,41 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
     connection_group = "ftp/" + connection_group;
   }
   if (using_ssl) {
-    std::string prefix = "ssl/";
-    // Place sockets with and without deprecated ciphers into separate
-    // connection groups.
-    if (ssl_config_for_origin.deprecated_cipher_suites_enabled)
-      prefix += "deprecatedciphers/";
-    connection_group = prefix + connection_group;
+    connection_group = "ssl/" + connection_group;
   }
 
   ClientSocketPool::RespectLimits respect_limits =
       ClientSocketPool::RespectLimits::ENABLED;
   if ((request_load_flags & LOAD_IGNORE_LIMITS) != 0)
     respect_limits = ClientSocketPool::RespectLimits::DISABLED;
+
+  // CombineConnectAndWritePolicy for SSL and non-SSL connections.
+  TransportSocketParams::CombineConnectAndWritePolicy
+      non_ssl_combine_connect_and_write_policy =
+          TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT;
+  TransportSocketParams::CombineConnectAndWritePolicy
+      ssl_combine_connect_and_write_policy =
+          TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT;
+
+  if (session->params().tcp_fast_open_mode ==
+      HttpNetworkSession::Params::TcpFastOpenMode::ENABLED_FOR_SSL_ONLY) {
+    ssl_combine_connect_and_write_policy =
+        TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DESIRED;
+  } else if (session->params().tcp_fast_open_mode ==
+             HttpNetworkSession::Params::TcpFastOpenMode::ENABLED_FOR_ALL) {
+    non_ssl_combine_connect_and_write_policy =
+        TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DESIRED;
+    ssl_combine_connect_and_write_policy =
+        TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DESIRED;
+  }
+
   if (!proxy_info.is_direct()) {
     ProxyServer proxy_server = proxy_info.proxy_server();
     proxy_host_port.reset(new HostPortPair(proxy_server.host_port_pair()));
     scoped_refptr<TransportSocketParams> proxy_tcp_params(
-        new TransportSocketParams(
-            *proxy_host_port,
-            disable_resolver_cache,
-            resolution_callback,
-            TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT));
+        new TransportSocketParams(*proxy_host_port, disable_resolver_cache,
+                                  resolution_callback,
+                                  non_ssl_combine_connect_and_write_policy));
 
     if (proxy_info.is_http() || proxy_info.is_https()) {
       std::string user_agent;
@@ -142,17 +157,9 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
                                       &user_agent);
       scoped_refptr<SSLSocketParams> ssl_params;
       if (proxy_info.is_https()) {
-        // Combine connect and write for SSL sockets in TCP FastOpen
-        // field trial.
-        TransportSocketParams::CombineConnectAndWritePolicy
-            combine_connect_and_write =
-                session->params().enable_tcp_fast_open_for_ssl ?
-                    TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DESIRED :
-                    TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT;
-        proxy_tcp_params = new TransportSocketParams(*proxy_host_port,
-                                                     disable_resolver_cache,
-                                                     resolution_callback,
-                                                     combine_connect_and_write);
+        proxy_tcp_params = new TransportSocketParams(
+            *proxy_host_port, disable_resolver_cache, resolution_callback,
+            ssl_combine_connect_and_write_policy);
         // Set ssl_params, and unset proxy_tcp_params
         ssl_params =
             new SSLSocketParams(proxy_tcp_params, NULL, NULL,
@@ -161,16 +168,11 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
         proxy_tcp_params = NULL;
       }
 
-      http_proxy_params =
-          new HttpProxySocketParams(proxy_tcp_params,
-                                    ssl_params,
-                                    user_agent,
-                                    origin_host_port,
-                                    session->http_auth_cache(),
-                                    session->http_auth_handler_factory(),
-                                    session->spdy_session_pool(),
-                                    force_tunnel || using_ssl,
-                                    session->params().proxy_delegate);
+      http_proxy_params = new HttpProxySocketParams(
+          proxy_tcp_params, ssl_params, user_agent, origin_host_port,
+          session->http_auth_cache(), session->http_auth_handler_factory(),
+          session->spdy_session_pool(), force_tunnel || using_ssl,
+          session->context().proxy_delegate);
     } else {
       DCHECK(proxy_info.is_socks());
       char socks_version;
@@ -195,17 +197,9 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
   if (using_ssl) {
     scoped_refptr<TransportSocketParams> ssl_tcp_params;
     if (proxy_info.is_direct()) {
-      // Setup TCP params if non-proxied SSL connection.
-      // Combine connect and write for SSL sockets in TCP FastOpen field trial.
-      TransportSocketParams::CombineConnectAndWritePolicy
-          combine_connect_and_write =
-              session->params().enable_tcp_fast_open_for_ssl ?
-                  TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DESIRED :
-                  TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT;
-      ssl_tcp_params = new TransportSocketParams(origin_host_port,
-                                                 disable_resolver_cache,
-                                                 resolution_callback,
-                                                 combine_connect_and_write);
+      ssl_tcp_params = new TransportSocketParams(
+          origin_host_port, disable_resolver_cache, resolution_callback,
+          ssl_combine_connect_and_write_policy);
     }
     scoped_refptr<SSLSocketParams> ssl_params = new SSLSocketParams(
         ssl_tcp_params, socks_params, http_proxy_params, origin_host_port,
@@ -220,7 +214,7 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
 
     if (num_preconnect_streams) {
       RequestSocketsForPool(ssl_pool, connection_group, ssl_params,
-                            num_preconnect_streams, net_log);
+                            num_preconnect_streams, net_log, motivation);
       return OK;
     }
 
@@ -235,7 +229,7 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
         session->GetSocketPoolForHTTPProxy(socket_pool_type, *proxy_host_port);
     if (num_preconnect_streams) {
       RequestSocketsForPool(pool, connection_group, http_proxy_params,
-                            num_preconnect_streams, net_log);
+                            num_preconnect_streams, net_log, motivation);
       return OK;
     }
 
@@ -249,7 +243,7 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
         session->GetSocketPoolForSOCKSProxy(socket_pool_type, *proxy_host_port);
     if (num_preconnect_streams) {
       RequestSocketsForPool(pool, connection_group, socks_params,
-                            num_preconnect_streams, net_log);
+                            num_preconnect_streams, net_log, motivation);
       return OK;
     }
 
@@ -258,17 +252,14 @@ int InitSocketPoolHelper(ClientSocketPoolManager::SocketGroupType group_type,
   }
 
   DCHECK(proxy_info.is_direct());
-  scoped_refptr<TransportSocketParams> tcp_params =
-      new TransportSocketParams(
-          origin_host_port,
-          disable_resolver_cache,
-          resolution_callback,
-          TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT);
+  scoped_refptr<TransportSocketParams> tcp_params = new TransportSocketParams(
+      origin_host_port, disable_resolver_cache, resolution_callback,
+      non_ssl_combine_connect_and_write_policy);
   TransportClientSocketPool* pool =
       session->GetTransportSocketPool(socket_pool_type);
   if (num_preconnect_streams) {
     RequestSocketsForPool(pool, connection_group, tcp_params,
-                          num_preconnect_streams, net_log);
+                          num_preconnect_streams, net_log, motivation);
     return OK;
   }
 
@@ -365,7 +356,7 @@ int InitSocketHandleForHttpRequest(
       request_priority, session, proxy_info, expect_spdy, ssl_config_for_origin,
       ssl_config_for_proxy, /*force_tunnel=*/false, privacy_mode, net_log, 0,
       socket_handle, HttpNetworkSession::NORMAL_SOCKET_POOL,
-      resolution_callback, callback);
+      resolution_callback, callback, HttpRequestInfo::NORMAL_MOTIVATION);
 }
 
 int InitSocketHandleForWebSocketRequest(
@@ -390,7 +381,7 @@ int InitSocketHandleForWebSocketRequest(
       request_priority, session, proxy_info, expect_spdy, ssl_config_for_origin,
       ssl_config_for_proxy, /*force_tunnel=*/true, privacy_mode, net_log, 0,
       socket_handle, HttpNetworkSession::WEBSOCKET_SOCKET_POOL,
-      resolution_callback, callback);
+      resolution_callback, callback, HttpRequestInfo::NORMAL_MOTIVATION);
 }
 
 int InitSocketHandleForRawConnect(const HostPortPair& host_port_pair,
@@ -412,7 +403,7 @@ int InitSocketHandleForRawConnect(const HostPortPair& host_port_pair,
       proxy_info, false, ssl_config_for_origin, ssl_config_for_proxy,
       /*force_tunnel=*/true, privacy_mode, net_log, 0, socket_handle,
       HttpNetworkSession::NORMAL_SOCKET_POOL, OnHostResolutionCallback(),
-      callback);
+      callback, HttpRequestInfo::NORMAL_MOTIVATION);
 }
 
 int InitSocketHandleForTlsConnect(const HostPortPair& endpoint,
@@ -434,7 +425,7 @@ int InitSocketHandleForTlsConnect(const HostPortPair& endpoint,
       /*expect_spdy=*/false, ssl_config_for_origin, ssl_config_for_proxy,
       /*force_tunnel=*/true, privacy_mode, net_log, 0, socket_handle,
       HttpNetworkSession::NORMAL_SOCKET_POOL, OnHostResolutionCallback(),
-      callback);
+      callback, HttpRequestInfo::NORMAL_MOTIVATION);
 }
 
 int PreconnectSocketsForHttpRequest(
@@ -450,13 +441,14 @@ int PreconnectSocketsForHttpRequest(
     const SSLConfig& ssl_config_for_proxy,
     PrivacyMode privacy_mode,
     const NetLogWithSource& net_log,
-    int num_preconnect_streams) {
+    int num_preconnect_streams,
+    HttpRequestInfo::RequestMotivation motivation) {
   return InitSocketPoolHelper(
       group_type, endpoint, request_extra_headers, request_load_flags,
       request_priority, session, proxy_info, expect_spdy, ssl_config_for_origin,
       ssl_config_for_proxy, /*force_tunnel=*/false, privacy_mode, net_log,
       num_preconnect_streams, NULL, HttpNetworkSession::NORMAL_SOCKET_POOL,
-      OnHostResolutionCallback(), CompletionCallback());
+      OnHostResolutionCallback(), CompletionCallback(), motivation);
 }
 
 }  // namespace net

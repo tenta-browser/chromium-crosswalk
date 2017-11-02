@@ -7,7 +7,12 @@
 #import <QuartzCore/CAAnimation.h>
 #import <QuartzCore/CAMediaTimingFunction.h>
 
+#include "base/logging.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_button_tints.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 // The number of dots drawn.
@@ -48,7 +53,7 @@ const CGFloat kLineWidthAtApogee = 3;
   // Whether the reading list contains unseen items.
   BOOL readingListContainsUnseenItems_;
   // The CALayers containing the drawn dots.
-  base::scoped_nsobject<CAShapeLayer> pathLayers_[kNumberOfDots];
+  NSMutableArray<CAShapeLayer*>* pathLayers_;
   // Whether the CALayers are being animated.
   BOOL animationOnGoing_;
 }
@@ -58,7 +63,7 @@ const CGFloat kLineWidthAtApogee = 3;
 // Initializes the pathLayers.
 - (void)initializeShapeLayers;
 // Returns a keyframe-based animation of the property identified by |keyPath|.
-// The animation immidiately sets the property's value to |initialValue|.
+// The animation immediately sets the property's value to |initialValue|.
 // After |frameStart| frames, the property's value animates to
 // |intermediaryValue|, and then to |finalValue|.
 - (CAAnimation*)animationWithInitialValue:(id)initialValue
@@ -76,6 +81,7 @@ const CGFloat kLineWidthAtApogee = 3;
                         style:(ToolbarControllerStyle)style {
   if (self = [super initWithFrame:frame]) {
     style_ = style;
+    pathLayers_ = [[NSMutableArray alloc] initWithCapacity:kNumberOfDots];
 
     [self setTintColor:toolbar::NormalButtonTint(style_)
               forState:UIControlStateNormal];
@@ -112,12 +118,12 @@ const CGFloat kLineWidthAtApogee = 3;
 }
 
 - (void)initializeShapeLayers {
-  for (int i = 0; i < kNumberOfDots; i++) {
-    base::scoped_nsobject<CAShapeLayer>& pathLayer = pathLayers_[i];
-    if (pathLayer) {
-      [pathLayer removeFromSuperlayer];
-    }
+  for (NSUInteger i = 0; i < pathLayers_.count; i++) {
+    [pathLayers_[i] removeFromSuperlayer];
+  }
 
+  pathLayers_ = [[NSMutableArray alloc] initWithCapacity:kNumberOfDots];
+  for (NSUInteger i = 0; i < kNumberOfDots; i++) {
     const CGFloat x = kDotOffsetX;
     const CGFloat y = kDotOffsetY + kVerticalSpaceBetweenDots * i;
 
@@ -125,7 +131,7 @@ const CGFloat kLineWidthAtApogee = 3;
     [path moveToPoint:CGPointMake(x - kMaxWidthOfSegment * 0.5, y)];
     [path addLineToPoint:CGPointMake(x + kMaxWidthOfSegment * 0.5, y)];
 
-    pathLayer.reset([[CAShapeLayer layer] retain]);
+    CAShapeLayer* pathLayer = [CAShapeLayer layer];
     [pathLayer setFrame:self.bounds];
     [pathLayer setPath:path.CGPath];
     [pathLayer setStrokeColor:[self.tintColor CGColor]];
@@ -134,7 +140,8 @@ const CGFloat kLineWidthAtApogee = 3;
     [pathLayer setLineCap:kCALineCapRound];
     [pathLayer setStrokeStart:kStrokeStartAtRest];
     [pathLayer setStrokeEnd:kStrokeEndAtRest];
-    [self.layer addSublayer:pathLayer.get()];
+    [self.layer addSublayer:pathLayer];
+    [pathLayers_ addObject:pathLayer];
   }
 }
 
@@ -204,10 +211,10 @@ const CGFloat kLineWidthAtApogee = 3;
 - (void)animateToColor:(UIColor*)targetColor {
   animationOnGoing_ = YES;
 
+  DCHECK(pathLayers_.count == kNumberOfDots);
   // Add four animations for each stroke.
   for (int i = 0; i < kNumberOfDots; i++) {
-    base::scoped_nsobject<CAShapeLayer>& pathLayer = pathLayers_[i];
-    DCHECK(pathLayer.get());
+    CAShapeLayer* pathLayer = pathLayers_[i];
     const int frameStart =
         (kNumberOfDots - i) * kFramesBetweenAnimationOfEachDot;
 

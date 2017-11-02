@@ -49,13 +49,11 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "extensions/grit/extensions_browser_resources.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkRegion.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/keycodes/keyboard_codes.h"
-#include "ui/gfx/image/image_skia_operations.h"
 
 #if !defined(OS_MACOSX)
 #include "components/prefs/pref_service.h"
@@ -81,7 +79,7 @@ void SetConstraintProperty(const std::string& name,
   if (value != SizeConstraints::kUnboundedSize)
     bounds_properties->SetInteger(name, value);
   else
-    bounds_properties->Set(name, base::MakeUnique<base::Value>());
+    bounds_properties->Set(name, std::make_unique<base::Value>());
 }
 
 void SetBoundsProperties(const gfx::Rect& bounds,
@@ -104,7 +102,7 @@ void SetBoundsProperties(const gfx::Rect& bounds,
   SetConstraintProperty(
       "maxHeight", max_size.height(), bounds_properties.get());
 
-  window_properties->Set(bounds_name, bounds_properties.release());
+  window_properties->Set(bounds_name, std::move(bounds_properties));
 }
 
 // Combines the constraints of the content and window, and returns constraints
@@ -173,6 +171,7 @@ AppWindow::CreateParams::CreateParams()
       focused(true),
       always_on_top(false),
       visible_on_all_workspaces(false),
+      show_on_lock_screen(false),
       show_in_shelf(false) {}
 
 AppWindow::CreateParams::CreateParams(const CreateParams& other) = default;
@@ -250,6 +249,7 @@ AppWindow::AppWindow(BrowserContext* context,
       cached_always_on_top_(false),
       requested_alpha_enabled_(false),
       is_ime_window_(false),
+      show_on_lock_screen_(false),
       show_in_shelf_(false),
       image_loader_ptr_factory_(this) {
   ExtensionsBrowserClient* client = ExtensionsBrowserClient::Get();
@@ -292,8 +292,8 @@ void AppWindow::Init(const GURL& url,
 
   requested_alpha_enabled_ = new_params.alpha_enabled;
   is_ime_window_ = params.is_ime_window;
+  show_on_lock_screen_ = params.show_on_lock_screen;
   show_in_shelf_ = params.show_in_shelf;
-  window_icon_url_ = params.window_icon_url;
 
   AppWindowClient* app_window_client = AppWindowClient::Get();
   native_app_window_.reset(
@@ -302,10 +302,10 @@ void AppWindow::Init(const GURL& url,
   helper_.reset(new AppWebContentsHelper(
       browser_context_, extension_id_, web_contents(), app_delegate_.get()));
 
-  UpdateExtensionAppIcon();
-  // Download showInShelf=true window icon.
-  if (window_icon_url_.is_valid())
-    SetAppIconUrl(window_icon_url_);
+  native_app_window_->UpdateWindowIcon();
+
+  if (params.window_icon_url.is_valid())
+    SetAppIconUrl(params.window_icon_url);
 
   AppWindowRegistry::Get(browser_context_)->AddAppWindow(this);
 
@@ -372,12 +372,8 @@ void AppWindow::AddNewContents(WebContents* source,
                                bool user_gesture,
                                bool* was_blocked) {
   DCHECK(new_contents->GetBrowserContext() == browser_context_);
-  app_delegate_->AddNewContents(browser_context_,
-                                new_contents,
-                                disposition,
-                                initial_rect,
-                                user_gesture,
-                                was_blocked);
+  app_delegate_->AddNewContents(browser_context_, new_contents, disposition,
+                                initial_rect, user_gesture);
 }
 
 content::KeyboardEventProcessingResult AppWindow::PreHandleKeyboardEvent(
@@ -438,6 +434,10 @@ std::unique_ptr<content::BluetoothChooser> AppWindow::RunBluetoothChooser(
     const content::BluetoothChooser::EventHandler& event_handler) {
   return ExtensionsBrowserClient::Get()->CreateBluetoothChooser(frame,
                                                                 event_handler);
+}
+
+bool AppWindow::TakeFocus(WebContents* source, bool reverse) {
+  return app_delegate_->TakeFocus(source, reverse);
 }
 
 void AppWindow::RenderViewCreated(content::RenderViewHost* render_view_host) {
@@ -561,22 +561,10 @@ base::string16 AppWindow::GetTitle() const {
   return title;
 }
 
-bool AppWindow::HasCustomIcon() const {
-  return window_icon_url_.is_valid() || app_icon_url_.is_valid();
-}
-
 void AppWindow::SetAppIconUrl(const GURL& url) {
   // Avoid using any previous icons that were being downloaded.
   image_loader_ptr_factory_.InvalidateWeakPtrs();
-
-  // Reset |app_icon_image_| to abort pending image load (if any).
-  if (!show_in_shelf_) {
-    app_icon_image_.reset();
-    app_icon_url_ = url;
-  } else {
-    window_icon_url_ = url;
-  }
-
+  app_icon_url_ = url;
   web_contents()->DownloadImage(
       url,
       true,   // is a favicon
@@ -586,8 +574,8 @@ void AppWindow::SetAppIconUrl(const GURL& url) {
                  image_loader_ptr_factory_.GetWeakPtr()));
 }
 
-void AppWindow::UpdateShape(std::unique_ptr<SkRegion> region) {
-  native_app_window_->UpdateShape(std::move(region));
+void AppWindow::UpdateShape(std::unique_ptr<ShapeRects> rects) {
+  native_app_window_->UpdateShape(std::move(rects));
 }
 
 void AppWindow::UpdateDraggableRegions(
@@ -596,38 +584,10 @@ void AppWindow::UpdateDraggableRegions(
 }
 
 void AppWindow::UpdateAppIcon(const gfx::Image& image) {
-  // Set the showInShelf=true window icon and add the app_icon_image_
-  // as a badge. If the image is empty, set the default app icon placeholder
-  // as the base image.
-  if (window_icon_url_.is_valid() && app_icon_image_ &&
-      !app_icon_image_->image().IsEmpty()) {
-    gfx::Image base_image =
-        !image.IsEmpty()
-            ? image
-            : gfx::Image(*ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-                  IDR_APP_DEFAULT_ICON));
-    // Scale the icon to EXTENSION_ICON_LARGE.
-    const int large_icon_size = extension_misc::EXTENSION_ICON_LARGE;
-    if (base_image.Width() != large_icon_size ||
-        base_image.Height() != large_icon_size) {
-      gfx::ImageSkia resized_image =
-          gfx::ImageSkiaOperations::CreateResizedImage(
-              base_image.AsImageSkia(), skia::ImageOperations::RESIZE_BEST,
-              gfx::Size(large_icon_size, large_icon_size));
-      app_icon_ = gfx::Image(gfx::ImageSkiaOperations::CreateIconWithBadge(
-          resized_image, app_icon_image_->image_skia()));
-    } else {
-      app_icon_ = gfx::Image(gfx::ImageSkiaOperations::CreateIconWithBadge(
-          base_image.AsImageSkia(), app_icon_image_->image_skia()));
-    }
-  } else {
-    if (image.IsEmpty())
-      return;
-
-    app_icon_ = image;
-  }
+  if (image.IsEmpty())
+    return;
+  custom_app_icon_ = image;
   native_app_window_->UpdateWindowIcon();
-  AppWindowRegistry::Get(browser_context_)->AppWindowIconChanged(this);
 }
 
 void AppWindow::SetFullscreen(FullscreenType type, bool enable) {
@@ -812,10 +772,8 @@ void AppWindow::DidDownloadFavicon(
     const GURL& image_url,
     const std::vector<SkBitmap>& bitmaps,
     const std::vector<gfx::Size>& original_bitmap_sizes) {
-  if (((image_url != app_icon_url_) && (image_url != window_icon_url_)) ||
-      bitmaps.empty()) {
+  if (image_url != app_icon_url_ || bitmaps.empty())
     return;
-  }
 
   // Bitmaps are ordered largest to smallest. Choose the smallest bitmap
   // whose height >= the preferred size.
@@ -827,38 +785,6 @@ void AppWindow::DidDownloadFavicon(
   }
   const SkBitmap& largest = bitmaps[largest_index];
   UpdateAppIcon(gfx::Image::CreateFrom1xBitmap(largest));
-}
-
-void AppWindow::OnExtensionIconImageChanged(IconImage* image) {
-  DCHECK_EQ(app_icon_image_.get(), image);
-
-  // Update app_icon if no valid window icon url is set.
-  if (!window_icon_url_.is_valid())
-    UpdateAppIcon(gfx::Image(app_icon_image_->image_skia()));
-}
-
-void AppWindow::UpdateExtensionAppIcon() {
-  // Avoid using any previous app icons were being downloaded.
-  image_loader_ptr_factory_.InvalidateWeakPtrs();
-
-  const Extension* extension = GetExtension();
-  if (!extension)
-    return;
-
-  gfx::ImageSkia app_default_icon =
-      *ResourceBundle::GetSharedInstance().GetImageSkiaNamed(
-          IDR_APP_DEFAULT_ICON);
-
-  app_icon_image_.reset(new IconImage(browser_context(),
-                                      extension,
-                                      IconsInfo::GetIcons(extension),
-                                      app_delegate_->PreferredIconSize(),
-                                      app_default_icon,
-                                      this));
-
-  // Triggers actual image loading with 1x resources. The 2x resource will
-  // be handled by IconImage class when requested.
-  app_icon_image_->image_skia().GetRepresentation(1.0f);
 }
 
 void AppWindow::SetNativeWindowFullscreen() {
@@ -991,7 +917,7 @@ content::WebContents* AppWindow::GetAssociatedWebContents() const {
 
 void AppWindow::OnExtensionUnloaded(BrowserContext* browser_context,
                                     const Extension* extension,
-                                    UnloadedExtensionInfo::Reason reason) {
+                                    UnloadedExtensionReason reason) {
   if (extension_id_ == extension->id())
     native_app_window_->Close();
 }

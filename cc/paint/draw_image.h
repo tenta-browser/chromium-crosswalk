@@ -5,7 +5,9 @@
 #ifndef CC_PAINT_DRAW_IMAGE_H_
 #define CC_PAINT_DRAW_IMAGE_H_
 
+#include "base/optional.h"
 #include "cc/paint/paint_export.h"
+#include "cc/paint/paint_image.h"
 #include "third_party/skia/include/core/SkFilterQuality.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkMatrix.h"
@@ -16,48 +18,55 @@
 
 namespace cc {
 
-// TODO(vmpstr): This should probably be DISALLOW_COPY_AND_ASSIGN and transport
-// it around using a pointer, since it became kind of large. Profile.
 class CC_PAINT_EXPORT DrawImage {
  public:
   DrawImage();
-  DrawImage(sk_sp<const SkImage> image,
+  DrawImage(PaintImage image,
             const SkIRect& src_rect,
             SkFilterQuality filter_quality,
             const SkMatrix& matrix,
-            const gfx::ColorSpace& target_color_space);
+            base::Optional<size_t> frame_index = base::nullopt,
+            const base::Optional<gfx::ColorSpace>& color_space = base::nullopt);
+  // Constructs a DrawImage from |other| by adjusting its scale and setting a
+  // new color_space.
+  DrawImage(const DrawImage& other,
+            float scale_adjustment,
+            size_t frame_index,
+            const gfx::ColorSpace& color_space);
   DrawImage(const DrawImage& other);
+  DrawImage(DrawImage&& other);
   ~DrawImage();
 
-  const sk_sp<const SkImage>& image() const { return image_; }
+  DrawImage& operator=(DrawImage&& other);
+  DrawImage& operator=(const DrawImage& other);
+
+  bool operator==(const DrawImage& other) const;
+
+  const PaintImage& paint_image() const { return paint_image_; }
   const SkSize& scale() const { return scale_; }
   const SkIRect& src_rect() const { return src_rect_; }
   SkFilterQuality filter_quality() const { return filter_quality_; }
   bool matrix_is_decomposable() const { return matrix_is_decomposable_; }
-  const SkMatrix& matrix() const { return matrix_; }
   const gfx::ColorSpace& target_color_space() const {
-    return target_color_space_;
+    DCHECK(target_color_space_.has_value());
+    return *target_color_space_;
   }
-
-  DrawImage ApplyScale(float scale) const {
-    SkMatrix scaled_matrix = matrix_;
-    scaled_matrix.preScale(scale, scale);
-    return DrawImage(image_, src_rect_, filter_quality_, scaled_matrix,
-                     target_color_space_);
+  PaintImage::FrameKey frame_key() const {
+    return paint_image_.GetKeyForFrame(frame_index());
   }
-  DrawImage ApplyTargetColorSpace(const gfx::ColorSpace& target_color_space) {
-    return DrawImage(image_, src_rect_, filter_quality_, matrix_,
-                     target_color_space);
+  size_t frame_index() const {
+    DCHECK(frame_index_.has_value());
+    return frame_index_.value();
   }
 
  private:
-  sk_sp<const SkImage> image_;
+  PaintImage paint_image_;
   SkIRect src_rect_;
   SkFilterQuality filter_quality_;
-  SkMatrix matrix_;
   SkSize scale_;
   bool matrix_is_decomposable_;
-  gfx::ColorSpace target_color_space_;
+  base::Optional<size_t> frame_index_;
+  base::Optional<gfx::ColorSpace> target_color_space_;
 };
 
 }  // namespace cc

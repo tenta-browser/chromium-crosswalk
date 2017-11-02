@@ -116,7 +116,7 @@ TEST_F('SettingsUIBrowserTest', 'DISABLED_All', function() {
 
       var query = 'foo';
       settings.navigateTo(
-          settings.Route.BASIC, new URLSearchParams(`search=${query}`));
+          settings.routes.BASIC, new URLSearchParams(`search=${query}`));
       assertEquals(query, searchField.getSearchInput().value);
     });
 
@@ -125,12 +125,17 @@ TEST_F('SettingsUIBrowserTest', 'DISABLED_All', function() {
           toolbar.getSearchField());
 
       settings.navigateTo(
-          settings.Route.BASIC, /* dynamicParams */ null,
+          settings.routes.BASIC, /* dynamicParams */ null,
           /* removeSearch */ true);
       assertEquals('', searchField.getSearchInput().value);
       assertFalse(settings.getQueryParameters().has('search'));
 
       var value = 'GOOG';
+      searchField.setValue(value);
+      assertEquals(value, settings.getQueryParameters().get('search'));
+
+      // Test that search queries are properly URL encoded.
+      value = '+++';
       searchField.setValue(value);
       assertEquals(value, settings.getQueryParameters().get('search'));
     });

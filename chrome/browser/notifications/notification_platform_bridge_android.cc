@@ -4,6 +4,7 @@
 
 #include "chrome/browser/notifications/notification_platform_bridge_android.h"
 
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -15,11 +16,10 @@
 #include "base/strings/nullable_string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/notifications/native_notification_display_service.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_common.h"
+#include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
-#include "chrome/browser/notifications/persistent_notification_delegate.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/chrome_switches.h"
@@ -90,9 +90,8 @@ ScopedJavaLocalRef<jobjectArray> ConvertToJavaActionInfos(
     ScopedJavaLocalRef<jstring> placeholder =
         base::android::ConvertUTF16ToJavaString(env, button.placeholder);
     ScopedJavaLocalRef<jobject> icon = ConvertToJavaBitmap(env, button.icon);
-    ScopedJavaLocalRef<jobject> action_info =
-        Java_ActionInfo_createActionInfo(AttachCurrentThread(), title.obj(),
-                                         icon.obj(), type, placeholder.obj());
+    ScopedJavaLocalRef<jobject> action_info = Java_ActionInfo_createActionInfo(
+        AttachCurrentThread(), title, icon, type, placeholder);
     env->SetObjectArrayElement(actions, i, action_info.obj());
   }
 
@@ -106,8 +105,9 @@ void ProfileLoadedCallback(NotificationCommon::Operation operation,
                            NotificationCommon::Type notification_type,
                            const std::string& origin,
                            const std::string& notification_id,
-                           int action_index,
-                           const base::NullableString16& reply,
+                           const base::Optional<int>& action_index,
+                           const base::Optional<base::string16>& reply,
+                           const base::Optional<bool>& by_user,
                            Profile* profile) {
   if (!profile) {
     // TODO(miguelg): Add UMA for this condition.
@@ -116,12 +116,12 @@ void ProfileLoadedCallback(NotificationCommon::Operation operation,
     return;
   }
 
-  NotificationDisplayService* display_service =
+  auto* display_service =
       NotificationDisplayServiceFactory::GetForProfile(profile);
 
-  static_cast<NativeNotificationDisplayService*>(display_service)
-      ->ProcessNotificationOperation(operation, notification_type, origin,
-                                     notification_id, action_index, reply);
+  display_service->ProcessNotificationOperation(operation, notification_type,
+                                                origin, notification_id,
+                                                action_index, reply, by_user);
 }
 
 }  // namespace
@@ -154,6 +154,7 @@ void NotificationPlatformBridgeAndroid::OnNotificationClicked(
     const JavaParamRef<jobject>& java_object,
     const JavaParamRef<jstring>& java_notification_id,
     const JavaParamRef<jstring>& java_origin,
+    const JavaParamRef<jstring>& java_scope_url,
     const JavaParamRef<jstring>& java_profile_id,
     jboolean incognito,
     const JavaParamRef<jstring>& java_tag,
@@ -166,15 +167,16 @@ void NotificationPlatformBridgeAndroid::OnNotificationClicked(
   std::string profile_id = ConvertJavaStringToUTF8(env, java_profile_id);
   std::string webapk_package =
       ConvertJavaStringToUTF8(env, java_webapk_package);
-  base::NullableString16 reply =
-      java_reply
-          ? base::NullableString16(ConvertJavaStringToUTF16(env, java_reply),
-                                   false /* is_null */)
-          : base::NullableString16();
+
+  base::Optional<base::string16> reply;
+  if (java_reply)
+    reply = ConvertJavaStringToUTF16(env, java_reply);
 
   GURL origin(ConvertJavaStringToUTF8(env, java_origin));
+  GURL scope_url(ConvertJavaStringToUTF8(env, java_scope_url));
   regenerated_notification_infos_[notification_id] =
-      RegeneratedNotificationInfo(origin.spec(), tag, webapk_package);
+      RegeneratedNotificationInfo(origin.spec(), scope_url.spec(), tag,
+                                  webapk_package);
 
   ProfileManager* profile_manager = g_browser_process->profile_manager();
   DCHECK(profile_manager);
@@ -183,7 +185,26 @@ void NotificationPlatformBridgeAndroid::OnNotificationClicked(
       profile_id, incognito,
       base::Bind(&ProfileLoadedCallback, NotificationCommon::CLICK,
                  NotificationCommon::PERSISTENT, origin.spec(), notification_id,
-                 action_index, reply));
+                 action_index, std::move(reply), base::nullopt /* by_user */));
+}
+
+void NotificationPlatformBridgeAndroid::
+    StoreCachedWebApkPackageForNotificationId(
+        JNIEnv* env,
+        const base::android::JavaParamRef<jobject>& java_object,
+        const base::android::JavaParamRef<jstring>& java_notification_id,
+        const base::android::JavaParamRef<jstring>& java_webapk_package) {
+  std::string notification_id =
+      ConvertJavaStringToUTF8(env, java_notification_id);
+  const auto iterator = regenerated_notification_infos_.find(notification_id);
+  if (iterator == regenerated_notification_infos_.end())
+    return;
+
+  const RegeneratedNotificationInfo& info = iterator->second;
+  regenerated_notification_infos_[notification_id] =
+      RegeneratedNotificationInfo(
+          info.origin, info.service_worker_scope, info.tag,
+          ConvertJavaStringToUTF8(env, java_webapk_package));
 }
 
 void NotificationPlatformBridgeAndroid::OnNotificationClosed(
@@ -210,7 +231,8 @@ void NotificationPlatformBridgeAndroid::OnNotificationClosed(
       base::Bind(&ProfileLoadedCallback, NotificationCommon::CLOSE,
                  NotificationCommon::PERSISTENT,
                  ConvertJavaStringToUTF8(env, java_origin), notification_id,
-                 -1 /* action index */, base::NullableString16() /* reply */));
+                 base::nullopt /* action index */, base::nullopt /* reply */,
+                 by_user));
 }
 
 void NotificationPlatformBridgeAndroid::Display(
@@ -218,23 +240,23 @@ void NotificationPlatformBridgeAndroid::Display(
     const std::string& notification_id,
     const std::string& profile_id,
     bool incognito,
-    const Notification& notification) {
+    const Notification& notification,
+    std::unique_ptr<NotificationCommon::Metadata> metadata) {
   JNIEnv* env = AttachCurrentThread();
+
+  GURL origin_url(notification.origin_url().GetOrigin());
+
   // TODO(miguelg): Store the notification type in java instead of assuming it's
   // persistent once/if non persistent notifications are ever implemented on
   // Android.
   DCHECK_EQ(notification_type, NotificationCommon::PERSISTENT);
-
-  GURL origin_url(notification.origin_url().GetOrigin());
-
-  GURL scope_url(notification.service_worker_scope());
+  GURL scope_url(PersistentNotificationMetadata::From(metadata.get())
+                     ->service_worker_scope);
   if (!scope_url.is_valid())
     scope_url = origin_url;
+
   ScopedJavaLocalRef<jstring> j_scope_url =
         ConvertUTF8ToJavaString(env, scope_url.spec());
-  ScopedJavaLocalRef<jstring> webapk_package =
-      Java_NotificationPlatformBridge_queryWebApkPackage(
-          env, java_object_, j_scope_url);
 
   ScopedJavaLocalRef<jstring> j_notification_id =
       ConvertUTF8ToJavaString(env, notification_id);
@@ -272,14 +294,14 @@ void NotificationPlatformBridgeAndroid::Display(
       ConvertUTF8ToJavaString(env, profile_id);
 
   Java_NotificationPlatformBridge_displayNotification(
-      env, java_object_, j_notification_id, j_origin, j_profile_id, incognito,
-      tag, webapk_package, title, body, image, notification_icon, badge,
+      env, java_object_, j_notification_id, j_origin, j_scope_url, j_profile_id,
+      incognito, tag, title, body, image, notification_icon, badge,
       vibration_pattern, notification.timestamp().ToJavaTime(),
       notification.renotify(), notification.silent(), actions);
 
   regenerated_notification_infos_[notification_id] =
-      RegeneratedNotificationInfo(origin_url.spec(), notification.tag(),
-                                  ConvertJavaStringToUTF8(env, webapk_package));
+      RegeneratedNotificationInfo(origin_url.spec(), scope_url.spec(),
+                                  notification.tag(), base::nullopt);
 }
 
 void NotificationPlatformBridgeAndroid::Close(
@@ -295,38 +317,44 @@ void NotificationPlatformBridgeAndroid::Close(
 
   ScopedJavaLocalRef<jstring> j_notification_id =
       ConvertUTF8ToJavaString(env, notification_id);
-  ScopedJavaLocalRef<jstring> origin =
+  ScopedJavaLocalRef<jstring> j_origin =
       ConvertUTF8ToJavaString(env, notification_info.origin);
-  ScopedJavaLocalRef<jstring> tag =
-      ConvertUTF8ToJavaString(env, notification_info.tag);
-  ScopedJavaLocalRef<jstring> webapk_package =
-      ConvertUTF8ToJavaString(env, notification_info.webapk_package);
 
-  ScopedJavaLocalRef<jstring> j_profile_id =
-      ConvertUTF8ToJavaString(env, profile_id);
+  GURL scope_url(notification_info.service_worker_scope);
+  ScopedJavaLocalRef<jstring> j_scope_url =
+      ConvertUTF8ToJavaString(env, scope_url.spec());
+
+  ScopedJavaLocalRef<jstring> j_tag =
+      ConvertUTF8ToJavaString(env, notification_info.tag);
+
+  bool has_queried_webapk_package =
+      notification_info.webapk_package.has_value();
+  std::string webapk_package =
+      has_queried_webapk_package ? *notification_info.webapk_package : "";
+  ScopedJavaLocalRef<jstring> j_webapk_package =
+      ConvertUTF8ToJavaString(env, webapk_package);
 
   regenerated_notification_infos_.erase(iterator);
 
   Java_NotificationPlatformBridge_closeNotification(
-      env, java_object_, j_profile_id, j_notification_id, origin, tag,
-      webapk_package);
+      env, java_object_, j_notification_id, j_origin, j_scope_url, j_tag,
+      has_queried_webapk_package, j_webapk_package);
 }
 
 void NotificationPlatformBridgeAndroid::GetDisplayed(
     const std::string& profile_id,
     bool incognito,
     const GetDisplayedNotificationsCallback& callback) const {
-  auto displayed_notifications = base::MakeUnique<std::set<std::string>>();
+  auto displayed_notifications = std::make_unique<std::set<std::string>>();
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
       base::Bind(callback, base::Passed(&displayed_notifications),
                  false /* supports_synchronization */));
 }
 
-// static
-bool NotificationPlatformBridgeAndroid::RegisterNotificationPlatformBridge(
-    JNIEnv* env) {
-  return RegisterNativesImpl(env);
+void NotificationPlatformBridgeAndroid::SetReadyCallback(
+    NotificationBridgeReadyCallback callback) {
+  std::move(callback).Run(true);
 }
 
 // static
@@ -339,10 +367,15 @@ NotificationPlatformBridgeAndroid::RegeneratedNotificationInfo::
     RegeneratedNotificationInfo() {}
 
 NotificationPlatformBridgeAndroid::RegeneratedNotificationInfo::
-    RegeneratedNotificationInfo(const std::string& origin,
-                                const std::string& tag,
-                                const std::string& webapk_package)
-    : origin(origin), tag(tag), webapk_package(webapk_package) {}
+    RegeneratedNotificationInfo(
+        const std::string& origin,
+        const std::string& service_worker_scope,
+        const std::string& tag,
+        const base::Optional<std::string>& webapk_package)
+    : origin(origin),
+      service_worker_scope(service_worker_scope),
+      tag(tag),
+      webapk_package(webapk_package) {}
 
 NotificationPlatformBridgeAndroid::RegeneratedNotificationInfo::
     ~RegeneratedNotificationInfo() {}

@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_PRERENDER_PRERENDER_TEST_UTILS_H_
 #define CHROME_BROWSER_PRERENDER_PRERENDER_TEST_UTILS_H_
 
-#include <deque>
 #include <functional>
 #include <memory>
 #include <set>
@@ -13,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/test/histogram_tester.h"
@@ -21,7 +21,7 @@
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/safe_browsing/test_safe_browsing_service.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "components/safe_browsing_db/test_database_manager.h"
+#include "components/safe_browsing/db/test_database_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "net/url_request/url_request_interceptor.h"
@@ -69,7 +69,9 @@ class FakeSafeBrowsingDatabaseManager
   // (in which that result will be communicated back via a call into the
   // client, and false will be returned).
   // Overrides SafeBrowsingDatabaseManager::CheckBrowseUrl.
-  bool CheckBrowseUrl(const GURL& gurl, Client* client) override;
+  bool CheckBrowseUrl(const GURL& gurl,
+                      const safe_browsing::SBThreatTypeSet& threat_types,
+                      Client* client) override;
 
   void SetThreatTypeForUrl(const GURL& url,
                            safe_browsing::SBThreatType threat_type) {
@@ -289,7 +291,7 @@ class TestPrerenderContentsFactory : public PrerenderContents::Factory {
     base::WeakPtr<TestPrerender> handle;
   };
 
-  std::deque<ExpectedContents> expected_contents_queue_;
+  base::circular_deque<ExpectedContents> expected_contents_queue_;
 
   DISALLOW_COPY_AND_ASSIGN(TestPrerenderContentsFactory);
 };
@@ -354,6 +356,12 @@ class PrerenderInProcessBrowserTest : virtual public InProcessBrowserTest {
 
   // Returns a string for pattern-matching TaskManager prerender entries.
   base::string16 MatchTaskManagerPrerender(const char* page_title);
+
+  // Returns a GURL for an EmbeddedTestServer that will serves the file
+  // |url_file| with |replacement_text| replacing |replacement_variable|.
+  GURL GetURLWithReplacement(const std::string& url_file,
+                             const std::string& replacement_variable,
+                             const std::string& replacement_text);
 
  protected:
   // For each FinalStatus in |expected_final_status_queue| creates a prerender

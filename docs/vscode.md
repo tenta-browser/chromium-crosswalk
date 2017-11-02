@@ -38,7 +38,7 @@ Here's what works well:
 Please keep this doc up-to-date. VS Code is still in active development and
 subject to changes. This doc is checked into the Chromium git repo, so if you
 make changes, read the [documentation
-guidelines](https://chromium.googlesource.com/chromium/src/+/lkgr/docs/documentation_guidelines.md)
+guidelines](https://chromium.googlesource.com/chromium/src/+/master/docs/documentation_guidelines.md)
 and [submit a change list](https://www.chromium.org/developers/contributing-code).
 
 All file paths and commands have been tested on Linux. Windows and Mac might
@@ -63,13 +63,13 @@ Next, we will install some useful extensions. Jump to the extensions window
 every day:
 
 *   ***C/C++*** -
-    Intellisense, code formatting, debugging.
+    Code formatting, debugging, Intellisense.
 *   ***Python*** -
     Linting, intellisense, code formatting, refactoring, debugging, snippets.
 *   ***Toggle Header/Source*** -
     Toggles between .cc and .h with `F4`. The C/C++ extension supports this as
-    well through `Alt+O`. Last time I checked this was very laggy, but they
-    might have improved it since, so this extension might not be necessary.
+    well through `Alt+O` but sometimes chooses the wrong file when there are
+    multiple files in the workspace that have the same name.
 *   ***Protobuf support*** -
     Syntax highlighting for .proto files.
 *   ***you-complete-me*** -
@@ -82,8 +82,11 @@ To install You-Complete-Me, enter these commands in a terminal:
 ```
 $ git clone https://github.com/Valloric/ycmd.git ~/.ycmd
 $ cd ~/.ycmd
+$ git submodule update --init --recursive
 $ ./build.py --clang-completer
 ```
+If it fails with "Your C++ compiler does NOT fully support C++11." but you know
+you have a good compiler, hack cpp/CMakeLists.txt to set CPP11_AVAILABLE true.
 
 The following extensions might be useful for you as well:
 
@@ -176,6 +179,8 @@ Remember to replace `<full_path_to_your_home>`!
   "workbench.editor.enablePreview": false,
   // Optional: Same for files opened from quick open (Ctrl+P).
   "workbench.editor.enablePreviewFromQuickOpen": false,
+  // Optional: Don't continuously fetch remote changes.
+  "git.autofetch": false,
 
   "files.associations": {
     // Adds xml syntax highlighting for grd files.
@@ -191,17 +196,28 @@ Remember to replace `<full_path_to_your_home>`!
     "out*/**": true
   },
 
+  "files.watcherExclude": {
+    // Don't watch out*/ and third_party/ for changes to fix an issue
+    // where vscode doesn't notice that files have changed.
+    // https://github.com/Microsoft/vscode/issues/3998
+    // There is currently another issue that requires a leading **/ for
+    // watcherExlude. Beware that this pattern might affect other out* folders
+    // like src/cc/output/.
+    "**/out*/**": true,
+    "**/third_party/**": true
+  },
+
   // Wider author column for annotator extension.
   "annotator.annotationColumnWidth": "24em",
 
   // C++ clang format settings.
-  "C_Cpp.clang_format_path": "<full_path_to_your_home>/depot_tools/clang-format",
+  "C_Cpp.clang_format_path": "${workspaceRoot}/third_party/depot_tools/clang-format",
   "C_Cpp.clang_format_sortIncludes": true,
   "C_Cpp.clang_format_formatOnSave": true,
 
   // YouCompleteMe
-  "ycmd.path": "<full_path_to_your_home>/.vim/bundle/YouCompleteMe/third_party/ycmd",
-  "ycmd.global_extra_config": "<full_path_to_your_home>/chromium/src/tools/vim/.ycm_extra_conf.py",
+  "ycmd.path": "<full_path_to_your_home>/.ycmd",
+  "ycmd.global_extra_config": "${workspaceRoot}/tools/vim/chromium.ycm_extra_conf.py",
   "ycmd.confirm_extra_conf": false,
 }
 ```
@@ -224,67 +240,112 @@ You might have to adjust the commands to your situation and needs.
     "command": "ninja -C out/Debug -j 2000 chrome",
     "isShellCommand": true,
     "isTestCommand": true,
-    "problemMatcher": {
+    "problemMatcher": [
+    {
       "owner": "cpp",
       "fileLocation": ["relative", "${workspaceRoot}"],
       "pattern": {
         "regexp": "^../../(.*):(\\d+):(\\d+):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
         "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
       }
-    }
+    },
+    {
+      "owner": "cpp",
+      "fileLocation": ["relative", "${workspaceRoot}"],
+      "pattern": {
+        "regexp": "^../../(.*?):(.*):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
+        "file": 1, "severity": 3, "message": 4
+      }
+    }]
   },
   {
     "taskName": "2-build_chrome_release",
     "command": "ninja -C out/Release -j 2000 chrome",
     "isShellCommand": true,
     "isBuildCommand": true,
-    "problemMatcher": {
+    "problemMatcher": [
+    {
       "owner": "cpp",
       "fileLocation": ["relative", "${workspaceRoot}"],
       "pattern": {
         "regexp": "^../../(.*):(\\d+):(\\d+):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
         "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
       }
-    }
+    },
+    {
+      "owner": "cpp",
+      "fileLocation": ["relative", "${workspaceRoot}"],
+      "pattern": {
+        "regexp": "^../../(.*?):(.*):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
+        "file": 1, "severity": 3, "message": 4
+      }
+    }]
   },
   {
     "taskName": "3-build_all_debug",
     "command": "ninja -C out/Debug -j 2000",
     "isShellCommand": true,
-    "problemMatcher": {
+    "problemMatcher": [
+    {
       "owner": "cpp",
       "fileLocation": ["relative", "${workspaceRoot}"],
       "pattern": {
         "regexp": "^../../(.*):(\\d+):(\\d+):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
         "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
       }
-    }
+    },
+    {
+      "owner": "cpp",
+      "fileLocation": ["relative", "${workspaceRoot}"],
+      "pattern": {
+        "regexp": "^../../(.*?):(.*):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
+        "file": 1, "severity": 3, "message": 4
+      }
+    }]
   },
   {
     "taskName": "4-build_all_release",
     "command": "ninja -C out/Release -j 2000",
     "isShellCommand": true,
-    "problemMatcher": {
+    "problemMatcher": [
+    {
       "owner": "cpp",
       "fileLocation": ["relative", "${workspaceRoot}"],
       "pattern": {
         "regexp": "^../../(.*):(\\d+):(\\d+):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
         "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
       }
-    }
+    },
+    {
+      "owner": "cpp",
+      "fileLocation": ["relative", "${workspaceRoot}"],
+      "pattern": {
+        "regexp": "^../../(.*?):(.*):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
+        "file": 1, "severity": 3, "message": 4
+      }
+    }]
   },
   {
     "taskName": "5-build_test_debug",
     "command": "ninja -C out/Debug -j 2000 unit_tests components_unittests browser_tests",
     "isShellCommand": true,
-    "problemMatcher": {
+    "problemMatcher": [
+    {
       "owner": "cpp",
       "fileLocation": ["relative", "${workspaceRoot}"],
       "pattern": {
         "regexp": "^../../(.*):(\\d+):(\\d+):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
         "file": 1, "line": 2, "column": 3, "severity": 4, "message": 5
       }
-    }
+    },
+    {
+      "owner": "cpp",
+      "fileLocation": ["relative", "${workspaceRoot}"],
+      "pattern": {
+        "regexp": "^../../(.*?):(.*):\\s+(warning|\\w*\\s?error):\\s+(.*)$",
+        "file": 1, "severity": 3, "message": 4
+      }
+    }]
   }]
 }
 ```

@@ -4,13 +4,13 @@
 
 #include "platform/scheduler/child/webthread_impl_for_worker_scheduler.h"
 
+#include <memory>
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/time/default_tick_clock.h"
-#include "public/platform/scheduler/base/task_queue.h"
+#include "platform/scheduler/base/task_queue.h"
 #include "platform/scheduler/child/scheduler_tqm_delegate_impl.h"
 #include "platform/scheduler/child/web_scheduler_impl.h"
 #include "platform/scheduler/child/web_task_runner_impl.h"
@@ -62,16 +62,18 @@ void WebThreadImplForWorkerScheduler::InitOnThread(
     base::WaitableEvent* completion) {
   // TODO(alexclarke): Do we need to unify virtual time for workers and the
   // main thread?
+  task_runner_delegate_ = SchedulerTqmDelegateImpl::Create(
+      thread_->message_loop(), std::make_unique<base::DefaultTickClock>());
   worker_scheduler_ = CreateWorkerScheduler();
   worker_scheduler_->Init();
-  task_runner_ = worker_scheduler_->DefaultTaskRunner();
+  task_queue_ = worker_scheduler_->DefaultTaskQueue();
   idle_task_runner_ = worker_scheduler_->IdleTaskRunner();
   web_scheduler_.reset(new WebSchedulerImpl(
       worker_scheduler_.get(), worker_scheduler_->IdleTaskRunner(),
-      worker_scheduler_->DefaultTaskRunner(),
-      worker_scheduler_->DefaultTaskRunner()));
+      worker_scheduler_->DefaultTaskQueue(),
+      worker_scheduler_->DefaultTaskQueue()));
   base::MessageLoop::current()->AddDestructionObserver(this);
-  web_task_runner_ = WebTaskRunnerImpl::Create(task_runner_);
+  web_task_runner_ = WebTaskRunnerImpl::Create(task_queue_);
   completion->Signal();
 }
 
@@ -82,7 +84,7 @@ void WebThreadImplForWorkerScheduler::RestoreTaskRunnerOnThread(
 }
 
 void WebThreadImplForWorkerScheduler::WillDestroyCurrentMessageLoop() {
-  task_runner_ = nullptr;
+  task_queue_ = nullptr;
   idle_task_runner_ = nullptr;
   web_scheduler_.reset();
   worker_scheduler_.reset();
@@ -91,8 +93,6 @@ void WebThreadImplForWorkerScheduler::WillDestroyCurrentMessageLoop() {
 
 std::unique_ptr<scheduler::WorkerScheduler>
 WebThreadImplForWorkerScheduler::CreateWorkerScheduler() {
-  task_runner_delegate_ = SchedulerTqmDelegateImpl::Create(
-      thread_->message_loop(), base::MakeUnique<base::DefaultTickClock>());
   return WorkerScheduler::Create(task_runner_delegate_);
 }
 
@@ -104,9 +104,9 @@ blink::WebScheduler* WebThreadImplForWorkerScheduler::Scheduler() const {
   return web_scheduler_.get();
 }
 
-base::SingleThreadTaskRunner* WebThreadImplForWorkerScheduler::GetTaskRunner()
-    const {
-  return task_runner_.get();
+scoped_refptr<base::SingleThreadTaskRunner>
+WebThreadImplForWorkerScheduler::GetTaskRunner() const {
+  return task_queue_;
 }
 
 SingleThreadIdleTaskRunner* WebThreadImplForWorkerScheduler::GetIdleTaskRunner()

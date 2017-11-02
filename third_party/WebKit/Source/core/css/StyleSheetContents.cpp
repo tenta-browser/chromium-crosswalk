@@ -22,6 +22,7 @@
 
 #include "core/css/CSSStyleSheet.h"
 #include "core/css/CSSTiming.h"
+#include "core/css/StyleEngine.h"
 #include "core/css/StylePropertySet.h"
 #include "core/css/StyleRule.h"
 #include "core/css/StyleRuleImport.h"
@@ -29,7 +30,6 @@
 #include "core/css/parser/CSSParser.h"
 #include "core/dom/Document.h"
 #include "core/dom/Node.h"
-#include "core/dom/StyleEngine.h"
 #include "core/frame/UseCounter.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/loader/resource/CSSStyleSheetResource.h"
@@ -223,9 +223,9 @@ void StyleSheetContents::ClearRules() {
     DCHECK_EQ(import_rules_.at(i)->ParentStyleSheet(), this);
     import_rules_[i]->ClearParentStyleSheet();
   }
-  import_rules_.Clear();
-  namespace_rules_.Clear();
-  child_rules_.Clear();
+  import_rules_.clear();
+  namespace_rules_.clear();
+  child_rules_.clear();
 }
 
 bool StyleSheetContents::WrapperInsertRule(StyleRuleBase* rule,
@@ -297,7 +297,7 @@ bool StyleSheetContents::WrapperDeleteRule(unsigned index) {
     import_rules_[index]->ClearParentStyleSheet();
     if (import_rules_[index]->IsFontFaceRule())
       NotifyRemoveFontFaceRule(ToStyleRuleFontFace(import_rules_[index].Get()));
-    import_rules_.erase(index);
+    import_rules_.EraseAt(index);
     return true;
   }
   index -= import_rules_.size();
@@ -305,14 +305,14 @@ bool StyleSheetContents::WrapperDeleteRule(unsigned index) {
   if (index < namespace_rules_.size()) {
     if (!child_rules_.IsEmpty())
       return false;
-    namespace_rules_.erase(index);
+    namespace_rules_.EraseAt(index);
     return true;
   }
   index -= namespace_rules_.size();
 
   if (child_rules_[index]->IsFontFaceRule())
     NotifyRemoveFontFaceRule(ToStyleRuleFontFace(child_rules_[index].Get()));
-  child_rules_.erase(index);
+  child_rules_.EraseAt(index);
   return true;
 }
 
@@ -373,7 +373,7 @@ void StyleSheetContents::ParseAuthorStyleSheet(
   const CSSParserContext* context =
       CSSParserContext::CreateWithStyleSheetContents(ParserContext(), this);
   CSSParser::ParseSheet(context, this, sheet_text,
-                        RuntimeEnabledFeatures::lazyParseCSSEnabled());
+                        RuntimeEnabledFeatures::LazyParseCSSEnabled());
 
   DEFINE_STATIC_LOCAL(CustomCountHistogram, parse_histogram,
                       ("Style.AuthorStyleSheet.ParseTime", 0, 10000000, 50));

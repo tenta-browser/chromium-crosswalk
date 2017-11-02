@@ -8,10 +8,10 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIWebkitBoxFlexGroup::parseSingleValue(
+const CSSValue* CSSPropertyAPIWebkitBoxFlexGroup::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   return CSSPropertyParserHelpers::ConsumeInteger(range, 0);
 }
 

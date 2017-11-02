@@ -20,7 +20,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "third_party/skia/include/core/SkRect.h"
-#include "third_party/skia/include/core/SkRegion.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/platform/x11/x11_event_source.h"
@@ -41,10 +40,7 @@ namespace {
 class MinimizeWaiter : public X11PropertyChangeWaiter {
  public:
   explicit MinimizeWaiter(XID window)
-      : X11PropertyChangeWaiter(window, "_NET_WM_STATE") {
-    const char* const kAtomsToCache[] = {"_NET_WM_STATE_HIDDEN", nullptr};
-    atom_cache_.reset(new ui::X11AtomCache(gfx::GetXDisplay(), kAtomsToCache));
-  }
+      : X11PropertyChangeWaiter(window, "_NET_WM_STATE") {}
 
   ~MinimizeWaiter() override {}
 
@@ -54,13 +50,11 @@ class MinimizeWaiter : public X11PropertyChangeWaiter {
     std::vector<Atom> wm_states;
     if (ui::GetAtomArrayProperty(xwindow(), "_NET_WM_STATE", &wm_states)) {
       auto it = std::find(wm_states.cbegin(), wm_states.cend(),
-                          atom_cache_->GetAtom("_NET_WM_STATE_HIDDEN"));
+                          gfx::GetAtom("_NET_WM_STATE_HIDDEN"));
       return it == wm_states.cend();
     }
     return true;
   }
-
-  std::unique_ptr<ui::X11AtomCache> atom_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(MinimizeWaiter);
 };
@@ -307,10 +301,10 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangular) {
   std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 100, 100)));
   XID xid1 = widget1->GetNativeWindow()->GetHost()->GetAcceleratedWidget();
-  auto skregion1 = base::MakeUnique<SkRegion>();
-  skregion1->op(SkIRect::MakeXYWH(0, 10, 10, 90), SkRegion::kUnion_Op);
-  skregion1->op(SkIRect::MakeXYWH(10, 0, 90, 100), SkRegion::kUnion_Op);
-  widget1->SetShape(std::move(skregion1));
+  auto shape1 = base::MakeUnique<Widget::ShapeRects>();
+  shape1->emplace_back(0, 10, 10, 90);
+  shape1->emplace_back(10, 0, 90, 100);
+  widget1->SetShape(std::move(shape1));
 
   SkRegion skregion2;
   skregion2.op(SkIRect::MakeXYWH(0, 10, 10, 90), SkRegion::kUnion_Op);
@@ -346,10 +340,10 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangularEmptyShape) {
   std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 100, 100)));
   XID xid1 = widget1->GetNativeWindow()->GetHost()->GetAcceleratedWidget();
-  auto skregion1 = base::MakeUnique<SkRegion>();
-  skregion1->op(SkIRect::MakeXYWH(0, 0, 0, 0), SkRegion::kUnion_Op);
-  // Widget takes ownership of |skregion1|.
-  widget1->SetShape(std::move(skregion1));
+  auto shape1 = base::MakeUnique<Widget::ShapeRects>();
+  shape1->emplace_back();
+  // Widget takes ownership of |shape1|.
+  widget1->SetShape(std::move(shape1));
 
   XID xids[] = { xid1 };
   StackingClientListWaiter stack_waiter(xids, arraysize(xids));
@@ -367,9 +361,9 @@ TEST_F(X11TopmostWindowFinderTest, NonRectangularNullShape) {
   std::unique_ptr<Widget> widget1(
       CreateAndShowWidget(gfx::Rect(100, 100, 100, 100)));
   XID xid1 = widget1->GetNativeWindow()->GetHost()->GetAcceleratedWidget();
-  auto skregion1 = base::MakeUnique<SkRegion>();
-  skregion1->op(SkIRect::MakeXYWH(0, 0, 0, 0), SkRegion::kUnion_Op);
-  widget1->SetShape(std::move(skregion1));
+  auto shape1 = base::MakeUnique<Widget::ShapeRects>();
+  shape1->emplace_back();
+  widget1->SetShape(std::move(shape1));
 
   // Remove the shape - this is now just a normal window.
   widget1->SetShape(nullptr);
@@ -400,12 +394,8 @@ TEST_F(X11TopmostWindowFinderTest, Menu) {
                                CWOverrideRedirect,
                                &swa);
   {
-    const char* const kAtomsToCache[] = {"_NET_WM_WINDOW_TYPE_MENU", nullptr};
-    ui::X11AtomCache atom_cache(gfx::GetXDisplay(), kAtomsToCache);
-    ui::SetAtomProperty(menu_xid,
-                        "_NET_WM_WINDOW_TYPE",
-                        "ATOM",
-                        atom_cache.GetAtom("_NET_WM_WINDOW_TYPE_MENU"));
+    ui::SetAtomProperty(menu_xid, "_NET_WM_WINDOW_TYPE", "ATOM",
+                        gfx::GetAtom("_NET_WM_WINDOW_TYPE_MENU"));
   }
   ui::SetUseOSWindowFrame(menu_xid, false);
   ShowAndSetXWindowBounds(menu_xid, gfx::Rect(140, 110, 100, 100));

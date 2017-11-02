@@ -14,9 +14,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "content/public/browser/browser_context.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
+#include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/service_names.mojom.h"
@@ -26,9 +26,12 @@
 #include "headless/lib/browser/headless_browser_impl.h"
 #include "headless/lib/browser/headless_browser_main_parts.h"
 #include "headless/lib/browser/headless_devtools_manager_delegate.h"
+#include "headless/lib/browser/headless_quota_permission_context.h"
 #include "headless/lib/headless_macros.h"
+#include "net/base/url_util.h"
 #include "storage/browser/quota/quota_settings.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/gfx/switches.h"
 
 #if defined(HEADLESS_USE_BREAKPAD)
@@ -37,6 +40,11 @@
 #include "components/crash/content/browser/crash_handler_host_linux.h"
 #include "content/public/common/content_descriptors.h"
 #endif  // defined(HEADLESS_USE_BREAKPAD)
+
+#if BUILDFLAG(ENABLE_BASIC_PRINTING) && !defined(CHROME_MULTIPLE_DLL_CHILD)
+#include "base/strings/utf_string_conversions.h"
+#include "components/printing/service/public/interfaces/pdf_compositor.mojom.h"
+#endif
 
 namespace headless {
 
@@ -123,7 +131,7 @@ void HeadlessContentBrowserClient::OverrideWebkitPrefs(
     content::WebPreferences* prefs) {
   auto* browser_context = HeadlessBrowserContextImpl::From(
       render_view_host->GetProcess()->GetBrowserContext());
-  const base::Callback<void(headless::WebPreferences*)>& callback =
+  const base::Callback<void(WebPreferences*)>& callback =
       browser_context->options()->override_web_preferences_callback();
   if (callback)
     callback.Run(prefs);
@@ -137,13 +145,29 @@ HeadlessContentBrowserClient::GetDevToolsManagerDelegate() {
 std::unique_ptr<base::Value>
 HeadlessContentBrowserClient::GetServiceManifestOverlay(
     base::StringPiece name) {
-  if (name != content::mojom::kBrowserServiceName ||
-      browser_->options()->mojo_service_names.empty())
-    return nullptr;
+  if (name == content::mojom::kBrowserServiceName)
+    return GetBrowserServiceManifestOverlay();
+  if (name == content::mojom::kRendererServiceName)
+    return GetRendererServiceManifestOverlay();
+  if (name == content::mojom::kPackagedServicesServiceName)
+    return GetPackagedServicesServiceManifestOverlay();
 
+  return nullptr;
+}
+
+void HeadlessContentBrowserClient::RegisterOutOfProcessServices(
+    OutOfProcessServiceMap* services) {
+#if BUILDFLAG(ENABLE_BASIC_PRINTING) && !defined(CHROME_MULTIPLE_DLL_CHILD)
+  (*services)[printing::mojom::kServiceName] =
+      base::ASCIIToUTF16("PDF Compositor Service");
+#endif
+}
+
+std::unique_ptr<base::Value>
+HeadlessContentBrowserClient::GetBrowserServiceManifestOverlay() {
   base::StringPiece manifest_template =
       ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
-          IDR_HEADLESS_BROWSER_MANIFEST_OVERLAY_TEMPLATE);
+          IDR_HEADLESS_BROWSER_MANIFEST_OVERLAY);
   std::unique_ptr<base::Value> manifest =
       base::JSONReader::Read(manifest_template);
 
@@ -161,22 +185,40 @@ HeadlessContentBrowserClient::GetServiceManifestOverlay(
   return manifest;
 }
 
+std::unique_ptr<base::Value>
+HeadlessContentBrowserClient::GetRendererServiceManifestOverlay() {
+  base::StringPiece manifest_template =
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
+          IDR_HEADLESS_RENDERER_MANIFEST_OVERLAY);
+  return base::JSONReader::Read(manifest_template);
+}
+
+std::unique_ptr<base::Value>
+HeadlessContentBrowserClient::GetPackagedServicesServiceManifestOverlay() {
+  base::StringPiece manifest_template =
+      ui::ResourceBundle::GetSharedInstance().GetRawDataResource(
+          IDR_HEADLESS_PACKAGED_SERVICES_MANIFEST_OVERLAY);
+  return base::JSONReader::Read(manifest_template);
+}
+
+content::QuotaPermissionContext*
+HeadlessContentBrowserClient::CreateQuotaPermissionContext() {
+  return new HeadlessQuotaPermissionContext();
+}
+
 void HeadlessContentBrowserClient::GetQuotaSettings(
     content::BrowserContext* context,
     content::StoragePartition* partition,
-    const storage::OptionalQuotaSettingsCallback& callback) {
-  content::BrowserThread::PostTaskAndReplyWithResult(
-      content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&storage::CalculateNominalDynamicSettings,
-                 partition->GetPath(), context->IsOffTheRecord()),
-      callback);
+    storage::OptionalQuotaSettingsCallback callback) {
+  storage::GetNominalDynamicSettings(
+      partition->GetPath(), context->IsOffTheRecord(), std::move(callback));
 }
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
 void HeadlessContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
     const base::CommandLine& command_line,
     int child_process_id,
-    content::FileDescriptorInfo* mappings) {
+    content::PosixFileDescriptorInfo* mappings) {
 #if defined(HEADLESS_USE_BREAKPAD)
   int crash_signal_fd = GetCrashSignalFD(command_line, *browser_->options());
   if (crash_signal_fd >= 0)
@@ -201,6 +243,61 @@ void HeadlessContentBrowserClient::AppendExtraCommandLineSwitches(
   if (breakpad::IsCrashReporterEnabled())
     command_line->AppendSwitch(::switches::kEnableCrashReporter);
 #endif  // defined(HEADLESS_USE_BREAKPAD)
+
+  // If we're spawning a renderer, then override the language switch.
+  if (command_line->GetSwitchValueASCII(::switches::kProcessType) ==
+      ::switches::kRendererProcess) {
+    content::RenderProcessHost* render_process_host =
+        content::RenderProcessHost::FromID(child_process_id);
+    if (render_process_host) {
+      HeadlessBrowserContextImpl* headless_browser_context_impl =
+          HeadlessBrowserContextImpl::From(
+              render_process_host->GetBrowserContext());
+      std::vector<base::StringPiece> languages = base::SplitStringPiece(
+          headless_browser_context_impl->options()->accept_language(), ",",
+          base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+      if (!languages.empty()) {
+        command_line->AppendSwitchASCII(::switches::kLang,
+                                        languages[0].as_string());
+      }
+    }
+  }
+}
+
+void HeadlessContentBrowserClient::AllowCertificateError(
+    content::WebContents* web_contents,
+    int cert_error,
+    const net::SSLInfo& ssl_info,
+    const GURL& request_url,
+    content::ResourceType resource_type,
+    bool strict_enforcement,
+    bool expired_previous_decision,
+    const base::Callback<void(content::CertificateRequestResultType)>&
+        callback) {
+  if (!callback.is_null()) {
+    // If --allow-insecure-localhost is specified, and the request
+    // was for localhost, then the error was not fatal.
+    bool allow_localhost = base::CommandLine::ForCurrentProcess()->HasSwitch(
+        ::switches::kAllowInsecureLocalhost);
+    if (allow_localhost && net::IsLocalhost(request_url.host())) {
+      callback.Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_CONTINUE);
+      return;
+    }
+
+    callback.Run(content::CERTIFICATE_REQUEST_RESULT_TYPE_DENY);
+  }
+}
+
+void HeadlessContentBrowserClient::ResourceDispatcherHostCreated() {
+  resource_dispatcher_host_delegate_.reset(
+      new HeadlessResourceDispatcherHostDelegate(
+          browser_->options()->enable_resource_scheduler));
+  content::ResourceDispatcherHost::Get()->SetDelegate(
+      resource_dispatcher_host_delegate_.get());
+}
+
+net::NetLog* HeadlessContentBrowserClient::GetNetLog() {
+  return browser_->browser_main_parts()->net_log();
 }
 
 }  // namespace headless

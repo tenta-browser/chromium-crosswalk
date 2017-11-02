@@ -3,65 +3,79 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow HTML",
-      "bounds": [800, 408],
-      "drawsContent": true
+      "bounds": [800, 408]
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV",
-      "position": [8, 100],
       "bounds": [10, 10],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#FF0000"
+      "backgroundColor": "#FF0000",
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow HTML (foreground) Layer",
-      "bounds": [800, 408],
-      "drawsContent": true
+      "bounds": [800, 408]
     },
     {
       "name": "LayoutBlockFlow DIV",
       "position": [108, 100],
-      "bounds": [300, 300],
-      "shouldFlattenTransform": false,
-      "drawsContent": true
-    },
-    {
-      "name": "Scrolling Layer",
-      "bounds": [285, 300],
-      "shouldFlattenTransform": false
-    },
-    {
-      "name": "Scrolling Contents Layer",
-      "bounds": [285, 1000]
-    },
-    {
-      "name": "Overflow Controls Host Layer",
       "bounds": [300, 300]
     },
     {
+      "name": "Scrolling Layer",
+      "position": [108, 100],
+      "bounds": [285, 300],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "position": [108, 100],
+      "bounds": [285, 1000],
+      "drawsContent": false
+    },
+    {
+      "name": "Overflow Controls Host Layer",
+      "position": [108, 100],
+      "bounds": [300, 300],
+      "drawsContent": false
+    },
+    {
       "name": "Vertical Scrollbar Layer",
-      "position": [285, 0],
-      "bounds": [15, 300]
+      "position": [393, 100],
+      "bounds": [15, 300],
+      "drawsContent": false
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV",
       "position": [108, 100],
-      "bounds": [285, 1000]
+      "bounds": [285, 1000],
+      "drawsContent": false
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (relative positioned) DIV)",
       "position": [108, 100],
-      "bounds": [285, 1000],
-      "drawsContent": true
+      "bounds": [285, 1000]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 100, 0, 1]
+      ]
     }
   ]
 }

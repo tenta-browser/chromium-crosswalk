@@ -8,10 +8,12 @@
 #include "core/CoreExport.h"
 #include "core/dom/ExecutionContext.h"
 #include "platform/Supplementable.h"
-#include "wtf/HashSet.h"
-#include "wtf/Vector.h"
-#include "wtf/text/StringHash.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/HashSet.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/StringHash.h"
+#include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebTrialTokenValidator.h"
+#include "third_party/WebKit/common/origin_trials/trial_token_validator.h"
 
 namespace blink {
 
@@ -25,7 +27,7 @@ class WebTrialTokenValidator;
 // context.  This class is not for direct use by feature implementers.
 // Instead, the OriginTrials generated namespace provides a method for each
 // trial to check if it is enabled. Experimental features must be defined in
-// RuntimeEnabledFeatures.json5, which is used to generate OriginTrials.h/cpp.
+// runtime_enabled_features.json5, which is used to generate origin_trials.h/cc.
 //
 // Origin trials are defined by string names, provided by the implementers. The
 // framework does not maintain an enum or constant list for trial names.
@@ -40,7 +42,8 @@ class CORE_EXPORT OriginTrialContext final
  public:
   enum CreateMode { kCreateIfNotExists, kDontCreateIfNotExists };
 
-  OriginTrialContext(ExecutionContext&, WebTrialTokenValidator*);
+  OriginTrialContext(ExecutionContext&,
+                     std::unique_ptr<WebTrialTokenValidator>);
 
   static const char* SupplementName();
 
@@ -68,6 +71,10 @@ class CORE_EXPORT OriginTrialContext final
   void AddToken(const String& token);
   void AddTokens(const Vector<String>& tokens);
 
+  // Forces a given origin-trial-enabled feature to be enabled in this context
+  // and immediately adds required bindings to already initialized JS contexts.
+  void AddFeature(const String& feature);
+
   // Returns true if the trial (and therefore the feature or features it
   // controls) should be considered enabled for the current execution context.
   bool IsTrialEnabled(const String& trial_name);
@@ -94,7 +101,7 @@ class CORE_EXPORT OriginTrialContext final
   Vector<String> tokens_;
   HashSet<String> enabled_trials_;
   HashSet<String> installed_trials_;
-  WebTrialTokenValidator* trial_token_validator_;
+  std::unique_ptr<WebTrialTokenValidator> trial_token_validator_;
 };
 
 }  // namespace blink

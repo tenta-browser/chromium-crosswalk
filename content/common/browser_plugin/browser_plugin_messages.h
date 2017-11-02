@@ -2,13 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Multiply-included message header, no traditional include guard.
+#ifndef CONTENT_COMMON_BROWSER_PLUGIN_BROWSER_PLUGIN_MESSAGES_H_
+#define CONTENT_COMMON_BROWSER_PLUGIN_BROWSER_PLUGIN_MESSAGES_H_
 
 #include <string>
 
 #include "base/process/process.h"
-#include "cc/surfaces/surface.h"
-#include "cc/surfaces/surface_info.h"
+#include "cc/ipc/cc_param_traits.h"
+#include "components/viz/common/surfaces/surface_info.h"
 #include "content/common/content_export.h"
 #include "content/common/content_param_traits.h"
 #include "content/common/cursors/webcursor.h"
@@ -19,8 +20,8 @@
 #include "ipc/ipc_message_utils.h"
 #include "third_party/WebKit/public/platform/WebDragOperation.h"
 #include "third_party/WebKit/public/platform/WebFocusType.h"
-#include "third_party/WebKit/public/web/WebCompositionUnderline.h"
 #include "third_party/WebKit/public/web/WebDragStatus.h"
+#include "third_party/WebKit/public/web/WebImeTextSpan.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
@@ -46,7 +47,7 @@ IPC_STRUCT_END()
 
 IPC_STRUCT_BEGIN(BrowserPluginHostMsg_SetComposition_Params)
   IPC_STRUCT_MEMBER(base::string16, text)
-  IPC_STRUCT_MEMBER(std::vector<blink::WebCompositionUnderline>, underlines)
+  IPC_STRUCT_MEMBER(std::vector<blink::WebImeTextSpan>, ime_text_spans)
   IPC_STRUCT_MEMBER(gfx::Range, replacement_range)
   IPC_STRUCT_MEMBER(int, selection_start)
   IPC_STRUCT_MEMBER(int, selection_end)
@@ -58,7 +59,10 @@ IPC_STRUCT_END()
 // These messages are from the embedder to the browser process.
 // Most messages from the embedder to the browser process are CONTROL because
 // they are routed to the appropriate BrowserPluginGuest based on the
-// browser_plugin_instance_id which is unique per embedder process.
+// |browser_plugin_instance_id| which is unique per embedder process.
+// |browser_plugin_instance_id| is only used by BrowserPluginMessageFilter to
+// find the right BrowserPluginGuest. It should not be needed by the final IPC
+// handler.
 
 // This message is sent from BrowserPlugin to BrowserPluginGuest to issue an
 // edit command.
@@ -79,17 +83,17 @@ IPC_MESSAGE_CONTROL2(BrowserPluginHostMsg_ImeSetComposition,
 
 // This message is sent from BrowserPlugin to BrowserPluginGuest to notify that
 // deleting the current composition and inserting specified text is requested.
-IPC_MESSAGE_CONTROL5(
-    BrowserPluginHostMsg_ImeCommitText,
-    int /* browser_plugin_instance_id */,
-    base::string16 /* text */,
-    std::vector<blink::WebCompositionUnderline> /* underlines */,
-    gfx::Range /* replacement_range */,
-    int /* relative_cursor_pos */)
+IPC_MESSAGE_CONTROL5(BrowserPluginHostMsg_ImeCommitText,
+                     int /* browser_plugin_instance_id */,
+                     base::string16 /* text */,
+                     std::vector<blink::WebImeTextSpan> /* ime_text_spans */,
+                     gfx::Range /* replacement_range */,
+                     int /* relative_cursor_pos */)
 
 // This message is sent from BrowserPlugin to BrowserPluginGuest to notify that
 // inserting the current composition is requested.
-IPC_MESSAGE_CONTROL1(BrowserPluginHostMsg_ImeFinishComposingText,
+IPC_MESSAGE_CONTROL2(BrowserPluginHostMsg_ImeFinishComposingText,
+                     int /* browser_plugin_instance_id */,
                      bool /* keep selection */)
 
 // Deletes the current selection plus the specified number of characters before
@@ -149,18 +153,19 @@ IPC_MESSAGE_CONTROL1(BrowserPluginHostMsg_UnlockMouse_ACK,
                      int /* browser_plugin_instance_id */)
 
 // Sent when plugin's position has changed.
-IPC_MESSAGE_CONTROL2(BrowserPluginHostMsg_UpdateGeometry,
+IPC_MESSAGE_CONTROL3(BrowserPluginHostMsg_UpdateGeometry,
                      int /* browser_plugin_instance_id */,
-                     gfx::Rect /* view_rect */)
+                     gfx::Rect /* view_rect */,
+                     viz::LocalSurfaceId /* local_surface_id */)
 
 IPC_MESSAGE_ROUTED2(BrowserPluginHostMsg_SatisfySequence,
                     int /* browser_plugin_instance_id */,
-                    cc::SurfaceSequence /* sequence */)
+                    viz::SurfaceSequence /* sequence */)
 
 IPC_MESSAGE_ROUTED3(BrowserPluginHostMsg_RequireSequence,
                     int /* browser_plugin_instance_id */,
-                    cc::SurfaceId /* surface_id */,
-                    cc::SurfaceSequence /* sequence */)
+                    viz::SurfaceId /* surface_id */,
+                    viz::SurfaceSequence /* sequence */)
 
 // -----------------------------------------------------------------------------
 // These messages are from the browser process to the embedder.
@@ -170,8 +175,9 @@ IPC_MESSAGE_ROUTED3(BrowserPluginHostMsg_RequireSequence,
 IPC_MESSAGE_CONTROL1(BrowserPluginMsg_GuestGone,
                      int /* browser_plugin_instance_id */)
 
-IPC_MESSAGE_CONTROL1(BrowserPluginMsg_GuestReady,
-                     int /* browser_plugin_instance_id */)
+IPC_MESSAGE_CONTROL2(BrowserPluginMsg_GuestReady,
+                     int /* browser_plugin_instance_id */,
+                     viz::FrameSinkId /* frame_sink_id */)
 
 // When the user tabs to the end of the tab stops of a guest, the browser
 // process informs the embedder to tab out of the browser plugin.
@@ -192,8 +198,8 @@ IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetCursor,
 
 IPC_MESSAGE_CONTROL3(BrowserPluginMsg_SetChildFrameSurface,
                      int /* browser_plugin_instance_id */,
-                     cc::SurfaceInfo /* surface_info */,
-                     cc::SurfaceSequence /* sequence */)
+                     viz::SurfaceInfo /* surface_info */,
+                     viz::SurfaceSequence /* sequence */)
 
 // Forwards a PointerLock Unlock request to the BrowserPlugin.
 IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetMouseLock,
@@ -204,3 +210,5 @@ IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetMouseLock,
 IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetTooltipText,
                      int /* browser_plugin_instance_id */,
                      base::string16 /* tooltip_text */)
+
+#endif  // CONTENT_COMMON_BROWSER_PLUGIN_BROWSER_PLUGIN_MESSAGES_H_

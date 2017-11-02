@@ -31,8 +31,7 @@ class ShellAppDelegate : public AppDelegate {
                       content::WebContents* new_contents,
                       WindowOpenDisposition disposition,
                       const gfx::Rect& initial_rect,
-                      bool user_gesture,
-                      bool* was_blocked) override;
+                      bool user_gesture) override;
   content::ColorChooser* ShowColorChooser(content::WebContents* web_contents,
                                           SkColor initial_color) override;
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
@@ -46,13 +45,14 @@ class ShellAppDelegate : public AppDelegate {
                                   const GURL& security_origin,
                                   content::MediaStreamType type,
                                   const Extension* extension) override;
-  int PreferredIconSize() override;
+  int PreferredIconSize() const override;
   void SetWebContentsBlocked(content::WebContents* web_contents,
                              bool blocked) override;
   bool IsWebContentsVisible(content::WebContents* web_contents) override;
   void SetTerminatingCallback(const base::Closure& callback) override;
   void OnHide() override {}
   void OnShow() override {}
+  bool TakeFocus(content::WebContents* web_contents, bool reverse) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ShellAppDelegate);

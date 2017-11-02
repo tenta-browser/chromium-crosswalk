@@ -99,38 +99,38 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
   void SetWindowTitle(const base::string16& title) { title_ = title; }
   void EnableUIControl(UIControl control, bool is_enabled) {
     if (control == BACK_BUTTON) {
-      back_button_->SetState(is_enabled ? views::CustomButton::STATE_NORMAL
-          : views::CustomButton::STATE_DISABLED);
+      back_button_->SetState(is_enabled ? views::Button::STATE_NORMAL
+                                        : views::Button::STATE_DISABLED);
     } else if (control == FORWARD_BUTTON) {
-      forward_button_->SetState(is_enabled ? views::CustomButton::STATE_NORMAL
-          : views::CustomButton::STATE_DISABLED);
+      forward_button_->SetState(is_enabled ? views::Button::STATE_NORMAL
+                                           : views::Button::STATE_DISABLED);
     } else if (control == STOP_BUTTON) {
-      stop_button_->SetState(is_enabled ? views::CustomButton::STATE_NORMAL
-          : views::CustomButton::STATE_DISABLED);
+      stop_button_->SetState(is_enabled ? views::Button::STATE_NORMAL
+                                        : views::Button::STATE_DISABLED);
     }
   }
 
  private:
   // Initialize the UI control contained in shell window
   void InitShellWindow() {
-    set_background(views::Background::CreateStandardPanelBackground());
+    SetBackground(views::CreateStandardPanelBackground());
 
-    views::GridLayout* layout = new views::GridLayout(this);
-    SetLayoutManager(layout);
+    views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
 
     views::ColumnSet* column_set = layout->AddColumnSet(0);
-    column_set->AddPaddingColumn(0, 2);
+    if (!shell_->hide_toolbar())
+      column_set->AddPaddingColumn(0, 2);
     column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1,
                           views::GridLayout::USE_PREF, 0, 0);
-    column_set->AddPaddingColumn(0, 2);
-
-    layout->AddPaddingRow(0, 2);
+    if (!shell_->hide_toolbar())
+      column_set->AddPaddingColumn(0, 2);
 
     // Add toolbar buttons and URL text field
-    {
+    if (!shell_->hide_toolbar()) {
+      layout->AddPaddingRow(0, 2);
       layout->StartRow(0, 0);
-      views::GridLayout* toolbar_layout = new views::GridLayout(toolbar_view_);
-      toolbar_view_->SetLayoutManager(toolbar_layout);
+      views::GridLayout* toolbar_layout =
+          views::GridLayout::CreateAndInstall(toolbar_view_);
 
       views::ColumnSet* toolbar_column_set =
           toolbar_layout->AddColumnSet(0);
@@ -174,6 +174,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
       // URL entry
       url_entry_ = new views::Textfield();
       url_entry_->set_controller(this);
+      url_entry_->SetTextInputType(ui::TextInputType::TEXT_INPUT_TYPE_URL);
       toolbar_column_set->AddColumn(views::GridLayout::FILL,
                                     views::GridLayout::FILL, 1,
                                     views::GridLayout::USE_PREF, 0, 0);
@@ -188,9 +189,9 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
       toolbar_layout->AddView(url_entry_);
 
       layout->AddView(toolbar_view_);
-    }
 
-    layout->AddPaddingRow(0, 5);
+      layout->AddPaddingRow(0, 5);
+    }
 
     // Add web contents view as the second row
     {
@@ -198,7 +199,8 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
       layout->AddView(contents_view_);
     }
 
-    layout->AddPaddingRow(0, 5);
+    if (!shell_->hide_toolbar())
+      layout->AddPaddingRow(0, 5);
 
     InitAccelerators();
   }
@@ -295,10 +297,10 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
 
   // Toolbar view contains forward/backward/reload button and URL entry
   View* toolbar_view_;
-  views::CustomButton* back_button_;
-  views::CustomButton* forward_button_;
-  views::CustomButton* refresh_button_;
-  views::CustomButton* stop_button_;
+  views::Button* back_button_;
+  views::Button* forward_button_;
+  views::Button* refresh_button_;
+  views::Button* stop_button_;
   views::Textfield* url_entry_;
 
   // Contents view contains the web contents view
@@ -364,7 +366,7 @@ void Shell::PlatformCleanUp() {
 }
 
 void Shell::PlatformEnableUIControl(UIControl control, bool is_enabled) {
-  if (headless_)
+  if (headless_ || hide_toolbar_)
     return;
   ShellWindowDelegateView* delegate_view =
     static_cast<ShellWindowDelegateView*>(window_widget_->widget_delegate());
@@ -381,7 +383,7 @@ void Shell::PlatformEnableUIControl(UIControl control, bool is_enabled) {
 }
 
 void Shell::PlatformSetAddressBarURL(const GURL& url) {
-  if (headless_)
+  if (headless_ || hide_toolbar_)
     return;
   ShellWindowDelegateView* delegate_view =
     static_cast<ShellWindowDelegateView*>(window_widget_->widget_delegate());

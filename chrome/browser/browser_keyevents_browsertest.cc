@@ -9,6 +9,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -119,7 +120,7 @@ class TestFinishObserver : public content::NotificationObserver {
     if (*dom_op_result.ptr() == "\"FINISHED\"") {
       finished_ = true;
       if (waiting_)
-        base::MessageLoopForUI::current()->QuitWhenIdle();
+        base::RunLoop::QuitCurrentWhenIdleDeprecated();
     }
   }
 
@@ -583,7 +584,7 @@ IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, DISABLED_AccessKeys) {
       "U 18 0 false false true false" }
   };
 
-#if !defined(USE_ASH)
+#if !defined(OS_CHROMEOS)
   static const KeyEventTestData kTestAccess1 = {
     ui::VKEY_1, false, false, true, false,
     false, false, false, false, 4,
@@ -648,9 +649,9 @@ IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, DISABLED_AccessKeys) {
   EXPECT_NO_FATAL_FAILURE(SetFocusedElement(tab_index, L""));
   // Make sure no element is focused.
   EXPECT_NO_FATAL_FAILURE(CheckFocusedElement(tab_index, L""));
-#if !defined(USE_ASH)
-  // On Ash, alt-1..9 are assigned as window selection global accelerators, so
-  // they can not be used as accesskeys.
+#if !defined(OS_CHROMEOS)
+  // On Chrome OS, alt-1..9 are assigned as window selection global
+  // accelerators, so they cannot be used as accesskeys.
   EXPECT_NO_FATAL_FAILURE(TestKeyEvent(tab_index, kTestAccess1));
   EXPECT_NO_FATAL_FAILURE(CheckFocusedElement(tab_index, L"1"));
 #endif

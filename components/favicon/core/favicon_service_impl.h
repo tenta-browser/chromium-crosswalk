@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/flat_set.h"
 #include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -80,9 +81,9 @@ class FaviconServiceImpl : public FaviconService {
       const favicon_base::FaviconResultsCallback& callback,
       base::CancelableTaskTracker* tracker) override;
   base::CancelableTaskTracker::TaskId UpdateFaviconMappingsAndFetch(
-      const GURL& page_url,
-      const std::vector<GURL>& icon_urls,
-      int icon_types,
+      const base::flat_set<GURL>& page_urls,
+      const GURL& icon_url,
+      favicon_base::IconType icon_type,
       int desired_size_in_dip,
       const favicon_base::FaviconResultsCallback& callback,
       base::CancelableTaskTracker* tracker) override;
@@ -91,6 +92,7 @@ class FaviconServiceImpl : public FaviconService {
       const favicon_base::FaviconRawBitmapCallback& callback,
       base::CancelableTaskTracker* tracker) override;
   void SetFaviconOutOfDateForPage(const GURL& page_url) override;
+  void TouchOnDemandFavicon(const GURL& icon_url) override;
   void SetImportedFavicons(
       const favicon_base::FaviconUsageDataList& favicon_usage) override;
   void MergeFavicon(const GURL& page_url,
@@ -98,15 +100,15 @@ class FaviconServiceImpl : public FaviconService {
                     favicon_base::IconType icon_type,
                     scoped_refptr<base::RefCountedMemory> bitmap_data,
                     const gfx::Size& pixel_size) override;
-  void SetFavicons(const GURL& page_url,
+  void SetFavicons(const base::flat_set<GURL>& page_urls,
                    const GURL& icon_url,
                    favicon_base::IconType icon_type,
                    const gfx::Image& image) override;
-  void SetLastResortFavicons(const GURL& page_url,
-                             const GURL& icon_url,
-                             favicon_base::IconType icon_type,
-                             const gfx::Image& image,
-                             base::Callback<void(bool)> callback) override;
+  void SetOnDemandFavicons(const GURL& page_url,
+                           const GURL& icon_url,
+                           favicon_base::IconType icon_type,
+                           const gfx::Image& image,
+                           base::Callback<void(bool)> callback) override;
   void UnableToDownloadFavicon(const GURL& icon_url) override;
   bool WasUnableToDownloadFavicon(const GURL& icon_url) const override;
   void ClearUnableToDownloadFavicons() override;

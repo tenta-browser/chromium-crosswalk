@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/base64.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -20,18 +19,13 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/values.h"
-#include "components/crx_file/crx_file.h"
+#include "components/crx_file/crx_verifier.h"
 #include "components/update_client/component_patcher.h"
-#include "components/update_client/component_patcher_operation.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/update_client_errors.h"
-#include "crypto/secure_hash.h"
-#include "crypto/sha2.h"
 #include "third_party/zlib/google/zip.h"
-
-using crypto::SecureHash;
-using crx_file::CrxFile;
 
 namespace update_client {
 
@@ -61,16 +55,14 @@ ComponentUnpacker::ComponentUnpacker(
     const std::vector<uint8_t>& pk_hash,
     const base::FilePath& path,
     const scoped_refptr<CrxInstaller>& installer,
-    const scoped_refptr<OutOfProcessPatcher>& oop_patcher,
-    const scoped_refptr<base::SequencedTaskRunner>& task_runner)
+    const scoped_refptr<OutOfProcessPatcher>& oop_patcher)
     : pk_hash_(pk_hash),
       path_(path),
       is_delta_(false),
       installer_(installer),
       oop_patcher_(oop_patcher),
       error_(UnpackerError::kNone),
-      extended_error_(0),
-      task_runner_(task_runner) {}
+      extended_error_(0) {}
 
 ComponentUnpacker::~ComponentUnpacker() {}
 
@@ -90,33 +82,17 @@ bool ComponentUnpacker::Verify() {
     error_ = UnpackerError::kInvalidParams;
     return false;
   }
-  // First, validate the CRX header and signature. As of today
-  // this is SHA1 with RSA 1024.
-  std::string public_key_bytes;
-  std::string public_key_base64;
-  CrxFile::Header header;
-  CrxFile::ValidateError error = CrxFile::ValidateSignature(
-      path_, std::string(), &public_key_base64, nullptr, &header);
-  if (error != CrxFile::ValidateError::NONE ||
-      !base::Base64Decode(public_key_base64, &public_key_bytes)) {
+  const std::vector<std::vector<uint8_t>> required_keys = {pk_hash_};
+  const crx_file::VerifierResult result =
+      crx_file::Verify(path_, crx_file::VerifierFormat::CRX2_OR_CRX3,
+                       required_keys, std::vector<uint8_t>(), nullptr, nullptr);
+  if (result != crx_file::VerifierResult::OK_FULL &&
+      result != crx_file::VerifierResult::OK_DELTA) {
     error_ = UnpackerError::kInvalidFile;
+    extended_error_ = static_cast<int>(result);
     return false;
   }
-  is_delta_ = CrxFile::HeaderIsDelta(header);
-
-  // File is valid and the digital signature matches. Now make sure
-  // the public key hash matches the expected hash. If they do we fully
-  // trust this CRX.
-  uint8_t hash[crypto::kSHA256Length] = {};
-  std::unique_ptr<SecureHash> sha256(SecureHash::Create(SecureHash::SHA256));
-  sha256->Update(public_key_bytes.data(), public_key_bytes.size());
-  sha256->Finish(hash, arraysize(hash));
-
-  if (!std::equal(pk_hash_.begin(), pk_hash_.end(), hash)) {
-    VLOG(1) << "Hash mismatch: " << path_.value();
-    error_ = UnpackerError::kInvalidId;
-    return false;
-  }
+  is_delta_ = result == crx_file::VerifierResult::OK_DELTA;
   VLOG(1) << "Verification successful: " << path_.value();
   return true;
 }
@@ -148,18 +124,18 @@ bool ComponentUnpacker::BeginPatching() {
       error_ = UnpackerError::kUnzipPathError;
       return false;
     }
-    patcher_ = new ComponentPatcher(unpack_diff_path_, unpack_path_, installer_,
-                                    oop_patcher_, task_runner_);
-    task_runner_->PostTask(
+    patcher_ = base::MakeRefCounted<ComponentPatcher>(
+        unpack_diff_path_, unpack_path_, installer_, oop_patcher_);
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&ComponentPatcher::Start, patcher_,
-                   base::Bind(&ComponentUnpacker::EndPatching,
-                              scoped_refptr<ComponentUnpacker>(this))));
+        base::BindOnce(&ComponentPatcher::Start, patcher_,
+                       base::Bind(&ComponentUnpacker::EndPatching,
+                                  scoped_refptr<ComponentUnpacker>(this))));
   } else {
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&ComponentUnpacker::EndPatching,
-                                      scoped_refptr<ComponentUnpacker>(this),
-                                      UnpackerError::kNone, 0));
+    base::SequencedTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::BindOnce(&ComponentUnpacker::EndPatching,
+                                  scoped_refptr<ComponentUnpacker>(this),
+                                  UnpackerError::kNone, 0));
   }
   return true;
 }
@@ -184,7 +160,8 @@ void ComponentUnpacker::EndUnpacking() {
   if (error_ == UnpackerError::kNone)
     result.unpack_path = unpack_path_;
 
-  task_runner_->PostTask(FROM_HERE, base::Bind(callback_, result));
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(callback_, result));
 }
 
 }  // namespace update_client

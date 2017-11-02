@@ -12,22 +12,25 @@
 #include "base/macros.h"
 #include "ui/views/widget/widget.h"
 
+namespace aura {
+class Window;
+}
+
 namespace ash {
 class ImeMenuTray;
 class LogoutButtonTray;
 class OverviewButtonTray;
 class PaletteTray;
+class Shelf;
 class StatusAreaWidgetDelegate;
 class SystemTray;
 class VirtualKeyboardTray;
 class WebNotificationTray;
-class WmShelf;
-class WmWindow;
 
 class ASH_EXPORT StatusAreaWidget : public views::Widget,
                                     public ShelfBackgroundAnimatorObserver {
  public:
-  StatusAreaWidget(WmWindow* status_container, WmShelf* wm_shelf);
+  StatusAreaWidget(aura::Window* status_container, Shelf* shelf);
   ~StatusAreaWidget() override;
 
   // Creates the SystemTray, WebNotificationTray and LogoutButtonTray.
@@ -38,7 +41,7 @@ class ASH_EXPORT StatusAreaWidget : public views::Widget,
   void Shutdown();
 
   // Update the alignment of the widget and tray views.
-  void SetShelfAlignment(ShelfAlignment alignment);
+  void UpdateAfterShelfAlignmentChange();
 
   // Called by the client when the login status changes. Caches login_status
   // and calls UpdateAfterLoginStatusChange for the system tray and the web
@@ -58,7 +61,7 @@ class ASH_EXPORT StatusAreaWidget : public views::Widget,
 
   ImeMenuTray* ime_menu_tray() { return ime_menu_tray_; }
 
-  WmShelf* wm_shelf() { return wm_shelf_; }
+  Shelf* shelf() { return shelf_; }
 
   LoginStatus login_status() const { return login_status_; }
 
@@ -109,7 +112,7 @@ class ASH_EXPORT StatusAreaWidget : public views::Widget,
   ImeMenuTray* ime_menu_tray_;
   LoginStatus login_status_;
 
-  WmShelf* wm_shelf_;
+  Shelf* shelf_;
 
   DISALLOW_COPY_AND_ASSIGN(StatusAreaWidget);
 };

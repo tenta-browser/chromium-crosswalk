@@ -45,7 +45,7 @@ using ppapi::proxy::UDPSocketResourceConstants;
 
 namespace {
 
-size_t g_num_instances = 0;
+size_t g_num_udp_filter_instances = 0;
 
 }  // namespace
 
@@ -82,7 +82,7 @@ PepperUDPSocketMessageFilter::PepperUDPSocketMessageFilter(
       render_frame_id_(0),
       is_potentially_secure_plugin_context_(
           host->IsPotentiallySecurePluginContext(instance)) {
-  ++g_num_instances;
+  ++g_num_udp_filter_instances;
   DCHECK(host);
 
   if (!host->GetRenderFrameIDsForInstance(
@@ -93,12 +93,12 @@ PepperUDPSocketMessageFilter::PepperUDPSocketMessageFilter(
 
 PepperUDPSocketMessageFilter::~PepperUDPSocketMessageFilter() {
   Close();
-  --g_num_instances;
+  --g_num_udp_filter_instances;
 }
 
 // static
 size_t PepperUDPSocketMessageFilter::GetNumInstances() {
-  return g_num_instances;
+  return g_num_udp_filter_instances;
 }
 
 scoped_refptr<base::TaskRunner>
@@ -291,12 +291,10 @@ int32_t PepperUDPSocketMessageFilter::OnMsgBind(
     return PP_ERROR_NOACCESS;
   }
 
-  BrowserThread::PostTask(BrowserThread::IO,
-                          FROM_HERE,
-                          base::Bind(&PepperUDPSocketMessageFilter::DoBind,
-                                     this,
-                                     context->MakeReplyMessageContext(),
-                                     addr));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&PepperUDPSocketMessageFilter::DoBind, this,
+                     context->MakeReplyMessageContext(), addr));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -318,13 +316,10 @@ int32_t PepperUDPSocketMessageFilter::OnMsgSendTo(
     return PP_ERROR_NOACCESS;
   }
 
-  BrowserThread::PostTask(BrowserThread::IO,
-                          FROM_HERE,
-                          base::Bind(&PepperUDPSocketMessageFilter::DoSendTo,
-                                     this,
-                                     context->MakeReplyMessageContext(),
-                                     data,
-                                     addr));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&PepperUDPSocketMessageFilter::DoSendTo, this,
+                     context->MakeReplyMessageContext(), data, addr));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -364,7 +359,7 @@ int32_t PepperUDPSocketMessageFilter::OnMsgJoinGroup(
   if (!socket_)
     return PP_ERROR_FAILED;
 
-  std::vector<uint8_t> group;
+  net::IPAddressBytes group;
   uint16_t port;
 
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &group, &port))
@@ -385,7 +380,7 @@ int32_t PepperUDPSocketMessageFilter::OnMsgLeaveGroup(
   if (!socket_)
     return PP_ERROR_FAILED;
 
-  std::vector<uint8_t> group;
+  net::IPAddressBytes group;
   uint16_t port;
 
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &group, &port))
@@ -408,7 +403,7 @@ void PepperUDPSocketMessageFilter::DoBind(
       new net::UDPSocket(net::DatagramSocket::DEFAULT_BIND,
                          net::RandIntCallback(), NULL, net::NetLogSource()));
 
-  std::vector<uint8_t> address;
+  net::IPAddressBytes address;
   uint16_t port;
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &address, &port)) {
     SendBindError(context, PP_ERROR_ADDRESS_INVALID);
@@ -529,9 +524,10 @@ void PepperUDPSocketMessageFilter::OpenFirewallHole(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   pepper_socket_utils::FirewallHoleOpenCallback callback = base::Bind(
       &PepperUDPSocketMessageFilter::OnFirewallHoleOpened, this, bind_complete);
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&pepper_socket_utils::OpenUDPFirewallHole,
-                                     local_address, callback));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&pepper_socket_utils::OpenUDPFirewallHole, local_address,
+                     callback));
 }
 
 void PepperUDPSocketMessageFilter::OnFirewallHoleOpened(
@@ -592,7 +588,7 @@ void PepperUDPSocketMessageFilter::DoSendTo(
     return;
   }
 
-  std::vector<uint8_t> address;
+  net::IPAddressBytes address;
   uint16_t port;
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &address, &port)) {
     SendSendToError(context, PP_ERROR_ADDRESS_INVALID);

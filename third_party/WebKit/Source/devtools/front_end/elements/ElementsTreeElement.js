@@ -53,6 +53,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
       this._canAddAttributes = true;
     this._searchQuery = null;
     this._expandedChildrenLimit = Elements.ElementsTreeElement.InitialChildrenLimit;
+    this._decorationsThrottler = new Common.Throttler(100);
   }
 
   /**
@@ -287,7 +288,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
    * @override
    */
   expandRecursively() {
-    this._node.getSubtree(-1, UI.TreeElement.prototype.expandRecursively.bind(this, Number.MAX_VALUE));
+    this._node.getSubtree(-1).then(UI.TreeElement.prototype.expandRecursively.bind(this, Number.MAX_VALUE));
   }
 
   /**
@@ -459,15 +460,13 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
   populateTagContextMenu(contextMenu, event) {
     // Add attribute-related actions.
     var treeElement = this._elementCloseTag ? this.treeOutline.findTreeElement(this._node) : this;
-    contextMenu.appendItem(
-        Common.UIString.capitalize('Add ^attribute'), treeElement._addNewAttribute.bind(treeElement));
+    contextMenu.appendItem(Common.UIString('Add attribute'), treeElement._addNewAttribute.bind(treeElement));
 
     var attribute = event.target.enclosingNodeOrSelfWithClass('webkit-html-attribute');
     var newAttribute = event.target.enclosingNodeOrSelfWithClass('add-attribute');
     if (attribute && !newAttribute) {
       contextMenu.appendItem(
-          Common.UIString.capitalize('Edit ^attribute'),
-          this._startEditingAttribute.bind(this, attribute, event.target));
+          Common.UIString('Edit attribute'), this._startEditingAttribute.bind(this, attribute, event.target));
     }
     this.populateNodeContextMenu(contextMenu);
     Elements.ElementsTreeElement.populateForcedPseudoStateItems(contextMenu, treeElement.node());
@@ -479,12 +478,12 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
    * @param {!UI.ContextMenu} contextMenu
    */
   populateScrollIntoView(contextMenu) {
-    contextMenu.appendItem(Common.UIString.capitalize('Scroll into ^view'), this._scrollIntoView.bind(this));
+    contextMenu.appendItem(Common.UIString('Scroll into view'), () => this._node.scrollIntoView());
   }
 
   populateTextContextMenu(contextMenu, textNode) {
     if (!this._editing)
-      contextMenu.appendItem(Common.UIString.capitalize('Edit ^text'), this._startEditingTextNode.bind(this, textNode));
+      contextMenu.appendItem(Common.UIString('Edit text'), this._startEditingTextNode.bind(this, textNode));
     this.populateNodeContextMenu(contextMenu);
   }
 
@@ -507,7 +506,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
       menuItem.setShortcut(createShortcut('V', modifier));
     }
     if (this._node.nodeType() === Node.ELEMENT_NODE)
-      copyMenu.appendItem(Common.UIString.capitalize('Copy selector'), this._copyCSSPath.bind(this));
+      copyMenu.appendItem(Common.UIString('Copy selector'), this._copyCSSPath.bind(this));
     if (!isShadowRoot)
       copyMenu.appendItem(Common.UIString('Copy XPath'), this._copyXPath.bind(this));
     if (!isShadowRoot) {
@@ -734,12 +733,12 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
   /**
    * @param {function(string, string)} commitCallback
    * @param {function()} disposeCallback
-   * @param {?Protocol.Error} error
-   * @param {string} initialValue
+   * @param {?string} maybeInitialValue
    */
-  _startEditingAsHTML(commitCallback, disposeCallback, error, initialValue) {
-    if (error)
+  _startEditingAsHTML(commitCallback, disposeCallback, maybeInitialValue) {
+    if (maybeInitialValue === null)
       return;
+    var initialValue = maybeInitialValue;  // To suppress a compiler warning.
     if (this._editing)
       return;
 
@@ -1086,9 +1085,20 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
     if (this.isClosingTag())
       return;
 
-    var node = this._node;
-    if (node.nodeType() !== Node.ELEMENT_NODE)
+    if (this._node.nodeType() !== Node.ELEMENT_NODE)
       return;
+
+    this._decorationsThrottler.schedule(this._updateDecorationsInternal.bind(this));
+  }
+
+  /**
+   * @return {!Promise}
+   */
+  _updateDecorationsInternal() {
+    if (!this.treeOutline)
+      return Promise.resolve();
+
+    var node = this._node;
 
     if (!this.treeOutline._decoratorExtensions)
       /** @type {!Array.<!Runtime.Extension>} */
@@ -1127,7 +1137,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
       (n === node ? decorations : descendantDecorations).push(decoration);
     }
 
-    Promise.all(promises).then(updateDecorationsUI.bind(this));
+    return Promise.all(promises).then(updateDecorationsUI.bind(this));
 
     /**
      * @this {Elements.ElementsTreeElement}
@@ -1264,42 +1274,73 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
         value = value.trimMiddle(60);
       var link = node.nodeName().toLowerCase() === 'a' ?
           UI.createExternalLink(rewrittenHref, value, '', true) :
-          Components.Linkifier.linkifyURL(rewrittenHref, value, '', undefined, undefined, true);
+          Components.Linkifier.linkifyURL(rewrittenHref, {text: value, preventClick: true});
       link[Elements.ElementsTreeElement.HrefSymbol] = rewrittenHref;
       return link;
     }
 
-    if (node && (name === 'src' || name === 'href')) {
+    var nodeName = node ? node.nodeName().toLowerCase() : '';
+    if (nodeName && (name === 'src' || name === 'href'))
       attrValueElement.appendChild(linkifyValue.call(this, value));
-    } else if (
-        node && (node.nodeName().toLowerCase() === 'img' || node.nodeName().toLowerCase() === 'source') &&
-        name === 'srcset') {
-      var sources = value.split(',');
-      for (var i = 0; i < sources.length; ++i) {
-        if (i > 0)
-          attrValueElement.createTextChild(', ');
-        var source = sources[i].trim();
-        var indexOfSpace = source.indexOf(' ');
-        var url, tail;
-
-        if (indexOfSpace === -1) {
-          url = source;
-        } else {
-          url = source.substring(0, indexOfSpace);
-          tail = source.substring(indexOfSpace);
-        }
-
-        attrValueElement.appendChild(linkifyValue.call(this, url));
-
-        if (tail)
-          attrValueElement.createTextChild(tail);
-      }
-    } else {
+    else if ((nodeName === 'img' || nodeName === 'source') && name === 'srcset')
+      attrValueElement.appendChild(linkifySrcset.call(this, value));
+    else
       setValueWithEntities.call(this, attrValueElement, value);
-    }
 
     if (hasText)
       attrSpanElement.createTextChild('"');
+
+    /**
+     * @param {string} value
+     * @return {!DocumentFragment}
+     * @this {!Elements.ElementsTreeElement}
+     */
+    function linkifySrcset(value) {
+      // Splitting normally on commas or spaces will break on valid srcsets "foo 1x,bar 2x" and "data:,foo 1x".
+      // 1) Let the index of the next space be `indexOfSpace`.
+      // 2a) If the character at `indexOfSpace - 1` is a comma, collect the preceding characters up to
+      //     `indexOfSpace - 1` as a URL and repeat step 1).
+      // 2b) Else, collect the preceding characters as a URL.
+      // 3) Collect the characters from `indexOfSpace` up to the next comma as the size descriptor and repeat step 1).
+      // https://html.spec.whatwg.org/multipage/embedded-content.html#parse-a-srcset-attribute
+      var fragment = createDocumentFragment();
+      var i = 0;
+      while (value.length) {
+        if (i++ > 0)
+          fragment.createTextChild(' ');
+        value = value.trim();
+        // The url and descriptor may end with a separating comma.
+        var url = '';
+        var descriptor = '';
+        var indexOfSpace = value.search(/\s/);
+        if (indexOfSpace === -1) {
+          url = value;
+        } else if (indexOfSpace > 0 && value[indexOfSpace - 1] === ',') {
+          url = value.substring(0, indexOfSpace);
+        } else {
+          url = value.substring(0, indexOfSpace);
+          var indexOfComma = value.indexOf(',', indexOfSpace);
+          if (indexOfComma !== -1)
+            descriptor = value.substring(indexOfSpace, indexOfComma + 1);
+          else
+            descriptor = value.substring(indexOfSpace);
+        }
+
+        if (url) {
+          // Up to one trailing comma should be removed from `url`.
+          if (url.endsWith(',')) {
+            fragment.appendChild(linkifyValue.call(this, url.substring(0, url.length - 1)));
+            fragment.createTextChild(',');
+          } else {
+            fragment.appendChild(linkifyValue.call(this, url));
+          }
+        }
+        if (descriptor)
+          fragment.createTextChild(descriptor);
+        value = value.substring(url.length + descriptor.length);
+      }
+      return fragment;
+    }
   }
 
   /**
@@ -1552,7 +1593,7 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
     }
 
     var node = this._node;
-    node.getOuterHTML(this._startEditingAsHTML.bind(this, commitChange, disposeCallback));
+    node.getOuterHTML().then(this._startEditingAsHTML.bind(this, commitChange, disposeCallback));
   }
 
   _copyCSSPath() {
@@ -1584,23 +1625,6 @@ Elements.ElementsTreeElement = class extends UI.TreeElement {
 
     this._highlightResult = [];
     UI.highlightSearchResults(this.listItemElement, matchRanges, this._highlightResult);
-  }
-
-  _scrollIntoView() {
-    function scrollIntoViewCallback(object) {
-      /**
-       * @suppressReceiverCheck
-       * @this {!Element}
-       */
-      function scrollIntoView() {
-        this.scrollIntoViewIfNeeded(true);
-      }
-
-      if (object)
-        object.callFunction(scrollIntoView);
-    }
-
-    this._node.resolveToObject('', scrollIntoViewCallback);
   }
 
   _editAsHTML() {

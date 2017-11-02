@@ -25,8 +25,8 @@ class WebDocument;
 class WebElement;
 class WebFormControlElement;
 class WebFormElement;
-class WebFrame;
 class WebInputElement;
+class WebLocalFrame;
 class WebNode;
 }
 
@@ -87,7 +87,7 @@ bool ExtractFormData(const blink::WebFormElement& form_element, FormData* data);
 // equals |form_element|. If |form_element| is null, checks if forms action
 // equals |action|. Returns true if so. For forms with empty or unspecified
 // actions, all form data are used for comparison.
-bool IsFormVisible(blink::WebFrame* frame,
+bool IsFormVisible(blink::WebLocalFrame* frame,
                    const blink::WebFormElement& form_element,
                    const GURL& action,
                    const GURL& origin,
@@ -255,7 +255,7 @@ bool ClearPreviewedFormWithElement(const blink::WebFormControlElement& element,
 //    <body/>
 // <html/>
 // Meta, script and title tags don't influence the emptiness of a webpage.
-bool IsWebpageEmpty(const blink::WebFrame* frame);
+bool IsWebpageEmpty(const blink::WebLocalFrame* frame);
 
 // This function checks whether the children of |element|
 // are of the type <script>, <meta>, or <title>.
@@ -269,6 +269,14 @@ bool IsWebElementEmpty(const blink::WebElement& element);
 void PreviewSuggestion(const base::string16& suggestion,
                        const base::string16& user_input,
                        blink::WebFormControlElement* input_element);
+
+// Returns the aggregated values of the descendants of |element| that are
+// non-empty text nodes.  This is a faster alternative to |innerText()| for
+// performance critical operations.  It does a full depth-first search so can be
+// used when the structure is not directly known.  However, unlike with
+// |innerText()|, the search depth and breadth are limited to a fixed threshold.
+// Whitespace is trimmed from text accumulated at descendant nodes.
+base::string16 FindChildText(const blink::WebNode& node);
 
 }  // namespace form_util
 }  // namespace autofill

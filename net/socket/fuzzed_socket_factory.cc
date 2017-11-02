@@ -5,7 +5,6 @@
 #include "net/socket/fuzzed_socket_factory.h"
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/fuzzed_data_provider.h"
 #include "net/base/address_list.h"
 #include "net/base/ip_endpoint.h"
@@ -139,7 +138,7 @@ FuzzedSocketFactory::CreateDatagramClientSocket(
     const RandIntCallback& rand_int_cb,
     NetLog* net_log,
     const NetLogSource& source) {
-  return base::MakeUnique<FuzzedDatagramClientSocket>(data_provider_);
+  return std::make_unique<FuzzedDatagramClientSocket>(data_provider_);
 }
 
 std::unique_ptr<StreamSocket> FuzzedSocketFactory::CreateTransportClientSocket(
@@ -160,7 +159,7 @@ std::unique_ptr<SSLClientSocket> FuzzedSocketFactory::CreateSSLClientSocket(
     const HostPortPair& host_and_port,
     const SSLConfig& ssl_config,
     const SSLClientSocketContext& context) {
-  return base::MakeUnique<FailingSSLClientSocket>();
+  return std::make_unique<FailingSSLClientSocket>();
 }
 
 void FuzzedSocketFactory::ClearSSLSessionCache() {}

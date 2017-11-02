@@ -19,9 +19,6 @@ class Compositor;
 
 class ContentViewRenderView : public CompositorClient {
  public:
-  // Registers the JNI methods for ContentViewRender.
-  static bool RegisterContentViewRenderView(JNIEnv* env);
-
   ContentViewRenderView(JNIEnv* env,
                         jobject obj,
                         gfx::NativeWindow root_window);
@@ -32,6 +29,12 @@ class ContentViewRenderView : public CompositorClient {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       const base::android::JavaParamRef<jobject>& jweb_contents);
+  void OnPhysicalBackingSizeChanged(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& jweb_contents,
+      jint width,
+      jint height);
   void SurfaceCreated(JNIEnv* env,
                       const base::android::JavaParamRef<jobject>& obj);
   void SurfaceDestroyed(JNIEnv* env,

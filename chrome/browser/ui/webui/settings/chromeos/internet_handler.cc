@@ -8,7 +8,6 @@
 #include "base/values.h"
 #include "chrome/browser/chromeos/options/network_config_view.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/chromeos/ui/choose_mobile_network_dialog.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -74,7 +73,7 @@ void InternetHandler::AddNetwork(const base::ListValue* args) {
       args->GetString(1, &extension_id);
     if (extension_id.empty()) {
       // Show the "add network" dialog for the built-in OpenVPN/L2TP provider.
-      NetworkConfigView::ShowForType(shill::kTypeVPN, GetNativeWindow());
+      NetworkConfigView::ShowForType(shill::kTypeVPN);
       return;
     }
     // Request that the third-party VPN provider identified by |provider_id|
@@ -82,9 +81,7 @@ void InternetHandler::AddNetwork(const base::ListValue* args) {
     VpnServiceFactory::GetForBrowserContext(GetProfileForPrimaryUser())
         ->SendShowAddDialogToExtension(extension_id);
   } else if (onc_type == ::onc::network_type::kWiFi) {
-    NetworkConfigView::ShowForType(shill::kTypeWifi, GetNativeWindow());
-  } else if (onc_type == ::onc::network_type::kCellular) {
-    ChooseMobileNetworkDialog::ShowDialog(GetNativeWindow());
+    NetworkConfigView::ShowForType(shill::kTypeWifi);
   } else {
     LOG(ERROR) << "Unsupported type for: " << kAddNetworkMessage;
   }
@@ -121,7 +118,7 @@ void InternetHandler::ConfigureNetwork(const base::ListValue* args) {
     return;
   }
 
-  NetworkConfigView::ShowForNetworkId(network->guid(), GetNativeWindow());
+  NetworkConfigView::ShowForNetworkId(network->guid());
 }
 
 gfx::NativeWindow InternetHandler::GetNativeWindow() const {

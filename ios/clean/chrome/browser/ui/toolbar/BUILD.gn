@@ -13,14 +13,24 @@ source_set("toolbar") {
   configs += [ "//build/config/compiler:enable_arc" ]
 
   deps = [
+    ":toolbar_components_ui",
     ":toolbar_ui",
     "//base",
+    "//ios/chrome/browser",
+    "//ios/chrome/browser/browser_state",
+    "//ios/chrome/browser/ui/broadcaster",
+    "//ios/chrome/browser/ui/browser_list",
+    "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/coordinators",
+    "//ios/chrome/browser/ui/history_popup/requirements",
+    "//ios/chrome/browser/ui/tools_menu:configuration",
+    "//ios/chrome/browser/web_state_list",
     "//ios/clean/chrome/browser/ui/commands",
+    "//ios/clean/chrome/browser/ui/history_popup",
     "//ios/clean/chrome/browser/ui/omnibox",
+    "//ios/clean/chrome/browser/ui/overlays",
     "//ios/clean/chrome/browser/ui/tools",
-    "//ios/shared/chrome/browser/ui/browser_list",
-    "//ios/shared/chrome/browser/ui/commands",
-    "//ios/shared/chrome/browser/ui/coordinators",
     "//ios/web",
   ]
 }
@@ -34,10 +44,14 @@ source_set("toolbar_ui") {
   deps = [
     ":toolbar_components_ui",
     "//base",
-    "//ios/clean/chrome/browser/ui/actions",
-    "//ios/clean/chrome/browser/ui/animators",
+    "//ios/chrome/browser/ui",
+    "//ios/chrome/browser/ui/commands",
+    "//ios/chrome/browser/ui/history_popup/requirements",
+    "//ios/chrome/browser/ui/toolbar",
     "//ios/clean/chrome/browser/ui/commands",
     "//ios/clean/chrome/browser/ui/tools",
+    "//ios/clean/chrome/browser/ui/transitions/animators",
+    "//ios/third_party/material_components_ios",
   ]
   libs = [ "UIKit.framework" ]
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -45,16 +59,25 @@ source_set("toolbar_ui") {
 
 source_set("toolbar_components_ui") {
   sources = [
-    "toolbar_button+factory.h",
-    "toolbar_button+factory.mm",
     "toolbar_button.h",
     "toolbar_button.mm",
+    "toolbar_button_factory.h",
+    "toolbar_button_factory.mm",
     "toolbar_component_options.h",
+    "toolbar_configuration.h",
+    "toolbar_configuration.mm",
+    "toolbar_constants.h",
+    "toolbar_constants.mm",
+    "toolbar_style.h",
   ]
   deps = [
     "//base",
+    "//components/strings",
+    "//ios/chrome/app/strings",
     "//ios/chrome/app/theme",
     "//ios/chrome/browser/ui",
+    "//ios/chrome/browser/ui/toolbar:resource_macros",
+    "//ui/base",
   ]
   libs = [ "UIKit.framework" ]
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -71,8 +94,11 @@ source_set("unit_tests") {
     ":toolbar_ui",
     "//base",
     "//base/test:test_support",
+    "//ios/chrome/browser/ui/toolbar/test",
+    "//ios/chrome/browser/web_state_list",
+    "//ios/chrome/browser/web_state_list:test_support",
     "//ios/web",
-    "//ios/web:test_support",
+    "//ios/web/public/test/fakes",
     "//testing/gtest",
     "//third_party/ocmock",
   ]

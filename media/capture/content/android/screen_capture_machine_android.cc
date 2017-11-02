@@ -4,7 +4,6 @@
 
 #include "media/capture/content/android/screen_capture_machine_android.h"
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
 #include "jni/ScreenCapture_jni.h"
@@ -12,14 +11,10 @@
 #include "third_party/libyuv/include/libyuv.h"
 
 using base::android::AttachCurrentThread;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 namespace media {
-
-// static
-bool ScreenCaptureMachineAndroid::RegisterScreenCaptureMachine(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
 
 ScreenCaptureMachineAndroid::ScreenCaptureMachineAndroid() {}
 
@@ -30,19 +25,19 @@ ScopedJavaLocalRef<jobject>
 ScreenCaptureMachineAndroid::createScreenCaptureMachineAndroid(
     jlong nativeScreenCaptureMachineAndroid) {
   return (Java_ScreenCapture_createScreenCaptureMachine(
-      AttachCurrentThread(), base::android::GetApplicationContext(),
-      nativeScreenCaptureMachineAndroid));
+      AttachCurrentThread(), nativeScreenCaptureMachineAndroid));
 }
 
-void ScreenCaptureMachineAndroid::OnRGBAFrameAvailable(JNIEnv* env,
-                                                       jobject obj,
-                                                       jobject buf,
-                                                       jint row_stride,
-                                                       jint left,
-                                                       jint top,
-                                                       jint width,
-                                                       jint height,
-                                                       jlong timestamp) {
+void ScreenCaptureMachineAndroid::OnRGBAFrameAvailable(
+    JNIEnv* env,
+    const JavaRef<jobject>& obj,
+    const JavaRef<jobject>& buf,
+    jint row_stride,
+    jint left,
+    jint top,
+    jint width,
+    jint height,
+    jlong timestamp) {
   const VideoCaptureOracle::Event event = VideoCaptureOracle::kCompositorUpdate;
   const uint64_t absolute_micro =
       timestamp / base::Time::kNanosecondsPerMicrosecond;
@@ -68,7 +63,7 @@ void ScreenCaptureMachineAndroid::OnRGBAFrameAvailable(JNIEnv* env,
   }
 
   uint8_t* const src =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(buf));
+      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(buf.obj()));
   CHECK(src);
 
   const int offset = top * row_stride + left * 4;
@@ -105,19 +100,20 @@ void ScreenCaptureMachineAndroid::OnRGBAFrameAvailable(JNIEnv* env,
   lastFrame_ = frame;
 }
 
-void ScreenCaptureMachineAndroid::OnI420FrameAvailable(JNIEnv* env,
-                                                       jobject obj,
-                                                       jobject y_buffer,
-                                                       jint y_stride,
-                                                       jobject u_buffer,
-                                                       jobject v_buffer,
-                                                       jint uv_row_stride,
-                                                       jint uv_pixel_stride,
-                                                       jint left,
-                                                       jint top,
-                                                       jint width,
-                                                       jint height,
-                                                       jlong timestamp) {
+void ScreenCaptureMachineAndroid::OnI420FrameAvailable(
+    JNIEnv* env,
+    const JavaRef<jobject>& obj,
+    const JavaRef<jobject>& y_buffer,
+    jint y_stride,
+    const JavaRef<jobject>& u_buffer,
+    const JavaRef<jobject>& v_buffer,
+    jint uv_row_stride,
+    jint uv_pixel_stride,
+    jint left,
+    jint top,
+    jint width,
+    jint height,
+    jlong timestamp) {
   const VideoCaptureOracle::Event event = VideoCaptureOracle::kCompositorUpdate;
   const uint64_t absolute_micro =
       timestamp / base::Time::kNanosecondsPerMicrosecond;
@@ -143,13 +139,13 @@ void ScreenCaptureMachineAndroid::OnI420FrameAvailable(JNIEnv* env,
   }
 
   uint8_t* const y_src =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(y_buffer));
+      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(y_buffer.obj()));
   CHECK(y_src);
   uint8_t* u_src =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(u_buffer));
+      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(u_buffer.obj()));
   CHECK(u_src);
   uint8_t* v_src =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(v_buffer));
+      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(v_buffer.obj()));
   CHECK(v_src);
 
   const int y_offset = top * y_stride + left;
@@ -189,7 +185,7 @@ void ScreenCaptureMachineAndroid::OnI420FrameAvailable(JNIEnv* env,
 }
 
 void ScreenCaptureMachineAndroid::OnActivityResult(JNIEnv* env,
-                                                   jobject obj,
+                                                   const JavaRef<jobject>& obj,
                                                    jboolean result) {
   if (!result) {
     oracle_proxy_->ReportError(FROM_HERE, "The user denied screen capture");
@@ -202,9 +198,10 @@ void ScreenCaptureMachineAndroid::OnActivityResult(JNIEnv* env,
     oracle_proxy_->ReportError(FROM_HERE, "Failed to start Screen Capture");
 }
 
-void ScreenCaptureMachineAndroid::OnOrientationChange(JNIEnv* env,
-                                                      jobject obj,
-                                                      jint rotation) {
+void ScreenCaptureMachineAndroid::OnOrientationChange(
+    JNIEnv* env,
+    const JavaRef<jobject>& obj,
+    jint rotation) {
   DeviceOrientation orientation = kDefault;
   switch (rotation) {
     case 0:

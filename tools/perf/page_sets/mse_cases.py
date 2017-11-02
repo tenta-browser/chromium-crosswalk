@@ -7,8 +7,8 @@ from telemetry import story
 
 class MseCasesPage(page_module.Page):
 
-  def __init__(self, url, page_set):
-    super(MseCasesPage, self).__init__(url=url, page_set=page_set)
+  def __init__(self, url, page_set, name):
+    super(MseCasesPage, self).__init__(url=url, page_set=page_set, name=name)
 
   def RunNavigateSteps(self, action_runner):
     super(MseCasesPage, self).RunNavigateSteps(action_runner)
@@ -25,24 +25,15 @@ class MseCasesPageSet(story.StorySet):
 
     urls_list = [
       'file://mse_cases/startup_test.html?testType=AV',
-      'file://mse_cases/startup_test.html?testType=AV&useAppendStream=true',
       # pylint: disable=line-too-long
       'file://mse_cases/startup_test.html?testType=AV&doNotWaitForBodyOnLoad=true',
-      # pylint: disable=line-too-long
-      'file://mse_cases/startup_test.html?testType=AV&useAppendStream=true&doNotWaitForBodyOnLoad=true',
       'file://mse_cases/startup_test.html?testType=V',
-      'file://mse_cases/startup_test.html?testType=V&useAppendStream=true',
       # pylint: disable=line-too-long
       'file://mse_cases/startup_test.html?testType=V&doNotWaitForBodyOnLoad=true',
-      # pylint: disable=line-too-long
-      'file://mse_cases/startup_test.html?testType=V&useAppendStream=true&doNotWaitForBodyOnLoad=true',
       'file://mse_cases/startup_test.html?testType=A',
-      'file://mse_cases/startup_test.html?testType=A&useAppendStream=true',
       # pylint: disable=line-too-long
       'file://mse_cases/startup_test.html?testType=A&doNotWaitForBodyOnLoad=true',
-      # pylint: disable=line-too-long
-      'file://mse_cases/startup_test.html?testType=A&useAppendStream=true&doNotWaitForBodyOnLoad=true',
     ]
 
     for url in urls_list:
-      self.AddStory(MseCasesPage(url, self))
+      self.AddStory(MseCasesPage(url, self, url.split('/')[-1]))

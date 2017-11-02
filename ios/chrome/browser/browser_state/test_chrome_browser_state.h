@@ -6,10 +6,13 @@
 #define IOS_CHROME_BROWSER_BROWSER_STATE_TEST_CHROME_BROWSER_STATE_H_
 
 #include <memory>
+#include <utility>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
+#include "base/sequenced_task_runner.h"
 #include "components/keyed_service/ios/browser_state_keyed_service_factory.h"
 #include "components/keyed_service/ios/refcounted_browser_state_keyed_service_factory.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
@@ -55,7 +58,6 @@ class TestChromeBrowserState : public ios::ChromeBrowserState {
       ProtocolHandlerMap* protocol_handlers) override;
   net::URLRequestContextGetter* CreateIsolatedRequestContext(
       const base::FilePath& partition_path) override;
-  TestChromeBrowserState* AsTestChromeBrowserState() override;
 
   // This method is defined as empty following the paradigm of
   // TestingProfile::DestroyOffTheRecordProfile().
@@ -71,17 +73,14 @@ class TestChromeBrowserState : public ios::ChromeBrowserState {
   // you're recreating the BookmarkModel.
   //
   // NOTE: this does not block until the bookmarks are loaded.
-  // TODO(shreyasv): If needed, write a version that blocks.
   void CreateBookmarkModel(bool delete_file);
 
+  // !!!!!!!! WARNING: THIS IS GENERALLY NOT SAFE TO CALL! !!!!!!!!
   // Creates the history service. If |delete_file| is true, the history file is
   // deleted first, then the HistoryService is created. As
   // TestChromeBrowserState deletes the directory containing the files used by
   // HistoryService, this only matters if you're recreating the HistoryService.
   bool CreateHistoryService(bool delete_file) WARN_UNUSED_RESULT;
-
-  // Shuts down and nulls out the reference to HistoryService.
-  void DestroyHistoryService();
 
   // Returns the preferences as a TestingPrefServiceSyncable if possible or
   // null. Returns null for off-the-record TestChromeBrowserState and also

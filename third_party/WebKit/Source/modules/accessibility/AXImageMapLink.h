@@ -48,12 +48,11 @@ class AXImageMapLink final : public AXNodeObject {
   ~AXImageMapLink() override;
   DECLARE_VIRTUAL_TRACE();
 
-  HTMLAreaElement* AreaElement() const { return toHTMLAreaElement(GetNode()); }
+  HTMLAreaElement* AreaElement() const { return ToHTMLAreaElement(GetNode()); }
 
   HTMLMapElement* MapElement() const;
 
   AccessibilityRole RoleValue() const override;
-  bool IsEnabled() const override { return true; }
   bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const override;
 
   Element* AnchorElement() const override;

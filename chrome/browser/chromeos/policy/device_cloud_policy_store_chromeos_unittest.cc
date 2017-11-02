@@ -88,10 +88,8 @@ class DeviceCloudPolicyStoreChromeOSTest
     EXPECT_TRUE(store_->is_managed());
     EXPECT_TRUE(store_->policy());
     base::Value expected(false);
-    EXPECT_TRUE(
-        base::Value::Equals(&expected,
-                            store_->policy_map().GetValue(
-                                key::kDeviceMetricsReportingEnabled)));
+    EXPECT_EQ(expected, *store_->policy_map().GetValue(
+                            key::kDeviceMetricsReportingEnabled));
     EXPECT_FALSE(store_->policy_signature_public_key().empty());
   }
 
@@ -199,7 +197,7 @@ TEST_F(DeviceCloudPolicyStoreChromeOSTest, StoreKeyRotation) {
   device_policy_.SetDefaultNewSigningKey();
   device_policy_.Build();
   store_->Store(device_policy_.policy());
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
   device_settings_test_helper_.FlushStore();
   owner_key_util_->SetPublicKeyFromPrivateKey(
       *device_policy_.GetNewSigningKey());

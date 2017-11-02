@@ -65,7 +65,7 @@ class PumpableTaskRunner : public base::SingleThreadTaskRunner {
       const scoped_refptr<base::SingleThreadTaskRunner>& target_task_runner);
 
   // Enqueue WrappedTask and post it to |target_task_runner_|.
-  bool EnqueueAndPostWrappedTask(const tracked_objects::Location& from_here,
+  bool EnqueueAndPostWrappedTask(const base::Location& from_here,
                                  WrappedTask* task,
                                  base::TimeDelta delay);
 
@@ -73,15 +73,15 @@ class PumpableTaskRunner : public base::SingleThreadTaskRunner {
   bool WaitForSingleWrappedTaskToRun(const base::TimeDelta& max_delay);
 
   // base::SingleThreadTaskRunner implementation:
-  bool PostDelayedTask(const tracked_objects::Location& from_here,
+  bool PostDelayedTask(const base::Location& from_here,
                        base::OnceClosure task,
                        base::TimeDelta delay) override;
 
-  bool PostNonNestableDelayedTask(const tracked_objects::Location& from_here,
+  bool PostNonNestableDelayedTask(const base::Location& from_here,
                                   base::OnceClosure task,
                                   base::TimeDelta delay) override;
 
-  bool RunsTasksOnCurrentThread() const override;
+  bool RunsTasksInCurrentSequence() const override;
 
  private:
   friend class WrappedTask;
@@ -241,7 +241,7 @@ bool PumpableTaskRunner::WaitForSingleWrappedTaskToRun(
 }
 
 bool PumpableTaskRunner::EnqueueAndPostWrappedTask(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     WrappedTask* task,
     base::TimeDelta delay) {
   task->AddToTaskRunnerQueue(this);
@@ -258,16 +258,15 @@ bool PumpableTaskRunner::EnqueueAndPostWrappedTask(
 ////////////////////////////////////////////////////////////////////////////////
 // PumpableTaskRunner, base::SingleThreadTaskRunner implementation:
 
-bool PumpableTaskRunner::PostDelayedTask(
-    const tracked_objects::Location& from_here,
-    base::OnceClosure task,
-    base::TimeDelta delay) {
+bool PumpableTaskRunner::PostDelayedTask(const base::Location& from_here,
+                                         base::OnceClosure task,
+                                         base::TimeDelta delay) {
   return EnqueueAndPostWrappedTask(
       from_here, new WrappedTask(std::move(task), delay), delay);
 }
 
 bool PumpableTaskRunner::PostNonNestableDelayedTask(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     base::OnceClosure task,
     base::TimeDelta delay) {
   // The correctness of non-nestable events hasn't been proven for this
@@ -276,8 +275,8 @@ bool PumpableTaskRunner::PostNonNestableDelayedTask(
   return false;
 }
 
-bool PumpableTaskRunner::RunsTasksOnCurrentThread() const {
-  return target_task_runner_->RunsTasksOnCurrentThread();
+bool PumpableTaskRunner::RunsTasksInCurrentSequence() const {
+  return target_task_runner_->RunsTasksInCurrentSequence();
 }
 
 }  // namespace

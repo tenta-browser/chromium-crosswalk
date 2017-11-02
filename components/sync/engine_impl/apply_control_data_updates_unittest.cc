@@ -13,7 +13,6 @@
 #include "base/format_macros.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
 #include "components/sync/base/cryptographer.h"
@@ -47,7 +46,7 @@ class ApplyControlDataUpdatesTest : public ::testing::Test {
 
   void SetUp() override {
     dir_maker_.SetUp();
-    entry_factory_ = base::MakeUnique<TestEntryFactory>(directory());
+    entry_factory_ = std::make_unique<TestEntryFactory>(directory());
   }
 
   void TearDown() override { dir_maker_.TearDown(); }
@@ -124,8 +123,8 @@ TEST_F(ApplyControlDataUpdatesTest, EncryptUnsyncedChanges) {
     // With default encrypted_types, this should be true.
     EXPECT_TRUE(VerifyUnsyncedChangesAreEncrypted(&trans, encrypted_types));
 
-    Syncer::UnsyncedMetaHandles handles;
-    GetUnsyncedEntries(&trans, &handles);
+    syncable::Directory::Metahandles handles;
+    syncable::GetUnsyncedEntries(&trans, &handles);
     EXPECT_TRUE(handles.empty());
   }
 
@@ -166,8 +165,8 @@ TEST_F(ApplyControlDataUpdatesTest, EncryptUnsyncedChanges) {
     syncable::ReadTransaction trans(FROM_HERE, directory());
     EXPECT_FALSE(VerifyUnsyncedChangesAreEncrypted(&trans, encrypted_types));
 
-    Syncer::UnsyncedMetaHandles handles;
-    GetUnsyncedEntries(&trans, &handles);
+    syncable::Directory::Metahandles handles;
+    syncable::GetUnsyncedEntries(&trans, &handles);
     EXPECT_EQ(2 * batch_s + 1, handles.size());
   }
 
@@ -184,8 +183,8 @@ TEST_F(ApplyControlDataUpdatesTest, EncryptUnsyncedChanges) {
               directory()->GetNigoriHandler()->GetEncryptedTypes(&trans));
     EXPECT_TRUE(VerifyUnsyncedChangesAreEncrypted(&trans, encrypted_types));
 
-    Syncer::UnsyncedMetaHandles handles;
-    GetUnsyncedEntries(&trans, &handles);
+    syncable::Directory::Metahandles handles;
+    syncable::GetUnsyncedEntries(&trans, &handles);
     EXPECT_EQ(2 * batch_s + 1, handles.size());
   }
 
@@ -210,8 +209,8 @@ TEST_F(ApplyControlDataUpdatesTest, EncryptUnsyncedChanges) {
               directory()->GetNigoriHandler()->GetEncryptedTypes(&trans));
     EXPECT_TRUE(VerifyUnsyncedChangesAreEncrypted(&trans, encrypted_types));
 
-    Syncer::UnsyncedMetaHandles handles;
-    GetUnsyncedEntries(&trans, &handles);
+    syncable::Directory::Metahandles handles;
+    syncable::GetUnsyncedEntries(&trans, &handles);
     EXPECT_EQ(2 * batch_s + 1, handles.size());
   }
 }
@@ -235,8 +234,8 @@ TEST_F(ApplyControlDataUpdatesTest, CannotEncryptUnsyncedChanges) {
     // With default encrypted_types, this should be true.
     EXPECT_TRUE(VerifyUnsyncedChangesAreEncrypted(&trans, encrypted_types));
 
-    Syncer::UnsyncedMetaHandles handles;
-    GetUnsyncedEntries(&trans, &handles);
+    syncable::Directory::Metahandles handles;
+    syncable::GetUnsyncedEntries(&trans, &handles);
     EXPECT_TRUE(handles.empty());
   }
 
@@ -278,8 +277,8 @@ TEST_F(ApplyControlDataUpdatesTest, CannotEncryptUnsyncedChanges) {
     // Ensure we have unsynced nodes that aren't properly encrypted.
     syncable::ReadTransaction trans(FROM_HERE, directory());
     EXPECT_FALSE(VerifyUnsyncedChangesAreEncrypted(&trans, encrypted_types));
-    Syncer::UnsyncedMetaHandles handles;
-    GetUnsyncedEntries(&trans, &handles);
+    syncable::Directory::Metahandles handles;
+    syncable::GetUnsyncedEntries(&trans, &handles);
     EXPECT_EQ(2 * batch_s + 1, handles.size());
   }
 
@@ -298,8 +297,8 @@ TEST_F(ApplyControlDataUpdatesTest, CannotEncryptUnsyncedChanges) {
     EXPECT_FALSE(cryptographer->is_ready());
     EXPECT_TRUE(cryptographer->has_pending_keys());
 
-    Syncer::UnsyncedMetaHandles handles;
-    GetUnsyncedEntries(&trans, &handles);
+    syncable::Directory::Metahandles handles;
+    syncable::GetUnsyncedEntries(&trans, &handles);
     EXPECT_EQ(2 * batch_s + 1, handles.size());
   }
 }

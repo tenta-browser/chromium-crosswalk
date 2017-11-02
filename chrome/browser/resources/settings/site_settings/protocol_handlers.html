@@ -1,6 +1,7 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
+
 <link rel="import" href="chrome://resources/cr_elements/icons.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-toggle-button/paper-toggle-button.html">
 <link rel="import" href="chrome://resources/cr_elements/cr_action_menu/cr_action_menu.html">
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
@@ -48,9 +49,9 @@
               </div>
             </div>
 
-            <paper-icon-button icon="cr:more-vert" on-tap="showMenu_"
-                class="dropdown-trigger" title="$i18n{moreActions}">
-            </paper-icon-button>
+            <button is="paper-icon-button-light" on-tap="showMenu_"
+                class="icon-more-vert" title="$i18n{moreActions}">
+            </button>
           </div>
 
         </template>
@@ -58,13 +59,11 @@
     </template>
 
     <dialog is="cr-action-menu">
-      <button class="dropdown-item" role="option" on-tap="onDefaultTap_"
-          hidden$="[[isModelDefault_(actionMenuModel_)]]"
-          id="defaultButton">
+      <button class="dropdown-item" on-tap="onDefaultTap_" id="defaultButton"
+          hidden$="[[isModelDefault_(actionMenuModel_)]]">
         $i18n{handlerSetDefault}
       </button>
-      <button class="dropdown-item" role="option" on-tap="onRemoveTap_"
-          id="removeButton">
+      <button class="dropdown-item" on-tap="onRemoveTap_" id="removeButton">
         $i18n{handlerRemove}
       </button>
     </dialog>

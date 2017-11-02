@@ -26,8 +26,6 @@
 #include "core/html/parser/HTMLDocumentParser.h"
 
 #include <memory>
-#include "bindings/core/v8/DocumentWriteEvaluator.h"
-#include "core/HTMLNames.h"
 #include "core/css/MediaValuesCached.h"
 #include "core/css/resolver/StyleResolver.h"
 #include "core/dom/DocumentFragment.h"
@@ -42,6 +40,7 @@
 #include "core/html/parser/HTMLParserScriptRunner.h"
 #include "core/html/parser/HTMLResourcePreloader.h"
 #include "core/html/parser/HTMLTreeBuilder.h"
+#include "core/html_names.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/loader/LinkLoader.h"
@@ -51,14 +50,16 @@
 #include "platform/Histogram.h"
 #include "platform/SharedBuffer.h"
 #include "platform/WebFrameScheduler.h"
+#include "platform/bindings/RuntimeCallStats.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "platform/heap/Handle.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/AutoReset.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebLoadingBehaviorFlag.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
 
 namespace blink {
@@ -136,13 +137,12 @@ HTMLDocumentParser::HTMLDocumentParser(Document& document,
           TaskRunnerHelper::Get(TaskType::kNetworking, &document)),
       parser_scheduler_(
           sync_policy == kAllowAsynchronousParsing
-              ? HTMLParserScheduler::Create(this, loading_task_runner_.Get())
+              ? HTMLParserScheduler::Create(this, loading_task_runner_.get())
               : nullptr),
       xss_auditor_delegate_(&document),
       weak_factory_(this),
       preloader_(HTMLResourcePreloader::Create(document)),
       tokenized_chunk_queue_(TokenizedChunkQueue::Create()),
-      evaluator_(DocumentWriteEvaluator::Create(document)),
       pending_csp_meta_token_(nullptr),
       should_use_threading_(sync_policy == kAllowAsynchronousParsing),
       end_was_delayed_(false),
@@ -178,19 +178,11 @@ DEFINE_TRACE(HTMLDocumentParser) {
   HTMLParserScriptRunnerHost::Trace(visitor);
 }
 
-void HTMLDocumentParser::Detach() {
-  if (!IsParsingFragment() && tokenized_chunk_queue_.Get() &&
-      tokenized_chunk_queue_->PeakPendingChunkCount()) {
-    DEFINE_STATIC_LOCAL(CustomCountHistogram, peak_pending_chunk_histogram,
-                        ("Parser.PeakPendingChunkCount", 1, 1000, 50));
-    peak_pending_chunk_histogram.Count(
-        tokenized_chunk_queue_->PeakPendingChunkCount());
-    DEFINE_STATIC_LOCAL(CustomCountHistogram, peak_pending_token_histogram,
-                        ("Parser.PeakPendingTokenCount", 1, 100000, 50));
-    peak_pending_token_histogram.Count(
-        tokenized_chunk_queue_->PeakPendingTokenCount());
-  }
+DEFINE_TRACE_WRAPPERS(HTMLDocumentParser) {
+  visitor->TraceWrappers(script_runner_);
+}
 
+void HTMLDocumentParser::Detach() {
   if (have_background_parser_)
     StopBackgroundParser();
   DocumentParser::Detach();
@@ -363,11 +355,6 @@ void HTMLDocumentParser::NotifyPendingTokenizedChunks() {
         else
           queued_preloads_.push_back(std::move(request));
       }
-      for (auto& index : chunk->likely_document_write_script_indices) {
-        const CompactHTMLToken& token = chunk->tokens->at(index);
-        DCHECK_EQ(token.GetType(), HTMLToken::TokenType::kCharacter);
-        queued_document_write_scripts_.push_back(token.Data());
-      }
     }
     preloader_->TakeAndPreload(link_rel_preloads);
   } else {
@@ -375,19 +362,8 @@ void HTMLDocumentParser::NotifyPendingTokenizedChunks() {
     // document element is available, as we empty the queue immediately after
     // the document element is created in documentElementAvailable().
     DCHECK(queued_preloads_.IsEmpty());
-    DCHECK(queued_document_write_scripts_.IsEmpty());
-    // Loop through the chunks to generate preloads before any document.write
-    // script evaluation takes place. Preloading these scripts is valuable and
-    // comparably cheap, while evaluating JS can be expensive.
     for (auto& chunk : pending_chunks)
       preloader_->TakeAndPreload(chunk->preloads);
-    for (auto& chunk : pending_chunks) {
-      for (auto& index : chunk->likely_document_write_script_indices) {
-        const CompactHTMLToken& token = chunk->tokens->at(index);
-        DCHECK_EQ(token.GetType(), HTMLToken::TokenType::kCharacter);
-        EvaluateAndPreloadScriptForDocumentWrite(token.Data());
-      }
-    }
   }
 
   for (auto& chunk : pending_chunks)
@@ -466,9 +442,9 @@ void HTMLDocumentParser::DiscardSpeculationsAndResumeFrom(
                       ("Parser.DiscardedTokenCount", 1, 100000, 50));
   discarded_token_count_histogram.Count(discarded_token_count);
 
-  speculations_.Clear();
+  speculations_.clear();
   pending_csp_meta_token_ = nullptr;
-  queued_preloads_.Clear();
+  queued_preloads_.clear();
 
   std::unique_ptr<BackgroundHTMLParser::Checkpoint> checkpoint =
       WTF::WrapUnique(new BackgroundHTMLParser::Checkpoint);
@@ -682,8 +658,13 @@ void HTMLDocumentParser::PumpTokenizer() {
     if (xss_auditor_.IsEnabled())
       source_tracker_.Start(input_.Current(), tokenizer_.get(), Token());
 
-    if (!tokenizer_->NextToken(input_.Current(), Token()))
-      break;
+    {
+      RUNTIME_CALL_TIMER_SCOPE(
+          V8PerIsolateData::MainThreadIsolate(),
+          RuntimeCallStats::CounterId::kHTMLTokenizerNextToken);
+      if (!tokenizer_->NextToken(input_.Current(), Token()))
+        break;
+    }
 
     if (xss_auditor_.IsEnabled()) {
       source_tracker_.end(input_.Current(), tokenizer_.get(), Token());
@@ -835,7 +816,7 @@ void HTMLDocumentParser::StartBackgroundParser() {
   config->xss_auditor->Init(GetDocument(), &xss_auditor_delegate_);
 
   config->decoder = TakeDecoder();
-  config->tokenized_chunk_queue = tokenized_chunk_queue_.Get();
+  config->tokenized_chunk_queue = tokenized_chunk_queue_.get();
   if (GetDocument()->GetSettings()) {
     if (GetDocument()
             ->GetSettings()
@@ -898,6 +879,10 @@ void HTMLDocumentParser::Append(const String& input_source) {
   const SegmentedString source(input_source);
 
   if (GetDocument()->IsPrefetchOnly()) {
+    // Do not prefetch if there is an appcache.
+    if (GetDocument()->Loader()->GetResponse().AppCacheID() != 0)
+      return;
+
     if (!preload_scanner_) {
       preload_scanner_ =
           CreatePreloadScanner(TokenPreloadScanner::ScannerType::kMainDocument);
@@ -985,7 +970,7 @@ void HTMLDocumentParser::EndIfDelayed() {
 }
 
 void HTMLDocumentParser::Finish() {
-  // FIXME: We should ASSERT(!m_parserStopped) here, since it does not makes
+  // FIXME: We should DCHECK(!m_parserStopped) here, since it does not makes
   // sense to call any methods on DocumentParser once it's been stopped.
   // However, FrameLoader::stop calls DocumentParser::finish unconditionally.
 
@@ -1122,6 +1107,9 @@ void HTMLDocumentParser::NotifyScriptLoaded(PendingScript* pending_script) {
 }
 
 void HTMLDocumentParser::ExecuteScriptsWaitingForResources() {
+  if (IsStopped())
+    return;
+
   DCHECK(GetDocument()->IsScriptExecutionReady());
 
   if (is_waiting_for_stylesheets_)
@@ -1142,7 +1130,7 @@ void HTMLDocumentParser::DidAddPendingStylesheetInBody() {
   // token so don't actually set the bit to block parsing here, just track
   // the state of the added sheet in case it does persist beyond a single
   // token.
-  if (RuntimeEnabledFeatures::cssInBodyDoesNotBlockPaintEnabled())
+  if (RuntimeEnabledFeatures::CSSInBodyDoesNotBlockPaintEnabled())
     added_pending_stylesheet_in_body_ = true;
 }
 
@@ -1193,21 +1181,19 @@ void HTMLDocumentParser::AppendBytes(const char* data, size_t length) {
     return;
 
   if (ShouldUseThreading()) {
-    double bytes_received_time = MonotonicallyIncreasingTimeMS();
     if (!have_background_parser_)
       StartBackgroundParser();
 
     std::unique_ptr<Vector<char>> buffer =
         WTF::MakeUnique<Vector<char>>(length);
-    memcpy(buffer->Data(), data, length);
+    memcpy(buffer->data(), data, length);
     TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("blink.debug"),
                  "HTMLDocumentParser::appendBytes", "size", (unsigned)length);
 
     loading_task_runner_->PostTask(
         BLINK_FROM_HERE,
         WTF::Bind(&BackgroundHTMLParser::AppendRawBytesFromMainThread,
-                  background_parser_, WTF::Passed(std::move(buffer)),
-                  bytes_received_time));
+                  background_parser_, WTF::Passed(std::move(buffer))));
     return;
   }
 
@@ -1277,69 +1263,6 @@ void HTMLDocumentParser::FetchQueuedPreloads() {
 
   if (!queued_preloads_.IsEmpty())
     preloader_->TakeAndPreload(queued_preloads_);
-
-  for (const String& script_source : queued_document_write_scripts_) {
-    EvaluateAndPreloadScriptForDocumentWrite(script_source);
-  }
-
-  queued_document_write_scripts_.Clear();
-}
-
-void HTMLDocumentParser::EvaluateAndPreloadScriptForDocumentWrite(
-    const String& source) {
-  if (!evaluator_->ShouldEvaluate(source))
-    return;
-  GetDocument()->Loader()->DidObserveLoadingBehavior(
-      WebLoadingBehaviorFlag::kWebLoadingBehaviorDocumentWriteEvaluator);
-  if (!RuntimeEnabledFeatures::documentWriteEvaluatorEnabled())
-    return;
-  TRACE_EVENT0("blink",
-               "HTMLDocumentParser::evaluateAndPreloadScriptForDocumentWrite");
-
-  double initialize_start_time = MonotonicallyIncreasingTimeMS();
-  bool needed_initialization = evaluator_->EnsureEvaluationContext();
-  double initialization_duration =
-      MonotonicallyIncreasingTimeMS() - initialize_start_time;
-
-  double start_time = MonotonicallyIncreasingTimeMS();
-  String written_source = evaluator_->EvaluateAndEmitWrittenSource(source);
-  double duration = MonotonicallyIncreasingTimeMS() - start_time;
-
-  int current_preload_count =
-      GetDocument()->Loader()->Fetcher()->CountPreloads();
-
-  std::unique_ptr<HTMLPreloadScanner> scanner =
-      CreatePreloadScanner(TokenPreloadScanner::ScannerType::kInsertion);
-  scanner->AppendToEnd(SegmentedString(written_source));
-  ScanAndPreload(scanner.get());
-
-  int num_preloads = GetDocument()->Loader()->Fetcher()->CountPreloads() -
-                     current_preload_count;
-
-  TRACE_EVENT_INSTANT2(
-      "blink",
-      "HTMLDocumentParser::evaluateAndPreloadScriptForDocumentWrite.data",
-      TRACE_EVENT_SCOPE_THREAD, "numPreloads", num_preloads, "scriptLength",
-      source.length());
-
-  if (needed_initialization) {
-    DEFINE_STATIC_LOCAL(
-        CustomCountHistogram, initialize_histograms,
-        ("PreloadScanner.DocumentWrite.InitializationTime", 1, 10000, 50));
-    initialize_histograms.Count(initialization_duration);
-  }
-
-  if (num_preloads) {
-    DEFINE_STATIC_LOCAL(
-        CustomCountHistogram, success_histogram,
-        ("PreloadScanner.DocumentWrite.ExecutionTime.Success", 1, 10000, 50));
-    success_histogram.Count(duration);
-  } else {
-    DEFINE_STATIC_LOCAL(
-        CustomCountHistogram, failure_histogram,
-        ("PreloadScanner.DocumentWrite.ExecutionTime.Failure", 1, 10000, 50));
-    failure_histogram.Count(duration);
-  }
 }
 
 }  // namespace blink

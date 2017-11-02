@@ -41,7 +41,7 @@ void WebViewFindHelper::DispatchFindUpdateEvent(bool canceled,
   args->SetBoolean(webview::kFindCanceled, canceled);
   args->SetBoolean(webview::kFindFinalUpdate, final_update);
   DCHECK(webview_guest_);
-  webview_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+  webview_guest_->DispatchEventToView(std::make_unique<GuestViewEvent>(
       webview::kEventFindReply, std::move(args)));
 }
 
@@ -101,8 +101,8 @@ void WebViewFindHelper::Find(
   std::pair<FindInfoMap::iterator, bool> insert_result =
       find_info_map_.insert(std::make_pair(
           current_find_request_id_,
-          make_scoped_refptr(new FindInfo(current_find_request_id_, search_text,
-                                          options, find_function))));
+          base::WrapRefCounted(new FindInfo(
+              current_find_request_id_, search_text, options, find_function))));
   // No duplicate insertions.
   DCHECK(insert_result.second);
 
@@ -221,7 +221,8 @@ void WebViewFindHelper::FindResults::PrepareResults(
   rect.SetInteger(webview::kFindRectTop, selection_rect_.y());
   rect.SetInteger(webview::kFindRectWidth, selection_rect_.width());
   rect.SetInteger(webview::kFindRectHeight, selection_rect_.height());
-  results->Set(webview::kFindSelectionRect, rect.DeepCopy());
+  results->Set(webview::kFindSelectionRect,
+               std::make_unique<base::Value>(std::move(rect)));
 }
 
 WebViewFindHelper::FindUpdateEvent::FindUpdateEvent(

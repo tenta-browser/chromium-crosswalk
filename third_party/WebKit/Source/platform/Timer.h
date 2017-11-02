@@ -26,6 +26,7 @@
 #ifndef Timer_h
 #define Timer_h
 
+#include "base/time/time.h"
 #include "platform/PlatformExport.h"
 #include "platform/WebTaskRunner.h"
 #include "platform/heap/Handle.h"
@@ -56,8 +57,15 @@ class PLATFORM_EXPORT TimerBase {
   void StartRepeating(double repeat_interval, const WebTraceLocation& caller) {
     Start(repeat_interval, repeat_interval, caller);
   }
+  void StartRepeating(base::TimeDelta repeat_interval,
+                      const WebTraceLocation& caller) {
+    StartRepeating(repeat_interval.InSecondsF(), caller);
+  }
   void StartOneShot(double interval, const WebTraceLocation& caller) {
     Start(interval, 0, caller);
+  }
+  void StartOneShot(base::TimeDelta interval, const WebTraceLocation& caller) {
+    StartOneShot(interval.InSecondsF(), caller);
   }
 
   // Timer cancellation is fast enough that you shouldn't have to worry
@@ -83,7 +91,6 @@ class PLATFORM_EXPORT TimerBase {
 
  protected:
   static RefPtr<WebTaskRunner> GetTimerTaskRunner();
-  static RefPtr<WebTaskRunner> GetUnthrottledTaskRunner();
 
  private:
   virtual void Fired() = 0;
@@ -174,26 +181,6 @@ class Timer : public TaskRunnerTimer<TimerFiredClass> {
   Timer(TimerFiredClass* timer_fired_class,
         TimerFiredFunction timer_fired_function)
       : TaskRunnerTimer<TimerFiredClass>(TimerBase::GetTimerTaskRunner(),
-                                         timer_fired_class,
-                                         timer_fired_function) {}
-};
-
-// This subclass of Timer posts its tasks on the current thread's default task
-// runner.  Tasks posted on there are not throttled when the tab is in the
-// background.
-//
-// DEPRECATED: Use TaskRunnerHelper::get with TaskType::Unthrottled.
-template <typename TimerFiredClass>
-class UnthrottledThreadTimer : public TaskRunnerTimer<TimerFiredClass> {
- public:
-  using TimerFiredFunction =
-      typename TaskRunnerTimer<TimerFiredClass>::TimerFiredFunction;
-
-  ~UnthrottledThreadTimer() override {}
-
-  UnthrottledThreadTimer(TimerFiredClass* timer_fired_class,
-                         TimerFiredFunction timer_fired_function)
-      : TaskRunnerTimer<TimerFiredClass>(TimerBase::GetUnthrottledTaskRunner(),
                                          timer_fired_class,
                                          timer_fired_function) {}
 };

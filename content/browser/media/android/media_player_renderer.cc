@@ -30,8 +30,9 @@ media::MediaUrlInterceptor* g_media_url_interceptor = nullptr;
 
 }  // namespace
 
-MediaPlayerRenderer::MediaPlayerRenderer(RenderFrameHost* render_frame_host)
-    : render_frame_host_(render_frame_host),
+MediaPlayerRenderer::MediaPlayerRenderer(int process_id, int routing_id)
+    : render_process_id_(process_id),
+      routing_id_(routing_id),
       has_error_(false),
       weak_factory_(this) {}
 
@@ -75,14 +76,23 @@ void MediaPlayerRenderer::CreateMediaPlayer(
     const media::PipelineStatusCB& init_cb) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
+  // Force the initialization of |media_resource_getter_| first. If it fails,
+  // the RenderFrameHost may have been destroyed already.
+  if (!GetMediaResourceGetter()) {
+    DLOG(ERROR) << "Unable to retrieve MediaResourceGetter";
+    init_cb.Run(media::PIPELINE_ERROR_INITIALIZATION_FAILED);
+    return;
+  }
+
   const std::string user_agent = GetContentClient()->GetUserAgent();
 
   media_player_.reset(new media::MediaPlayerBridge(
       kUnusedAndIrrelevantPlayerId, url_params.media_url,
-      url_params.first_party_for_cookies, user_agent,
+      url_params.site_for_cookies, user_agent,
       false,  // hide_url_log
-      this, base::Bind(&MediaPlayerRenderer::OnDecoderResourcesReleased,
-                       weak_factory_.GetWeakPtr()),
+      this,
+      base::Bind(&MediaPlayerRenderer::OnDecoderResourcesReleased,
+                 weak_factory_.GetWeakPtr()),
       GURL(),  // frame_url
       true));  // allow_crendentials
 
@@ -169,14 +179,20 @@ base::TimeDelta MediaPlayerRenderer::GetMediaTime() {
 media::MediaResourceGetter* MediaPlayerRenderer::GetMediaResourceGetter() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!media_resource_getter_.get()) {
-    RenderProcessHost* host = render_frame_host_->GetProcess();
+    RenderProcessHost* host = RenderProcessHost::FromID(render_process_id_);
+
+    // The RenderFrameHost/RenderProcessHost may have been destroyed already,
+    // as there might be a delay between the frame closing and
+    // MojoRendererService receiving a connection closing error.
+    if (!host)
+      return nullptr;
+
     BrowserContext* context = host->GetBrowserContext();
     StoragePartition* partition = host->GetStoragePartition();
     storage::FileSystemContext* file_system_context =
         partition ? partition->GetFileSystemContext() : nullptr;
-    media_resource_getter_.reset(
-        new MediaResourceGetterImpl(context, file_system_context, host->GetID(),
-                                    render_frame_host_->GetRoutingID()));
+    media_resource_getter_.reset(new MediaResourceGetterImpl(
+        context, file_system_context, render_process_id_, routing_id_));
   }
   return media_resource_getter_.get();
 }
@@ -194,8 +210,9 @@ void MediaPlayerRenderer::OnMediaMetadataChanged(int player_id,
                                                  int width,
                                                  int height,
                                                  bool success) {
-  if (video_size_ != gfx::Size(width, height))
-    OnVideoSizeChanged(kUnusedAndIrrelevantPlayerId, width, height);
+  // Always try to propage the video size.
+  // This call will no-op if |video_size_| is already current.
+  OnVideoSizeChanged(kUnusedAndIrrelevantPlayerId, width, height);
 
   // For HLS streams, the reported duration may be zero for infinite streams.
   // See http://crbug.com/501213.
@@ -234,8 +251,14 @@ void MediaPlayerRenderer::OnError(int player_id, int error) {
 void MediaPlayerRenderer::OnVideoSizeChanged(int player_id,
                                              int width,
                                              int height) {
-  video_size_ = gfx::Size(width, height);
-  renderer_client_->OnVideoNaturalSizeChange(video_size_);
+  // This method is called when we find a video size from metadata or when
+  // |media_player|'s size actually changes.
+  // We therefore may already have the latest video size.
+  gfx::Size new_size = gfx::Size(width, height);
+  if (video_size_ != new_size) {
+    video_size_ = new_size;
+    renderer_client_->OnVideoNaturalSizeChange(video_size_);
+  }
 }
 
 media::MediaPlayerAndroid* MediaPlayerRenderer::GetFullscreenPlayer() {

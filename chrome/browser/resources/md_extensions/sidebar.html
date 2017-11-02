@@ -1,9 +1,11 @@
-<link rel="import" href="chrome://resources/html/cr.html">
 <link rel="import" href="chrome://resources/html/polymer.html">
+
+<link rel="import" href="chrome://resources/html/cr.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-item/paper-item.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-menu/paper-menu.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-styles/color.html">
+<link rel="import" href="navigation_helper.html">
 
 <dom-module id="extensions-sidebar">
   <template>
@@ -38,7 +40,6 @@
         -webkit-padding-start: 24px;
         color: #5A5A5A;
         cursor: pointer;
-        font-size: 13px;
         height: 48px;
       }
 
@@ -49,7 +50,7 @@
         width: 15px;
       }
     </style>
-    <paper-menu id="section-menu" selected="0">
+    <paper-menu id="section-menu" selected="{{selected_}}">
       <paper-item class="section-item" id="sections-extensions"
           on-tap="onExtensionsTap_">
         <span>$i18n{sidebarExtensions}</span>
@@ -69,5 +70,5 @@
       <button class="open-in-new" is="paper-icon-button-light"></button>
     </a>
   </template>
-  <script src="chrome://extensions/sidebar.js"></script>
+  <script src="sidebar.js"></script>
 </dom-module>

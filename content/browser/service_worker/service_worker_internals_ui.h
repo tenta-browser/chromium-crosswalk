@@ -12,7 +12,6 @@
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "content/browser/service_worker/service_worker_context_observer.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 #include "content/public/browser/web_ui_controller.h"
 
@@ -24,15 +23,12 @@ namespace content {
 
 class StoragePartition;
 class ServiceWorkerContextWrapper;
-class ServiceWorkerVersion;
 
 class ServiceWorkerInternalsUI
     : public WebUIController,
       public base::SupportsWeakPtr<ServiceWorkerInternalsUI> {
  public:
-  typedef base::Callback<void(ServiceWorkerStatusCode)> StatusCallback;
-  typedef void (ServiceWorkerVersion::*ServiceWorkerVersionMethod)(
-      const StatusCallback& callback);
+  using StatusCallback = base::OnceCallback<void(ServiceWorkerStatusCode)>;
 
   explicit ServiceWorkerInternalsUI(WebUI* web_ui);
 
@@ -49,8 +45,7 @@ class ServiceWorkerInternalsUI
   void GetOptions(const base::ListValue* args);
   void SetOption(const base::ListValue* args);
   void GetAllRegistrations(const base::ListValue* args);
-  void CallServiceWorkerVersionMethod(ServiceWorkerVersionMethod method,
-                                      const base::ListValue* args);
+  void StopWorker(const base::ListValue* args);
   void InspectWorker(const base::ListValue* args);
   void Unregister(const base::ListValue* args);
   void StartWorker(const base::ListValue* args);
@@ -62,9 +57,12 @@ class ServiceWorkerInternalsUI
                    StoragePartition** result_partition,
                    StoragePartition* storage_partition) const;
 
+  void StopWorkerWithId(scoped_refptr<ServiceWorkerContextWrapper> context,
+                        int64_t version_id,
+                        StatusCallback callback);
   void UnregisterWithScope(scoped_refptr<ServiceWorkerContextWrapper> context,
                            const GURL& scope,
-                           const StatusCallback& callback) const;
+                           StatusCallback callback) const;
 
   std::unordered_map<uintptr_t, std::unique_ptr<PartitionObserver>> observers_;
   int next_partition_id_;

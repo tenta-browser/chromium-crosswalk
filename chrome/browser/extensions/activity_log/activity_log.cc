@@ -438,8 +438,9 @@ void LogApiActivity(content::BrowserContext* browser_context,
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&LogApiActivityOnUI, browser_context, extension_id,
-                   activity_name, base::Passed(args.CreateDeepCopy()), type));
+        base::BindOnce(&LogApiActivityOnUI, browser_context, extension_id,
+                       activity_name, base::Passed(args.CreateDeepCopy()),
+                       type));
     return;
   }
   LogApiActivityOnUI(browser_context, extension_id, activity_name,
@@ -499,8 +500,9 @@ void LogWebRequestActivity(content::BrowserContext* browser_context,
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&LogWebRequestActivityOnUI, browser_context, extension_id,
-                   url, is_incognito, api_call, base::Passed(&details)));
+        base::BindOnce(&LogWebRequestActivityOnUI, browser_context,
+                       extension_id, url, is_incognito, api_call,
+                       base::Passed(&details)));
     return;
   }
   LogWebRequestActivityOnUI(browser_context, extension_id, url, is_incognito,
@@ -521,7 +523,7 @@ void SetActivityHandlers() {
   activity_monitor::Monitor current_event_monitor =
       activity_monitor::GetApiEventMonitor();
   DCHECK(!current_event_monitor || current_event_monitor == &LogApiEvent);
-  if (!current_function_monitor)
+  if (!current_event_monitor)
     activity_monitor::SetApiEventMonitor(&LogApiEvent);
 
   activity_monitor::WebRequestMonitor current_web_request_monitor =
@@ -536,12 +538,11 @@ void SetActivityHandlers() {
 
 // SET THINGS UP. --------------------------------------------------------------
 
-static base::LazyInstance<
-    BrowserContextKeyedAPIFactory<ActivityLog>>::DestructorAtExit g_factory =
-    LAZY_INSTANCE_INITIALIZER;
+static base::LazyInstance<BrowserContextKeyedAPIFactory<ActivityLog>>::
+    DestructorAtExit g_activity_log_factory = LAZY_INSTANCE_INITIALIZER;
 
 BrowserContextKeyedAPIFactory<ActivityLog>* ActivityLog::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_activity_log_factory.Pointer();
 }
 
 // static
@@ -558,7 +559,6 @@ ActivityLog::ActivityLog(content::BrowserContext* context)
       extension_system_(ExtensionSystem::Get(context)),
       db_enabled_(false),
       testing_mode_(false),
-      has_threads_(true),
       extension_registry_observer_(this),
       active_consumers_(0),
       cached_consumer_count_(0),
@@ -575,14 +575,6 @@ ActivityLog::ActivityLog(content::BrowserContext* context)
       profile_->GetPrefs()->GetInteger(prefs::kWatchdogExtensionActive);
 
   observers_ = new base::ObserverListThreadSafe<Observer>;
-
-  // Check that the right threads exist for logging to the database.
-  // If not, we shouldn't try to do things that require them.
-  if (!BrowserThread::IsMessageLoopValid(BrowserThread::DB) ||
-      !BrowserThread::IsMessageLoopValid(BrowserThread::FILE) ||
-      !BrowserThread::IsMessageLoopValid(BrowserThread::IO)) {
-    has_threads_ = false;
-  }
 
   extension_registry_observer_.Add(ExtensionRegistry::Get(profile_));
   CheckActive(true);  // use cached
@@ -643,8 +635,6 @@ void ActivityLog::ChooseDatabasePolicy() {
 }
 
 bool ActivityLog::IsDatabaseEnabled() {
-  // Make sure we are not enabled when there are no threads.
-  DCHECK(has_threads_ || !db_enabled_);
   return db_enabled_;
 }
 
@@ -679,7 +669,7 @@ void ActivityLog::OnExtensionLoaded(content::BrowserContext* browser_context,
 
 void ActivityLog::OnExtensionUnloaded(content::BrowserContext* browser_context,
                                       const Extension* extension,
-                                      UnloadedExtensionInfo::Reason reason) {
+                                      UnloadedExtensionReason reason) {
   if (!ActivityLogAPI::IsExtensionWhitelisted(extension->id()))
     return;
   --active_consumers_;
@@ -857,9 +847,8 @@ void ActivityLog::CheckActive(bool use_cached) {
   bool has_consumer =
       active_consumers_ || (use_cached && cached_consumer_count_);
   bool needs_db =
-      has_threads_ && (has_consumer ||
-                       base::CommandLine::ForCurrentProcess()->HasSwitch(
-                           switches::kEnableExtensionActivityLogging));
+      has_consumer || base::CommandLine::ForCurrentProcess()->HasSwitch(
+                          switches::kEnableExtensionActivityLogging);
   bool should_be_active = needs_db || has_consumer;
 
   if (should_be_active == is_active_)

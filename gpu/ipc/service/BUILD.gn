@@ -74,19 +74,21 @@ target(link_target_type, "ipc_service_sources") {
     "//gpu/command_buffer/common:common_sources",
     "//gpu/command_buffer/service:service_sources",
     "//gpu/config:config_sources",
+    "//gpu/config:crash_keys",
     "//gpu/ipc/common:ipc_common_sources",
   ]
   libs = []
   if (is_win) {
     sources += [
-      "child_window_surface_win.cc",
-      "child_window_surface_win.h",
       "child_window_win.cc",
       "child_window_win.h",
+      "direct_composition_child_surface_win.cc",
+      "direct_composition_child_surface_win.h",
       "direct_composition_surface_win.cc",
       "direct_composition_surface_win.h",
       "image_transport_surface_win.cc",
     ]
+    libs += [ "dwmapi.lib" ]
   }
   if (is_mac) {
     sources += [
@@ -123,6 +125,9 @@ target(link_target_type, "ipc_service_sources") {
   }
   if (use_ozone) {
     deps += [ "//ui/ozone" ]
+  }
+  if (is_fuchsia) {
+    sources += [ "image_transport_surface_fuchsia.cc" ]
   }
 }
 

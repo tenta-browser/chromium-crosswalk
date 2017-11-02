@@ -9,8 +9,14 @@ function extensionFunctions()
     return functions;
 }
 
+var extensionsOrigin = "http://devtools-extensions.oopif.test:8000";
+
 var initialize_ExtensionsTest = function()
 {
+
+var extensionsHost = "devtools-extensions.oopif.test";
+var extensionsOrigin = `http://${extensionsHost}:8000`;
+
 Extensions.extensionServer._registerHandler("evaluateForTestInFrontEnd", onEvaluate);
 
 Extensions.extensionServer._extensionAPITestHook = function(extensionServerClient, coreAPI)
@@ -47,19 +53,19 @@ InspectorTest.showPanel = function(panelId)
     return UI.inspectorView.showPanel(panelId);
 }
 
-InspectorTest.runExtensionTests = function()
+InspectorTest.runExtensionTests = async function()
 {
-    InspectorTest.RuntimeAgent.evaluate("location.href", "console", false, function(error, result) {
-        if (error)
-            return;
-        var pageURL = result.value;
-        var extensionURL = (/^https?:/.test(pageURL) ?
-            pageURL.replace(/^(https?:\/\/[^/]*\/).*$/,"$1") :
-            pageURL.replace(/\/inspector\/extensions\/[^/]*$/, "/http/tests")) +
-            "/inspector/resources/extension-main.html";
-        InspectorFrontendAPI.addExtensions([{ startPage: extensionURL, name: "test extension", exposeWebInspectorNamespace: true }]);
-        Extensions.extensionServer.initializeExtensions();
-    });
+    var result = await InspectorTest.RuntimeAgent.evaluate("location.href", "console", false);
+    if (!result)
+        return;
+    var pageURL = result.value;
+    var extensionURL = (/^https?:/.test(pageURL) ?
+        pageURL.replace(/^(https?:\/\/[^/]*\/).*$/,"$1") :
+        pageURL.replace(/\/devtools\/extensions\/[^/]*$/, "/http/tests")) +
+        "devtools/resources/extension-main.html";
+    extensionURL = extensionURL.replace("127.0.0.1", extensionsHost);
+    InspectorFrontendAPI.addExtensions([{ startPage: extensionURL, name: "test extension", exposeWebInspectorNamespace: true }]);
+    Extensions.extensionServer.initializeExtensions();
 }
 
 }

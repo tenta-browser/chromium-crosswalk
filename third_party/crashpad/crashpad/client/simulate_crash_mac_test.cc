@@ -130,12 +130,12 @@ class TestSimulateCrashMac final : public MachMultiprocess,
               reinterpret_cast<const x86_thread_state*>(old_state);
           switch (state->tsh.flavor) {
             case x86_THREAD_STATE32:
-              EXPECT_EQ(state->tsh.count,
-                        implicit_cast<int>(x86_THREAD_STATE32_COUNT));
+              EXPECT_EQ(implicit_cast<uint32_t>(state->tsh.count),
+                        implicit_cast<uint32_t>(x86_THREAD_STATE32_COUNT));
               break;
             case x86_THREAD_STATE64:
-              EXPECT_EQ(state->tsh.count,
-                        implicit_cast<int>(x86_THREAD_STATE64_COUNT));
+              EXPECT_EQ(implicit_cast<uint32_t>(state->tsh.count),
+                        implicit_cast<uint32_t>(x86_THREAD_STATE64_COUNT));
               break;
             default:
               ADD_FAILURE() << "unexpected tsh.flavor " << state->tsh.flavor;
@@ -149,12 +149,12 @@ class TestSimulateCrashMac final : public MachMultiprocess,
               reinterpret_cast<const x86_float_state*>(old_state);
           switch (state->fsh.flavor) {
             case x86_FLOAT_STATE32:
-              EXPECT_EQ(state->fsh.count,
-                        implicit_cast<int>(x86_FLOAT_STATE32_COUNT));
+              EXPECT_EQ(implicit_cast<uint32_t>(state->fsh.count),
+                        implicit_cast<uint32_t>(x86_FLOAT_STATE32_COUNT));
               break;
             case x86_FLOAT_STATE64:
-              EXPECT_EQ(state->fsh.count,
-                        implicit_cast<int>(x86_FLOAT_STATE64_COUNT));
+              EXPECT_EQ(implicit_cast<uint32_t>(state->fsh.count),
+                        implicit_cast<uint32_t>(x86_FLOAT_STATE64_COUNT));
               break;
             default:
               ADD_FAILURE() << "unexpected fsh.flavor " << state->fsh.flavor;
@@ -168,12 +168,12 @@ class TestSimulateCrashMac final : public MachMultiprocess,
               reinterpret_cast<const x86_debug_state*>(old_state);
           switch (state->dsh.flavor) {
             case x86_DEBUG_STATE32:
-              EXPECT_EQ(state->dsh.count,
-                        implicit_cast<int>(x86_DEBUG_STATE32_COUNT));
+              EXPECT_EQ(implicit_cast<uint32_t>(state->dsh.count),
+                        implicit_cast<uint32_t>(x86_DEBUG_STATE32_COUNT));
               break;
             case x86_DEBUG_STATE64:
-              EXPECT_EQ(state->dsh.count,
-                        implicit_cast<int>(x86_DEBUG_STATE64_COUNT));
+              EXPECT_EQ(implicit_cast<uint32_t>(state->dsh.count),
+                        implicit_cast<uint32_t>(x86_DEBUG_STATE64_COUNT));
               break;
             default:
               ADD_FAILURE() << "unexpected dsh.flavor " << state->dsh.flavor;
@@ -307,14 +307,14 @@ class TestSimulateCrashMac final : public MachMultiprocess,
 };
 
 TEST(SimulateCrash, SimulateCrash) {
-  const TestSimulateCrashMac::ExceptionPortsTarget kTargets[] = {
+  static constexpr TestSimulateCrashMac::ExceptionPortsTarget kTargets[] = {
       TestSimulateCrashMac::kExceptionPortsTargetNone,
       TestSimulateCrashMac::kExceptionPortsTargetTask,
       TestSimulateCrashMac::kExceptionPortsTargetThread,
       TestSimulateCrashMac::kExceptionPortsTargetBoth,
   };
 
-  const exception_behavior_t kBehaviors[] = {
+  static constexpr exception_behavior_t kBehaviors[] = {
       EXCEPTION_DEFAULT,
       EXCEPTION_STATE,
       EXCEPTION_STATE_IDENTITY,
@@ -323,7 +323,7 @@ TEST(SimulateCrash, SimulateCrash) {
       EXCEPTION_STATE_IDENTITY | kMachExceptionCodes,
   };
 
-  const thread_state_flavor_t kFlavors[] = {
+  static constexpr thread_state_flavor_t kFlavors[] = {
 #if defined(ARCH_CPU_X86_FAMILY)
       x86_THREAD_STATE,
       x86_FLOAT_STATE,

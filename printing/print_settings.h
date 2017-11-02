@@ -37,6 +37,7 @@ class PRINTING_EXPORT PrintSettings {
 #if defined(OS_WIN)
   enum PrinterType {
     TYPE_NONE = 0,
+    TYPE_TEXTONLY,
     TYPE_XPS,
     TYPE_POSTSCRIPT_LEVEL2,
     TYPE_POSTSCRIPT_LEVEL3
@@ -107,7 +108,7 @@ class PRINTING_EXPORT PrintSettings {
     dpi_[0] = dpi_horizontal;
     dpi_[1] = dpi_vertical;
   }
-  int dpi() const { return std::min(dpi_[0], dpi_[1]); }
+  int dpi() const { return std::max(dpi_[0], dpi_[1]); }
   int dpi_horizontal() const { return dpi_[0]; }
   int dpi_vertical() const { return dpi_[1]; }
 
@@ -171,6 +172,9 @@ class PRINTING_EXPORT PrintSettings {
   bool print_text_with_gdi() const { return print_text_with_gdi_; }
 
   void set_printer_type(PrinterType type) { printer_type_ = type; }
+  bool printer_is_textonly() const {
+    return printer_type_ == PrinterType::TYPE_TEXTONLY;
+  }
   bool printer_is_xps() const { return printer_type_ == PrinterType::TYPE_XPS;}
   bool printer_is_ps2() const {
     return printer_type_ == PrinterType::TYPE_POSTSCRIPT_LEVEL2;

@@ -30,9 +30,10 @@
 
 #include "core/html/forms/URLInputType.h"
 
-#include "core/InputTypeNames.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/frame/WebFeature.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/input_type_names.h"
 #include "platform/text/PlatformLocale.h"
 
 namespace blink {
@@ -42,7 +43,7 @@ InputType* URLInputType::Create(HTMLInputElement& element) {
 }
 
 void URLInputType::CountUsage() {
-  CountUsageIfVisible(UseCounter::kInputTypeURL);
+  CountUsageIfVisible(WebFeature::kInputTypeURL);
 }
 
 const AtomicString& URLInputType::FormControlType() const {
@@ -50,7 +51,7 @@ const AtomicString& URLInputType::FormControlType() const {
 }
 
 bool URLInputType::TypeMismatchFor(const String& value) const {
-  return !value.IsEmpty() && !KURL(KURL(), value).IsValid();
+  return !value.IsEmpty() && !KURL(NullURL(), value).IsValid();
 }
 
 bool URLInputType::TypeMismatch() const {

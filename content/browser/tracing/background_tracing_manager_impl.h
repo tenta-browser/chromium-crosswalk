@@ -5,20 +5,26 @@
 #ifndef CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_MANAGER_IMPL_H_
 #define CONTENT_BROWSER_TRACING_BACKGROUND_TRACING_MANAGER_IMPL_H_
 
+#include <map>
 #include <memory>
+#include <set>
+#include <string>
 
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted_memory.h"
-#include "base/memory/weak_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/timer/timer.h"
+#include "base/trace_event/trace_config.h"
 #include "content/browser/tracing/background_tracing_config_impl.h"
-#include "content/browser/tracing/tracing_controller_impl.h"
 #include "content/public/browser/background_tracing_manager.h"
+
+namespace base {
+class RefCountedString;
+}  // namespace base
 
 namespace content {
 
 class BackgroundTracingRule;
+class TraceMessageFilter;
 class TracingDelegate;
 
 class BackgroundTracingManagerImpl : public BackgroundTracingManager {
@@ -32,12 +38,21 @@ class BackgroundTracingManagerImpl : public BackgroundTracingManager {
     virtual void OnScenarioActivated(
         const BackgroundTracingConfigImpl* config) = 0;
 
+    // In case the scenario was aborted before or after tracing was enabled.
+    virtual void OnScenarioAborted() = 0;
+
     // Called after tracing is enabled on all processes because the rule was
     // triggered.
     virtual void OnTracingEnabled(
         BackgroundTracingConfigImpl::CategoryPreset preset) = 0;
 
     virtual ~EnabledStateObserver() = default;
+  };
+
+  class TraceMessageFilterObserver {
+   public:
+    virtual void OnTraceMessageFilterAdded(TraceMessageFilter* filter) = 0;
+    virtual void OnTraceMessageFilterRemoved(TraceMessageFilter* filter) = 0;
   };
 
   CONTENT_EXPORT static BackgroundTracingManagerImpl* GetInstance();
@@ -64,6 +79,14 @@ class BackgroundTracingManagerImpl : public BackgroundTracingManager {
   CONTENT_EXPORT void RemoveEnabledStateObserver(
       EnabledStateObserver* observer);
 
+  // Add/remove TraceMessageFilter{Observer}.
+  void AddTraceMessageFilter(TraceMessageFilter* trace_message_filter);
+  void RemoveTraceMessageFilter(TraceMessageFilter* trace_message_filter);
+  void AddTraceMessageFilterObserver(TraceMessageFilterObserver* observer);
+  void RemoveTraceMessageFilterObserver(TraceMessageFilterObserver* observer);
+
+  void AddMetadataGeneratorFunction();
+
   // For tests
   void InvalidateTriggerHandlesForTesting() override;
   CONTENT_EXPORT void SetRuleTriggeredCallbackForTesting(
@@ -78,14 +101,16 @@ class BackgroundTracingManagerImpl : public BackgroundTracingManager {
   void StartTracing(BackgroundTracingConfigImpl::CategoryPreset,
                     base::trace_event::TraceRecordMode);
   void StartTracingIfConfigNeedsIt();
-  void OnFinalizeStarted(std::unique_ptr<const base::DictionaryValue> metadata,
+  void OnFinalizeStarted(base::Closure started_finalizing_closure,
+                         std::unique_ptr<const base::DictionaryValue> metadata,
                          base::RefCountedString*);
   void OnFinalizeComplete();
   void BeginFinalizing(StartedFinalizingCallback);
   void ValidateStartupScenario();
 
-  void AddCustomMetadata();
+  std::unique_ptr<base::DictionaryValue> GenerateMetadataDict();
 
+  bool IsAllowedFinalization() const;
   std::string GetTriggerNameFromHandle(TriggerHandle handle) const;
   bool IsTriggerHandleValid(TriggerHandle handle) const;
 
@@ -125,7 +150,12 @@ class BackgroundTracingManagerImpl : public BackgroundTracingManager {
 
   TriggerHandle triggered_named_event_handle_;
 
-  std::vector<EnabledStateObserver*> background_tracing_observer_list_;
+  // There is no need to use base::ObserverList to store observers because we
+  // only access |background_tracing_observers_| and
+  // |trace_message_filter_observers_| from the UI thread.
+  std::set<EnabledStateObserver*> background_tracing_observers_;
+  std::set<scoped_refptr<TraceMessageFilter>> trace_message_filters_;
+  std::set<TraceMessageFilterObserver*> trace_message_filter_observers_;
 
   IdleCallback idle_callback_;
   base::Closure tracing_enabled_callback_for_testing_;

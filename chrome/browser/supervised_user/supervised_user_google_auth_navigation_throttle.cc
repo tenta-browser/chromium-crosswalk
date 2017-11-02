@@ -57,6 +57,10 @@ SupervisedUserGoogleAuthNavigationThrottle::WillRedirectRequest() {
   return WillStartOrRedirectRequest();
 }
 
+const char* SupervisedUserGoogleAuthNavigationThrottle::GetNameForLogging() {
+  return "SupervisedUserGoogleAuthNavigationThrottle";
+}
+
 content::NavigationThrottle::ThrottleCheckResult
 SupervisedUserGoogleAuthNavigationThrottle::WillStartOrRedirectRequest() {
   const GURL& url = navigation_handle()->GetURL();
@@ -70,7 +74,7 @@ SupervisedUserGoogleAuthNavigationThrottle::WillStartOrRedirectRequest() {
   content::NavigationThrottle::ThrottleCheckResult result =
       ShouldProceed(child_account_service_->IsGoogleAuthenticated());
 
-  if (result == content::NavigationThrottle::DEFER) {
+  if (result.action() == content::NavigationThrottle::DEFER) {
     google_auth_state_subscription_ =
         child_account_service_->ObserveGoogleAuthState(
             base::Bind(&SupervisedUserGoogleAuthNavigationThrottle::
@@ -86,15 +90,15 @@ void SupervisedUserGoogleAuthNavigationThrottle::OnGoogleAuthStateChanged(
   content::NavigationThrottle::ThrottleCheckResult result =
       ShouldProceed(authenticated);
 
-  switch (result) {
+  switch (result.action()) {
     case content::NavigationThrottle::PROCEED: {
       google_auth_state_subscription_.reset();
-      navigation_handle()->Resume();
+      Resume();
       break;
     }
     case content::NavigationThrottle::CANCEL:
     case content::NavigationThrottle::CANCEL_AND_IGNORE: {
-      navigation_handle()->CancelDeferredNavigation(result);
+      CancelDeferredNavigation(result);
       break;
     }
     case content::NavigationThrottle::DEFER: {
@@ -102,6 +106,7 @@ void SupervisedUserGoogleAuthNavigationThrottle::OnGoogleAuthStateChanged(
       break;
     }
     case content::NavigationThrottle::BLOCK_REQUEST:
+    case content::NavigationThrottle::BLOCK_REQUEST_AND_COLLAPSE:
     case content::NavigationThrottle::BLOCK_RESPONSE: {
       NOTREACHED();
     }
@@ -145,6 +150,5 @@ void SupervisedUserGoogleAuthNavigationThrottle::OnReauthenticationResult(
   }
 
   // Otherwise cancel immediately.
-  navigation_handle()->CancelDeferredNavigation(
-      content::NavigationThrottle::CANCEL_AND_IGNORE);
+  CancelDeferredNavigation(content::NavigationThrottle::CANCEL_AND_IGNORE);
 }

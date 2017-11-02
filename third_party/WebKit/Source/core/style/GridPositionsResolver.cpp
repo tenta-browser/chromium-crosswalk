@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "GridPositionsResolver.h"
+#include "core/style/GridPositionsResolver.h"
 
 #include "core/layout/LayoutBox.h"
 #include "core/style/GridArea.h"
@@ -40,12 +40,12 @@ NamedLineCollection::NamedLineCollection(
                   : grid_container_style.AutoRepeatNamedGridRowLines();
 
   if (!grid_line_names.IsEmpty()) {
-    auto it = grid_line_names.Find(named_line);
+    auto it = grid_line_names.find(named_line);
     named_lines_indexes_ = it == grid_line_names.end() ? nullptr : &it->value;
   }
 
   if (!auto_repeat_grid_line_names.IsEmpty()) {
-    auto it = auto_repeat_grid_line_names.Find(named_line);
+    auto it = auto_repeat_grid_line_names.find(named_line);
     auto_repeat_named_lines_indexes_ =
         it == auto_repeat_grid_line_names.end() ? nullptr : &it->value;
   }

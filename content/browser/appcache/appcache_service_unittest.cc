@@ -50,9 +50,9 @@ class MockResponseReader : public AppCacheResponseReader {
         data_(data),
         data_size_(data_size) {}
   void ReadInfo(HttpResponseInfoIOBuffer* info_buf,
-                const net::CompletionCallback& callback) override {
+                OnceCompletionCallback callback) override {
     info_buffer_ = info_buf;
-    callback_ = callback;  // Cleared on completion.
+    callback_ = std::move(callback);  // Cleared on completion.
 
     int rv = info_.get() ? info_size_ : net::ERR_FAILED;
     info_buffer_->http_info.reset(info_.release());
@@ -61,10 +61,10 @@ class MockResponseReader : public AppCacheResponseReader {
   }
   void ReadData(net::IOBuffer* buf,
                 int buf_len,
-                const net::CompletionCallback& callback) override {
+                OnceCompletionCallback callback) override {
     buffer_ = buf;
     buffer_len_ = buf_len;
-    callback_ = callback;  // Cleared on completion.
+    callback_ = std::move(callback);  // Cleared on completion.
 
     if (!data_) {
       ScheduleUserCallback(net::ERR_CACHE_READ_FAILURE);
@@ -79,8 +79,9 @@ class MockResponseReader : public AppCacheResponseReader {
  private:
   void ScheduleUserCallback(int result) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&MockResponseReader::InvokeUserCompletionCallback,
-                              weak_factory_.GetWeakPtr(), result));
+        FROM_HERE,
+        base::BindOnce(&MockResponseReader::InvokeUserCompletionCallback,
+                       weak_factory_.GetWeakPtr(), result));
   }
 
   std::unique_ptr<net::HttpResponseInfo> info_;
@@ -183,13 +184,11 @@ class AppCacheServiceImplTest : public testing::Test {
   const GURL kOrigin;
   const GURL kManifestUrl;
 
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<AppCacheServiceImpl> service_;
   int delete_result_;
   int delete_completion_count_;
   net::CompletionCallback deletion_callback_;
-
- private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(AppCacheServiceImplTest, DeleteAppCachesForOrigin) {

@@ -22,7 +22,6 @@
 
 #include "core/html/HTMLMetaElement.h"
 
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/frame/LocalFrame.h"
@@ -30,9 +29,9 @@
 #include "core/frame/Settings.h"
 #include "core/html/HTMLHeadElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/loader/HttpEquiv.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/wtf/text/StringToNumber.h"
 
 namespace blink {
@@ -489,11 +488,7 @@ void HTMLMetaElement::Process() {
           ViewportDescription::kMobileOptimizedMeta);
     else if (DeprecatedEqualIgnoringCase(name_value, "theme-color") &&
              GetDocument().GetFrame())
-      GetDocument()
-          .GetFrame()
-          ->Loader()
-          .Client()
-          ->DispatchDidChangeThemeColor();
+      GetDocument().GetFrame()->Client()->DispatchDidChangeThemeColor();
   }
 
   // Get the document to process the tag, but only if we're actually part of DOM

@@ -10,6 +10,7 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -72,15 +73,24 @@ class Shell::DevToolsWebContentsObserver : public WebContentsObserver {
 
 Shell::Shell(WebContents* web_contents)
     : WebContentsObserver(web_contents),
+      web_contents_(web_contents),
       devtools_frontend_(NULL),
       is_fullscreen_(false),
       window_(NULL),
 #if defined(OS_MACOSX)
       url_edit_view_(NULL),
 #endif
-      headless_(false) {
+      headless_(false),
+      hide_toolbar_(false) {
+  web_contents_->SetDelegate(this);
+
   if (switches::IsRunLayoutTestSwitchPresent())
     headless_ = true;
+
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kContentShellHideToolbar))
+    hide_toolbar_ = true;
+
   windows_.push_back(this);
 
   if (!shell_created_callback_.is_null()) {
@@ -105,15 +115,14 @@ Shell::~Shell() {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
   }
+
+  web_contents_->SetDelegate(nullptr);
 }
 
 Shell* Shell::CreateShell(WebContents* web_contents,
                           const gfx::Size& initial_size) {
   Shell* shell = new Shell(web_contents);
   shell->PlatformCreateWindow(initial_size.width(), initial_size.height());
-
-  shell->web_contents_.reset(web_contents);
-  web_contents->SetDelegate(shell);
 
   shell->PlatformSetContents();
 
@@ -326,7 +335,12 @@ WebContents* Shell::OpenURLFromTab(WebContents* source,
     // content shell and layout tests, popups don't get special treatment below
     // (i.e. they will have a toolbar and other things described here).
     case WindowOpenDisposition::NEW_POPUP:
-    case WindowOpenDisposition::NEW_WINDOW: {
+    case WindowOpenDisposition::NEW_WINDOW:
+    // content_shell doesn't really support tabs, but some layout tests use
+    // middle click (which translates into kNavigationPolicyNewBackgroundTab),
+    // so we treat the cases below just like a NEW_WINDOW disposition.
+    case WindowOpenDisposition::NEW_BACKGROUND_TAB:
+    case WindowOpenDisposition::NEW_FOREGROUND_TAB: {
       Shell* new_window =
           Shell::CreateNewWindow(source->GetBrowserContext(),
                                  GURL(),  // Don't load anything just yet.
@@ -340,8 +354,6 @@ WebContents* Shell::OpenURLFromTab(WebContents* source,
 
     // No tabs in content_shell:
     case WindowOpenDisposition::SINGLETON_TAB:
-    case WindowOpenDisposition::NEW_FOREGROUND_TAB:
-    case WindowOpenDisposition::NEW_BACKGROUND_TAB:
     // No incognito mode in content_shell:
     case WindowOpenDisposition::OFF_THE_RECORD:
     // TODO(lukasza): Investigate if some layout tests might need support for
@@ -517,7 +529,7 @@ gfx::Size Shell::GetShellDefaultSize() {
   return default_shell_size;
 }
 
-void Shell::TitleWasSet(NavigationEntry* entry, bool explicit_set) {
+void Shell::TitleWasSet(NavigationEntry* entry) {
   if (entry)
     PlatformSetTitle(entry->GetTitle());
 }

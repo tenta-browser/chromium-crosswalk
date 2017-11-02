@@ -4,23 +4,20 @@
 
 #include "ash/shell/shell_delegate_impl.h"
 
-#include "ash/accessibility_delegate.h"
-#include "ash/default_accessibility_delegate.h"
+#include <memory>
+
+#include "ash/accessibility/default_accessibility_delegate.h"
 #include "ash/default_wallpaper_delegate.h"
 #include "ash/gpu_support_stub.h"
+#include "ash/keyboard/test_keyboard_ui.h"
 #include "ash/palette_delegate.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_state_delegate.h"
+#include "ash/root_window_controller.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
-#include "ash/shell/context_menu.h"
 #include "ash/shell/example_factory.h"
 #include "ash/shell/toplevel_window.h"
-#include "ash/system/tray/default_system_tray_delegate.h"
-#include "ash/test/test_keyboard_ui.h"
-#include "ash/test/test_shelf_delegate.h"
 #include "ash/wm/window_state.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/user_manager/user_info_impl.h"
 #include "ui/aura/window.h"
@@ -46,36 +43,9 @@ class PaletteDelegateImpl : public PaletteDelegate {
   bool HasNoteApp() override { return false; }
   bool ShouldAutoOpenPalette() override { return false; }
   bool ShouldShowPalette() override { return false; }
-  void TakeScreenshot() override {}
-  void TakePartialScreenshot(const base::Closure& done) override {
-    if (done)
-      done.Run();
-  }
-  void CancelPartialScreenshot() override {}
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PaletteDelegateImpl);
-};
-
-class SessionStateDelegateImpl : public SessionStateDelegate {
- public:
-  SessionStateDelegateImpl() : user_info_(new user_manager::UserInfoImpl()) {}
-
-  ~SessionStateDelegateImpl() override {}
-
-  // SessionStateDelegate:
-  bool ShouldShowAvatar(WmWindow* window) const override {
-    return !user_info_->GetImage().isNull();
-  }
-  gfx::ImageSkia GetAvatarImageForWindow(WmWindow* window) const override {
-    return gfx::ImageSkia();
-  }
-
- private:
-  // A pseudo user info.
-  std::unique_ptr<user_manager::UserInfo> user_info_;
-
-  DISALLOW_COPY_AND_ASSIGN(SessionStateDelegateImpl);
 };
 
 }  // namespace
@@ -88,19 +58,11 @@ ShellDelegateImpl::~ShellDelegateImpl() {}
   return nullptr;
 }
 
-bool ShellDelegateImpl::IsIncognitoAllowed() const {
-  return true;
-}
-
-bool ShellDelegateImpl::IsMultiProfilesEnabled() const {
-  return false;
-}
-
 bool ShellDelegateImpl::IsRunningInForcedAppMode() const {
   return false;
 }
 
-bool ShellDelegateImpl::CanShowWindowForUser(WmWindow* window) const {
+bool ShellDelegateImpl::CanShowWindowForUser(aura::Window* window) const {
   return true;
 }
 
@@ -112,31 +74,19 @@ void ShellDelegateImpl::PreInit() {}
 
 void ShellDelegateImpl::PreShutdown() {}
 
-void ShellDelegateImpl::Exit() {
-  base::MessageLoop::current()->QuitWhenIdle();
-}
-
-keyboard::KeyboardUI* ShellDelegateImpl::CreateKeyboardUI() {
-  return new TestKeyboardUI;
+std::unique_ptr<keyboard::KeyboardUI> ShellDelegateImpl::CreateKeyboardUI() {
+  return std::make_unique<TestKeyboardUI>();
 }
 
 void ShellDelegateImpl::OpenUrlFromArc(const GURL& url) {}
 
-ShelfDelegate* ShellDelegateImpl::CreateShelfDelegate(ShelfModel* model) {
-  return new test::TestShelfDelegate();
-}
-
-SystemTrayDelegate* ShellDelegateImpl::CreateSystemTrayDelegate() {
-  return new DefaultSystemTrayDelegate;
+NetworkingConfigDelegate* ShellDelegateImpl::GetNetworkingConfigDelegate() {
+  return nullptr;
 }
 
 std::unique_ptr<WallpaperDelegate>
 ShellDelegateImpl::CreateWallpaperDelegate() {
-  return base::MakeUnique<DefaultWallpaperDelegate>();
-}
-
-SessionStateDelegate* ShellDelegateImpl::CreateSessionStateDelegate() {
-  return new SessionStateDelegateImpl;
+  return std::make_unique<DefaultWallpaperDelegate>();
 }
 
 AccessibilityDelegate* ShellDelegateImpl::CreateAccessibilityDelegate() {
@@ -144,12 +94,7 @@ AccessibilityDelegate* ShellDelegateImpl::CreateAccessibilityDelegate() {
 }
 
 std::unique_ptr<PaletteDelegate> ShellDelegateImpl::CreatePaletteDelegate() {
-  return base::MakeUnique<PaletteDelegateImpl>();
-}
-
-ui::MenuModel* ShellDelegateImpl::CreateContextMenu(WmShelf* wm_shelf,
-                                                    const ShelfItem* item) {
-  return new ContextMenu(wm_shelf);
+  return std::make_unique<PaletteDelegateImpl>();
 }
 
 GPUSupport* ShellDelegateImpl::CreateGPUSupport() {
@@ -165,15 +110,10 @@ gfx::Image ShellDelegateImpl::GetDeprecatedAcceleratorImage() const {
   return gfx::Image();
 }
 
-bool ShellDelegateImpl::IsTouchscreenEnabledInPrefs(
-    bool use_local_state) const {
-  return true;
+ui::InputDeviceControllerClient*
+ShellDelegateImpl::GetInputDeviceControllerClient() {
+  return nullptr;
 }
-
-void ShellDelegateImpl::SetTouchscreenEnabledInPrefs(bool enabled,
-                                                     bool use_local_state) {}
-
-void ShellDelegateImpl::UpdateTouchscreenStatusFromPrefs() {}
 
 }  // namespace shell
 }  // namespace ash

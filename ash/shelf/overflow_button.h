@@ -9,21 +9,18 @@
 #include "base/macros.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/image_skia.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 
 namespace ash {
-namespace test {
-class OverflowButtonTestApi;
-}  // namespace test
 
+class Shelf;
 class ShelfView;
-class WmShelf;
 
 // Shelf overflow chevron button.
-class ASH_EXPORT OverflowButton : public views::CustomButton {
+class ASH_EXPORT OverflowButton : public views::Button {
  public:
   // |shelf_view| is the view containing this button.
-  OverflowButton(ShelfView* shelf_view, WmShelf* wm_shelf);
+  OverflowButton(ShelfView* shelf_view, Shelf* shelf);
   ~OverflowButton() override;
 
   void OnShelfAlignmentChanged();
@@ -34,7 +31,7 @@ class ASH_EXPORT OverflowButton : public views::CustomButton {
   void UpdateShelfItemBackground(SkColor color);
 
  private:
-  friend class test::OverflowButtonTestApi;
+  friend class OverflowButtonTestApi;
 
   enum class ChevronDirection { UP, DOWN, LEFT, RIGHT };
 
@@ -45,13 +42,13 @@ class ASH_EXPORT OverflowButton : public views::CustomButton {
   // Updates the chevron image according to GetChevronDirection().
   void UpdateChevronImage();
 
-  // views::CustomButton:
-  void OnPaint(gfx::Canvas* canvas) override;
+  // views::Button:
   std::unique_ptr<views::InkDrop> CreateInkDrop() override;
   std::unique_ptr<views::InkDropRipple> CreateInkDropRipple() const override;
   bool ShouldEnterPushedState(const ui::Event& event) override;
   void NotifyClick(const ui::Event& event) override;
   std::unique_ptr<views::InkDropMask> CreateInkDropMask() const override;
+  void PaintButtonContents(gfx::Canvas* canvas) override;
 
   // Helper functions to paint the background and foreground of the button
   // at |bounds|.
@@ -75,7 +72,7 @@ class ASH_EXPORT OverflowButton : public views::CustomButton {
   const gfx::ImageSkia* chevron_image_;
 
   ShelfView* shelf_view_;
-  WmShelf* wm_shelf_;
+  Shelf* shelf_;
 
   // Color used to paint the background.
   SkColor background_color_;

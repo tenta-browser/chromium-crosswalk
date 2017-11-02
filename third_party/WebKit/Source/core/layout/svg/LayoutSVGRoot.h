@@ -88,10 +88,6 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
   }
 
   LayoutRect VisualOverflowRect() const override;
-  LayoutRect OverflowClipRect(
-      const LayoutPoint& location,
-      OverlayScrollbarClipBehavior =
-          kIgnorePlatformOverlayScrollbarSize) const override;
 
   bool HasNonIsolatedBlendingDescendants() const final;
 
@@ -141,7 +137,7 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
                    const LayoutPoint& accumulated_offset,
                    HitTestAction) override;
 
-  LayoutRect LocalVisualRect() const override;
+  LayoutRect LocalVisualRectIgnoringVisibility() const override;
 
   bool PaintedOutputOfObjectHasNoEffectRegardlessOfSize() const final {
     // The rule is the same as LayoutBox's instead of LayoutReplaced's.

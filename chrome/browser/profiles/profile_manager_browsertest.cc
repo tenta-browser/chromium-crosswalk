@@ -9,13 +9,11 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "chrome/browser/browsing_data/browsing_data_remover.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
-#include "chrome/browser/lifetime/scoped_keep_alive.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
@@ -29,9 +27,12 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/keep_alive_registry/scoped_keep_alive.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/core/browser/password_store_consumer.h"
 #include "components/prefs/pref_service.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/test/test_utils.h"
 
 #if defined(OS_CHROMEOS)
@@ -63,7 +64,7 @@ void ProfileCreationComplete(Profile* profile, Profile::CreateStatus status) {
   EXPECT_EQ(chrome::GetBrowserCount(profile), 0U);
   EXPECT_EQ(chrome::GetTotalBrowserCount(), 1U);
   if (status == Profile::CREATE_STATUS_INITIALIZED)
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 // An observer that returns back to test code after one or more profiles was
@@ -85,7 +86,7 @@ class MultipleProfileDeletionObserver
                        OnBrowsingDataRemoverWouldComplete,
                    base::Unretained(this));
     for (Profile* profile : profile_manager->GetLoadedProfiles()) {
-      BrowsingDataRemoverFactory::GetForBrowserContext(profile)
+      content::BrowserContext::GetBrowsingDataRemover(profile)
           ->SetWouldCompleteCallbackForTesting(would_complete_callback);
     }
   }
@@ -199,17 +200,21 @@ class PasswordStoreConsumerVerifier
   std::vector<std::unique_ptr<autofill::PasswordForm>> password_entries_;
 };
 
-static base::FilePath GetFirstNonSigninProfile(
+static base::FilePath GetFirstNonSigninNonLockScreenAppProfile(
     ProfileAttributesStorage& storage) {
   std::vector<ProfileAttributesEntry*> entries =
       storage.GetAllProfilesAttributesSortedByName();
 #if defined(OS_CHROMEOS)
   const base::FilePath signin_path =
       chromeos::ProfileHelper::GetSigninProfileDir();
+  const base::FilePath lock_screen_apps_path =
+      chromeos::ProfileHelper::GetLockScreenAppProfilePath();
+
   for (ProfileAttributesEntry* entry : entries) {
     base::FilePath profile_path = entry->GetPath();
-    if (profile_path != signin_path)
+    if (profile_path != signin_path && profile_path != lock_screen_apps_path) {
       return profile_path;
+    }
   }
   return base::FilePath();
 #else
@@ -445,8 +450,7 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
   }
 }
 
-IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
-                       SwitchToProfile) {
+IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, SwitchToProfile) {
   // If multiprofile mode is not enabled, you can't switch between profiles.
   if (!profiles::IsMultipleProfilesEnabled())
     return;
@@ -455,7 +459,8 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest,
   ProfileAttributesStorage& storage =
       profile_manager->GetProfileAttributesStorage();
   size_t initial_profile_count = profile_manager->GetNumberOfProfiles();
-  base::FilePath path_profile1 = GetFirstNonSigninProfile(storage);
+  base::FilePath path_profile1 =
+      GetFirstNonSigninNonLockScreenAppProfile(storage);
 
   ASSERT_NE(0U, initial_profile_count);
   EXPECT_EQ(1U, chrome::GetTotalBrowserCount());
@@ -515,7 +520,8 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, MAYBE_EphemeralProfile) {
   ProfileAttributesStorage& storage =
       profile_manager->GetProfileAttributesStorage();
   size_t initial_profile_count = profile_manager->GetNumberOfProfiles();
-  base::FilePath path_profile1 = GetFirstNonSigninProfile(storage);
+  base::FilePath path_profile1 =
+      GetFirstNonSigninNonLockScreenAppProfile(storage);
 
   ASSERT_NE(0U, initial_profile_count);
   EXPECT_EQ(1U, chrome::GetTotalBrowserCount());

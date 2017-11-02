@@ -74,6 +74,7 @@ class CONTENT_EXPORT SyntheticSmoothMoveGesture : public SyntheticGesture {
 
   void ForwardMouseWheelEvent(SyntheticGestureTarget* target,
                               const gfx::Vector2dF& delta,
+                              const blink::WebMouseWheelEvent::Phase phase,
                               const base::TimeTicks& timestamp) const;
 
   void PressPoint(SyntheticGestureTarget* target,
@@ -95,13 +96,15 @@ class CONTENT_EXPORT SyntheticSmoothMoveGesture : public SyntheticGesture {
   SyntheticSmoothMoveGestureParams params_;
   std::unique_ptr<SyntheticPointerDriver> synthetic_pointer_driver_;
   // Used for mouse input.
-  gfx::Vector2d current_move_segment_total_delta_discrete_;
+  gfx::Vector2dF current_move_segment_total_delta_;
   // Used for touch input.
   gfx::PointF current_move_segment_start_position_;
   GestureState state_;
   int current_move_segment_;
   base::TimeTicks current_move_segment_start_time_;
   base::TimeTicks current_move_segment_stop_time_;
+  // Used to set phase information for synthetic wheel events.
+  bool needs_scroll_begin_;
 
   DISALLOW_COPY_AND_ASSIGN(SyntheticSmoothMoveGesture);
 };

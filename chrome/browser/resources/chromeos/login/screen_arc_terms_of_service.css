@@ -7,8 +7,18 @@
 }
 
 #arc-tos[md-mode] {
+  /* To prevent appearing visual gap at the bottom for the some languages. */
+  height: 640px;
   min-height: unset;
   padding: unset;
+}
+
+#arc-tos[md-mode] .arc-tos-overlay-close-bottom {
+  display: none;
+}
+
+#arc-tos[md-mode] .popup-overlay {
+  background: rgba(0, 0, 0, .5);
 }
 
 #arc-tos .step-contents {

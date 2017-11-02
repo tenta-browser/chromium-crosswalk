@@ -9,7 +9,9 @@
 #include <cctype>
 #include <string>
 
+#include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -17,6 +19,7 @@
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_delegate.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/extensions/convert_web_app.h"
 #include "chrome/browser/extensions/crx_installer.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/favicon_downloader.h"
@@ -25,10 +28,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/app_list_util.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/webshare/share_target_pref_helper.h"
+#include "chrome/common/extensions/api/url_handlers/url_handlers_parser.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/origin_trials/chrome_origin_trial_policy.h"
@@ -39,14 +44,13 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "extensions/browser/image_loader.h"
 #include "extensions/browser/notification_types.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/url_pattern.h"
 #include "net/base/load_flags.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
@@ -63,10 +67,8 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/image/canvas_image_source.h"
 #include "ui/gfx/image/image.h"
-#include "ui/gfx/image/image_family.h"
 
 #if defined(OS_MACOSX)
-#include "base/command_line.h"
 #include "chrome/browser/web_applications/web_app_mac.h"
 #include "chrome/common/chrome_switches.h"
 #endif
@@ -75,9 +77,10 @@
 #include "base/win/shortcut.h"
 #endif  // defined(OS_WIN)
 
-#if defined(USE_ASH)
-#include "ash/shelf/shelf_delegate.h"  // nogncheck
-#include "ash/shell.h"                        // nogncheck
+#if defined(OS_CHROMEOS)
+// gn check complains on Linux Ozone.
+#include "ash/public/cpp/shelf_model.h"  // nogncheck
+#include "ash/shell.h"
 #endif
 
 namespace {
@@ -139,22 +142,6 @@ class GeneratedIconImageSource : public gfx::CanvasImageSource {
 
   DISALLOW_COPY_AND_ASSIGN(GeneratedIconImageSource);
 };
-
-void OnIconsLoaded(
-    WebApplicationInfo web_app_info,
-    const base::Callback<void(const WebApplicationInfo&)> callback,
-    const gfx::ImageFamily& image_family) {
-  for (gfx::ImageFamily::const_iterator it = image_family.begin();
-       it != image_family.end();
-       ++it) {
-    WebApplicationInfo::IconInfo icon_info;
-    icon_info.data = *it->ToSkBitmap();
-    icon_info.width = icon_info.data.width();
-    icon_info.height = icon_info.data.height();
-    web_app_info.icons.push_back(icon_info);
-  }
-  callback.Run(web_app_info);
-}
 
 std::set<int> SizesToGenerate() {
   // Generate container icons from smaller icons.
@@ -228,8 +215,10 @@ class BookmarkAppInstaller : public base::RefCounted<BookmarkAppInstaller>,
 
   void Run() {
     for (const auto& icon : web_app_info_.icons) {
-      if (icon.url.is_valid())
+      if (icon.url.is_valid()) {
+        VLOG(1) << "Queuing download of " << icon.url.spec();
         urls_to_download_.push_back(icon.url);
+      }
     }
 
     if (urls_to_download_.size()) {
@@ -285,14 +274,17 @@ class BookmarkAppInstaller : public base::RefCounted<BookmarkAppInstaller>,
 
   void OnIconsDownloaded(bool success,
                          const std::map<GURL, std::vector<SkBitmap>>& bitmaps) {
+    VLOG(1) << "Bookmark app icons downloaded.";
     // Ignore the unsuccessful case, as the necessary icons will be generated.
     if (success) {
       for (const auto& url_bitmaps : bitmaps) {
+        VLOG(1) << "Downloaded bitmap " << url_bitmaps.first.spec();
         for (const auto& bitmap : url_bitmaps.second) {
           // Only accept square icons.
           if (bitmap.empty() || bitmap.width() != bitmap.height())
             continue;
 
+          VLOG(1) << "Adding bitmap of size " << bitmap.width();
           downloaded_bitmaps_.push_back(
               BookmarkAppHelper::BitmapAndSource(url_bitmaps.first, bitmap));
         }
@@ -303,6 +295,7 @@ class BookmarkAppInstaller : public base::RefCounted<BookmarkAppInstaller>,
   }
 
   void FinishInstallation() {
+    VLOG(1) << "Finishing bookmark app installation";
     // Ensure that all icons that are in web_app_info are present, by generating
     // icons for any sizes which have failed to download. This ensures that the
     // created manifest for the bookmark app does not contain links to icons
@@ -354,6 +347,14 @@ void BookmarkAppHelper::UpdateWebAppInfoFromManifest(
   // Set the url based on the manifest value, if any.
   if (manifest.start_url.is_valid())
     web_app_info->app_url = manifest.start_url;
+
+  // If there is no scope present, use 'start_url' without the filename as the
+  // scope. This does not match the spec but it matches what we do on Android.
+  // See: https://github.com/w3c/manifest/issues/550
+  if (!manifest.scope.is_empty())
+    web_app_info->scope = manifest.scope;
+  else if (manifest.start_url.is_valid())
+    web_app_info->scope = manifest.start_url.Resolve(".");
 
   // If any icons are specified in the manifest, they take precedence over any
   // we picked up from the web_app stuff.
@@ -414,9 +415,13 @@ void BookmarkAppHelper::GenerateIcon(
     return;
 
   gfx::ImageSkia icon_image(
-      new GeneratedIconImageSource(letter, color, output_size),
+      base::MakeUnique<GeneratedIconImageSource>(letter, color, output_size),
       gfx::Size(output_size, output_size));
-  icon_image.bitmap()->deepCopyTo(&(*bitmaps)[output_size].bitmap);
+  SkBitmap& dst = (*bitmaps)[output_size].bitmap;
+  if (dst.tryAllocPixels(icon_image.bitmap()->info())) {
+    icon_image.bitmap()->readPixels(dst.info(), dst.getPixels(), dst.rowBytes(),
+                                    0, 0);
+  }
 }
 
 // static
@@ -570,38 +575,53 @@ void BookmarkAppHelper::Create(const CreateBookmarkAppCallback& callback) {
 
 void BookmarkAppHelper::CreateFromAppBanner(
     const CreateBookmarkAppCallback& callback,
+    const GURL& manifest_url,
     const content::Manifest& manifest) {
   DCHECK(!manifest.short_name.is_null() || !manifest.name.is_null());
   DCHECK(manifest.start_url.is_valid());
 
   callback_ = callback;
-  OnDidGetManifest(GURL(), manifest);
+  OnDidGetManifest(manifest_url, manifest);
 }
 
 void BookmarkAppHelper::OnDidGetManifest(const GURL& manifest_url,
                                          const content::Manifest& manifest) {
+  DCHECK(manifest_url.is_valid() || manifest.IsEmpty());
+
   if (contents_->IsBeingDestroyed())
     return;
 
   UpdateWebAppInfoFromManifest(manifest, &web_app_info_);
 
-  if (!ChromeOriginTrialPolicy().IsFeatureDisabled("WebShare"))
+  // TODO(mgiuca): Web Share Target should have its own flag, rather than using
+  // the experimental-web-platform-features flag. https://crbug.com/736178.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kEnableExperimentalWebPlatformFeatures)) {
     UpdateShareTargetInPrefs(manifest_url, manifest, profile_->GetPrefs());
+  }
 
+  VLOG(1) << "Preparing to download bookmark app icons";
   // Add urls from the WebApplicationInfo.
   std::vector<GURL> web_app_info_icon_urls;
   for (std::vector<WebApplicationInfo::IconInfo>::const_iterator it =
            web_app_info_.icons.begin();
        it != web_app_info_.icons.end();
        ++it) {
-    if (it->url.is_valid())
+    if (it->url.is_valid()) {
+      VLOG(1) << "Adding icon to download: " << it->url.spec();
       web_app_info_icon_urls.push_back(it->url);
+    }
   }
 
   favicon_downloader_.reset(
       new FaviconDownloader(contents_, web_app_info_icon_urls,
                             base::Bind(&BookmarkAppHelper::OnIconsDownloaded,
                                        weak_factory_.GetWeakPtr())));
+
+  // If the manifest specified icons, don't use the page icons.
+  if (!manifest.icons.empty())
+    favicon_downloader_->SkipPageFavicons();
+
   favicon_downloader_->Start();
 }
 
@@ -663,9 +683,10 @@ void BookmarkAppHelper::OnIconsDownloaded(
     OnBubbleCompleted(true, web_app_info_);
     return;
   }
-  browser->window()->ShowBookmarkAppBubble(
-      web_app_info_, base::Bind(&BookmarkAppHelper::OnBubbleCompleted,
-                                weak_factory_.GetWeakPtr()));
+  chrome::ShowBookmarkAppDialog(
+      browser->window()->GetNativeWindow(), web_app_info_,
+      base::Bind(&BookmarkAppHelper::OnBubbleCompleted,
+                 weak_factory_.GetWeakPtr()));
 }
 
 void BookmarkAppHelper::OnBubbleCompleted(
@@ -711,15 +732,15 @@ void BookmarkAppHelper::FinishInstallation(const Extension* extension) {
     return;
   }
 
-#if !defined(USE_ASH)
+#if !defined(OS_CHROMEOS)
   // Pin the app to the relevant launcher depending on the OS.
   Profile* current_profile = profile_->GetOriginalProfile();
-#endif  // !defined(USE_ASH)
+#endif  // !defined(OS_CHROMEOS)
 
 // On Mac, shortcuts are automatically created for hosted apps when they are
 // installed, so there is no need to create them again.
 #if !defined(OS_MACOSX)
-#if !defined(USE_ASH)
+#if !defined(OS_CHROMEOS)
   web_app::ShortcutLocations creation_locations;
 #if defined(OS_LINUX) || defined(OS_WIN)
   creation_locations.on_desktop = true;
@@ -732,10 +753,8 @@ void BookmarkAppHelper::FinishInstallation(const Extension* extension) {
   web_app::CreateShortcuts(web_app::SHORTCUT_CREATION_BY_USER,
                            creation_locations, current_profile, extension);
 #else
-  ash::ShelfDelegate* shelf_delegate = ash::Shell::Get()->shelf_delegate();
-  DCHECK(shelf_delegate);
-  shelf_delegate->PinAppWithID(extension->id());
-#endif  // !defined(USE_ASH)
+  ash::Shell::Get()->shelf_model()->PinAppWithID(extension->id());
+#endif  // !defined(OS_CHROMEOS)
 #endif  // !defined(OS_MACOSX)
 
 #if defined(OS_MACOSX)
@@ -781,36 +800,6 @@ void CreateOrUpdateBookmarkApp(ExtensionService* service,
   scoped_refptr<BookmarkAppInstaller> installer(
       new BookmarkAppInstaller(service, *web_app_info));
   installer->Run();
-}
-
-void GetWebApplicationInfoFromApp(
-    content::BrowserContext* browser_context,
-    const extensions::Extension* extension,
-    const base::Callback<void(const WebApplicationInfo&)> callback) {
-  if (!extension->from_bookmark()) {
-    callback.Run(WebApplicationInfo());
-    return;
-  }
-
-  WebApplicationInfo web_app_info;
-  web_app_info.app_url = AppLaunchInfo::GetLaunchWebURL(extension);
-  web_app_info.title = base::UTF8ToUTF16(extension->non_localized_name());
-  web_app_info.description = base::UTF8ToUTF16(extension->description());
-
-  const ExtensionIconSet& icon_set = extensions::IconsInfo::GetIcons(extension);
-  std::vector<extensions::ImageLoader::ImageRepresentation> info_list;
-  for (const auto& iter : icon_set.map()) {
-    extensions::ExtensionResource resource =
-        extension->GetResource(iter.second);
-    if (!resource.empty()) {
-      info_list.push_back(extensions::ImageLoader::ImageRepresentation(
-          resource, extensions::ImageLoader::ImageRepresentation::ALWAYS_RESIZE,
-          gfx::Size(iter.first, iter.first), ui::SCALE_FACTOR_100P));
-    }
-  }
-
-  extensions::ImageLoader::Get(browser_context)->LoadImageFamilyAsync(
-      extension, info_list, base::Bind(&OnIconsLoaded, web_app_info, callback));
 }
 
 bool IsValidBookmarkAppUrl(const GURL& url) {

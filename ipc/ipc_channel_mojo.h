@@ -28,6 +28,7 @@
 #include "ipc/ipc_mojo_bootstrap.h"
 #include "mojo/public/cpp/bindings/thread_safe_interface_ptr.h"
 #include "mojo/public/cpp/system/core.h"
+#include "mojo/public/interfaces/bindings/native_struct.mojom.h"
 
 namespace IPC {
 
@@ -40,10 +41,9 @@ namespace IPC {
 // TODO(morrita): Add APIs to create extra MessagePipes to let
 //                Mojo-based objects talk over this Channel.
 //
-class IPC_EXPORT ChannelMojo
-    : public Channel,
-      public Channel::AssociatedInterfaceSupport,
-      public NON_EXPORTED_BASE(internal::MessagePipeReader::Delegate) {
+class IPC_EXPORT ChannelMojo : public Channel,
+                               public Channel::AssociatedInterfaceSupport,
+                               public internal::MessagePipeReader::Delegate {
  public:
   // Creates a ChannelMojo.
   static std::unique_ptr<ChannelMojo>
@@ -78,11 +78,11 @@ class IPC_EXPORT ChannelMojo
   // These access protected API of IPC::Message, which has ChannelMojo
   // as a friend class.
   static MojoResult WriteToMessageAttachmentSet(
-      base::Optional<std::vector<mojom::SerializedHandlePtr>> handle_buffer,
+      base::Optional<std::vector<mojo::native::SerializedHandlePtr>> handles,
       Message* message);
   static MojoResult ReadFromMessageAttachmentSet(
       Message* message,
-      base::Optional<std::vector<mojom::SerializedHandlePtr>>* handles);
+      base::Optional<std::vector<mojo::native::SerializedHandlePtr>>* handles);
 
   // MessagePipeReader::Delegate
   void OnPeerPidReceived(int32_t peer_pid) override;

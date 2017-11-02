@@ -55,7 +55,6 @@
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram.h"
-#include "base/profiler/stack_sampling_profiler.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
@@ -577,9 +576,9 @@ class WatchDogThread : public base::Thread {
   // They return true iff the watchdog thread existed and the task was posted.
   // Note that even if the task is posted, there's no guarantee that it will
   // run, since the target thread may already have a Quit message in its queue.
-  static bool PostTask(const tracked_objects::Location& from_here,
+  static bool PostTask(const base::Location& from_here,
                        const base::Closure& task);
-  static bool PostDelayedTask(const tracked_objects::Location& from_here,
+  static bool PostDelayedTask(const base::Location& from_here,
                               const base::Closure& task,
                               base::TimeDelta delay);
 
@@ -588,15 +587,12 @@ class WatchDogThread : public base::Thread {
   void CleanUp() override;
 
  private:
-  friend class JankTimeBombTest;
-
   // This method returns true if Init() is called.
   bool Started() const;
 
-  static bool PostTaskHelper(
-      const tracked_objects::Location& from_here,
-      const base::Closure& task,
-      base::TimeDelta delay);
+  static bool PostTaskHelper(const base::Location& from_here,
+                             const base::Closure& task,
+                             base::TimeDelta delay);
 
   DISALLOW_COPY_AND_ASSIGN(WatchDogThread);
 };
@@ -640,39 +636,6 @@ class StartupTimeBomb {
   const base::PlatformThreadId thread_id_;
 
   DISALLOW_COPY_AND_ASSIGN(StartupTimeBomb);
-};
-
-// This is a wrapper class for metrics logging of the stack of a janky method.
-class JankTimeBomb {
- public:
-  // This is instantiated when the jank needs to be detected in a method. Posts
-  // an Alarm callback task on WatchDogThread with |duration| as the delay. This
-  // can be called on any thread, but the thread's identity should be provided
-  // in |thread|.
-  JankTimeBomb(base::TimeDelta duration,
-               metrics::CallStackProfileParams::Thread thread);
-  virtual ~JankTimeBomb();
-
-  // Returns true if JankTimeBomb is enabled.
-  bool IsEnabled() const;
-
- protected:
-  // Logs the call stack of given thread_id's janky method. This runs on
-  // WatchDogThread. This is overridden in tests to prevent the metrics logging.
-  virtual void Alarm(base::PlatformThreadId thread_id);
-
- private:
-  // The thread that instantiated this object.
-  const metrics::CallStackProfileParams::Thread thread_;
-
-  // A profiler that periodically samples stack traces. Used to sample jank
-  // behavior.
-  std::unique_ptr<base::StackSamplingProfiler> sampling_profiler_;
-
-  // We use this factory during creation and starting timer.
-  base::WeakPtrFactory<JankTimeBomb> weak_ptr_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(JankTimeBomb);
 };
 
 // This is a wrapper class for detecting hangs during shutdown.

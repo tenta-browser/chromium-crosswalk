@@ -15,9 +15,6 @@
 #include "components/ntp_snippets/category_status.h"
 #include "components/ntp_snippets/content_suggestions_provider.h"
 
-class PrefRegistrySimple;
-class PrefService;
-
 namespace ntp_snippets {
 
 // Provides content suggestions from the bookmarks model.
@@ -25,11 +22,8 @@ class BookmarkSuggestionsProvider : public ContentSuggestionsProvider,
                                     public bookmarks::BookmarkModelObserver {
  public:
   BookmarkSuggestionsProvider(ContentSuggestionsProvider::Observer* observer,
-                              bookmarks::BookmarkModel* bookmark_model,
-                              PrefService* pref_service);
+                              bookmarks::BookmarkModel* bookmark_model);
   ~BookmarkSuggestionsProvider() override;
-
-  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
  private:
   // ContentSuggestionsProvider implementation.
@@ -37,10 +31,10 @@ class BookmarkSuggestionsProvider : public ContentSuggestionsProvider,
   CategoryInfo GetCategoryInfo(Category category) override;
   void DismissSuggestion(const ContentSuggestion::ID& suggestion_id) override;
   void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
-                            const ImageFetchedCallback& callback) override;
+                            ImageFetchedCallback callback) override;
   void Fetch(const Category& category,
              const std::set<std::string>& known_suggestion_ids,
-             const FetchDoneCallback& callback) override;
+             FetchDoneCallback callback) override;
   void ClearHistory(
       base::Time begin,
       base::Time end,
@@ -48,7 +42,7 @@ class BookmarkSuggestionsProvider : public ContentSuggestionsProvider,
   void ClearCachedSuggestions(Category category) override;
   void GetDismissedSuggestionsForDebugging(
       Category category,
-      const DismissedSuggestionsCallback& callback) override;
+      DismissedSuggestionsCallback callback) override;
   void ClearDismissedSuggestionsForDebugging(Category category) override;
 
   // bookmarks::BookmarkModelObserver implementation.

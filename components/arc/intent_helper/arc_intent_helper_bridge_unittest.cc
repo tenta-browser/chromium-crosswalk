@@ -4,45 +4,65 @@
 
 #include "components/arc/intent_helper/arc_intent_helper_bridge.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/memory/ptr_util.h"
 #include "components/arc/arc_bridge_service.h"
 #include "components/arc/common/intent_helper.mojom.h"
-#include "components/arc/intent_helper/local_activity_resolver.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace arc {
 
 namespace {
 
+IntentFilter GetIntentFilter(const std::string& host) {
+  std::vector<IntentFilter::AuthorityEntry> authorities;
+  authorities.emplace_back(host, -1);
+  return IntentFilter(std::move(authorities),
+                      std::vector<IntentFilter::PatternMatcher>());
+}
+
+}  // namespace
+
 class ArcIntentHelperTest : public testing::Test {
- public:
+ protected:
   ArcIntentHelperTest() = default;
 
- protected:
+  class TestOpenUrlDelegate : public ArcIntentHelperBridge::OpenUrlDelegate {
+   public:
+    ~TestOpenUrlDelegate() override = default;
+
+    // ArcIntentHelperBridge::OpenUrlDelegate:
+    void OpenUrl(const GURL& url) override { last_opened_url_ = url; }
+
+    const GURL& last_opened_url() const { return last_opened_url_; }
+
+   private:
+    GURL last_opened_url_;
+  };
+
   std::unique_ptr<ArcBridgeService> arc_bridge_service_;
-  scoped_refptr<LocalActivityResolver> activity_resolver_;
+  TestOpenUrlDelegate* test_open_url_delegate_;  // owned by |instance_|
   std::unique_ptr<ArcIntentHelperBridge> instance_;
 
  private:
   void SetUp() override {
-    arc_bridge_service_ = base::MakeUnique<ArcBridgeService>();
-    activity_resolver_ = new LocalActivityResolver();
-    instance_ = base::MakeUnique<ArcIntentHelperBridge>(
-        arc_bridge_service_.get(), activity_resolver_);
+    arc_bridge_service_ = std::make_unique<ArcBridgeService>();
+    instance_ = std::make_unique<ArcIntentHelperBridge>(
+        nullptr /* context */, arc_bridge_service_.get());
+    test_open_url_delegate_ = new TestOpenUrlDelegate();
+    instance_->SetOpenUrlDelegateForTesting(
+        base::WrapUnique(test_open_url_delegate_));
   }
 
   void TearDown() override {
     instance_.reset();
-    activity_resolver_ = nullptr;
     arc_bridge_service_.reset();
   }
 
   DISALLOW_COPY_AND_ASSIGN(ArcIntentHelperTest);
 };
-
-}  // namespace
 
 // Tests if IsIntentHelperPackage works as expected. Probably too trivial
 // to test but just in case.
@@ -148,7 +168,7 @@ TEST_F(ArcIntentHelperTest, TestObserver) {
   };
 
   // Observer should be called when intent filter is updated.
-  auto observer = base::MakeUnique<FakeObserver>();
+  auto observer = std::make_unique<FakeObserver>();
   instance_->AddObserver(observer.get());
   EXPECT_FALSE(observer->IsUpdated());
   instance_->OnIntentFiltersUpdated(std::vector<IntentFilter>());
@@ -159,6 +179,117 @@ TEST_F(ArcIntentHelperTest, TestObserver) {
   instance_->RemoveObserver(observer.get());
   instance_->OnIntentFiltersUpdated(std::vector<IntentFilter>());
   EXPECT_FALSE(observer->IsUpdated());
+}
+
+// Tests that ShouldChromeHandleUrl returns true by default.
+TEST_F(ArcIntentHelperTest, TestDefault) {
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("http://www.google.com")));
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("https://www.google.com")));
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("file:///etc/password")));
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("chrome://help")));
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("about://chrome")));
+}
+
+// Tests that ShouldChromeHandleUrl returns false when there's a match.
+TEST_F(ArcIntentHelperTest, TestSingleFilter) {
+  std::vector<IntentFilter> array;
+  array.emplace_back(GetIntentFilter("www.google.com"));
+  instance_->OnIntentFiltersUpdated(std::move(array));
+
+  EXPECT_FALSE(instance_->ShouldChromeHandleUrl(GURL("http://www.google.com")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("https://www.google.com")));
+
+  EXPECT_TRUE(
+      instance_->ShouldChromeHandleUrl(GURL("https://www.google.co.uk")));
+}
+
+// Tests the same with multiple filters.
+TEST_F(ArcIntentHelperTest, TestMultipleFilters) {
+  std::vector<IntentFilter> array;
+  array.emplace_back(GetIntentFilter("www.google.com"));
+  array.emplace_back(GetIntentFilter("www.google.co.uk"));
+  array.emplace_back(GetIntentFilter("dev.chromium.org"));
+  instance_->OnIntentFiltersUpdated(std::move(array));
+
+  EXPECT_FALSE(instance_->ShouldChromeHandleUrl(GURL("http://www.google.com")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("https://www.google.com")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("http://www.google.co.uk")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("https://www.google.co.uk")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("http://dev.chromium.org")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("https://dev.chromium.org")));
+
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("http://www.android.com")));
+}
+
+// Tests that ShouldChromeHandleUrl returns true for non http(s) URLs.
+TEST_F(ArcIntentHelperTest, TestNonHttp) {
+  std::vector<IntentFilter> array;
+  array.emplace_back(GetIntentFilter("www.google.com"));
+  instance_->OnIntentFiltersUpdated(std::move(array));
+
+  EXPECT_TRUE(
+      instance_->ShouldChromeHandleUrl(GURL("chrome://www.google.com")));
+  EXPECT_TRUE(
+      instance_->ShouldChromeHandleUrl(GURL("custom://www.google.com")));
+}
+
+// Tests that ShouldChromeHandleUrl discards the previous filters when
+// UpdateIntentFilters is called with new ones.
+TEST_F(ArcIntentHelperTest, TestMultipleUpdate) {
+  std::vector<IntentFilter> array;
+  array.emplace_back(GetIntentFilter("www.google.com"));
+  array.emplace_back(GetIntentFilter("dev.chromium.org"));
+  instance_->OnIntentFiltersUpdated(std::move(array));
+
+  std::vector<IntentFilter> array2;
+  array2.emplace_back(GetIntentFilter("www.google.co.uk"));
+  array2.emplace_back(GetIntentFilter("dev.chromium.org"));
+  array2.emplace_back(GetIntentFilter("www.android.com"));
+  instance_->OnIntentFiltersUpdated(std::move(array2));
+
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("http://www.google.com")));
+  EXPECT_TRUE(instance_->ShouldChromeHandleUrl(GURL("https://www.google.com")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("http://www.google.co.uk")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("https://www.google.co.uk")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("http://dev.chromium.org")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("https://dev.chromium.org")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("http://www.android.com")));
+  EXPECT_FALSE(
+      instance_->ShouldChromeHandleUrl(GURL("https://www.android.com")));
+}
+
+// Tests that OnOpenUrl opens the URL in Chrome browser.
+TEST_F(ArcIntentHelperTest, TestOnOpenUrl) {
+  instance_->OnOpenUrl("https://google.com");
+  EXPECT_EQ(GURL("https://google.com"),
+            test_open_url_delegate_->last_opened_url());
+}
+
+// Tests that OnOpenUrl does not open URLs with the 'chrome' scheme.
+TEST_F(ArcIntentHelperTest, TestOnOpenUrl_ChromeScheme) {
+  instance_->OnOpenUrl("chrome://www.google.com");
+  EXPECT_FALSE(test_open_url_delegate_->last_opened_url().is_valid());
+  instance_->OnOpenUrl("chrome://settings");
+  EXPECT_FALSE(test_open_url_delegate_->last_opened_url().is_valid());
+}
+
+// Tests that OnOpenChromeSettingsMultideviceUrl opens the multidevice settings
+// section in the Chrome browser.
+TEST_F(ArcIntentHelperTest, TestOnOpenChromeSettingsMultideviceUrl) {
+  instance_->OnOpenChromeSettingsMultideviceUrl();
+  EXPECT_EQ(GURL(ArcIntentHelperBridge::kMultideviceSettingsUrl),
+            test_open_url_delegate_->last_opened_url());
 }
 
 }  // namespace arc

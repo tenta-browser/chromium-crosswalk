@@ -26,10 +26,11 @@
 #ifndef Database_h
 #define Database_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "modules/webdatabase/DatabaseBasicTypes.h"
 #include "modules/webdatabase/DatabaseError.h"
 #include "modules/webdatabase/sqlite/SQLiteDatabase.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/Deque.h"
 #include "platform/wtf/text/WTFString.h"
@@ -46,6 +47,7 @@ class SQLTransactionCallback;
 class SQLTransactionClient;
 class SQLTransactionCoordinator;
 class SQLTransactionErrorCallback;
+class V8DatabaseCallback;
 class VoidCallback;
 
 class Database final : public GarbageCollectedFinalized<Database>,
@@ -55,6 +57,7 @@ class Database final : public GarbageCollectedFinalized<Database>,
  public:
   virtual ~Database();
   DECLARE_TRACE();
+  DECLARE_TRACE_WRAPPERS();
 
   bool OpenAndVerifyVersion(bool set_version_in_new_database,
                             DatabaseError&,
@@ -127,10 +130,12 @@ class Database final : public GarbageCollectedFinalized<Database>,
            const String& name,
            const String& expected_version,
            const String& display_name,
-           unsigned estimated_size);
+           unsigned estimated_size,
+           V8DatabaseCallback* creation_callback);
   bool PerformOpenAndVerify(bool set_version_in_new_database,
                             DatabaseError&,
                             String& error_message);
+  void RunCreationCallback();
 
   void ScheduleTransaction();
 
@@ -148,7 +153,7 @@ class Database final : public GarbageCollectedFinalized<Database>,
                       SQLTransactionErrorCallback*,
                       VoidCallback* success_callback,
                       bool read_only,
-                      const ChangeVersionData* = 0);
+                      const ChangeVersionData* = nullptr);
   Vector<String> PerformGetTableNames();
 
   void ReportOpenDatabaseResult(int error_site,
@@ -196,7 +201,7 @@ class Database final : public GarbageCollectedFinalized<Database>,
   SQLiteDatabase sqlite_database_;
 
   Member<DatabaseAuthorizer> database_authorizer_;
-
+  TraceWrapperMember<V8DatabaseCallback> creation_callback_;
   Deque<CrossThreadPersistent<SQLTransactionBackend>> transaction_queue_;
   Mutex transaction_in_progress_mutex_;
   bool transaction_in_progress_;

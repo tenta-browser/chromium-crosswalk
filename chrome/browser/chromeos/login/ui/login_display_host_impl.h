@@ -11,7 +11,6 @@
 #include <string>
 #include <vector>
 
-#include "ash/shell_observer.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/app_launch_controller.h"
@@ -29,19 +28,22 @@
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/display/display_observer.h"
+#include "ui/events/devices/input_device_event_observer.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/keyboard/keyboard_controller_observer.h"
 #include "ui/views/widget/widget_removals_observer.h"
 #include "ui/wm/public/scoped_drag_drop_disabler.h"
 
 class AccountId;
 class ScopedKeepAlive;
 
+namespace ash {
+class FocusRingController;
+}
+
 namespace chromeos {
 
 class ArcKioskController;
 class DemoAppLauncher;
-class FocusRingController;
 class WebUILoginDisplay;
 class WebUILoginView;
 
@@ -52,9 +54,8 @@ class LoginDisplayHostImpl : public LoginDisplayHost,
                              public content::WebContentsObserver,
                              public chromeos::SessionManagerClient::Observer,
                              public chromeos::CrasAudioHandler::AudioObserver,
-                             public ash::ShellObserver,
-                             public keyboard::KeyboardControllerObserver,
                              public display::DisplayObserver,
+                             public ui::InputDeviceEventObserver,
                              public views::WidgetRemovalsObserver,
                              public chrome::MultiUserWindowManager::Observer {
  public:
@@ -68,10 +69,8 @@ class LoginDisplayHostImpl : public LoginDisplayHost,
   WebUILoginView* GetWebUILoginView() const override;
   void BeforeSessionStart() override;
   void Finalize(base::OnceClosure completion_callback) override;
-  void OnCompleteLogin() override;
-  void OpenProxySettings() override;
+  void OpenInternetDetailDialog(const std::string& network_id) override;
   void SetStatusAreaVisible(bool visible) override;
-  AutoEnrollmentController* GetAutoEnrollmentController() override;
   void StartWizard(OobeScreen first_screen) override;
   WizardController* GetWizardController() override;
   AppLaunchController* GetAppLaunchController() override;
@@ -80,12 +79,13 @@ class LoginDisplayHostImpl : public LoginDisplayHost,
   void StartSignInScreen(const LoginScreenContext& context) override;
   void OnPreferencesChanged() override;
   void PrewarmAuthentication() override;
-  void StartAppLaunch(
-      const std::string& app_id,
-      bool diagnostic_mode,
-      bool auto_launch) override;
+  void StartAppLaunch(const std::string& app_id,
+                      bool diagnostic_mode,
+                      bool auto_launch) override;
   void StartDemoAppLaunch() override;
   void StartArcKiosk(const AccountId& account_id) override;
+  bool IsVoiceInteractionOobe() override;
+  void StartVoiceInteractionOobe() override;
 
   // Creates WizardController instance.
   WizardController* CreateWizardController();
@@ -121,19 +121,13 @@ class LoginDisplayHostImpl : public LoginDisplayHost,
   // Overridden from chromeos::CrasAudioHandler::AudioObserver:
   void OnActiveOutputNodeChanged() override;
 
-  // ash::ShellObserver:
-  void OnVirtualKeyboardStateChanged(bool activated,
-                                     ash::WmWindow* root_window) override;
-
-  // Overridden from keyboard::KeyboardControllerObserver:
-  void OnKeyboardBoundsChanging(const gfx::Rect& new_bounds) override;
-  void OnKeyboardClosed() override;
-
   // Overridden from display::DisplayObserver:
   void OnDisplayAdded(const display::Display& new_display) override;
-  void OnDisplayRemoved(const display::Display& old_display) override;
   void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t changed_metrics) override;
+
+  // Overridden from ui::InputDeviceEventObserver
+  void OnTouchscreenDeviceConfigurationChanged() override;
 
   // Overriden from views::WidgetRemovalsObserver:
   void OnWillRemoveView(views::Widget* widget, views::View* view) override;
@@ -206,9 +200,6 @@ class LoginDisplayHostImpl : public LoginDisplayHost,
   gfx::Rect wallpaper_bounds_;
 
   content::NotificationRegistrar registrar_;
-
-  // The controller driving the auto-enrollment check.
-  std::unique_ptr<AutoEnrollmentController> auto_enrollment_controller_;
 
   // Sign in screen controller.
   std::unique_ptr<ExistingUserController> existing_user_controller_;
@@ -295,7 +286,7 @@ class LoginDisplayHostImpl : public LoginDisplayHost,
 
   // A focus ring controller to draw focus ring around view for keyboard
   // driven oobe.
-  std::unique_ptr<FocusRingController> focus_ring_controller_;
+  std::unique_ptr<ash::FocusRingController> focus_ring_controller_;
 
   // Handles special keys for keyboard driven oobe.
   std::unique_ptr<KeyboardDrivenOobeKeyHandler>
@@ -309,20 +300,14 @@ class LoginDisplayHostImpl : public LoginDisplayHost,
 
   // True when request to play startup sound was sent to
   // SoundsManager.
+  // After OOBE is completed, this is always initialized with true.
   bool startup_sound_played_ = false;
-
-  // When true, startup sound should be played only when spoken
-  // feedback is enabled.  Otherwise, startup sound should be played
-  // in any case.
-  bool startup_sound_honors_spoken_feedback_ = false;
-
-  // True is subscribed as keyboard controller observer.
-  bool is_observing_keyboard_ = false;
 
   // Keeps a copy of the old Drag'n'Drop client, so that it would be disabled
   // during a login session and restored afterwards.
-  std::unique_ptr<aura::client::ScopedDragDropDisabler>
-      scoped_drag_drop_disabler_;
+  std::unique_ptr<wm::ScopedDragDropDisabler> scoped_drag_drop_disabler_;
+
+  bool is_voice_interaction_oobe_ = false;
 
   base::WeakPtrFactory<LoginDisplayHostImpl> pointer_factory_;
   base::WeakPtrFactory<LoginDisplayHostImpl> animation_weak_ptr_factory_;

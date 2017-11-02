@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/feature_list.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "build/build_config.h"
@@ -14,6 +15,7 @@
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_result_view.h"
 #include "chrome/browser/ui/views/theme_copying_widget.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/omnibox_view.h"
 #include "third_party/skia/include/core/SkDrawLooper.h"
 #include "ui/base/theme_provider.h"
@@ -25,8 +27,8 @@
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/path.h"
 #include "ui/gfx/shadow_value.h"
+#include "ui/views/bubble/bubble_border.h"
 #include "ui/views/controls/image_view.h"
-#include "ui/views/view_targeter.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/non_client_view.h"
 
@@ -58,18 +60,6 @@ class OmniboxPopupContentsView::AutocompletePopupWidget
 ////////////////////////////////////////////////////////////////////////////////
 // OmniboxPopupContentsView, public:
 
-OmniboxPopupView* OmniboxPopupContentsView::Create(
-    const gfx::FontList& font_list,
-    OmniboxView* omnibox_view,
-    OmniboxEditModel* edit_model,
-    LocationBarView* location_bar_view) {
-  OmniboxPopupContentsView* view = nullptr;
-  view = new OmniboxPopupContentsView(
-      font_list, omnibox_view, edit_model, location_bar_view);
-  view->Init();
-  return view;
-}
-
 OmniboxPopupContentsView::OmniboxPopupContentsView(
     const gfx::FontList& font_list,
     OmniboxView* omnibox_view,
@@ -79,21 +69,23 @@ OmniboxPopupContentsView::OmniboxPopupContentsView(
       omnibox_view_(omnibox_view),
       location_bar_view_(location_bar_view),
       font_list_(font_list),
-      ignore_mouse_drag_(false),
       size_animation_(this),
       start_margin_(0),
       end_margin_(0) {
   // The contents is owned by the LocationBarView.
   set_owned_by_client();
 
-  if (g_top_shadow.Get().isNull()) {
+  bool narrow_popup =
+      base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown);
+
+  if (g_top_shadow.Get().isNull() && !narrow_popup) {
     std::vector<gfx::ShadowValue> shadows;
     // Blur by 1dp. See comment below about blur accounting.
     shadows.emplace_back(gfx::Vector2d(), 2, SK_ColorBLACK);
     g_top_shadow.Get() =
         gfx::ImageSkiaOperations::CreateHorizontalShadow(shadows, false);
   }
-  if (g_bottom_shadow.Get().isNull()) {
+  if (g_bottom_shadow.Get().isNull() && !narrow_popup) {
     const int kSmallShadowBlur = 3;
     const int kLargeShadowBlur = 8;
     const int kLargeShadowYOffset = 3;
@@ -111,16 +103,8 @@ OmniboxPopupContentsView::OmniboxPopupContentsView(
         gfx::ImageSkiaOperations::CreateHorizontalShadow(shadows, true);
   }
 
-  SetEventTargeter(
-      std::unique_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
-}
-
-void OmniboxPopupContentsView::Init() {
-  // This can't be done in the constructor as at that point we aren't
-  // necessarily our final class yet, and we may have subclasses
-  // overriding CreateResultView.
-  for (size_t i = 0; i < AutocompleteResult::kMaxMatches; ++i) {
-    OmniboxResultView* result_view = CreateResultView(i, font_list_);
+  for (size_t i = 0; i < AutocompleteResult::GetMaxMatches(); ++i) {
+    OmniboxResultView* result_view = new OmniboxResultView(this, i, font_list_);
     result_view->SetVisible(false);
     AddChildViewAt(result_view, static_cast<int>(i));
   }
@@ -148,21 +132,28 @@ gfx::Rect OmniboxPopupContentsView::GetPopupBounds() const {
   return current_frame_bounds;
 }
 
-void OmniboxPopupContentsView::LayoutChildren() {
-  gfx::Rect contents_rect = GetContentsBounds();
-  contents_rect.Inset(gfx::Insets(kPopupVerticalPadding, 0));
-  contents_rect.Inset(start_margin_, g_top_shadow.Get().height(), end_margin_,
-                      0);
+void OmniboxPopupContentsView::OpenMatch(size_t index,
+                                         WindowOpenDisposition disposition) {
+  DCHECK(HasMatchAt(index));
 
-  int top = contents_rect.y();
-  for (size_t i = 0; i < AutocompleteResult::kMaxMatches; ++i) {
-    View* v = child_at(i);
-    if (v->visible()) {
-      v->SetBounds(contents_rect.x(), top, contents_rect.width(),
-                   v->GetPreferredSize().height());
-      top = v->bounds().bottom();
-    }
-  }
+  omnibox_view_->OpenMatch(model_->result().match_at(index), disposition,
+                           GURL(), base::string16(), index);
+}
+
+gfx::Image OmniboxPopupContentsView::GetMatchIcon(
+    const AutocompleteMatch& match,
+    SkColor vector_icon_color) const {
+  return model_->GetMatchIcon(match, vector_icon_color);
+}
+
+void OmniboxPopupContentsView::SetSelectedLine(size_t index) {
+  DCHECK(HasMatchAt(index));
+
+  model_->SetSelectedLine(index, false, false);
+}
+
+bool OmniboxPopupContentsView::IsSelectedIndex(size_t index) const {
+  return index == model_->selected_line();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -204,10 +195,12 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
     return;
   }
 
+  // Fix-up any matches due to tail suggestions, before display below.
+  model_->autocomplete_controller()->InlineTailPrefixes();
+
   // Update the match cached by each row, in the process of doing so make sure
   // we have enough row views.
   const size_t result_size = model_->result().size();
-  max_match_contents_width_ = 0;
   for (size_t i = 0; i < result_size; ++i) {
     OmniboxResultView* view = result_view_at(i);
     const AutocompleteMatch& match = GetMatchAtIndex(i);
@@ -217,20 +210,21 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
       view->SetAnswerImage(
           gfx::ImageSkia::CreateFrom1xBitmap(model_->answer_bitmap()));
     }
-    if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL) {
-      max_match_contents_width_ = std::max(
-          max_match_contents_width_, view->GetMatchContentsWidth());
-    }
   }
 
-  for (size_t i = result_size; i < AutocompleteResult::kMaxMatches; ++i)
+  for (size_t i = result_size; i < AutocompleteResult::GetMaxMatches(); ++i)
     child_at(i)->SetVisible(false);
 
-  // We want the popup to appear to overlay the bottom of the toolbar. So we
-  // shift the popup to completely cover the client edge, and then draw an
-  // additional semitransparent shadow above that.
-  int top_edge_overlap = views::NonClientFrameView::kClientEdgeThickness +
-                         g_top_shadow.Get().height();
+  int top_edge_overlap = 0;
+  bool narrow_popup =
+      base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown);
+  if (!narrow_popup) {
+    // We want the popup to appear to overlay the bottom of the toolbar. So we
+    // shift the popup to completely cover the client edge, and then draw an
+    // additional semitransparent shadow above that.
+    top_edge_overlap = g_top_shadow.Get().height() +
+                       views::NonClientFrameView::kClientEdgeThickness;
+  }
 
   gfx::Point top_left_screen_coord;
   int width;
@@ -239,6 +233,22 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
       &end_margin_, top_edge_overlap);
   gfx::Rect new_target_bounds(top_left_screen_coord,
                               gfx::Size(width, CalculatePopupHeight()));
+
+  if (narrow_popup) {
+    SkColor background_color = GetNativeTheme()->GetSystemColor(
+        ui::NativeTheme::kColorId_ResultsTableNormalBackground);
+    auto border = base::MakeUnique<views::BubbleBorder>(
+        views::BubbleBorder::NONE, views::BubbleBorder::SMALL_SHADOW,
+        background_color);
+
+    // Outdent the popup to factor in the shadow size.
+    int border_thickness = border->GetBorderThickness();
+    new_target_bounds.Inset(-border_thickness, -border_thickness,
+                            -border_thickness, -border_thickness);
+
+    SetBackground(base::MakeUnique<views::BubbleBackground>(border.get()));
+    SetBorder(std::move(border));
+  }
 
   // If we're animating and our target height changes, reset the animation.
   // NOTE: If we just reset blindly on _every_ update, then when the user types
@@ -298,6 +308,10 @@ void OmniboxPopupContentsView::UpdatePopupAppearance() {
   Layout();
 }
 
+void OmniboxPopupContentsView::OnMatchIconUpdated(size_t match_index) {
+  result_view_at(match_index)->OnMatchIconUpdated();
+}
+
 gfx::Rect OmniboxPopupContentsView::GetTargetBounds() {
   return target_bounds_;
 }
@@ -307,30 +321,7 @@ void OmniboxPopupContentsView::PaintUpdatesNow() {
 }
 
 void OmniboxPopupContentsView::OnDragCanceled() {
-  ignore_mouse_drag_ = true;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// OmniboxPopupContentsView, OmniboxResultViewModel implementation:
-
-bool OmniboxPopupContentsView::IsSelectedIndex(size_t index) const {
-  return index == model_->selected_line();
-}
-
-bool OmniboxPopupContentsView::IsHoveredIndex(size_t index) const {
-  return index == model_->hovered_line();
-}
-
-gfx::Image OmniboxPopupContentsView::GetIconIfExtensionMatch(
-    size_t index) const {
-  if (!HasMatchAt(index))
-    return gfx::Image();
-  return model_->GetIconIfExtensionMatch(GetMatchAtIndex(index));
-}
-
-bool OmniboxPopupContentsView::IsStarredMatch(
-    const AutocompleteMatch& match) const {
-  return model_->IsStarredMatch(match);
+  SetMouseHandler(nullptr);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -360,64 +351,37 @@ views::View* OmniboxPopupContentsView::GetTooltipHandlerForPoint(
   return nullptr;
 }
 
-bool OmniboxPopupContentsView::OnMousePressed(
-    const ui::MouseEvent& event) {
-  ignore_mouse_drag_ = false;  // See comment on |ignore_mouse_drag_| in header.
-  if (event.IsLeftMouseButton() || event.IsMiddleMouseButton())
-    UpdateLineEvent(event, event.IsLeftMouseButton());
-  return true;
-}
+bool OmniboxPopupContentsView::OnMouseDragged(const ui::MouseEvent& event) {
+  size_t index = GetIndexForPoint(event.location());
 
-bool OmniboxPopupContentsView::OnMouseDragged(
-    const ui::MouseEvent& event) {
-  if (event.IsLeftMouseButton() || event.IsMiddleMouseButton())
-    UpdateLineEvent(event, !ignore_mouse_drag_ && event.IsLeftMouseButton());
-  return true;
-}
-
-void OmniboxPopupContentsView::OnMouseReleased(
-    const ui::MouseEvent& event) {
-  if (ignore_mouse_drag_) {
-    OnMouseCaptureLost();
-    return;
+  // If the drag event is over the bounds of one of the result views, pass
+  // control to that view.
+  if (HasMatchAt(index)) {
+    SetMouseHandler(result_view_at(index));
+    return false;
   }
 
-  if (event.IsOnlyMiddleMouseButton() || event.IsOnlyLeftMouseButton()) {
-    OpenSelectedLine(event, event.IsOnlyLeftMouseButton()
-                                ? WindowOpenDisposition::CURRENT_TAB
-                                : WindowOpenDisposition::NEW_BACKGROUND_TAB);
-  }
-}
-
-void OmniboxPopupContentsView::OnMouseCaptureLost() {
-  ignore_mouse_drag_ = false;
-}
-
-void OmniboxPopupContentsView::OnMouseMoved(
-    const ui::MouseEvent& event) {
-  model_->SetHoveredLine(GetIndexForPoint(event.location()));
-}
-
-void OmniboxPopupContentsView::OnMouseEntered(
-    const ui::MouseEvent& event) {
-  model_->SetHoveredLine(GetIndexForPoint(event.location()));
-}
-
-void OmniboxPopupContentsView::OnMouseExited(
-    const ui::MouseEvent& event) {
-  model_->SetHoveredLine(OmniboxPopupModel::kNoMatch);
+  // If the drag event is not over any of the result views, that means that it
+  // has passed outside the bounds of the popup view. Return true to keep
+  // receiving the drag events, as the drag may return in which case we will
+  // want to respond to it again.
+  return true;
 }
 
 void OmniboxPopupContentsView::OnGestureEvent(ui::GestureEvent* event) {
+  const size_t event_location_index = GetIndexForPoint(event->location());
+  if (!HasMatchAt(event_location_index))
+    return;
+
   switch (event->type()) {
     case ui::ET_GESTURE_TAP_DOWN:
     case ui::ET_GESTURE_SCROLL_BEGIN:
     case ui::ET_GESTURE_SCROLL_UPDATE:
-      UpdateLineEvent(*event, true);
+      SetSelectedLine(event_location_index);
       break;
     case ui::ET_GESTURE_TAP:
     case ui::ET_GESTURE_SCROLL_END:
-      OpenSelectedLine(*event, WindowOpenDisposition::CURRENT_TAB);
+      OpenMatch(event_location_index, WindowOpenDisposition::CURRENT_TAB);
       break;
     default:
       return;
@@ -426,7 +390,7 @@ void OmniboxPopupContentsView::OnGestureEvent(ui::GestureEvent* event) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// OmniboxPopupContentsView, protected:
+// OmniboxPopupContentsView, private:
 
 int OmniboxPopupContentsView::CalculatePopupHeight() {
   DCHECK_GE(static_cast<size_t>(child_count()), model_->result().size());
@@ -441,50 +405,21 @@ int OmniboxPopupContentsView::CalculatePopupHeight() {
          g_top_shadow.Get().height() + g_bottom_shadow.Get().height();
 }
 
-OmniboxResultView* OmniboxPopupContentsView::CreateResultView(
-    int model_index,
-    const gfx::FontList& font_list) {
-  return new OmniboxResultView(this, model_index, font_list);
-}
+void OmniboxPopupContentsView::LayoutChildren() {
+  gfx::Rect contents_rect = GetContentsBounds();
+  contents_rect.Inset(gfx::Insets(kPopupVerticalPadding, 0));
+  contents_rect.Inset(start_margin_, g_top_shadow.Get().height(), end_margin_,
+                      0);
 
-////////////////////////////////////////////////////////////////////////////////
-// OmniboxPopupContentsView, views::View overrides, private:
-
-const char* OmniboxPopupContentsView::GetClassName() const {
-  return "OmniboxPopupContentsView";
-}
-
-void OmniboxPopupContentsView::OnPaint(gfx::Canvas* canvas) {
-  canvas->TileImageInt(g_top_shadow.Get(), 0, 0, width(),
-                       g_top_shadow.Get().height());
-  canvas->TileImageInt(g_bottom_shadow.Get(), 0,
-                       height() - g_bottom_shadow.Get().height(), width(),
-                       g_bottom_shadow.Get().height());
-}
-
-void OmniboxPopupContentsView::PaintChildren(const ui::PaintContext& context) {
-  gfx::Rect contents_bounds = GetContentsBounds();
-  contents_bounds.Inset(0, g_top_shadow.Get().height(), 0,
-                        g_bottom_shadow.Get().height());
-
-  ui::ClipRecorder clip_recorder(context);
-  clip_recorder.ClipRect(contents_bounds);
-  {
-    ui::PaintRecorder recorder(context, size());
-    SkColor background_color = result_view_at(0)->GetColor(
-        OmniboxResultView::NORMAL, OmniboxResultView::BACKGROUND);
-    recorder.canvas()->DrawColor(background_color);
+  int top = contents_rect.y();
+  for (size_t i = 0; i < AutocompleteResult::GetMaxMatches(); ++i) {
+    View* v = child_at(i);
+    if (v->visible()) {
+      v->SetBounds(contents_rect.x(), top, contents_rect.width(),
+                   v->GetPreferredSize().height());
+      top = v->bounds().bottom();
+    }
   }
-  View::PaintChildren(context);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// OmniboxPopupContentsView, private:
-
-views::View* OmniboxPopupContentsView::TargetForRect(views::View* root,
-                                                     const gfx::Rect& rect) {
-  CHECK_EQ(root, this);
-  return this;
 }
 
 bool OmniboxPopupContentsView::HasMatchAt(size_t index) const {
@@ -496,8 +431,7 @@ const AutocompleteMatch& OmniboxPopupContentsView::GetMatchAtIndex(
   return model_->result().match_at(index);
 }
 
-size_t OmniboxPopupContentsView::GetIndexForPoint(
-    const gfx::Point& point) {
+size_t OmniboxPopupContentsView::GetIndexForPoint(const gfx::Point& point) {
   if (!HitTestPoint(point))
     return OmniboxPopupModel::kNoMatch;
 
@@ -513,25 +447,50 @@ size_t OmniboxPopupContentsView::GetIndexForPoint(
   return OmniboxPopupModel::kNoMatch;
 }
 
-void OmniboxPopupContentsView::UpdateLineEvent(
-    const ui::LocatedEvent& event,
-    bool should_set_selected_line) {
-  size_t index = GetIndexForPoint(event.location());
-  model_->SetHoveredLine(index);
-  if (HasMatchAt(index) && should_set_selected_line)
-    model_->SetSelectedLine(index, false, false);
-}
-
-void OmniboxPopupContentsView::OpenSelectedLine(
-    const ui::LocatedEvent& event,
-    WindowOpenDisposition disposition) {
-  size_t index = GetIndexForPoint(event.location());
-  if (!HasMatchAt(index))
-    return;
-  omnibox_view_->OpenMatch(model_->result().match_at(index), disposition,
-                           GURL(), base::string16(), index);
-}
-
 OmniboxResultView* OmniboxPopupContentsView::result_view_at(size_t i) {
   return static_cast<OmniboxResultView*>(child_at(static_cast<int>(i)));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// OmniboxPopupContentsView, views::View overrides, private:
+
+const char* OmniboxPopupContentsView::GetClassName() const {
+  return "OmniboxPopupContentsView";
+}
+
+void OmniboxPopupContentsView::OnPaint(gfx::Canvas* canvas) {
+  if (base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown)) {
+    View::OnPaint(canvas);
+    return;
+  }
+
+  canvas->TileImageInt(g_top_shadow.Get(), 0, 0, width(),
+                       g_top_shadow.Get().height());
+  canvas->TileImageInt(g_bottom_shadow.Get(), 0,
+                       height() - g_bottom_shadow.Get().height(), width(),
+                       g_bottom_shadow.Get().height());
+}
+
+void OmniboxPopupContentsView::PaintChildren(
+    const views::PaintInfo& paint_info) {
+  if (base::FeatureList::IsEnabled(omnibox::kUIExperimentNarrowDropdown)) {
+    View::PaintChildren(paint_info);
+    return;
+  }
+
+  gfx::Rect contents_bounds = GetContentsBounds();
+  contents_bounds.Inset(0, g_top_shadow.Get().height(), 0,
+                        g_bottom_shadow.Get().height());
+
+  ui::ClipRecorder clip_recorder(paint_info.context());
+  clip_recorder.ClipRect(gfx::ScaleToRoundedRect(
+      contents_bounds, paint_info.paint_recording_scale_x(),
+      paint_info.paint_recording_scale_y()));
+  {
+    ui::PaintRecorder recorder(paint_info.context(), size());
+    SkColor background_color = result_view_at(0)->GetColor(
+        OmniboxResultView::NORMAL, OmniboxResultView::BACKGROUND);
+    recorder.canvas()->DrawColor(background_color);
+  }
+  View::PaintChildren(paint_info);
 }

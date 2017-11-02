@@ -12,7 +12,7 @@ cr.define('bookmarks', function() {
    * @polymerBehavior
    * @implements {StoreObserver}
    */
-  var StoreClient = {
+  const StoreClient = {
     created: function() {
       /**
        * @type {!Array<{
@@ -49,7 +49,10 @@ cr.define('bookmarks', function() {
      * @param {function(!BookmarksPageState)} valueGetter
      */
     watch: function(localProperty, valueGetter) {
-      // TODO(tsergeant): Warn if localProperty is not a defined property.
+      if (!this.getPropertyInfo(localProperty).defined) {
+        console.error(
+            'No property ' + localProperty + ' defined on ' + this.is);
+      }
       this.watches_.push({
         localProperty: localProperty,
         valueGetter: valueGetter,
@@ -59,26 +62,35 @@ cr.define('bookmarks', function() {
     /**
      * Helper to dispatch an action to the store, which will update the store
      * data and then (possibly) flow through to the UI.
-     * @param {Action} action
+     * @param {?Action} action
      */
     dispatch: function(action) {
-      bookmarks.Store.getInstance().handleAction(action);
+      bookmarks.Store.getInstance().dispatch(action);
+    },
+
+    /**
+     * Helper to dispatch a DeferredAction to the store, which will
+     * asynchronously perform updates to the store data and UI.
+     * @param {DeferredAction} action
+     */
+    dispatchAsync: function(action) {
+      bookmarks.Store.getInstance().dispatchAsync(action);
     },
 
     /** @param {string} newState */
     onStateChanged: function(newState) {
-      this.watches_.forEach(function(watch) {
-        var oldValue = this[watch.localProperty];
-        var newValue = watch.valueGetter(newState);
+      this.watches_.forEach((watch) => {
+        const oldValue = this[watch.localProperty];
+        const newValue = watch.valueGetter(newState);
 
         // Avoid poking Polymer unless something has actually changed. Reducers
         // must return new objects rather than mutating existing objects, so
         // any real changes will pass through correctly.
-        if (oldValue == newValue || newValue == undefined)
+        if (oldValue === newValue || newValue === undefined)
           return;
 
         this[watch.localProperty] = newValue;
-      }.bind(this));
+      });
     },
 
     updateFromStore: function() {

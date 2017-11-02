@@ -63,16 +63,9 @@ class WebIDBKeyRange {
     return *this;
   }
 
-// FIXME: when compiling core or modules, use inline for reset.
-// when compiling WebIDBKeyRange.cpp, don't use inline to avoid redefinition.
-#if !BLINK_WEB_IMPLEMENTATION && BLINK_IMPLEMENTATION && \
-    defined(COMPONENT_BUILD)
-  BLINK_EXPORT void Reset() { private_.Reset(); }
-#else
   BLINK_EXPORT void Reset();
-#endif
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   WebIDBKeyRange(IDBKeyRange* value) : private_(value) {}
   WebIDBKeyRange& operator=(IDBKeyRange* value) {
     private_ = value;

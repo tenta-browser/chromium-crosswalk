@@ -30,16 +30,17 @@ class SecurityHandler : public DevToolsDomainHandler,
   SecurityHandler();
   ~SecurityHandler() override;
 
-  static SecurityHandler* FromAgentHost(DevToolsAgentHostImpl* host);
+  static std::vector<SecurityHandler*> ForAgentHost(
+      DevToolsAgentHostImpl* host);
 
   // DevToolsDomainHandler overrides
   void Wire(UberDispatcher* dispatcher) override;
-  void SetRenderFrameHost(RenderFrameHostImpl* host) override;
+  void SetRenderer(RenderProcessHost* process_host,
+                   RenderFrameHostImpl* frame_host) override;
 
   // Security::Backend overrides.
   Response Enable() override;
   Response Disable() override;
-  Response ShowCertificateViewer() override;
   Response HandleCertificateError(int event_id, const String& action) override;
   Response SetOverrideCertificateErrors(bool override) override;
 

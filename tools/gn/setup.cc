@@ -98,6 +98,11 @@ Variables
       build file containing this target name. This defaults to "//:" which will
       cause the file //BUILD.gn to be loaded.
 
+  script_executable [optional]
+      Path to specific Python executable or potentially a different language
+      interpreter that is used to execute scripts in action targets and
+      exec_script calls.
+
   secondary_source [optional]
       Label of an alternate directory tree to find input files. When searching
       for a BUILD.gn file (or the build config file discussed above), the file
@@ -265,21 +270,6 @@ base::FilePath FindWindowsPython() {
 }
 #endif
 
-// Expands all ./, ../, and symbolic links in the given path.
-bool GetRealPath(const base::FilePath& path, base::FilePath* out) {
-#if defined(OS_POSIX)
-  char buf[PATH_MAX];
-  if (!realpath(path.value().c_str(), buf)) {
-    return false;
-  }
-  *out = base::FilePath(buf);
-#else
-  // Do nothing on a non-POSIX system.
-  *out = path;
-#endif
-  return true;
-}
-
 }  // namespace
 
 const char Setup::kBuildArgFileName[] = "args.gn";
@@ -329,13 +319,6 @@ bool Setup::DoSetup(const std::string& build_dir, bool force_create) {
   if (!FillBuildDir(build_dir, !force_create))
     return false;
 
-  // Check for unused variables in the .gn file.
-  Err err;
-  if (!dotfile_scope_.CheckForUnusedVars(&err)) {
-    err.PrintToStdout();
-    return false;
-  }
-
   // Apply project-specific default (if specified).
   // Must happen before FillArguments().
   if (default_args_) {
@@ -348,7 +331,15 @@ bool Setup::DoSetup(const std::string& build_dir, bool force_create) {
     if (!FillArguments(*cmdline))
       return false;
   }
-  FillPythonPath(*cmdline);
+  if (!FillPythonPath(*cmdline))
+    return false;
+
+  // Check for unused variables in the .gn file.
+  Err err;
+  if (!dotfile_scope_.CheckForUnusedVars(&err)) {
+    err.PrintToStdout();
+    return false;
+  }
 
   return true;
 }
@@ -578,8 +569,8 @@ bool Setup::FillSourceDir(const base::CommandLine& cmdline) {
     root_path = dotfile_name_.DirName();
   }
 
-  base::FilePath root_realpath;
-  if (!GetRealPath(root_path, &root_realpath)) {
+  base::FilePath root_realpath = base::MakeAbsoluteFilePath(root_path);
+  if (root_realpath.empty()) {
     Err(Location(), "Can't get the real root path.",
         "I could not get the real path of \"" + FilePathToUTF8(root_path) +
         "\".").PrintToStdout();
@@ -610,8 +601,9 @@ bool Setup::FillBuildDir(const std::string& build_dir, bool require_exists) {
         "\".").PrintToStdout();
     return false;
   }
-  base::FilePath build_dir_realpath;
-  if (!GetRealPath(build_dir_path, &build_dir_realpath)) {
+  base::FilePath build_dir_realpath =
+      base::MakeAbsoluteFilePath(build_dir_path);
+  if (build_dir_realpath.empty()) {
     Err(Location(), "Can't get the real build dir path.",
         "I could not get the real path of \"" + FilePathToUTF8(build_dir_path) +
         "\".").PrintToStdout();
@@ -640,12 +632,21 @@ bool Setup::FillBuildDir(const std::string& build_dir, bool require_exists) {
   return true;
 }
 
-void Setup::FillPythonPath(const base::CommandLine& cmdline) {
+bool Setup::FillPythonPath(const base::CommandLine& cmdline) {
   // Trace this since it tends to be a bit slow on Windows.
   ScopedTrace setup_trace(TraceItem::TRACE_SETUP, "Fill Python Path");
+  const Value* value = dotfile_scope_.GetValue("script_executable", true);
   if (cmdline.HasSwitch(switches::kScriptExecutable)) {
     build_settings_.set_python_path(
         cmdline.GetSwitchValuePath(switches::kScriptExecutable));
+  } else if (value) {
+    Err err;
+    if (!value->VerifyTypeIs(Value::STRING, &err)) {
+      err.PrintToStdout();
+      return false;
+    }
+    build_settings_.set_python_path(
+        base::FilePath(UTF8ToFilePath(value->string_value())));
   } else {
 #if defined(OS_WIN)
     base::FilePath python_path = FindWindowsPython();
@@ -659,6 +660,7 @@ void Setup::FillPythonPath(const base::CommandLine& cmdline) {
     build_settings_.set_python_path(base::FilePath("python"));
 #endif
   }
+  return true;
 }
 
 bool Setup::RunConfigFile() {
@@ -698,6 +700,7 @@ bool Setup::RunConfigFile() {
 bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
   Err err;
   SourceDir current_dir("//");
+  Label root_target_label(current_dir, "");
 
   // Secondary source path, read from the config file if present.
   // Read from the config file if present.
@@ -720,8 +723,7 @@ bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
       return false;
     }
 
-    Label root_target_label =
-        Label::Resolve(current_dir, Label(), *root_value, &err);
+    root_target_label = Label::Resolve(current_dir, Label(), *root_value, &err);
     if (err.has_error()) {
       err.PrintToStdout();
       return false;
@@ -729,6 +731,7 @@ bool Setup::FillOtherConfig(const base::CommandLine& cmdline) {
 
     root_build_file_ = Loader::BuildFileForLabel(root_target_label);
   }
+  build_settings_.SetRootTargetLabel(root_target_label);
 
   // Build config file.
   const Value* build_config_value =

@@ -9,6 +9,7 @@
 #include "net/quic/core/crypto/null_encrypter.h"
 #include "net/quic/core/quic_connection.h"
 #include "net/quic/core/quic_packets.h"
+#include "net/quic/platform/api/quic_containers.h"
 #include "net/quic/test_tools/simulator/link.h"
 #include "net/quic/test_tools/simulator/queue.h"
 #include "net/tools/quic/quic_default_packet_writer.h"
@@ -84,11 +85,13 @@ class QuicEndpoint : public Endpoint,
                           const std::string& error_details,
                           ConnectionCloseSource source) override {}
   void OnWriteBlocked() override {}
-  void OnSuccessfulVersionNegotiation(const QuicVersion& version) override {}
+  void OnSuccessfulVersionNegotiation(
+      const QuicTransportVersion& version) override {}
   void OnCongestionWindowChange(QuicTime now) override {}
   void OnConnectionMigration(PeerAddressChangeType type) override {}
   void OnPathDegrading() override {}
   void PostProcessAfterData() override {}
+  void OnAckNeedsRetransmittableFrame() override {}
   // End QuicConnectionVisitorInterface implementation.
 
  private:
@@ -157,10 +160,10 @@ class QuicEndpointMultiplexer : public Endpoint,
   // Sets the egress port for all the endpoints being multiplexed.
   void SetTxPort(ConstrainedPortInterface* port) override;
 
-  void Act() override{};
+  void Act() override {}
 
  private:
-  std::unordered_map<std::string, QuicEndpoint*> mapping_;
+  QuicUnorderedMap<std::string, QuicEndpoint*> mapping_;
 };
 
 }  // namespace simulator

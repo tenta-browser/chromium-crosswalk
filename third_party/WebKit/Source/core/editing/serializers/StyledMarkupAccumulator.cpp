@@ -32,6 +32,7 @@
 #include "core/css/StylePropertySet.h"
 #include "core/dom/Text.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/iterators/TextIterator.h"
 #include "platform/wtf/text/StringBuilder.h"
 
@@ -115,7 +116,7 @@ void StyledMarkupAccumulator::AppendTextWithInlineStyle(
     AppendText(text);
   } else {
     const bool use_rendered_text = !EnclosingElementWithTag(
-        Position::FirstPositionInNode(&text), selectTag);
+        Position::FirstPositionInNode(text), selectTag);
     String content =
         use_rendered_text ? RenderedText(text) : StringValueForRange(text);
     StringBuilder buffer;

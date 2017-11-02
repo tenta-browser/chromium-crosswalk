@@ -4,22 +4,27 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutListItem LI",
           "rect": [48, 94, 744, 104],
-          "reason": "forced by layout"
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutImage IMG id='target'",
+          "rect": [48, 94, 100, 100],
+          "reason": "geometry"
         },
         {
           "object": "LayoutListMarker (anonymous)",
           "rect": [31, 180, 7, 18],
-          "reason": "forced by layout"
+          "reason": "geometry"
         },
         {
           "object": "LayoutListMarker (anonymous)",
           "rect": [31, 130, 7, 18],
-          "reason": "forced by layout"
+          "reason": "geometry"
         }
       ]
     }
@@ -27,19 +32,19 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutListItem LI",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutListMarker (anonymous)",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutImage IMG id='target'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }

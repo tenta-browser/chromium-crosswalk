@@ -37,13 +37,18 @@ class CORE_EXPORT FrameTree final {
   ~FrameTree();
 
   const AtomicString& GetName() const;
-  void SetName(const AtomicString&);
 
-  // TODO(andypaicu): remove this once we have gathered the data
-  void ExperimentalSetNulledName();
+  enum ReplicationPolicy {
+    // Does not propagate name changes beyond this FrameTree object.
+    kDoNotReplicate,
+
+    // Kicks-off propagation of name changes to other renderers.
+    kReplicate,
+  };
+  void SetName(const AtomicString&, ReplicationPolicy = kDoNotReplicate);
 
   Frame* Parent() const;
-  Frame* Top() const;
+  Frame& Top() const;
   Frame* NextSibling() const;
   Frame* FirstChild() const;
 
@@ -66,9 +71,6 @@ class CORE_EXPORT FrameTree final {
   AtomicString name_;  // The actual frame name (may be empty).
 
   mutable unsigned scoped_child_count_;
-
-  // TODO(andypaicu): remove this once we have gathered the data
-  bool experimental_set_nulled_name_;
 };
 
 }  // namespace blink

@@ -27,8 +27,8 @@ cr.define('device_table', function() {
     /** @private {?Array<device_collection.Device>} */
     this.devices_ = null;
 
-    return document.importNode($('table-template').content.children[0],
-                               true /* deep */);
+    return document.importNode(
+        $('table-template').content.children[0], true /* deep */);
   });
 
   DeviceTable.prototype = {
@@ -43,7 +43,7 @@ cr.define('device_table', function() {
       this.body_ = this.tBodies[0];
       /** @private */
       this.headers_ = this.tHead.rows[0].cells;
-      /** @private {!Map<!interfaces.BluetoothDevice.DeviceInfo, boolean>} */
+      /** @private {!Map<!bluetooth.mojom.DeviceInfo, boolean>} */
       this.inspectionMap_ = new Map();
     },
 
@@ -66,7 +66,7 @@ cr.define('device_table', function() {
      * Updates the inspect status of the row matching the given |deviceInfo|.
      * If |isInspecting| is true, the forget link is enabled otherwise it's
      * disabled.
-     * @param {!interfaces.BluetoothDevice.DeviceInfo} deviceInfo
+     * @param {!bluetooth.mojom.DeviceInfo} deviceInfo
      * @param {boolean} isInspecting
      */
     setInspecting: function(deviceInfo, isInspecting) {
@@ -130,7 +130,7 @@ cr.define('device_table', function() {
 
     /**
      * Inserts a new row at |index| and updates it with info from |device|.
-     * @param {!interfaces.BluetoothDevice.DeviceInfo} device
+     * @param {!bluetooth.mojom.DeviceInfo} device
      * @param {?number} index
      * @private
      */
@@ -140,7 +140,8 @@ cr.define('device_table', function() {
 
       for (var i = 0; i < this.headers_.length; i++) {
         // Skip the LINKS column. It has no data-field attribute.
-        if (i === COLUMNS.LINKS) continue;
+        if (i === COLUMNS.LINKS)
+          continue;
         row.insertCell();
       }
 
@@ -181,7 +182,7 @@ cr.define('device_table', function() {
 
     /**
      * Updates the row at |index| with the info from |device|.
-     * @param {!interfaces.BluetoothDevice.DeviceInfo} device
+     * @param {!bluetooth.mojom.DeviceInfo} device
      * @param {number} index
      * @private
      */
@@ -201,7 +202,8 @@ cr.define('device_table', function() {
       // Update the properties based on the header field path.
       for (var i = 0; i < this.headers_.length; i++) {
         // Skip the LINKS column. It has no data-field attribute.
-        if (i === COLUMNS.LINKS) continue;
+        if (i === COLUMNS.LINKS)
+          continue;
 
         var header = this.headers_[i];
         var propName = header.dataset.field;
@@ -213,7 +215,7 @@ cr.define('device_table', function() {
           obj = obj[part];
         }
 
-        if (propName == 'is_gatt_connected') {
+        if (propName == 'isGattConnected') {
           obj = obj ? 'Connected' : 'Not Connected';
         }
 

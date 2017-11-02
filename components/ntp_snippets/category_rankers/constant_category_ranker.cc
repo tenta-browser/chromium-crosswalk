@@ -5,6 +5,8 @@
 #include "components/ntp_snippets/category_rankers/constant_category_ranker.h"
 
 #include "base/stl_util.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "components/ntp_snippets/features.h"
 
 namespace ntp_snippets {
@@ -75,6 +77,33 @@ void ConstantCategoryRanker::InsertCategoryAfterIfNecessary(
   AppendCategoryIfNecessary(category_to_insert);
 }
 
+std::vector<CategoryRanker::DebugDataItem>
+ConstantCategoryRanker::GetDebugData() {
+  std::vector<CategoryRanker::DebugDataItem> result;
+  result.push_back(
+      CategoryRanker::DebugDataItem("Type", "ConstantCategoryRanker"));
+
+  std::string initial_order_type;
+  CategoryOrderChoice choice = GetSelectedCategoryOrder();
+  if (choice == CategoryOrderChoice::GENERAL) {
+    initial_order_type = "GENERAL";
+  }
+  if (choice == CategoryOrderChoice::EMERGING_MARKETS_ORIENTED) {
+    initial_order_type = "EMERGING_MARKETS_ORIENTED;";
+  }
+  result.push_back(
+      CategoryRanker::DebugDataItem("Initial order type", initial_order_type));
+
+  std::vector<std::string> category_strings;
+  for (Category category : ordered_categories_) {
+    category_strings.push_back(base::IntToString(category.id()));
+  }
+  result.push_back(CategoryRanker::DebugDataItem(
+      "Current order", base::JoinString(category_strings, ", ")));
+
+  return result;
+}
+
 void ConstantCategoryRanker::OnSuggestionOpened(Category category) {
   // Ignored. The order is constant.
 }
@@ -89,6 +118,9 @@ ConstantCategoryRanker::GetKnownCategoriesDefaultOrder() {
   std::vector<KnownCategories> categories;
   CategoryOrderChoice choice = GetSelectedCategoryOrder();
   switch (choice) {
+    // All categories must be present. An exception is
+    // KnownCategories::CONTEXTUAL because it is not handled by
+    // ContentSuggestionsService.
     case CategoryOrderChoice::GENERAL:
       categories.push_back(KnownCategories::PHYSICAL_WEB_PAGES);
       categories.push_back(KnownCategories::READING_LIST);
@@ -111,8 +143,10 @@ ConstantCategoryRanker::GetKnownCategoriesDefaultOrder() {
   }
 
   static_assert(
-      static_cast<size_t>(KnownCategories::LOCAL_CATEGORIES_COUNT) == 6,
-      "All local KnownCategories must be present in all orders.");
+      static_cast<size_t>(KnownCategories::LOCAL_CATEGORIES_COUNT) == 7,
+      "Number of local categories has changed, please update "
+      "ConstantCategoryRanker::GetKnownCategoriesDefaultOrder to list all "
+      "local KnownCategories for all orders.");
 
   // Other remote categories will be ordered after these depending on when
   // providers notify us about them using AppendCategoryIfNecessary.

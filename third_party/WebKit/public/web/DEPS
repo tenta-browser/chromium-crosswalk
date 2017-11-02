@@ -1,11 +1,11 @@
 include_rules = [
-    "+../platform",
-    "+core",
+    "+base/optional.h",
     "+mojo/public",
-    "+platform",
     "+public/platform",
     "+public/web",
+    "+services/service_manager/public/cpp/interface_provider.h",
 
-    # For subdirectories.
-    "+../../platform",
+    # Allowed only inside INSIDE_BLINK
+    "+core",
+    "+platform",
 ]

@@ -4,13 +4,12 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutTextControl INPUT id='root'",
       "position": [5, 5],
       "bounds": [47, 25],
-      "drawsContent": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
@@ -22,6 +21,16 @@
           "object": "LayoutTextControl INPUT id='root'",
           "rect": [0, 0, 41, 19],
           "reason": "full"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='inner-editor'",
+          "rect": [6, 6, 35, 13],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [6, 6, 35, 13],
+          "reason": "subtree"
         }
       ]
     }
@@ -38,10 +47,6 @@
     {
       "object": "RootInlineBox",
       "reason": "subtree"
-    },
-    {
-      "object": "HorizontalScrollbar",
-      "reason": "scroll"
     },
     {
       "object": "Caret",

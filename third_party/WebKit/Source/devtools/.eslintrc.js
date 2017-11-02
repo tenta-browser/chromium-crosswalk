@@ -38,7 +38,6 @@ module.exports = {
             "markers": ["*"]
         }],
         "eqeqeq": [2],
-        "arrow-body-style": [2, "as-needed"],
         "accessor-pairs": [2, {
             "getWithoutSet": false,
             "setWithoutGet": false
@@ -60,7 +59,7 @@ module.exports = {
         "no-shadow-restricted-names": 2,
         "no-cond-assign": 2,
         "no-debugger": 2,
-        "no-console": [2, { "allow": ["warn", "error", "assert", "timeStamp", "time", "timeEnd"] }],
+        "no-console": [2, { "allow": ["assert", "context", "error", "timeStamp", "time", "timeEnd", "warn"] }],
         "no-dupe-keys": 2,
         "no-duplicate-case": 2,
         "no-empty-character-class": 2,

@@ -6,12 +6,12 @@
 
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
+#include "modules/mediastream/MediaDevicesRequest.h"
 #include "modules/mediastream/MediaErrorState.h"
 #include "modules/mediastream/MediaStream.h"
 #include "modules/mediastream/MediaStreamConstraints.h"
@@ -19,6 +19,8 @@
 #include "modules/mediastream/NavigatorUserMediaErrorCallback.h"
 #include "modules/mediastream/NavigatorUserMediaSuccessCallback.h"
 #include "modules/mediastream/UserMediaController.h"
+#include "modules/mediastream/UserMediaRequest.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -143,7 +145,7 @@ void MediaDevices::DidChangeMediaDevices() {
   Document* document = ToDocument(GetExecutionContext());
   DCHECK(document);
 
-  if (RuntimeEnabledFeatures::onDeviceChangeEnabled())
+  if (RuntimeEnabledFeatures::OnDeviceChangeEnabled())
     ScheduleDispatchEvent(Event::Create(EventTypeNames::devicechange));
 }
 
@@ -206,7 +208,7 @@ void MediaDevices::ScheduleDispatchEvent(Event* event) {
 
 void MediaDevices::DispatchScheduledEvent() {
   HeapVector<Member<Event>> events;
-  events.Swap(scheduled_events_);
+  events.swap(scheduled_events_);
 
   for (const auto& event : events)
     DispatchEvent(event);

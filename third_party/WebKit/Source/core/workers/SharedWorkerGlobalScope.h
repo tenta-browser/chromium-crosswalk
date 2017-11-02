@@ -31,12 +31,11 @@
 #ifndef SharedWorkerGlobalScope_h
 #define SharedWorkerGlobalScope_h
 
-#include "core/CoreExport.h"
-#include "core/frame/csp/ContentSecurityPolicy.h"
-#include "core/workers/WorkerGlobalScope.h"
-#include "core/workers/WorkerThreadStartupData.h"
-#include "platform/heap/Handle.h"
 #include <memory>
+#include "core/CoreExport.h"
+#include "core/workers/GlobalScopeCreationParams.h"
+#include "core/workers/WorkerGlobalScope.h"
+#include "platform/heap/Handle.h"
 
 namespace blink {
 
@@ -47,10 +46,10 @@ class SharedWorkerGlobalScope final : public WorkerGlobalScope {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SharedWorkerGlobalScope* Create(
-      const String& name,
-      SharedWorkerThread*,
-      std::unique_ptr<WorkerThreadStartupData>);
+  SharedWorkerGlobalScope(const String& name,
+                          std::unique_ptr<GlobalScopeCreationParams>,
+                          SharedWorkerThread*,
+                          double time_origin);
   ~SharedWorkerGlobalScope() override;
 
   bool IsSharedWorkerGlobalScope() const override { return true; }
@@ -65,15 +64,9 @@ class SharedWorkerGlobalScope final : public WorkerGlobalScope {
   DECLARE_VIRTUAL_TRACE();
 
  private:
-  SharedWorkerGlobalScope(const String& name,
-                          const KURL&,
-                          const String& user_agent,
-                          SharedWorkerThread*,
-                          std::unique_ptr<SecurityOrigin::PrivilegeData>,
-                          WorkerClients*);
   void ExceptionThrown(ErrorEvent*) override;
 
-  String name_;
+  const String name_;
 };
 
 CORE_EXPORT MessageEvent* CreateConnectEvent(MessagePort*);

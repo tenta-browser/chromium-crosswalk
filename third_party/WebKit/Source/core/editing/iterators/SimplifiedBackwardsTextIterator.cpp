@@ -29,8 +29,11 @@
 
 #include "core/dom/FirstLetterPseudoElement.h"
 #include "core/editing/EditingUtilities.h"
+#include "core/editing/EphemeralRange.h"
+#include "core/editing/Position.h"
+#include "core/editing/VisibleUnits.h"
 #include "core/editing/iterators/TextIterator.h"
-#include "core/html/HTMLFormControlElement.h"
+#include "core/html/forms/HTMLFormControlElement.h"
 #include "core/layout/LayoutTextFragment.h"
 
 namespace blink {
@@ -49,9 +52,11 @@ static int CollapsedSpaceLength(LayoutText* layout_text, int text_end) {
 static int MaxOffsetIncludingCollapsedSpaces(Node* node) {
   int offset = CaretMaxOffset(node);
 
-  if (node->GetLayoutObject() && node->GetLayoutObject()->IsText())
+  if (node->GetLayoutObject() && node->GetLayoutObject()->IsText()) {
     offset +=
-        CollapsedSpaceLength(ToLayoutText(node->GetLayoutObject()), offset);
+        CollapsedSpaceLength(ToLayoutText(node->GetLayoutObject()), offset) +
+        ToLayoutText(node->GetLayoutObject())->TextStartOffset();
+  }
 
   return offset;
 }
@@ -59,8 +64,7 @@ static int MaxOffsetIncludingCollapsedSpaces(Node* node) {
 template <typename Strategy>
 SimplifiedBackwardsTextIteratorAlgorithm<Strategy>::
     SimplifiedBackwardsTextIteratorAlgorithm(
-        const PositionTemplate<Strategy>& start,
-        const PositionTemplate<Strategy>& end,
+        const EphemeralRangeTemplate<Strategy>& range,
         const TextIteratorBehavior& behavior)
     : node_(nullptr),
       offset_(0),
@@ -86,12 +90,12 @@ SimplifiedBackwardsTextIteratorAlgorithm<Strategy>::
       behavior ==
           TextIteratorBehavior::Builder().SetStopsOnFormControls(true).Build());
 
-  Node* start_node = start.AnchorNode();
+  Node* start_node = range.StartPosition().AnchorNode();
   if (!start_node)
     return;
-  Node* end_node = end.AnchorNode();
-  int start_offset = start.ComputeEditingOffset();
-  int end_offset = end.ComputeEditingOffset();
+  Node* end_node = range.EndPosition().AnchorNode();
+  int start_offset = range.StartPosition().ComputeEditingOffset();
+  int end_offset = range.EndPosition().ComputeEditingOffset();
 
   Init(start_node, end_node, start_offset, end_offset);
 }
@@ -116,7 +120,7 @@ void SimplifiedBackwardsTextIteratorAlgorithm<Strategy>::Init(Node* start_node,
     // traversing the children twice.
     if (Node* child_at_offset = Strategy::ChildAt(*end_node, end_offset - 1)) {
       end_node = child_at_offset;
-      end_offset = Position::LastOffsetInNode(end_node);
+      end_offset = Position::LastOffsetInNode(*end_node);
     }
   }
 
@@ -167,7 +171,7 @@ void SimplifiedBackwardsTextIteratorAlgorithm<Strategy>::Advance() {
         if (layout_object->Style()->Visibility() == EVisibility::kVisible &&
             offset_ > 0)
           handled_node_ = HandleTextNode();
-      } else if (layout_object && (layout_object->IsLayoutPart() ||
+      } else if (layout_object && (layout_object->IsLayoutEmbeddedContent() ||
                                    TextIterator::SupportsAltText(node_))) {
         if (layout_object->Style()->Visibility() == EVisibility::kVisible &&
             offset_ > 0)
@@ -242,7 +246,7 @@ bool SimplifiedBackwardsTextIteratorAlgorithm<Strategy>::HandleTextNode() {
     return true;
 
   position_end_offset_ = offset_;
-  offset_ = start_offset + offset_in_node;
+  offset_ = start_offset;
   position_node_ = node_;
   position_start_offset_ = offset_;
 
@@ -277,17 +281,21 @@ LayoutText* SimplifiedBackwardsTextIteratorAlgorithm<
   LayoutTextFragment* fragment = ToLayoutTextFragment(layout_object);
   int offset_after_first_letter = fragment->Start();
   if (start_offset >= offset_after_first_letter) {
+    // We'll stop in remaining part.
     DCHECK(!should_handle_first_letter_);
     offset_in_node = offset_after_first_letter;
     return layout_object;
   }
 
   if (!should_handle_first_letter_ && offset_after_first_letter < offset_) {
+    // Enter into remaining part
     should_handle_first_letter_ = true;
     offset_in_node = offset_after_first_letter;
+    start_offset = offset_after_first_letter;
     return layout_object;
   }
 
+  // Enter into first-letter part
   should_handle_first_letter_ = false;
   offset_in_node = 0;
 
@@ -301,8 +309,12 @@ LayoutText* SimplifiedBackwardsTextIteratorAlgorithm<
   LayoutText* first_letter_layout_object =
       ToLayoutText(pseudo_element_layout_object->SlowFirstChild());
 
-  offset_ = first_letter_layout_object->CaretMaxOffset();
-  offset_ += CollapsedSpaceLength(first_letter_layout_object, offset_);
+  const int end_offset =
+      end_node_ == node_ && end_offset_ < offset_after_first_letter
+          ? end_offset_
+          : first_letter_layout_object->CaretMaxOffset();
+  offset_ =
+      end_offset + CollapsedSpaceLength(first_letter_layout_object, end_offset);
 
   return first_letter_layout_object;
 }

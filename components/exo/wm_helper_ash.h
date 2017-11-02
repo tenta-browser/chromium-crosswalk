@@ -5,13 +5,13 @@
 #ifndef COMPONENTS_EXO_WM_HELPER_ASH_H_
 #define COMPONENTS_EXO_WM_HELPER_ASH_H_
 
-#include "ash/shell_observer.h"
-#include "ash/system/accessibility_observer.h"
-#include "ash/wm_display_observer.h"
+#include "ash/display/window_tree_host_manager.h"
+#include "ash/wm/tablet_mode/tablet_mode_observer.h"
 #include "base/macros.h"
 #include "components/exo/wm_helper.h"
 #include "ui/aura/client/cursor_client_observer.h"
 #include "ui/aura/client/focus_change_observer.h"
+#include "ui/compositor/compositor_vsync_manager.h"
 #include "ui/events/devices/input_device_event_observer.h"
 #include "ui/wm/public/activation_change_observer.h"
 
@@ -19,38 +19,38 @@ namespace exo {
 
 // A helper class for accessing WindowManager related features.
 class WMHelperAsh : public WMHelper,
-                    public aura::client::ActivationChangeObserver,
+                    public wm::ActivationChangeObserver,
                     public aura::client::FocusChangeObserver,
                     public aura::client::CursorClientObserver,
-                    public ash::AccessibilityObserver,
-                    public ash::ShellObserver,
-                    public ash::WmDisplayObserver,
-                    public ui::InputDeviceEventObserver {
+                    public ash::TabletModeObserver,
+                    public ash::WindowTreeHostManager::Observer,
+                    public ui::InputDeviceEventObserver,
+                    public ui::CompositorVSyncManager::Observer {
  public:
   WMHelperAsh();
   ~WMHelperAsh() override;
 
   // Overridden from WMHelper:
-  const display::ManagedDisplayInfo GetDisplayInfo(
+  const display::ManagedDisplayInfo& GetDisplayInfo(
       int64_t display_id) const override;
-  aura::Window* GetContainer(int container_id) override;
+  aura::Window* GetPrimaryDisplayContainer(int container_id) override;
   aura::Window* GetActiveWindow() const override;
   aura::Window* GetFocusedWindow() const override;
-  ui::CursorSetType GetCursorSet() const override;
+  ui::CursorSize GetCursorSize() const override;
+  const display::Display& GetCursorDisplay() const override;
   void AddPreTargetHandler(ui::EventHandler* handler) override;
   void PrependPreTargetHandler(ui::EventHandler* handler) override;
   void RemovePreTargetHandler(ui::EventHandler* handler) override;
   void AddPostTargetHandler(ui::EventHandler* handler) override;
   void RemovePostTargetHandler(ui::EventHandler* handler) override;
-  bool IsMaximizeModeWindowManagerEnabled() const override;
-  bool IsSpokenFeedbackEnabled() const override;
-  void PlayEarcon(int sound_key) const override;
+  bool IsTabletModeWindowManagerEnabled() const override;
+  double GetDefaultDeviceScaleFactor() const override;
+  bool AreVerifiedSyncTokensNeeded() const override;
 
-  // Overridden from aura::client::ActivationChangeObserver:
-  void OnWindowActivated(
-      aura::client::ActivationChangeObserver::ActivationReason reason,
-      aura::Window* gained_active,
-      aura::Window* lost_active) override;
+  // Overridden from wm::ActivationChangeObserver:
+  void OnWindowActivated(wm::ActivationChangeObserver::ActivationReason reason,
+                         aura::Window* gained_active,
+                         aura::Window* lost_active) override;
 
   // Overridden from aura::client::FocusChangeObserver:
   void OnWindowFocused(aura::Window* gained_focus,
@@ -58,24 +58,28 @@ class WMHelperAsh : public WMHelper,
 
   // Overridden from aura::client::CursorClientObserver:
   void OnCursorVisibilityChanged(bool is_visible) override;
-  void OnCursorSetChanged(ui::CursorSetType cursor_set) override;
+  void OnCursorSizeChanged(ui::CursorSize cursor_size) override;
+  void OnCursorDisplayChanged(const display::Display& display) override;
 
-  // Overridden from ash::AccessibilityObserver:
-  void OnAccessibilityModeChanged(
-      ash::AccessibilityNotificationVisibility notify) override;
+  // ash::TabletModeObserver:
+  void OnTabletModeStarted() override;
+  void OnTabletModeEnding() override;
+  void OnTabletModeEnded() override;
 
-  // Overridden from ash::ShellObserver:
-  void OnMaximizeModeStarted() override;
-  void OnMaximizeModeEnding() override;
-  void OnMaximizeModeEnded() override;
-
-  // Overridden from ash::WmDisplayObserver:
+  // WindowTreeHostManager::Observer:
   void OnDisplayConfigurationChanged() override;
 
   // Overridden from ui::InputDeviceEventObserver:
   void OnKeyboardDeviceConfigurationChanged() override;
 
+  // ui::CompositorVSyncManager::Observer:
+  void OnUpdateVSyncParameters(base::TimeTicks timebase,
+                               base::TimeDelta interval) override;
+
  private:
+  // The VSync manager being observed.
+  scoped_refptr<ui::CompositorVSyncManager> vsync_manager_;
+
   DISALLOW_COPY_AND_ASSIGN(WMHelperAsh);
 };
 

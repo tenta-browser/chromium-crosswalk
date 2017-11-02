@@ -1,40 +1,49 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef IOS_CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_HOME_VIEW_CONTROLLER_H_
-#define IOS_CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_HOME_VIEW_CONTROLLER_H_
+#ifndef IOS_CHROME_BROWSER_UI_BOOKMARKS_HOME_VIEW_CONTROLLER_H_
+#define IOS_CHROME_BROWSER_UI_BOOKMARKS_HOME_VIEW_CONTROLLER_H_
 
-#import "ios/chrome/browser/ui/ntp/new_tab_page_panel_protocol.h"
+#import <UIKit/UIKit.h>
 
 #include <set>
 #include <vector>
 
-@class BookmarkCollectionView;
-class GURL;
+@protocol ApplicationCommands;
 @protocol UrlLoader;
-
-namespace bookmarks {
-class BookmarkModel;
-class BookmarkNode;
-}  // namespace bookmarks
+class GURL;
 
 namespace ios {
 class ChromeBrowserState;
 }  // namespace ios
 
+namespace bookmarks {
+class BookmarkModelBridge;
+class BookmarkNode;
+}  // namespace bookmarks
+
 @class BookmarkHomeViewController;
+
 @protocol BookmarkHomeViewControllerDelegate
-// The view controller wants to be dismissed.
-// If |url| != GURL(), then the user has selected |url| for navigation.
+// The view controller wants to be dismissed. If |urls| is not empty, then
+// the user has selected to navigate to those URLs in the current tab mode.
 - (void)bookmarkHomeViewControllerWantsDismissal:
             (BookmarkHomeViewController*)controller
-                                 navigationToUrl:(const GURL&)url;
+                                navigationToUrls:(const std::vector<GURL>&)urls;
+
+// The view controller wants to be dismissed. If |urls| is not empty, then
+// the user has selected to navigate to those URLs with specified tab mode.
+- (void)bookmarkHomeViewControllerWantsDismissal:
+            (BookmarkHomeViewController*)controller
+                                navigationToUrls:(const std::vector<GURL>&)urls
+                                     inIncognito:(BOOL)inIncognito
+                                          newTab:(BOOL)newTab;
+
 @end
 
-// Full screen view controller for browsing the bookmark hierarchy, batch
-// editing bookmarks, and navigating to a single bookmark.
-// Abstracty base class that provides common, non-UI functionality.
+// Class to navigate the bookmark hierarchy, needs subclassing for tablet /
+// handset case.
 @interface BookmarkHomeViewController : UIViewController {
  @protected
   // The following 2 ivars both represent the set of nodes being edited.
@@ -44,50 +53,50 @@ class ChromeBrowserState;
   // DO NOT modify these two ivars directly.
   std::set<const bookmarks::BookmarkNode*> _editNodes;
   std::vector<const bookmarks::BookmarkNode*> _editNodesOrdered;
+
+  // Bridge to register for bookmark changes.
+  std::unique_ptr<bookmarks::BookmarkModelBridge> _bridge;
+
+  // The root node, whose child nodes are shown in the bookmark table view.
+  const bookmarks::BookmarkNode* _rootNode;
 }
-// Designated initializer.
+
+- (instancetype)initWithNibName:(NSString*)nibNameOrNil
+                         bundle:(NSBundle*)nibBundleOrNil NS_UNAVAILABLE;
+- (instancetype)initWithCoder:(NSCoder*)aDecoder NS_UNAVAILABLE;
+- (instancetype)init NS_UNAVAILABLE;
 - (instancetype)initWithLoader:(id<UrlLoader>)loader
-                  browserState:(ios::ChromeBrowserState*)browserState;
+                  browserState:(ios::ChromeBrowserState*)browserState
+                    dispatcher:(id<ApplicationCommands>)dispatcher
+    NS_DESIGNATED_INITIALIZER;
 
-#pragma mark - Properties Relevant To Presenters
+// Set to YES, only when this view controller instance is being created
+// from cached path. Once the view controller is shown, this is set to NO.
+// This is so that the cache code is called only once in viewWillAppear, and
+// not every time the view appears.
+@property(nonatomic, assign) BOOL isReconstructingFromCache;
 
-@property(nonatomic, weak) id<BookmarkHomeViewControllerDelegate> delegate;
+// Setter to set _rootNode value.
+- (void)setRootNode:(const bookmarks::BookmarkNode*)rootNode;
 
-#pragma mark - Properties Relevant To Subclasses
+// Delegate for presenters. Note that this delegate is currently being set only
+// in case of handset, and not tablet. In the future it will be used by both
+// cases.
+@property(nonatomic, weak) id<BookmarkHomeViewControllerDelegate> homeDelegate;
 
-// Whether the view controller is in editing mode.
-@property(nonatomic, assign, readonly) BOOL editing;
-// The set of selected index paths for edition.
-@property(nonatomic, strong, readonly) NSMutableArray* editIndexPaths;
-@property(nonatomic, assign, readonly) bookmarks::BookmarkModel* bookmarks;
-@property(nonatomic, weak, readonly) id<UrlLoader> loader;
-@property(nonatomic, assign, readonly) ios::ChromeBrowserState* browserState;
+// Dispatcher for sending commands.
+@property(nonatomic, readonly, weak) id<ApplicationCommands> dispatcher;
 
-#pragma mark - Relevant Methods
-// Replaces |_editNodes| and |_editNodesOrdered| with new container objects.
-- (void)resetEditNodes;
-// Adds |node| and |indexPath| if it isn't already present.
-- (void)insertEditNode:(const bookmarks::BookmarkNode*)node
-           atIndexPath:(NSIndexPath*)indexPath;
-// Removes |node| and |indexPath| if it's present.
-- (void)removeEditNode:(const bookmarks::BookmarkNode*)node
-           atIndexPath:(NSIndexPath*)indexPath;
-
-#pragma mark - Methods Intended For Subclass Override
-
-// Subclasses must call the super class implementation.
-// This method updates the property, and resets the edit nodes.
-- (void)setEditing:(BOOL)editing animated:(BOOL)animated;
-
-// Dismisses any modal interaction elements. The base implementation does
-// nothing.
-- (void)dismissModals:(BOOL)animated;
-
+// Dismisses any modal interaction elements. Note that this
+// method is currently used in case of handset only. In the future it
+// will be used by both cases.
+- (void)dismissModals;
 @end
 
-@interface BookmarkHomeViewController (PrivateAPIExposedForTesting)
+@interface BookmarkHomeViewController (ExposedForTesting)
+
 - (const std::set<const bookmarks::BookmarkNode*>&)editNodes;
-- (void)setEditNodes:(const std::set<const bookmarks::BookmarkNode*>&)editNodes;
+
 @end
 
-#endif  // IOS_CHROME_BROWSER_UI_BOOKMARKS_BOOKMARK_HOME_VIEW_CONTROLLER_H_
+#endif  // IOS_CHROME_BROWSER_UI_BOOKMARKS_HOME_VIEW_CONTROLLER_H_

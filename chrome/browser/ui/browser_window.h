@@ -28,11 +28,8 @@ class ExclusiveAccessContext;
 class FindBar;
 class GURL;
 class LocationBar;
-class Profile;
 class StatusBubble;
 class ToolbarActionsBar;
-
-struct WebApplicationInfo;
 
 namespace autofill {
 class SaveCardBubbleController;
@@ -54,10 +51,6 @@ namespace gfx {
 class Rect;
 class Size;
 }
-
-namespace security_state {
-struct SecurityInfo;
-}  // namespace security_state
 
 namespace signin_metrics {
 enum class AccessPoint;
@@ -240,21 +233,6 @@ class BrowserWindow : public ui::BaseWindow {
   // |already_bookmarked| is true if the url is already bookmarked.
   virtual void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) = 0;
 
-  // Callback type used with the ShowBookmarkAppBubble() method. The boolean
-  // parameter is true when the user accepts the dialog. The WebApplicationInfo
-  // parameter contains the WebApplicationInfo as edited by the user.
-  typedef base::Callback<void(bool, const WebApplicationInfo&)>
-      ShowBookmarkAppBubbleCallback;
-
-  // Shows the Bookmark App bubble.
-  // See Extension::InitFromValueFlags::FROM_BOOKMARK for a description of
-  // bookmark apps.
-  //
-  // |web_app_info| is the WebApplicationInfo being converted into an app.
-  virtual void ShowBookmarkAppBubble(
-      const WebApplicationInfo& web_app_info,
-      const ShowBookmarkAppBubbleCallback& callback) = 0;
-
   // Shows the "Save credit card" bubble.
   virtual autofill::SaveCardBubbleView* ShowSaveCreditCardBubble(
       content::WebContents* contents,
@@ -303,16 +281,6 @@ class BrowserWindow : public ui::BaseWindow {
   // ThemeService calls this when a user has changed their theme, indicating
   // that it's time to redraw everything.
   virtual void UserChangedTheme() = 0;
-
-  // Shows Page Info using the specified information. |virtual_url|
-  // is the virtual url of the page/frame the info applies to, |ssl| is the SSL
-  // information for that page/frame. If |show_history| is true, a section
-  // showing how many times that URL has been visited is added to the page info.
-  virtual void ShowPageInfo(
-      Profile* profile,
-      content::WebContents* web_contents,
-      const GURL& virtual_url,
-      const security_state::SecurityInfo& security_info) = 0;
 
   // Shows the app menu (for accessibility).
   virtual void ShowAppMenu() = 0;

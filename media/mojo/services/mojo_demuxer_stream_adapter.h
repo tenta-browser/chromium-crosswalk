@@ -6,10 +6,10 @@
 #define MEDIA_MOJO_SERVICES_MOJO_DEMUXER_STREAM_ADAPTER_H_
 
 #include <memory>
-#include <queue>
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/video_decoder_config.h"
@@ -43,25 +43,24 @@ class MojoDemuxerStreamAdapter : public DemuxerStream {
   Type type() const override;
   void EnableBitstreamConverter() override;
   bool SupportsConfigChanges() override;
-  VideoRotation video_rotation() override;
 
  private:
   void OnStreamReady(Type type,
                      mojo::ScopedDataPipeConsumerHandle consumer_handle,
-                     mojom::AudioDecoderConfigPtr audio_config,
-                     mojom::VideoDecoderConfigPtr video_config);
+                     const base::Optional<AudioDecoderConfig>& audio_config,
+                     const base::Optional<VideoDecoderConfig>& video_config);
 
   // The callback from |demuxer_stream_| that a read operation has completed.
   // |read_cb| is a callback from the client who invoked Read() on |this|.
   void OnBufferReady(Status status,
                      mojom::DecoderBufferPtr buffer,
-                     mojom::AudioDecoderConfigPtr audio_config,
-                     mojom::VideoDecoderConfigPtr video_config);
+                     const base::Optional<AudioDecoderConfig>& audio_config,
+                     const base::Optional<VideoDecoderConfig>& video_config);
 
   void OnBufferRead(scoped_refptr<DecoderBuffer> buffer);
 
-  void UpdateConfig(mojom::AudioDecoderConfigPtr audio_config,
-                    mojom::VideoDecoderConfigPtr video_config);
+  void UpdateConfig(const base::Optional<AudioDecoderConfig>& audio_config,
+                    const base::Optional<VideoDecoderConfig>& video_config);
 
   // See constructor for descriptions.
   mojom::DemuxerStreamPtr demuxer_stream_;

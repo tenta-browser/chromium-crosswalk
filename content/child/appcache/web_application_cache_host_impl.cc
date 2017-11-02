@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #include "base/compiler_specific.h"
-#include "base/id_map.h"
+#include "base/containers/id_map.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "content/public/common/browser_side_navigation_policy.h"
@@ -35,7 +35,7 @@ const char* const kEventNames[] = {
   "UpdateReady", "Cached", "Obsolete"
 };
 
-using HostsMap = IDMap<WebApplicationCacheHostImpl*>;
+using HostsMap = base::IDMap<WebApplicationCacheHostImpl*>;
 
 HostsMap* all_hosts() {
   static HostsMap* map = new HostsMap;
@@ -310,6 +310,10 @@ void WebApplicationCacheHostImpl::GetAssociatedCacheInfo(
   info->creation_time = cache_info_.creation_time.ToDoubleT();
   info->update_time = cache_info_.last_update_time.ToDoubleT();
   info->total_size = cache_info_.size;
+}
+
+int WebApplicationCacheHostImpl::GetHostID() const {
+  return host_id_;
 }
 
 void WebApplicationCacheHostImpl::GetResourceList(

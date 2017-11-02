@@ -22,7 +22,7 @@
 #import "ios/chrome/browser/ui/bookmarks/bookmark_elevated_toolbar.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_extended_button.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_folder_view_controller.h"
-#import "ios/chrome/browser/ui/bookmarks/bookmark_interaction_controller.h"
+#import "ios/chrome/browser/ui/bookmarks/bookmark_mediator.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_model_bridge_observer.h"
 #import "ios/chrome/browser/ui/bookmarks/bookmark_utils_ios.h"
 #import "ios/chrome/browser/ui/bookmarks/cells/bookmark_parent_folder_item.h"
@@ -166,7 +166,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
                     browserState:(ios::ChromeBrowserState*)browserState {
   DCHECK(bookmark);
   DCHECK(browserState);
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     DCHECK(!bookmark->is_folder());
     DCHECK(!browserState->IsOffTheRecord());
@@ -294,6 +296,15 @@ typedef NS_ENUM(NSInteger, ItemType) {
   GURL url = ConvertUserDataToGURL([self inputURLString]);
   // If the URL was not valid, the |save| message shouldn't have been sent.
   DCHECK([self inputURLIsValid]);
+
+  // Tell delegate if bookmark name or title has been changed.
+  if (self.bookmark &&
+      (self.bookmark->GetTitle() !=
+           base::SysNSStringToUTF16([self inputBookmarkName]) ||
+       self.bookmark->url() != url)) {
+    [self.delegate bookmarkEditorWillCommitTitleOrUrlChange:self];
+  }
+
   bookmark_utils_ios::CreateOrUpdateBookmarkWithUndoToast(
       self.bookmark, [self inputBookmarkName], url, self.folder,
       self.bookmarkModel, self.browserState);
@@ -302,8 +313,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
 - (void)changeFolder:(const BookmarkNode*)folder {
   DCHECK(folder->is_folder());
   self.folder = folder;
-  [BookmarkInteractionController setFolderForNewBookmarks:self.folder
-                                           inBrowserState:self.browserState];
+  [BookmarkMediator setFolderForNewBookmarks:self.folder
+                              inBrowserState:self.browserState];
   [self updateFolderLabel];
 }
 

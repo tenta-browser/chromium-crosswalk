@@ -8,14 +8,15 @@
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
+#include "chrome/browser/lifetime/termination_notification.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/common/chrome_switches.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/views/widget/widget.h"
 
-#if defined(USE_ASH)
-#include "ash/shell.h"
+#if defined(OS_CHROMEOS)
+#include "ash/shell.h"  // mash-ok
 #endif
 
 namespace chrome {
@@ -25,9 +26,11 @@ void HandleAppExitingForPlatform() {
   // and windows created by Ash (launcher, background, etc).
   g_browser_process->notification_ui_manager()->StartShutdown();
 
-#if defined(USE_ASH)
-  // This may be called before |ash::Shell| is initialized when
-  // XIOError is reported.  crbug.com/150633.
+#if defined(OS_CHROMEOS)
+  // This is a no-op in mash, as shutting down the client will dismiss any of
+  // the open menus. This check was originally here to work around an x11-ism,
+  // but has the nice side effect of making this a no-op in mash. When we turn
+  // mash on eventually, this can go away.  crbug.com/723876
   if (ash::Shell::HasInstance()) {
     // Releasing the capture will close any menus that might be open:
     // http://crbug.com/134472
@@ -48,7 +51,7 @@ void HandleAppExitingForPlatform() {
     // if something prevents a browser from closing before SetTryingToQuit()
     // gets called (e.g. browser->TabsNeedBeforeUnloadFired() is true).
     // NotifyAndTerminate does nothing if called more than once.
-    NotifyAndTerminate(true);
+    browser_shutdown::NotifyAndTerminate(true /* fast_path */);
   }
 #endif
 }

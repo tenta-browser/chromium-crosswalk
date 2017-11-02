@@ -44,12 +44,20 @@ class AppCacheService;
 class BrowserContext;
 class CacheStorageContext;
 class DOMStorageContext;
-class HostZoomLevelContext;
-class HostZoomMap;
 class IndexedDBContext;
 class PlatformNotificationContext;
 class ServiceWorkerContext;
+
+#if !defined(OS_ANDROID)
+class HostZoomLevelContext;
+class HostZoomMap;
 class ZoomLevelDelegate;
+#endif  // !defined(OS_ANDROID)
+
+namespace mojom {
+class NetworkContext;
+class URLLoaderFactory;
+}
 
 // Defines what persistent state a child process can access.
 //
@@ -62,6 +70,13 @@ class CONTENT_EXPORT StoragePartition {
   virtual base::FilePath GetPath() = 0;
   virtual net::URLRequestContextGetter* GetURLRequestContext() = 0;
   virtual net::URLRequestContextGetter* GetMediaURLRequestContext() = 0;
+  virtual mojom::NetworkContext* GetNetworkContext() = 0;
+  // Returns a pointer to a URLLoaderFactory owned by the storage partition.
+  // Prefer to use this instead of creating a new URLLoaderFactory when issuing
+  // requests from the Browser process, to share resources. The returned
+  // URLLoaderFactory should not be sent to subprocesses, due to its
+  // permissions.
+  virtual mojom::URLLoaderFactory* GetURLLoaderFactoryForBrowserProcess() = 0;
   virtual storage::QuotaManager* GetQuotaManager() = 0;
   virtual AppCacheService* GetAppCacheService() = 0;
   virtual storage::FileSystemContext* GetFileSystemContext() = 0;
@@ -70,9 +85,11 @@ class CONTENT_EXPORT StoragePartition {
   virtual IndexedDBContext* GetIndexedDBContext() = 0;
   virtual ServiceWorkerContext* GetServiceWorkerContext() = 0;
   virtual CacheStorageContext* GetCacheStorageContext() = 0;
+#if !defined(OS_ANDROID)
   virtual HostZoomMap* GetHostZoomMap() = 0;
   virtual HostZoomLevelContext* GetHostZoomLevelContext() = 0;
   virtual ZoomLevelDelegate* GetZoomLevelDelegate() = 0;
+#endif  // !defined(OS_ANDROID)
   virtual PlatformNotificationContext* GetPlatformNotificationContext() = 0;
 
   enum : uint32_t {

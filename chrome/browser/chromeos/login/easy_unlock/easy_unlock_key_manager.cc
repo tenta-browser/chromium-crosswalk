@@ -29,6 +29,7 @@ const char kKeyPermitPermitId[] = "permitRecord.permitId";
 const char kKeyPermitData[] = "permitRecord.data";
 const char kKeyPermitType[] = "permitRecord.type";
 const char kKeyPsk[] = "psk";
+const char kKeySerializedBeaconSeeds[] = "serializedBeaconSeeds";
 
 const char kKeyLabelPrefix[] = "easy-unlock-";
 
@@ -39,18 +40,15 @@ const char kPermitTypeLicence[] = "licence";
 
 EasyUnlockKeyManager::EasyUnlockKeyManager() : weak_ptr_factory_(this) {}
 
-EasyUnlockKeyManager::~EasyUnlockKeyManager() {
-}
+EasyUnlockKeyManager::~EasyUnlockKeyManager() {}
 
 void EasyUnlockKeyManager::RefreshKeys(const UserContext& user_context,
                                        const base::ListValue& remote_devices,
                                        const RefreshKeysCallback& callback) {
-  base::Closure do_refresh_keys = base::Bind(
-      &EasyUnlockKeyManager::RefreshKeysWithTpmKeyPresent,
-      weak_ptr_factory_.GetWeakPtr(),
-      user_context,
-      base::Owned(remote_devices.DeepCopy()),
-      callback);
+  base::Closure do_refresh_keys =
+      base::Bind(&EasyUnlockKeyManager::RefreshKeysWithTpmKeyPresent,
+                 weak_ptr_factory_.GetWeakPtr(), user_context,
+                 base::Owned(remote_devices.DeepCopy()), callback);
 
   EasyUnlockTpmKeyManager* tpm_key_manager =
       EasyUnlockTpmKeyManagerFactory::GetInstance()->GetForUser(
@@ -125,6 +123,7 @@ void EasyUnlockKeyManager::DeviceDataToRemoteDeviceDictionary(
   dict->SetString(kKeyPermitPermitId,
                   base::StringPrintf(kPermitPermitIdFormat,
                                      account_id.GetUserEmail().c_str()));
+  dict->SetString(kKeySerializedBeaconSeeds, data.serialized_beacon_seeds);
 }
 
 // static
@@ -154,6 +153,14 @@ bool EasyUnlockKeyManager::RemoteDeviceDictionaryToDeviceData(
     }
   }
 
+  std::string serialized_beacon_seeds;
+  if (dict.GetString(kKeySerializedBeaconSeeds, &serialized_beacon_seeds)) {
+    data->serialized_beacon_seeds = serialized_beacon_seeds;
+  } else {
+    PA_LOG(ERROR) << "Failed to parse key data: "
+                  << "expected serialized_beacon_seeds.";
+  }
+
   data->bluetooth_address.swap(bluetooth_address);
   data->public_key.swap(public_key);
   data->psk.swap(psk);
@@ -181,8 +188,7 @@ bool EasyUnlockKeyManager::RemoteDeviceListToDeviceDataList(
     EasyUnlockDeviceKeyDataList* data_list) {
   EasyUnlockDeviceKeyDataList parsed_devices;
   for (base::ListValue::const_iterator it = device_list.begin();
-       it != device_list.end();
-       ++it) {
+       it != device_list.end(); ++it) {
     const base::DictionaryValue* dict;
     if (!it->GetAsDictionary(&dict) || !dict)
       return false;

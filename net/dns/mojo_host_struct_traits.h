@@ -49,17 +49,6 @@ struct StructTraits<net::interfaces::HostResolverRequestInfoDataView,
 };
 
 template <>
-struct StructTraits<net::interfaces::IPEndPointDataView, net::IPEndPoint> {
-  static const std::vector<uint8_t>& address(const net::IPEndPoint& obj) {
-    return obj.address().bytes();
-  }
-  static uint16_t port(const net::IPEndPoint& obj) { return obj.port(); }
-
-  static bool Read(net::interfaces::IPEndPointDataView obj,
-                   net::IPEndPoint* out);
-};
-
-template <>
 struct StructTraits<net::interfaces::AddressListDataView, net::AddressList> {
   static std::vector<net::IPEndPoint> addresses(const net::AddressList& obj) {
     return obj.endpoints();

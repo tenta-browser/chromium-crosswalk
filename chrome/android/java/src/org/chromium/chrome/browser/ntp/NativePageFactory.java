@@ -10,20 +10,19 @@ import android.net.Uri;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
-import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.NativePage;
 import org.chromium.chrome.browser.NativePageHost;
 import org.chromium.chrome.browser.TabLoadStatus;
 import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.bookmarks.BookmarkPage;
 import org.chromium.chrome.browser.download.DownloadPage;
-import org.chromium.chrome.browser.history.HistoryManagerUtils;
 import org.chromium.chrome.browser.history.HistoryPage;
 import org.chromium.chrome.browser.physicalweb.PhysicalWebDiagnosticsPage;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet;
+import org.chromium.chrome.browser.widget.bottomsheet.BottomSheet.StateChangeReason;
 import org.chromium.content_public.browser.LoadUrlParams;
 
 /**
@@ -36,9 +35,11 @@ public class NativePageFactory {
     static class NativePageBuilder {
         protected NativePage buildNewTabPage(ChromeActivity activity, Tab tab,
                 TabModelSelector tabModelSelector) {
-            if (FeatureUtilities.isChromeHomeEnabled() && !tab.isIncognito()) {
-                return new ChromeHomeNewTabPage(activity, tab, tabModelSelector,
-                        ((ChromeTabbedActivity) activity).getLayoutManager());
+            if (activity.getBottomSheet() != null) {
+                BottomSheet sheet = activity.getBottomSheet();
+                sheet.getBottomSheetMetrics().recordNativeNewTabPageShown();
+                sheet.setSheetState(BottomSheet.SHEET_STATE_FULL, true, StateChangeReason.NEW_TAB);
+                return null;
             } else if (tab.isIncognito()) {
                 return new IncognitoNewTabPage(activity);
             } else {
@@ -58,7 +59,7 @@ public class NativePageFactory {
             return new HistoryPage(activity, new TabShim(tab));
         }
 
-        protected NativePage buildRecentTabsPage(Activity activity, Tab tab) {
+        protected NativePage buildRecentTabsPage(ChromeActivity activity, Tab tab) {
             RecentTabsManager recentTabsManager =
                     new RecentTabsManager(tab, tab.getProfile(), activity);
             return new RecentTabsPage(activity, recentTabsManager);
@@ -94,11 +95,7 @@ public class NativePageFactory {
         } else if (UrlConstants.DOWNLOADS_HOST.equals(host)) {
             return NativePageType.DOWNLOADS;
         } else if (UrlConstants.HISTORY_HOST.equals(host)) {
-            if (HistoryManagerUtils.isAndroidHistoryManagerEnabled()) {
-                return NativePageType.HISTORY;
-            } else {
-                return NativePageType.NONE;
-            }
+            return NativePageType.HISTORY;
         } else if (UrlConstants.RECENT_TABS_HOST.equals(host) && !isIncognito) {
             return NativePageType.RECENT_TABS;
         } else if (UrlConstants.PHYSICAL_WEB_DIAGNOSTICS_HOST.equals(host)) {
@@ -164,7 +161,7 @@ public class NativePageFactory {
                 assert false;
                 return null;
         }
-        page.updateForUrl(url);
+        if (page != null) page.updateForUrl(url);
         return page;
     }
 

@@ -22,17 +22,17 @@
 
 #include "core/events/MouseEvent.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/Element.h"
-#include "core/events/EventDispatcher.h"
-#include "core/frame/FrameView.h"
+#include "core/dom/events/EventDispatcher.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/input/InputDeviceCapabilities.h"
 #include "core/layout/LayoutObject.h"
 #include "core/paint/PaintLayer.h"
 #include "core/svg/SVGElement.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
 #include "public/platform/WebPointerProperties.h"
 
 namespace blink {
@@ -45,7 +45,7 @@ LayoutSize ContentsScrollOffset(AbstractView* abstract_view) {
   LocalFrame* frame = ToLocalDOMWindow(abstract_view)->GetFrame();
   if (!frame)
     return LayoutSize();
-  FrameView* frame_view = frame->View();
+  LocalFrameView* frame_view = frame->View();
   if (!frame_view)
     return LayoutSize();
   float scale_factor = frame->PageZoomFactor();
@@ -178,7 +178,8 @@ MouseEvent::MouseEvent(const AtomicString& event_type,
       related_target_(related_target),
       synthetic_event_type_(event.FromTouch() ? kFromTouch
                                               : kRealOrIndistinguishable),
-      region_(region) {
+      region_(region),
+      menu_source_type_(event.menu_source_type) {
   IntPoint root_frame_coordinates =
       FlooredIntPoint(event.PositionInRootFrame());
   InitCoordinatesFromRootFrame(root_frame_coordinates.X(),
@@ -229,8 +230,9 @@ MouseEvent::MouseEvent(const AtomicString& event_type,
 }
 
 MouseEvent::MouseEvent(const AtomicString& event_type,
-                       const MouseEventInit& initializer)
-    : UIEventWithKeyState(event_type, initializer),
+                       const MouseEventInit& initializer,
+                       TimeTicks platform_time_stamp)
+    : UIEventWithKeyState(event_type, initializer, platform_time_stamp),
       screen_location_(
           DoublePoint(initializer.screenX(), initializer.screenY())),
       movement_delta_(
@@ -265,7 +267,7 @@ void MouseEvent::InitCoordinatesFromRootFrame(int window_x, int window_y) {
                           ? ToLocalDOMWindow(view())->GetFrame()
                           : nullptr;
   if (frame && HasPosition()) {
-    if (FrameView* frame_view = frame->View()) {
+    if (LocalFrameView* frame_view = frame->View()) {
       adjusted_page_location =
           frame_view->RootFrameToContents(IntPoint(window_x, window_y));
       scroll_offset = frame_view->ScrollOffsetInt();
@@ -383,13 +385,25 @@ bool MouseEvent::IsMouseEvent() const {
   return true;
 }
 
-int MouseEvent::which() const {
+short MouseEvent::button() const {
+  const AtomicString& event_name = type();
+  if (button_ == -1 || event_name == EventTypeNames::mousemove ||
+      event_name == EventTypeNames::mouseleave ||
+      event_name == EventTypeNames::mouseenter ||
+      event_name == EventTypeNames::mouseover ||
+      event_name == EventTypeNames::mouseout) {
+    return 0;
+  }
+  return button_;
+}
+
+unsigned MouseEvent::which() const {
   // For the DOM, the return values for left, middle and right mouse buttons are
   // 0, 1, 2, respectively.
   // For the Netscape "which" property, the return values for left, middle and
   // right mouse buttons are 1, 2, 3, respectively.
   // So we must add 1.
-  return button_ + 1;
+  return (unsigned)(button_ + 1);
 }
 
 Node* MouseEvent::toElement() const {
@@ -439,10 +453,20 @@ DispatchEventResult MouseEventDispatchMediator::DispatchEvent(
   mouse_event.GetEventPath().AdjustForRelatedTarget(
       dispatcher.GetNode(), mouse_event.relatedTarget());
 
+  bool is_click = mouse_event.type() == EventTypeNames::click;
+  bool send_to_disabled_form_controls =
+      RuntimeEnabledFeatures::SendMouseEventsDisabledFormControlsEnabled();
+
+  if (send_to_disabled_form_controls && is_click &&
+      mouse_event.GetEventPath().DisabledFormControlExistsInPath()) {
+    return DispatchEventResult::kCanceledBeforeDispatch;
+  }
+
   if (!mouse_event.isTrusted())
     return dispatcher.Dispatch();
 
-  if (IsDisabledFormControl(&dispatcher.GetNode()))
+  if (!send_to_disabled_form_controls &&
+      IsDisabledFormControl(&dispatcher.GetNode()))
     return DispatchEventResult::kCanceledBeforeDispatch;
 
   if (mouse_event.type().IsEmpty())
@@ -455,7 +479,7 @@ DispatchEventResult MouseEventDispatchMediator::DispatchEvent(
 
   DispatchEventResult dispatch_result = dispatcher.Dispatch();
 
-  if (mouse_event.type() != EventTypeNames::click || mouse_event.detail() != 2)
+  if (!is_click || mouse_event.detail() != 2)
     return dispatch_result;
 
   // Special case: If it's a double click event, we also send the dblclick

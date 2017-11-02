@@ -28,7 +28,7 @@
 
 #include "bindings/core/v8/Dictionary.h"
 #include "bindings/core/v8/Nullable.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 
 namespace blink {
 
@@ -41,7 +41,7 @@ bool DictionaryHelper::Get(const Dictionary& dictionary,
     return false;
 
   value =
-      V8TypeOf<T>::Type::toImplWithTypeCheck(dictionary.GetIsolate(), v8_value);
+      V8TypeOf<T>::Type::ToImplWithTypeCheck(dictionary.GetIsolate(), v8_value);
   return true;
 }
 

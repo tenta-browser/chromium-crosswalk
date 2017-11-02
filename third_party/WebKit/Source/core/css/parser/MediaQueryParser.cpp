@@ -4,15 +4,16 @@
 
 #include "core/css/parser/MediaQueryParser.h"
 
-#include "core/MediaTypeNames.h"
 #include "core/css/parser/CSSTokenizer.h"
+#include "core/media_type_names.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
 
 RefPtr<MediaQuerySet> MediaQueryParser::ParseMediaQuerySet(
     const String& query_string) {
-  return ParseMediaQuerySet(CSSTokenizer(query_string).TokenRange());
+  return ParseMediaQuerySet(
+      CSSParserTokenRange(CSSTokenizer(query_string).TokenizeToEOF()));
 }
 
 RefPtr<MediaQuerySet> MediaQueryParser::ParseMediaQuerySet(
@@ -254,8 +255,8 @@ void MediaQueryData::Clear() {
   media_type_ = MediaTypeNames::all;
   media_type_set_ = false;
   media_feature_ = String();
-  value_list_.Clear();
-  expressions_.Clear();
+  value_list_.clear();
+  expressions_.clear();
 }
 
 std::unique_ptr<MediaQuery> MediaQueryData::TakeMediaQuery() {
@@ -268,7 +269,7 @@ std::unique_ptr<MediaQuery> MediaQueryData::TakeMediaQuery() {
 bool MediaQueryData::AddExpression() {
   MediaQueryExp expression = MediaQueryExp::Create(media_feature_, value_list_);
   expressions_.push_back(expression);
-  value_list_.Clear();
+  value_list_.clear();
   return expression.IsValid();
 }
 

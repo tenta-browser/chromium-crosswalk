@@ -16,16 +16,16 @@ void FakeSyncScheduler::Stop() {}
 
 void FakeSyncScheduler::ScheduleLocalNudge(
     ModelTypeSet types,
-    const tracked_objects::Location& nudge_location) {}
+    const base::Location& nudge_location) {}
 
 void FakeSyncScheduler::ScheduleLocalRefreshRequest(
     ModelTypeSet types,
-    const tracked_objects::Location& nudge_location) {}
+    const base::Location& nudge_location) {}
 
 void FakeSyncScheduler::ScheduleInvalidationNudge(
     ModelType type,
     std::unique_ptr<InvalidationInterface> interface,
-    const tracked_objects::Location& nudge_location) {}
+    const base::Location& nudge_location) {}
 
 void FakeSyncScheduler::ScheduleConfiguration(
     const ConfigurationParams& params) {
@@ -52,7 +52,7 @@ void FakeSyncScheduler::OnTypesThrottled(
 
 void FakeSyncScheduler::OnTypesBackedOff(ModelTypeSet types) {}
 
-bool FakeSyncScheduler::IsCurrentlyThrottled() {
+bool FakeSyncScheduler::IsAnyThrottleOrBackoff() {
   return false;
 }
 

@@ -7,7 +7,7 @@ cases = [
     ["file:", "file:///"],
     ["file:UNChost/path", "file://unchost/path"],
     // CanonicalizeFileURL supports absolute Windows style paths for IE
-    // compatability. Note that the caller must decide that this is a file
+    // compatibility. Note that the caller must decide that this is a file
     // URL itself so it can call the file canonicalizer. This is usually
     // done automatically as part of relative URL resolving.
     ["c:\\\\foo\\\\bar", "file:///C:/foo/bar"],
@@ -18,7 +18,7 @@ cases = [
     ["\\\\\\\\server\\\\file", "file://server/file"],
     ["/\\\\server/file", "file://server/file"],
     // We should preserve the number of slashes after the colon for IE
-    // compatability, except when there is none, in which case we should
+    // compatibility, except when there is none, in which case we should
     // add one.
     ["file:c:foo/bar.html", "file:///C:/foo/bar.html"],
     ["file:/\\\\/\\\\C:\\\\\\\\//foo\\\\bar.html", "file:///C:////foo/bar.html"],
@@ -36,8 +36,8 @@ cases = [
     // Make sure relative paths can't go above the "C:"
     ["file:///C:/foo/../../../bar.html", "file:///C:/bar.html"],
     // Busted refs shouldn't make the whole thing fail.
-    ["file:///C:/asdf#\\xc2", "file:///C:/asdf#\\xc2"],
-    ["file:///C:/asdf#\xc2", "file:///C:/asdf#\xc2"],
+    ["file:///C:/asdf#\\xc2", "file:///C:/asdf#%C3%82"],
+    ["file:///C:/asdf#\xc2", "file:///C:/asdf#%C3%82"],
 
     // Unix-style paths
     ["file:///home/me", "file:///home/me"],

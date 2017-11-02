@@ -44,16 +44,15 @@ typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeFooBiz,
 };
 
-typedef void (^ReconfigureBlock)(CollectionViewController*,
-                                 NSArray*,
-                                 SectionIdentifier);
+typedef void (^ReconfigureBlock)(CollectionViewController*, NSArray*);
 
 class CollectionViewControllerTest : public BlockCleanupTest {
  public:
   void TestReconfigureBlock(ReconfigureBlock block) {
     // Setup.
     CollectionViewController* controller = [[CollectionViewController alloc]
-        initWithStyle:CollectionViewControllerStyleDefault];
+        initWithLayout:[[MDCCollectionViewFlowLayout alloc] init]
+                 style:CollectionViewControllerStyleDefault];
     [controller loadModel];
 
     CollectionViewModel* model = [controller collectionViewModel];
@@ -99,7 +98,7 @@ class CollectionViewControllerTest : public BlockCleanupTest {
         firstReconfiguredItem, secondReconfiguredItem, thirdReconfiguredItem
       ];
       // Action.
-      block(controller, itemsToReconfigure, SectionIdentifierFoo);
+      block(controller, itemsToReconfigure);
     }
 
     // Tests.
@@ -116,19 +115,22 @@ class CollectionViewControllerTest : public BlockCleanupTest {
 
 TEST_F(CollectionViewControllerTest, InitDefaultStyle) {
   CollectionViewController* controller = [[CollectionViewController alloc]
-      initWithStyle:CollectionViewControllerStyleDefault];
+      initWithLayout:[[MDCCollectionViewFlowLayout alloc] init]
+               style:CollectionViewControllerStyleDefault];
   EXPECT_EQ(nil, controller.appBar);
 }
 
 TEST_F(CollectionViewControllerTest, InitAppBarStyle) {
   CollectionViewController* controller = [[CollectionViewController alloc]
-      initWithStyle:CollectionViewControllerStyleAppBar];
+      initWithLayout:[[MDCCollectionViewFlowLayout alloc] init]
+               style:CollectionViewControllerStyleAppBar];
   EXPECT_NE(nil, controller.appBar);
 }
 
 TEST_F(CollectionViewControllerTest, CellForItemAtIndexPath) {
   CollectionViewController* controller = [[CollectionViewController alloc]
-      initWithStyle:CollectionViewControllerStyleDefault];
+      initWithLayout:[[MDCCollectionViewFlowLayout alloc] init]
+               style:CollectionViewControllerStyleDefault];
   [controller loadModel];
 
   [[controller collectionViewModel]
@@ -145,30 +147,26 @@ TEST_F(CollectionViewControllerTest, CellForItemAtIndexPath) {
 }
 
 TEST_F(CollectionViewControllerTest, ReconfigureCells) {
-  TestReconfigureBlock(^void(CollectionViewController* controller,
-                             NSArray* itemsToReconfigure,
-                             SectionIdentifier sectionIdentifier) {
-    [controller reconfigureCellsForItems:itemsToReconfigure
-                 inSectionWithIdentifier:sectionIdentifier];
-  });
+  TestReconfigureBlock(
+      ^void(CollectionViewController* controller, NSArray* itemsToReconfigure) {
+        [controller reconfigureCellsForItems:itemsToReconfigure];
+      });
 }
 
 TEST_F(CollectionViewControllerTest, ReconfigureCellsWithIndexPath) {
-  TestReconfigureBlock(^void(CollectionViewController* controller,
-                             NSArray* itemsToReconfigure,
-                             SectionIdentifier sectionIdentifier) {
-    // More setup.
-    NSMutableArray* indexPaths = [NSMutableArray array];
-    for (CollectionViewItem* item : itemsToReconfigure) {
-      NSIndexPath* indexPath =
-          [controller.collectionViewModel indexPathForItem:item
-                                   inSectionWithIdentifier:sectionIdentifier];
-      if (indexPath) {
-        [indexPaths addObject:indexPath];
-      }
-    }
+  TestReconfigureBlock(
+      ^void(CollectionViewController* controller, NSArray* itemsToReconfigure) {
+        // More setup.
+        NSMutableArray* indexPaths = [NSMutableArray array];
+        for (CollectionViewItem* item : itemsToReconfigure) {
+          NSIndexPath* indexPath =
+              [controller.collectionViewModel indexPathForItem:item];
+          if (indexPath) {
+            [indexPaths addObject:indexPath];
+          }
+        }
 
-    // Action.
-    [controller reconfigureCellsAtIndexPaths:indexPaths];
-  });
+        // Action.
+        [controller reconfigureCellsAtIndexPaths:indexPaths];
+      });
 }

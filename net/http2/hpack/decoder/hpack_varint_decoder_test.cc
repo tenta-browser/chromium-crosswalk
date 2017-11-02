@@ -17,9 +17,9 @@
 
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/string_piece.h"
-#include "base/strings/stringprintf.h"
 #include "net/http2/hpack/tools/hpack_block_builder.h"
+#include "net/http2/platform/api/http2_string_piece.h"
+#include "net/http2/platform/api/http2_string_utils.h"
 #include "net/http2/tools/failure.h"
 #include "net/http2/tools/http2_random.h"
 #include "net/http2/tools/random_decoder_test.h"
@@ -27,16 +27,20 @@
 
 using ::testing::AssertionFailure;
 using ::testing::AssertionSuccess;
-using base::StringPiece;
-using base::StringPrintf;
-using std::string;
 
 namespace net {
 namespace test {
 namespace {
 
-class HpackVarintDecoderTest : public RandomDecoderTest {
+// Returns the highest value with the specified number of extension bytes
+// and the specified prefix length (bits).
+uint64_t HiValueOfExtensionBytes(uint32_t extension_bytes,
+                                 uint32_t prefix_length) {
+  return (1 << prefix_length) - 2 +
+         (extension_bytes == 0 ? 0 : (1LLU << (extension_bytes * 7)));
+}
 
+class HpackVarintDecoderTest : public RandomDecoderTest {
  protected:
   DecodeStatus StartDecoding(DecodeBuffer* b) override {
     CHECK_LT(0u, b->Remaining());
@@ -157,9 +161,9 @@ class HpackVarintDecoderTest : public RandomDecoderTest {
       std::stringstream ss;
       ss << "value=" << value << " (0x" << std::hex << value
          << "), prefix_length=" << std::dec << prefix_length
-         << ", expected_bytes=" << expected_bytes << std::endl
-         << HexEncode(buffer_);
-      string msg(ss.str());
+         << ", expected_bytes=" << expected_bytes << "\n"
+         << Http2HexDump(buffer_);
+      Http2String msg(ss.str());
 
       if (value == minimum) {
         LOG(INFO) << "Checking minimum; " << msg;
@@ -208,7 +212,7 @@ class HpackVarintDecoderTest : public RandomDecoderTest {
 
     // Confirm the claim that beyond requires more bytes.
     Encode(beyond, prefix_length);
-    EXPECT_EQ(expected_bytes + 1, buffer_.size()) << HexEncode(buffer_);
+    EXPECT_EQ(expected_bytes + 1, buffer_.size()) << Http2HexDump(buffer_);
 
     std::set<uint32_t> values;
     if (range < 200) {
@@ -221,7 +225,7 @@ class HpackVarintDecoderTest : public RandomDecoderTest {
       // values that require exactly |expected_bytes| extension bytes.
       values.insert({start, start + 1, beyond - 2, beyond - 1});
       while (values.size() < 100) {
-        values.insert(start + Random().Rand32() % range);
+        values.insert(start + Random().Uniform(range));
       }
     }
 
@@ -229,7 +233,7 @@ class HpackVarintDecoderTest : public RandomDecoderTest {
   }
 
   HpackVarintDecoder decoder_;
-  string buffer_;
+  Http2String buffer_;
   uint8_t prefix_mask_ = 0;
   uint8_t prefix_length_ = 0;
 };
@@ -248,16 +252,11 @@ TEST_F(HpackVarintDecoderTest, Encode) {
     LOG(INFO) << "prefix_length=" << prefix_length << "   a=" << a
               << "   b=" << b << "   c=" << c;
 
-    EXPECT_EQ(a - 1,
-              HpackVarintDecoder::HiValueOfExtensionBytes(0, prefix_length));
-    EXPECT_EQ(b - 1,
-              HpackVarintDecoder::HiValueOfExtensionBytes(1, prefix_length));
-    EXPECT_EQ(c - 1,
-              HpackVarintDecoder::HiValueOfExtensionBytes(2, prefix_length));
-    EXPECT_EQ(d - 1,
-              HpackVarintDecoder::HiValueOfExtensionBytes(3, prefix_length));
-    EXPECT_EQ(e - 1,
-              HpackVarintDecoder::HiValueOfExtensionBytes(4, prefix_length));
+    EXPECT_EQ(a - 1, HiValueOfExtensionBytes(0, prefix_length));
+    EXPECT_EQ(b - 1, HiValueOfExtensionBytes(1, prefix_length));
+    EXPECT_EQ(c - 1, HiValueOfExtensionBytes(2, prefix_length));
+    EXPECT_EQ(d - 1, HiValueOfExtensionBytes(3, prefix_length));
+    EXPECT_EQ(e - 1, HiValueOfExtensionBytes(4, prefix_length));
 
     std::vector<uint32_t> values = {
         0,     1,                       // Force line break.
@@ -270,15 +269,15 @@ TEST_F(HpackVarintDecoderTest, Encode) {
 
     for (uint32_t value : values) {
       EncodeNoRandom(value, prefix_length);
-      string dump = HexEncode(buffer_);
-      LOG(INFO) << StringPrintf("%10u %0#10x ", value, value)
-                << HexEncode(buffer_);
+      Http2String dump = Http2HexDump(buffer_);
+      LOG(INFO) << Http2StringPrintf("%10u %0#10x ", value, value)
+                << Http2HexDump(buffer_).substr(7);
     }
   }
 }
 
 TEST_F(HpackVarintDecoderTest, FromSpec1337) {
-  DecodeBuffer b(StringPiece("\x1f\x9a\x0a"));
+  DecodeBuffer b(Http2StringPiece("\x1f\x9a\x0a"));
   uint32_t prefix_length = 5;
   uint32_t prefix_mask = (1 << prefix_length) - 1;
   uint8_t p = b.DecodeUInt8();
@@ -348,7 +347,7 @@ TEST_F(HpackVarintDecoderTest, ValueTooLarge) {
   const uint32_t expected_offset = HpackVarintDecoder::MaxExtensionBytes() + 1;
   for (prefix_length_ = 4; prefix_length_ <= 7; ++prefix_length_) {
     prefix_mask_ = (1 << prefix_length_) - 1;
-    uint64_t too_large = HpackVarintDecoder::HiValueOfExtensionBytes(
+    uint64_t too_large = HiValueOfExtensionBytes(
         HpackVarintDecoder::MaxExtensionBytes() + 3, prefix_length_);
     HpackBlockBuilder bb;
     bb.AppendHighBitsAndVarint(0, prefix_length_, too_large);

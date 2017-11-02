@@ -8,11 +8,11 @@
 #include <stdint.h>
 
 #include <memory>
-#include <queue>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
@@ -49,8 +49,11 @@ enum class PreviewsEligibilityReason {
   NETWORK_QUALITY_UNAVAILABLE = 6,
   // The network was fast enough to not warrant previews.
   NETWORK_NOT_SLOW = 7,
-  // If the page was reloaded, the user should not be shown an offline preview.
-  RELOAD_DISALLOWED_FOR_OFFLINE = 8,
+  // If the page was reloaded, the user should not be shown a stale preview.
+  RELOAD_DISALLOWED = 8,
+  // The host is explicitly blacklisted by the server, so the user was not shown
+  // a preview.
+  HOST_BLACKLISTED_BY_SERVER = 9,
   LAST = 9,
 };
 
@@ -78,8 +81,11 @@ class PreviewsBlackList {
   // navigated away from the page without opting out. |type| is only passed to
   // the backing store. If the in memory map has reached the max number of hosts
   // allowed, and |url| is a new host, a host will be evicted based on recency
-  // of the hosts most recent opt out.
-  void AddPreviewNavigation(const GURL& url, bool opt_out, PreviewsType type);
+  // of the hosts most recent opt out. It returns the time used for recording
+  // the moment when the navigation is added for logging.
+  base::Time AddPreviewNavigation(const GURL& url,
+                                  bool opt_out,
+                                  PreviewsType type);
 
   // Synchronously determines if |host_name| should be allowed to show previews.
   // Returns the reason the blacklist disallowed the preview, or
@@ -105,10 +111,13 @@ class PreviewsBlackList {
   CreateHostIndifferentBlackListItem();
 
  private:
-  // Synchronous version of AddPreviewNavigation method.
+  // Synchronous version of AddPreviewNavigation method. |time| is the time
+  // stamp of when the navigation was determined to be an opt-out or non-opt
+  // out.
   void AddPreviewNavigationSync(const GURL& host_name,
                                 bool opt_out,
-                                PreviewsType type);
+                                PreviewsType type,
+                                base::Time time);
 
   // Synchronous version of ClearBlackList method.
   void ClearBlackListSync(base::Time begin_time, base::Time end_time);
@@ -143,7 +152,7 @@ class PreviewsBlackList {
 
   // Callbacks to be run after loading information from the backing store has
   // completed.
-  std::queue<base::Closure> pending_callbacks_;
+  base::queue<base::Closure> pending_callbacks_;
 
   std::unique_ptr<base::Clock> clock_;
 

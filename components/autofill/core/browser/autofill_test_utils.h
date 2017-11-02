@@ -6,30 +6,37 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_TEST_UTILS_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
+#include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
 
 class PrefService;
 
+namespace user_prefs {
+class PrefRegistrySyncable;
+}  // namespace user_prefs
+
 namespace autofill {
 
 class AutofillProfile;
 class AutofillTable;
-class CreditCard;
 struct FormData;
 struct FormFieldData;
 
 // Common utilities shared amongst Autofill tests.
 namespace test {
 
-// Returns a PrefService that can be used for Autofill-related testing in
-// contexts where the PrefService would otherwise have to be constructed
-// manually (e.g., in unit tests within Autofill core code). The returned
-// PrefService has had Autofill preferences registered on its associated
-// registry.
+// The following methods return a PrefService that can be used for
+// Autofill-related testing in contexts where the PrefService would otherwise
+// have to be constructed manually (e.g., in unit tests within Autofill core
+// code). The returned PrefService has had Autofill preferences registered on
+// its associated registry.
 std::unique_ptr<PrefService> PrefServiceForTesting();
+std::unique_ptr<PrefService> PrefServiceForTesting(
+    user_prefs::PrefRegistrySyncable* registry);
 
 // Provides a quick way to populate a FormField with c-strings.
 void CreateTestFormField(const char* label,
@@ -58,11 +65,20 @@ void CreateTestAddressFormData(FormData* form);
 void CreateTestAddressFormData(FormData* form,
                                std::vector<ServerFieldTypeSet>* types);
 
+// Returns a full profile with valid info.
+AutofillProfile GetFullValidProfile();
+
 // Returns a profile full of dummy info.
 AutofillProfile GetFullProfile();
 
 // Returns a profile full of dummy info, different to the above.
 AutofillProfile GetFullProfile2();
+
+// Returns an incomplete profile of dummy info.
+AutofillProfile GetIncompleteProfile1();
+
+// Returns an incomplete profile of dummy info, different to the above.
+AutofillProfile GetIncompleteProfile2();
 
 // Returns a verified profile full of dummy info.
 AutofillProfile GetVerifiedProfile();
@@ -86,6 +102,10 @@ CreditCard GetVerifiedCreditCard2();
 CreditCard GetMaskedServerCard();
 CreditCard GetMaskedServerCardAmex();
 
+// Returns a randomly generated credit card of |record_type|. Note that the
+// card is not guaranteed to be valid/sane from a card validation standpoint.
+CreditCard GetRandomCreditCard(CreditCard::RecordType record_Type);
+
 // A unit testing utility that is common to a number of the Autofill unit
 // tests.  |SetProfileInfo| provides a quick way to populate a profile with
 // c-strings.
@@ -107,8 +127,11 @@ void SetProfileInfoWithGuid(AutofillProfile* profile,
 // tests.  |SetCreditCardInfo| provides a quick way to populate a credit card
 // with c-strings.
 void SetCreditCardInfo(CreditCard* credit_card,
-    const char* name_on_card, const char* card_number,
-    const char* expiration_month, const char* expiration_year);
+                       const char* name_on_card,
+                       const char* card_number,
+                       const char* expiration_month,
+                       const char* expiration_year,
+                       const std::string& billing_address_id);
 
 // TODO(isherman): We should do this automatically for all tests, not manually
 // on a per-test basis: http://crbug.com/57221

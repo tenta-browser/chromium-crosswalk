@@ -8,19 +8,22 @@
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
+#include "gpu/config/gpu_feature_info.h"
 #include "gpu/config/gpu_info.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
 #include "mojo/public/cpp/bindings/strong_binding_set.h"
 #include "services/ui/gpu/gpu_main.h"
-#include "services/ui/gpu/interfaces/gpu_host.mojom.h"
-#include "services/ui/gpu/interfaces/gpu_service.mojom.h"
 #include "services/ui/public/interfaces/gpu.mojom.h"
+#include "services/viz/privileged/interfaces/gl/gpu_host.mojom.h"
+#include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
+
+namespace viz {
+class ServerGpuMemoryBufferManager;
+}
 
 namespace ui {
-
-class ServerGpuMemoryBufferManager;
 
 namespace ws {
 
@@ -32,21 +35,27 @@ class GpuHostTest;
 
 class GpuHostDelegate;
 
-// Sets up connection from clients to the real service implementation in the GPU
-// process.
-class GpuHost : public mojom::GpuHost {
+// GpuHost sets up connection from clients to the real service implementation in
+// the GPU process.
+class GpuHost {
  public:
-  explicit GpuHost(GpuHostDelegate* delegate);
-  ~GpuHost() override;
+  GpuHost() = default;
+  virtual ~GpuHost() = default;
 
-  void Add(mojom::GpuRequest request);
+  virtual void Add(mojom::GpuRequest request) = 0;
+  virtual void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) = 0;
+  virtual void OnAcceleratedWidgetDestroyed(gfx::AcceleratedWidget widget) = 0;
 
-  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget);
-  void OnAcceleratedWidgetDestroyed(gfx::AcceleratedWidget widget);
+  // Requests a viz::mojom::FrameSinkManager interface from mus-gpu.
+  virtual void CreateFrameSinkManager(
+      viz::mojom::FrameSinkManagerRequest request,
+      viz::mojom::FrameSinkManagerClientPtr client) = 0;
+};
 
-  // Requests a cc::mojom::FrameSinkManager interface from mus-gpu.
-  void CreateFrameSinkManager(cc::mojom::FrameSinkManagerRequest request,
-                              cc::mojom::FrameSinkManagerClientPtr client);
+class DefaultGpuHost : public GpuHost, public viz::mojom::GpuHost {
+ public:
+  explicit DefaultGpuHost(GpuHostDelegate* delegate);
+  ~DefaultGpuHost() override;
 
  private:
   friend class test::GpuHostTest;
@@ -54,7 +63,18 @@ class GpuHost : public mojom::GpuHost {
   GpuClient* AddInternal(mojom::GpuRequest request);
   void OnBadMessageFromGpu();
 
-  // mojom::GpuHost:
+  // TODO(crbug.com/611505): this goes away after the gpu proces split in mus.
+  void InitializeGpuMain(mojom::GpuMainRequest request);
+
+  // GpuHost:
+  void Add(mojom::GpuRequest request) override;
+  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) override;
+  void OnAcceleratedWidgetDestroyed(gfx::AcceleratedWidget widget) override;
+  void CreateFrameSinkManager(
+      viz::mojom::FrameSinkManagerRequest request,
+      viz::mojom::FrameSinkManagerClientPtr client) override;
+
+  // viz::mojom::GpuHost:
   void DidInitialize(const gpu::GPUInfo& gpu_info,
                      const gpu::GpuFeatureInfo& gpu_feature_info) override;
   void DidFailInitialize() override;
@@ -76,20 +96,25 @@ class GpuHost : public mojom::GpuHost {
   GpuHostDelegate* const delegate_;
   int32_t next_client_id_;
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
-  mojom::GpuServicePtr gpu_service_;
-  mojo::Binding<mojom::GpuHost> gpu_host_binding_;
+  viz::mojom::GpuServicePtr gpu_service_;
+  mojo::Binding<viz::mojom::GpuHost> gpu_host_binding_;
   gpu::GPUInfo gpu_info_;
-  std::unique_ptr<ServerGpuMemoryBufferManager> gpu_memory_buffer_manager_;
+  gpu::GpuFeatureInfo gpu_feature_info_;
+  std::unique_ptr<viz::ServerGpuMemoryBufferManager> gpu_memory_buffer_manager_;
 
   mojom::GpuMainPtr gpu_main_;
 
   // TODO(fsamuel): GpuHost should not be holding onto |gpu_main_impl|
   // because that will live in another process soon.
+  base::Thread gpu_thread_;
   std::unique_ptr<GpuMain> gpu_main_impl_;
+  // This is used to make sure that the |gpu_main_impl_| has been set up
+  // correctly, before we start tearing it down.
+  base::WaitableEvent gpu_main_wait_;
 
   mojo::StrongBindingSet<mojom::Gpu> gpu_bindings_;
 
-  DISALLOW_COPY_AND_ASSIGN(GpuHost);
+  DISALLOW_COPY_AND_ASSIGN(DefaultGpuHost);
 };
 
 }  // namespace ws

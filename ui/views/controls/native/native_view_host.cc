@@ -28,6 +28,9 @@ NativeViewHost::NativeViewHost()
 }
 
 NativeViewHost::~NativeViewHost() {
+  // As part of deleting NativeViewHostWrapper the native view is unparented.
+  // Make sure the FocusManager is updated.
+  ClearFocus();
 }
 
 void NativeViewHost::Attach(gfx::NativeView native_view) {
@@ -51,6 +54,10 @@ void NativeViewHost::SetPreferredSize(const gfx::Size& size) {
   PreferredSizeChanged();
 }
 
+bool NativeViewHost::SetCornerRadius(int corner_radius) {
+  return native_wrapper_->SetCornerRadius(corner_radius);
+}
+
 void NativeViewHost::NativeViewDestroyed() {
   // Detach so we can clear our state and notify the native_wrapper_ to release
   // ref on the native view.
@@ -60,7 +67,7 @@ void NativeViewHost::NativeViewDestroyed() {
 ////////////////////////////////////////////////////////////////////////////////
 // NativeViewHost, View overrides:
 
-gfx::Size NativeViewHost::GetPreferredSize() const {
+gfx::Size NativeViewHost::CalculatePreferredSize() const {
   return preferred_size_;
 }
 

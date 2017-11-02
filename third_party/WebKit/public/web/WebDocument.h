@@ -32,7 +32,6 @@
 #define WebDocument_h
 
 #include "WebDraggableRegion.h"
-#include "WebExceptionCode.h"
 #include "WebFrame.h"
 #include "WebNode.h"
 #include "public/platform/WebColor.h"
@@ -49,13 +48,14 @@ class Local;
 namespace blink {
 
 class Document;
-class WebAXObject;
 class WebElement;
 class WebFormElement;
 class WebElementCollection;
 class WebString;
 class WebURL;
 struct WebDistillabilityFeatures;
+
+using WebStyleSheetId = unsigned;
 
 // Provides readonly access to some properties of a DOM document.
 class WebDocument : public WebNode {
@@ -92,7 +92,7 @@ class WebDocument : public WebNode {
   // The firstPartyForCookies is used to compute whether this document
   // appears in a "third-party" context for the purpose of third-party
   // cookie blocking.
-  BLINK_EXPORT WebURL FirstPartyForCookies() const;
+  BLINK_EXPORT WebURL SiteForCookies() const;
 
   BLINK_EXPORT WebElement DocumentElement() const;
   BLINK_EXPORT WebElement Body() const;
@@ -107,21 +107,13 @@ class WebDocument : public WebNode {
   BLINK_EXPORT WebReferrerPolicy GetReferrerPolicy() const;
   BLINK_EXPORT WebString OutgoingReferrer();
 
-  // Accessibility support. These methods should only be called on the
-  // top-level document, because one accessibility cache spans all of
-  // the documents on the page.
+  // Inserts the given CSS source code as a stylesheet in the document, and
+  // return its id.
+  BLINK_EXPORT WebStyleSheetId InsertStyleSheet(const WebString& source_code);
 
-  // Gets the accessibility object for this document.
-  BLINK_EXPORT WebAXObject AccessibilityObject() const;
-
-  // Gets the accessibility object for an object on this page by ID.
-  BLINK_EXPORT WebAXObject AccessibilityObjectFromID(int ax_id) const;
-
-  // Gets the accessibility object that has focus.
-  BLINK_EXPORT WebAXObject FocusedAccessibilityObject() const;
-
-  // Inserts the given CSS source code as a stylesheet in the document.
-  BLINK_EXPORT void InsertStyleSheet(const WebString& source_code);
+  // Removes the CSS which was previously inserted by a call to
+  // InsertStyleSheet().
+  BLINK_EXPORT void RemoveInsertedStyleSheet(WebStyleSheetId);
 
   // Arranges to call WebFrameClient::didMatchCSS(frame(), ...) when one of
   // the selectors matches or stops matching an element in this document.
@@ -132,14 +124,13 @@ class WebDocument : public WebNode {
 
   BLINK_EXPORT v8::Local<v8::Value> RegisterEmbedderCustomElement(
       const WebString& name,
-      v8::Local<v8::Value> options,
-      WebExceptionCode&);
+      v8::Local<v8::Value> options);
 
   BLINK_EXPORT WebURL ManifestURL() const;
   BLINK_EXPORT bool ManifestUseCredentials() const;
   BLINK_EXPORT WebDistillabilityFeatures DistillabilityFeatures();
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   BLINK_EXPORT WebDocument(Document*);
   BLINK_EXPORT WebDocument& operator=(Document*);
   BLINK_EXPORT operator Document*() const;

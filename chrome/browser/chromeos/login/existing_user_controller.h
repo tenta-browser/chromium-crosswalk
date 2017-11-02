@@ -20,9 +20,11 @@
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/app_mode/arc/arc_kiosk_app_manager.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
+#include "chrome/browser/chromeos/login/screens/encryption_migration_mode.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/login/signin/token_handle_util.h"
 #include "chrome/browser/chromeos/login/ui/login_display.h"
+#include "chrome/browser/chromeos/policy/pre_signin_policy_fetcher.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
 #include "chrome/browser/chromeos/settings/device_settings_service.h"
 #include "chromeos/login/auth/login_performer.h"
@@ -31,6 +33,7 @@
 #include "components/user_manager/user.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
+#include "third_party/cros_system_api/dbus/cryptohome/dbus-constants.h"
 #include "ui/gfx/geometry/rect.h"
 #include "url/gurl.h"
 
@@ -38,9 +41,12 @@ namespace base {
 class ListValue;
 }
 
+namespace enterprise_management {
+class CloudPolicySettings;
+}
+
 namespace chromeos {
 
-class BootstrapUserContextInitializer;
 class CrosSettings;
 class LoginDisplayHost;
 class OAuth2TokenInitializer;
@@ -120,14 +126,10 @@ class ExistingUserController
 
   // Returns the LoginDisplay created and owned by this controller.
   // Used for testing.
-  LoginDisplay* login_display() {
-    return login_display_.get();
-  }
+  LoginDisplay* login_display() { return login_display_.get(); }
 
   // Returns the LoginDisplayHost for this controller.
-  LoginDisplayHost* login_display_host() {
-    return host_;
-  }
+  LoginDisplayHost* login_display_host() { return host_; }
 
   // Returns value of LoginPerformer::auth_mode() (cached if performer is
   // destroyed).
@@ -196,9 +198,6 @@ class ExistingUserController
   // Enters the enterprise enrollment screen.
   void ShowEnrollmentScreen();
 
-  // Shows "reset device" screen.
-  void ShowResetScreen();
-
   // Shows "enable developer features" screen.
   void ShowEnableDebuggingScreen();
 
@@ -210,7 +209,7 @@ class ExistingUserController
 
   // Shows "filesystem encryption migration" screen.
   void ShowEncryptionMigrationScreen(const UserContext& user_context,
-                                     bool has_incomplete_migration);
+                                     EncryptionMigrationMode migration_mode);
 
   // Shows "critical TPM error" screen.
   void ShowTPMError();
@@ -222,9 +221,18 @@ class ExistingUserController
   void PerformLogin(const UserContext& user_context,
                     LoginPerformer::AuthorizationMode auth_mode);
 
-  // calls login() on previously-used |login_performer|.
+  // Calls login() on previously-used |login_performer_|.
   void ContinuePerformLogin(LoginPerformer::AuthorizationMode auth_mode,
                             const UserContext& user_context);
+
+  // Removes the constraint that user home mount requires ext4 encryption from
+  // |user_context|, then calls login() on previously-used |login_performer|.
+  void ContinuePerformLoginWithoutMigration(
+      LoginPerformer::AuthorizationMode auth_mode,
+      const UserContext& user_context);
+
+  // Asks the user to enter their password again.
+  void RestartLogin(const UserContext& user_context);
 
   // Updates the |login_display_| attached to this controller.
   void UpdateLoginDisplay(const user_manager::UserList& users);
@@ -251,6 +259,11 @@ class ExistingUserController
   // auto-login timer is started.
   void PerformLoginFinishedActions(bool start_auto_login_timer);
 
+  // Invokes |continuation| after verifying that cryptohome service is
+  // available.
+  void ContinueLoginWhenCryptohomeAvailable(base::OnceClosure continuation,
+                                            bool service_is_available);
+
   // Invokes |continuation| after verifying that the device is not disabled.
   void ContinueLoginIfDeviceNotDisabled(const base::Closure& continuation);
 
@@ -263,10 +276,6 @@ class ExistingUserController
   void DoLogin(const UserContext& user_context,
                const SigninSpecifics& specifics);
 
-  // Callback invoked when |bootstrap_user_context_initializer_| has finished.
-  void OnBootstrapUserContextInitialized(bool success,
-                                         const UserContext& user_context);
-
   // Callback invoked when |oauth2_token_initializer_| has finished.
   void OnOAuth2TokensFetched(bool success, const UserContext& user_context);
 
@@ -275,9 +284,27 @@ class ExistingUserController
       const AccountId&,
       TokenHandleUtil::TokenHandleStatus token_handle_status);
 
+  // Called on completition of a pre-signin policy fetch, which is performed to
+  // check if there is a user policy governing migration action.
+  void OnPolicyFetchResult(
+      const UserContext& user_context,
+      policy::PreSigninPolicyFetcher::PolicyFetchResult result,
+      std::unique_ptr<enterprise_management::CloudPolicySettings>
+          policy_payload);
+
+  // Called when cryptohome wipe has finished.
+  void WipePerformed(const UserContext& user_context,
+                     bool success,
+                     cryptohome::MountError return_code);
+
   // Clear the recorded displayed email, displayed name, given name so it won't
   // affect any future attempts.
   void ClearRecordedNames();
+
+  // Restart authpolicy daemon in case of Active Directory authentication.
+  // Used to prevent data from leaking from one user session into another.
+  // Should be called to cancel AuthPolicyLoginHelper::TryAuthenticateUser call.
+  void ClearActiveDirectoryState();
 
   // Public session auto-login timer.
   std::unique_ptr<base::OneShotTimer> auto_login_timer_;
@@ -378,12 +405,11 @@ class ExistingUserController
   std::unique_ptr<CrosSettings::ObserverSubscription>
       local_account_auto_login_delay_subscription_;
 
-  std::unique_ptr<BootstrapUserContextInitializer>
-      bootstrap_user_context_initializer_;
-
   std::unique_ptr<OAuth2TokenInitializer> oauth2_token_initializer_;
 
   std::unique_ptr<TokenHandleUtil> token_handle_util_;
+
+  std::unique_ptr<policy::PreSigninPolicyFetcher> pre_signin_policy_fetcher_;
 
   // Factory of callbacks.
   base::WeakPtrFactory<ExistingUserController> weak_factory_;

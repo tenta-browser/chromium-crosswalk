@@ -32,7 +32,6 @@
 #define RTCPeerConnection_h
 
 #include <memory>
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "core/dom/SuspendableObject.h"
 #include "modules/EventTargetModules.h"
@@ -41,6 +40,7 @@
 #include "modules/peerconnection/RTCIceCandidate.h"
 #include "platform/AsyncMethodRunner.h"
 #include "platform/WebFrameScheduler.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/heap/HeapAllocator.h"
 #include "public/platform/WebMediaConstraints.h"
 #include "public/platform/WebRTCPeerConnectionHandler.h"
@@ -53,10 +53,13 @@ class RTCAnswerOptions;
 class RTCConfiguration;
 class RTCDTMFSender;
 class RTCDataChannel;
+class RTCDataChannelInit;
 class RTCIceCandidateInitOrRTCIceCandidate;
 class RTCOfferOptions;
 class RTCPeerConnectionErrorCallback;
+class RTCPeerConnectionTest;
 class RTCRtpReceiver;
+class RTCRtpSender;
 class RTCSessionDescription;
 class RTCSessionDescriptionCallback;
 class RTCSessionDescriptionInit;
@@ -65,10 +68,12 @@ class ScriptState;
 class VoidCallback;
 struct WebRTCConfiguration;
 
-class RTCPeerConnection final : public EventTargetWithInlineData,
-                                public WebRTCPeerConnectionHandlerClient,
-                                public ActiveScriptWrappable<RTCPeerConnection>,
-                                public SuspendableObject {
+class MODULES_EXPORT RTCPeerConnection final
+    : public EventTargetWithInlineData,
+      public WebRTCPeerConnectionHandlerClient,
+      public ActiveScriptWrappable<RTCPeerConnection>,
+      public SuspendableObject,
+      public MediaStreamObserver {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(RTCPeerConnection);
   USING_PRE_FINALIZER(RTCPeerConnection, Dispose);
@@ -135,8 +140,6 @@ class RTCPeerConnection final : public EventTargetWithInlineData,
 
   MediaStreamVector getRemoteStreams() const;
 
-  MediaStream* getStreamById(const String& stream_id);
-
   void addStream(ScriptState*,
                  MediaStream*,
                  const Dictionary& media_constraints,
@@ -149,16 +152,20 @@ class RTCPeerConnection final : public EventTargetWithInlineData,
                          MediaStreamTrack* selector = nullptr);
   ScriptPromise getStats(ScriptState*);
 
+  HeapVector<Member<RTCRtpSender>> getSenders();
   HeapVector<Member<RTCRtpReceiver>> getReceivers();
+  RTCRtpSender* addTrack(MediaStreamTrack*, MediaStreamVector, ExceptionState&);
+  void removeTrack(RTCRtpSender*, ExceptionState&);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(track);
 
   RTCDataChannel* createDataChannel(ScriptState*,
                                     String label,
-                                    const Dictionary& data_channel_dict,
+                                    const RTCDataChannelInit&,
                                     ExceptionState&);
 
   RTCDTMFSender* createDTMFSender(MediaStreamTrack*, ExceptionState&);
 
-  void close(ExceptionState&);
+  void close();
 
   // We allow getStats after close, but not other calls or callbacks.
   bool ShouldFireDefaultCallbacks() { return !closed_ && !stopped_; }
@@ -173,13 +180,19 @@ class RTCPeerConnection final : public EventTargetWithInlineData,
   DEFINE_ATTRIBUTE_EVENT_LISTENER(icegatheringstatechange);
   DEFINE_ATTRIBUTE_EVENT_LISTENER(datachannel);
 
+  // MediaStreamObserver
+  void OnStreamAddTrack(MediaStream*, MediaStreamTrack*) override;
+  void OnStreamRemoveTrack(MediaStream*, MediaStreamTrack*) override;
+
   // WebRTCPeerConnectionHandlerClient
   void NegotiationNeeded() override;
   void DidGenerateICECandidate(const WebRTCICECandidate&) override;
   void DidChangeSignalingState(SignalingState) override;
   void DidChangeICEGatheringState(ICEGatheringState) override;
   void DidChangeICEConnectionState(ICEConnectionState) override;
-  void DidAddRemoteStream(const WebMediaStream&) override;
+  void DidAddRemoteStream(
+      const WebMediaStream&,
+      WebVector<std::unique_ptr<WebRTCRtpReceiver>>*) override;
   void DidRemoveRemoteStream(const WebMediaStream&) override;
   void DidAddRemoteDataChannel(WebRTCDataChannelHandler*) override;
   void ReleasePeerConnectionHandler() override;
@@ -201,10 +214,19 @@ class RTCPeerConnection final : public EventTargetWithInlineData,
   DECLARE_VIRTUAL_TRACE();
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(RTCPeerConnectionTest, GetAudioTrack);
+  FRIEND_TEST_ALL_PREFIXES(RTCPeerConnectionTest, GetVideoTrack);
+  FRIEND_TEST_ALL_PREFIXES(RTCPeerConnectionTest, GetAudioAndVideoTrack);
+  FRIEND_TEST_ALL_PREFIXES(RTCPeerConnectionTest, GetTrackRemoveStreamAndGCAll);
+  FRIEND_TEST_ALL_PREFIXES(RTCPeerConnectionTest,
+                           GetTrackRemoveStreamAndGCWithPersistentComponent);
+  FRIEND_TEST_ALL_PREFIXES(RTCPeerConnectionTest,
+                           GetTrackRemoveStreamAndGCWithPersistentStream);
+
   typedef Function<bool()> BoolFunction;
   class EventWrapper : public GarbageCollectedFinalized<EventWrapper> {
    public:
-    EventWrapper(Event*, std::unique_ptr<BoolFunction>);
+    EventWrapper(Event*, BoolFunction);
     // Returns true if |m_setupFunction| returns true or it is null.
     // |m_event| will only be fired if setup() returns true;
     bool Setup();
@@ -214,7 +236,7 @@ class RTCPeerConnection final : public EventTargetWithInlineData,
     Member<Event> event_;
 
    private:
-    std::unique_ptr<BoolFunction> setup_function_;
+    BoolFunction setup_function_;
   };
 
   RTCPeerConnection(ExecutionContext*,
@@ -224,25 +246,42 @@ class RTCPeerConnection final : public EventTargetWithInlineData,
   void Dispose();
 
   void ScheduleDispatchEvent(Event*);
-  void ScheduleDispatchEvent(Event*, std::unique_ptr<BoolFunction>);
+  void ScheduleDispatchEvent(Event*, BoolFunction);
   void DispatchScheduledEvent();
-  bool HasLocalStreamWithTrackId(const String& track_id);
-  MediaStreamTrack* GetRemoteTrackById(const String& track_id) const;
-  // Receivers returned by the handler are in use by the peer connection, a
-  // receiver that is no longer in use is permanently inactive and does not need
-  // to be referenced anymore. Removes such receivers from |m_rtpReceivers|.
-  void RemoveInactiveReceivers();
+  MediaStreamTrack* GetTrack(const WebMediaStreamTrack&) const;
+  RTCRtpReceiver* GetOrCreateRTCRtpReceiver(
+      std::unique_ptr<WebRTCRtpReceiver> web_rtp_receiver);
 
+  // The "Change" methods set the state asynchronously and fire the
+  // corresponding event immediately after changing the state (if it was really
+  // changed).
+  //
+  // The "Set" methods are called asynchronously by the "Change" methods, and
+  // set the corresponding state without firing an event, returning true if the
+  // state was really changed.
+  //
+  // This is done because the standard guarantees that state changes and the
+  // corresponding events will happen in the same task; it shouldn't be
+  // possible to, for example, end up with two "icegatheringstatechange" events
+  // that are delayed somehow and cause the application to read a "complete"
+  // gathering state twice, missing the "gathering" state in the middle.
+  //
+  // TODO(deadbeef): This wasn't done for the signaling state because it
+  // resulted in a change to the order of the signaling state being updated
+  // relative to the SetLocalDescription or SetRemoteDescription promise being
+  // resolved. Some additional refactoring would be necessary to fix this; for
+  // example, passing the new signaling state along with the SRD/SLD callbacks
+  // as opposed to relying on a separate event.
   void ChangeSignalingState(WebRTCPeerConnectionHandlerClient::SignalingState);
+
   void ChangeIceGatheringState(
       WebRTCPeerConnectionHandlerClient::ICEGatheringState);
-  // Changes the state immediately; does not fire an event.
-  // Returns true if the state was changed.
-  bool SetIceConnectionState(
-      WebRTCPeerConnectionHandlerClient::ICEConnectionState);
-  // Changes the state asynchronously and fires an event immediately after
-  // changing the state.
+  bool SetIceGatheringState(
+      WebRTCPeerConnectionHandlerClient::ICEGatheringState);
+
   void ChangeIceConnectionState(
+      WebRTCPeerConnectionHandlerClient::ICEConnectionState);
+  bool SetIceConnectionState(
       WebRTCPeerConnectionHandlerClient::ICEConnectionState);
 
   void CloseInternal();
@@ -253,11 +292,14 @@ class RTCPeerConnection final : public EventTargetWithInlineData,
   ICEGatheringState ice_gathering_state_;
   ICEConnectionState ice_connection_state_;
 
-  // TODO(hbos): Move away from "addStream" and "removeStream" in favor of
-  // "addTrack" and "removeTrack". Update tracks, senders and receivers on
-  // relevant events. https://crbug.com/705901
   MediaStreamVector local_streams_;
   MediaStreamVector remote_streams_;
+  // A map containing any track that is in use by the peer connection. This
+  // includes tracks of |local_streams_|, |remote_streams_|, |rtp_senders_| and
+  // |rtp_receivers_|.
+  HeapHashMap<WeakMember<MediaStreamComponent>, WeakMember<MediaStreamTrack>>
+      tracks_;
+  HeapHashMap<uintptr_t, Member<RTCRtpSender>> rtp_senders_;
   HeapHashMap<uintptr_t, Member<RTCRtpReceiver>> rtp_receivers_;
 
   std::unique_ptr<WebRTCPeerConnectionHandler> peer_handler_;

@@ -13,7 +13,10 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_crx_util.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
@@ -138,6 +141,7 @@ WebApplicationInfo CreateWebAppInfo(const char* title,
   web_app_info.title = base::UTF8ToUTF16(title);
   web_app_info.description = base::UTF8ToUTF16(description);
   web_app_info.app_url = GURL(app_url);
+  web_app_info.scope = GURL(app_url);
 
   web_app_info.icons.push_back(CreateIconInfoWithBitmap(size));
 
@@ -155,12 +159,12 @@ class MockInstallPrompt : public ExtensionInstallPrompt {
   void OnInstallSuccess(const Extension* extension, SkBitmap* icon) override {
     proxy_->set_extension_id(extension->id());
     proxy_->set_confirmation_requested(did_call_show_dialog());
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
   void OnInstallFailure(const CrxInstallError& error) override {
     proxy_->set_error(error.message());
     proxy_->set_confirmation_requested(did_call_show_dialog());
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -199,7 +203,8 @@ class ManagementPolicyMock : public extensions::ManagementPolicy::Provider {
 
   bool UserMayLoad(const Extension* extension,
                    base::string16* error) const override {
-    *error = base::UTF8ToUTF16("Dummy error message");
+    if (error)
+      *error = base::UTF8ToUTF16("Dummy error message");
     return false;
   }
 };
@@ -214,6 +219,7 @@ class ExtensionCrxInstallerTest : public ExtensionBrowserTest {
       bool strict_manifest_checks) {
     std::unique_ptr<WebstoreInstaller::Approval> result;
 
+    base::ThreadRestrictions::ScopedAllowIO allow_io;
     base::FilePath ext_path = test_data_dir_.AppendASCII(manifest_dir);
     std::string error;
     std::unique_ptr<base::DictionaryValue> parsed_manifest(
@@ -338,6 +344,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTestWithExperimentalApis,
 IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, BlockedFileTypes) {
   const Extension* extension =
       InstallExtension(test_data_dir_.AppendASCII("blocked_file_types.crx"), 1);
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   EXPECT_TRUE(base::PathExists(extension->path().AppendASCII("test.html")));
   EXPECT_TRUE(base::PathExists(extension->path().AppendASCII("test.nexe")));
   EXPECT_FALSE(base::PathExists(extension->path().AppendASCII("test1.EXE")));
@@ -349,6 +356,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, AllowedThemeFileTypes) {
       test_data_dir_.AppendASCII("theme_with_extension.crx"), 1);
   ASSERT_TRUE(extension);
   const base::FilePath& path = extension->path();
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   EXPECT_TRUE(
       base::PathExists(path.AppendASCII("images/theme_frame_camo.PNG")));
   EXPECT_TRUE(
@@ -599,6 +607,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, InstallToSharedLocation) {
       crx_path, 1, extensions::Manifest::EXTERNAL_PREF);
   base::FilePath extension_path = extension->path();
   EXPECT_TRUE(cache_dir.GetPath().IsParent(extension_path));
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   EXPECT_TRUE(base::PathExists(extension_path));
 
   std::string extension_id = extension->id();
@@ -607,7 +616,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionCrxInstallerTest, InstallToSharedLocation) {
       browser()->profile());
   EXPECT_FALSE(registry->enabled_extensions().GetByID(extension_id));
 
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   EXPECT_FALSE(base::PathExists(extension_path));
 }

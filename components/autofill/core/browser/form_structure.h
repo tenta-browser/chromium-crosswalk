@@ -21,6 +21,7 @@
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/form_types.h"
 #include "components/autofill/core/browser/proto/server.pb.h"
 #include "url/gurl.h"
 
@@ -34,12 +35,8 @@ namespace base {
 class TimeTicks;
 }
 
-namespace rappor {
-class RapporServiceImpl;
-}
-
 namespace ukm {
-class UkmService;
+class UkmRecorder;
 }
 
 namespace autofill {
@@ -55,9 +52,9 @@ class FormStructure {
   virtual ~FormStructure();
 
   // Runs several heuristics against the form fields to determine their possible
-  // types. If |ukm_service| is specified, logs UKM for the form structure
+  // types. If |ukm_recorder| is specified, logs UKM for the form structure
   // corresponding to |source_url_|.
-  void DetermineHeuristicTypes(ukm::UkmService* ukm_service);
+  void DetermineHeuristicTypes(ukm::UkmRecorder* ukm_recorder);
 
   // Encodes the proto |upload| request from this FormStructure.
   // In some cases, a |login_form_signature| is included as part of the upload.
@@ -78,10 +75,8 @@ class FormStructure {
 
   // Parses the field types from the server query response. |forms| must be the
   // same as the one passed to EncodeQueryRequest when constructing the query.
-  // |rappor_service| may be null.
   static void ParseQueryResponse(std::string response,
-                                 const std::vector<FormStructure*>& forms,
-                                 rappor::RapporServiceImpl* rappor_service);
+                                 const std::vector<FormStructure*>& forms);
 
   // Returns predictions using the details from the given |form_structures| and
   // their fields' predicted types.
@@ -139,7 +134,6 @@ class FormStructure {
       const base::TimeTicks& load_time,
       const base::TimeTicks& interaction_time,
       const base::TimeTicks& submission_time,
-      rappor::RapporServiceImpl* rappor_service,
       AutofillMetrics::FormInteractionsUkmLogger* form_interactions_ukm_logger,
       bool did_show_suggestions,
       bool observed_submission) const;
@@ -147,7 +141,9 @@ class FormStructure {
   // Log the quality of the heuristics and server predictions for this form
   // structure, if autocomplete attributes are present on the fields (they are
   // used as golden truths).
-  void LogQualityMetricsBasedOnAutocomplete() const;
+  void LogQualityMetricsBasedOnAutocomplete(
+      AutofillMetrics::FormInteractionsUkmLogger* form_interactions_ukm_logger)
+      const;
 
   // Classifies each field in |fields_| based upon its |autocomplete| attribute,
   // if the attribute is available.  The association is stored into the field's
@@ -229,6 +225,13 @@ class FormStructure {
   }
   UploadRequired upload_required() const { return upload_required_; }
 
+  void set_form_parsed_timestamp(const base::TimeTicks form_parsed_timestamp) {
+    form_parsed_timestamp_ = form_parsed_timestamp;
+  }
+  base::TimeTicks form_parsed_timestamp() const {
+    return form_parsed_timestamp_;
+  }
+
   bool all_fields_are_passwords() const { return all_fields_are_passwords_; }
 
   bool is_signin_upload() const { return is_signin_upload_; }
@@ -241,6 +244,9 @@ class FormStructure {
   // Returns a FormData containing the data this form structure knows about.
   FormData ToFormData() const;
 
+  // Returns the possible form types.
+  std::set<FormType> GetFormTypes() const;
+
   bool operator==(const FormData& form) const;
   bool operator!=(const FormData& form) const;
 
@@ -249,6 +255,11 @@ class FormStructure {
   friend class FormStructureTest;
   FRIEND_TEST_ALL_PREFIXES(AutofillDownloadTest, QueryAndUploadTest);
   FRIEND_TEST_ALL_PREFIXES(FormStructureTest, FindLongestCommonPrefix);
+
+  // A helper function to avoid suggesting field types in cases where they are
+  // highly unlikely. For example: lone credit card fields in an otherwise
+  // non-credit-card related form.
+  void RationalizeFieldTypePredictions();
 
   // Encodes information about this form and its fields into |query_form|.
   void EncodeFormForQuery(
@@ -342,6 +353,9 @@ class FormStructure {
   // The unique signature for this form, composed of the target url domain,
   // the form name, and the form field names in a 64-bit hash.
   FormSignature form_signature_;
+
+  // When a form is parsed on this page.
+  base::TimeTicks form_parsed_timestamp_;
 
   DISALLOW_COPY_AND_ASSIGN(FormStructure);
 };

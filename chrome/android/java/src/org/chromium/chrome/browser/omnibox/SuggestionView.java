@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.omnibox;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.res.Resources;
 import android.content.res.TypedArray;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -35,6 +36,8 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.omnibox.OmniboxResultsAdapter.OmniboxResultItem;
 import org.chromium.chrome.browser.omnibox.OmniboxResultsAdapter.OmniboxSuggestionDelegate;
 import org.chromium.chrome.browser.omnibox.OmniboxSuggestion.MatchClassification;
+import org.chromium.chrome.browser.util.FeatureUtilities;
+import org.chromium.chrome.browser.util.ViewUtils;
 import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.ui.base.DeviceFormFactor;
 
@@ -68,10 +71,6 @@ class SuggestionView extends ViewGroup {
 
     private static final long RELAYOUT_DELAY_MS = 20;
 
-    static final int TITLE_COLOR_STANDARD_FONT_DARK = 0xFF333333;
-    private static final int TITLE_COLOR_STANDARD_FONT_LIGHT = 0xFFFFFFFF;
-    private static final int URL_COLOR = 0xFF5595FE;
-
     private static final float ANSWER_IMAGE_SCALING_FACTOR = 1.15f;
 
     private final LocationBar mLocationBar;
@@ -82,17 +81,26 @@ class SuggestionView extends ViewGroup {
     private final int mSuggestionAnswerHeight;
     private int mNumAnswerLines = 1;
 
+    private final int mDarkTitleColorStandardFont;
+    private final int mLightTitleColorStandardFont;
+    private final int mDarkUrlStandardColor;
+    private final int mLightUrlStandardColor;
+
     private OmniboxResultItem mSuggestionItem;
     private OmniboxSuggestion mSuggestion;
     private OmniboxSuggestionDelegate mSuggestionDelegate;
     private Boolean mUseDarkColors;
     private int mPosition;
+    private int mRightOffsetPx;
+    private int mSuggestionViewOffset;
 
     private final SuggestionContentsContainer mContentsView;
 
     private final int mRefineWidth;
     private final View mRefineView;
     private TintedDrawable mRefineIcon;
+    private final int mRefineViewModernEndPadding;
+    private final int mSuggestionListModernOffset;
 
     private final int[] mViewPositionHolder = new int[2];
 
@@ -115,6 +123,16 @@ class SuggestionView extends ViewGroup {
         mSuggestionAnswerHeight =
                 context.getResources().getDimensionPixelOffset(
                         R.dimen.omnibox_suggestion_answer_height);
+
+        Resources resources = getResources();
+        mDarkTitleColorStandardFont =
+                ApiCompatibilityUtils.getColor(resources, R.color.url_emphasis_default_text);
+        mLightTitleColorStandardFont =
+                ApiCompatibilityUtils.getColor(resources, R.color.url_emphasis_light_default_text);
+        mDarkUrlStandardColor =
+                ApiCompatibilityUtils.getColor(resources, R.color.suggestion_url_dark);
+        mLightUrlStandardColor =
+                ApiCompatibilityUtils.getColor(resources, R.color.suggestion_url_light);
 
         TypedArray a = getContext().obtainStyledAttributes(
                 new int [] {R.attr.selectableItemBackground});
@@ -176,6 +194,12 @@ class SuggestionView extends ViewGroup {
         mRefineWidth = getResources()
                 .getDimensionPixelSize(R.dimen.omnibox_suggestion_refine_width);
 
+        mRefineViewModernEndPadding = getResources().getDimensionPixelSize(
+                R.dimen.omnibox_suggestion_refine_view_modern_end_padding);
+
+        mSuggestionListModernOffset =
+                getResources().getDimensionPixelSize(R.dimen.omnibox_suggestion_list_modern_offset);
+
         mUrlBar = (UrlBar) locationBar.getContainerView().findViewById(R.id.url_bar);
 
         mPhoneUrlBarLeftOffsetPx = getResources().getDimensionPixelOffset(
@@ -195,12 +219,11 @@ class SuggestionView extends ViewGroup {
         boolean refineVisible = mRefineView.getVisibility() == VISIBLE;
         boolean isRtl = ApiCompatibilityUtils.isLayoutRtl(this);
         int contentsViewOffsetX = isRtl && refineVisible ? mRefineWidth : 0;
-        mContentsView.layout(
-                contentsViewOffsetX,
-                0,
+        mContentsView.layout(contentsViewOffsetX, 0,
                 contentsViewOffsetX + mContentsView.getMeasuredWidth(),
                 mContentsView.getMeasuredHeight());
-        int refineViewOffsetX = isRtl ? 0 : getMeasuredWidth() - mRefineWidth;
+
+        int refineViewOffsetX = isRtl ? 0 : getMeasuredWidth() - mRefineWidth - mRightOffsetPx;
         mRefineView.layout(
                 refineViewOffsetX,
                 0,
@@ -264,10 +287,10 @@ class SuggestionView extends ViewGroup {
      * @param suggestionDelegate The suggestion delegate.
      * @param position Position of the suggestion in the dropdown list.
      * @param useDarkColors Whether dark colors should be used for fonts and icons.
+     * @param mUseModernDesign Whether modern design padding should be used.
      */
-    public void init(OmniboxResultItem suggestionItem,
-            OmniboxSuggestionDelegate suggestionDelegate,
-            int position, boolean useDarkColors) {
+    public void init(OmniboxResultItem suggestionItem, OmniboxSuggestionDelegate suggestionDelegate,
+            int position, boolean useDarkColors, boolean mUseModernDesign) {
         ViewCompat.setLayoutDirection(this, ViewCompat.getLayoutDirection(mUrlBar));
 
         // Update the position unconditionally.
@@ -295,6 +318,9 @@ class SuggestionView extends ViewGroup {
                 .getDimension(R.dimen.omnibox_suggestion_first_line_text_size));
         mContentsView.mTextLine2.setTextSize(TypedValue.COMPLEX_UNIT_PX, getResources()
                 .getDimension(R.dimen.omnibox_suggestion_second_line_text_size));
+
+        mRightOffsetPx = mUseModernDesign ? mRefineViewModernEndPadding : 0;
+        mSuggestionViewOffset = mUseModernDesign ? mSuggestionListModernOffset : 0;
 
         // Suggestions with attached answers are rendered with rich results regardless of which
         // suggestion type they are.
@@ -371,8 +397,14 @@ class SuggestionView extends ViewGroup {
     }
 
     private int getStandardFontColor() {
-        return (mUseDarkColors == null || mUseDarkColors)
-                ? TITLE_COLOR_STANDARD_FONT_DARK : TITLE_COLOR_STANDARD_FONT_LIGHT;
+        return (mUseDarkColors == null || mUseDarkColors) ? mDarkTitleColorStandardFont
+                                                          : mLightTitleColorStandardFont;
+    }
+
+    private int getStandardUrlColor() {
+        if (!FeatureUtilities.isChromeHomeEnabled()) return mLightUrlStandardColor;
+        return (mUseDarkColors == null || mUseDarkColors) ? mDarkUrlStandardColor
+                                                          : mLightUrlStandardColor;
     }
 
     @Override
@@ -454,7 +486,7 @@ class SuggestionView extends ViewGroup {
 
         // Force left-to-right rendering for URLs. See UrlBar constructor for details.
         if (isUrl) {
-            textLine.setTextColor(URL_COLOR);
+            textLine.setTextColor(getStandardUrlColor());
             ApiCompatibilityUtils.setTextDirection(textLine, TEXT_DIRECTION_LTR);
         } else {
             textLine.setTextColor(getStandardFontColor());
@@ -511,7 +543,7 @@ class SuggestionView extends ViewGroup {
                 }
                 classifications.add(0, new MatchClassification(0, MatchClassificationStyle.NONE));
 
-                if (DeviceFormFactor.isTablet(getContext())) {
+                if (DeviceFormFactor.isTablet()) {
                     TextPaint tp = mContentsView.mTextLine1.getPaint();
                     mContentsView.mRequiredWidth =
                             tp.measureText(fillIntoEdit, 0, fillIntoEdit.length());
@@ -580,10 +612,8 @@ class SuggestionView extends ViewGroup {
             mContentsView.mAnswerImageMaxSize = imageSize;
 
             String url = "https:" + secondLine.getImage().replace("\\/", "/");
-            AnswersImage.requestAnswersImage(
-                    mLocationBar.getCurrentTab().getProfile(),
-                    url,
-                    new AnswersImage.AnswersImageObserver() {
+            AnswersImage.requestAnswersImage(mLocationBar.getToolbarDataProvider().getProfile(),
+                    url, new AnswersImage.AnswersImageObserver() {
                         @Override
                         public void onAnswersImageChanged(Bitmap bitmap) {
                             mContentsView.mAnswerImage.setImageBitmap(bitmap);
@@ -735,7 +765,7 @@ class SuggestionView extends ViewGroup {
         protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
 
-            if (DeviceFormFactor.isTablet(getContext())) {
+            if (DeviceFormFactor.isTablet()) {
                 // Use the same image transform matrix as the navigation icon to ensure the same
                 // scaling, which requires centering vertically based on the height of the
                 // navigation icon view and not the image itself.
@@ -821,7 +851,7 @@ class SuggestionView extends ViewGroup {
 
             // Align the text to be pixel perfectly aligned with the text in the url bar.
             boolean isRTL = ApiCompatibilityUtils.isLayoutRtl(this);
-            if (DeviceFormFactor.isTablet(getContext())) {
+            if (DeviceFormFactor.isTablet()) {
                 int textWidth = isRTL ? mTextRight : (r - l - mTextLeft);
                 final float maxRequiredWidth = mSuggestionDelegate.getMaxRequiredWidth();
                 final float maxMatchContentsWidth = mSuggestionDelegate.getMaxMatchContentsWidth();
@@ -841,13 +871,17 @@ class SuggestionView extends ViewGroup {
                         R.dimen.omnibox_suggestion_answer_image_horizontal_spacing);
             }
             if (isRTL) {
-                mTextLine1.layout(0, t, mTextRight, b);
-                mAnswerImage.layout(mTextRight - imageWidth , t, mTextRight, b);
-                mTextLine2.layout(0, t, mTextRight - (imageWidth + imageSpacing), b);
+                mTextLine1.layout(0, t, mTextRight - mSuggestionViewOffset, b);
+                mAnswerImage.layout(
+                        mTextRight - imageWidth, t, mTextRight - mSuggestionViewOffset, b);
+                mTextLine2.layout(
+                        0, t, mTextRight - (imageWidth + imageSpacing) - mSuggestionViewOffset, b);
             } else {
-                mTextLine1.layout(mTextLeft, t, r - l, b);
-                mAnswerImage.layout(mTextLeft, t, mTextLeft + imageWidth, b);
-                mTextLine2.layout(mTextLeft + imageWidth + imageSpacing, t, r - l, b);
+                mTextLine1.layout(mTextLeft + mSuggestionViewOffset, t, r - l, b);
+                mAnswerImage.layout(
+                        mTextLeft + mSuggestionViewOffset, t, mTextLeft + imageWidth, b);
+                mTextLine2.layout(
+                        mTextLeft + imageWidth + imageSpacing + mSuggestionViewOffset, t, r - l, b);
             }
 
             int suggestionIconPosition = getSuggestionIconLeftPosition();
@@ -860,7 +894,8 @@ class SuggestionView extends ViewGroup {
 
         private int getUrlBarLeftOffset() {
             if (mLocationBar.mustQueryUrlBarLocationForSuggestions()) {
-                mUrlBar.getLocationInWindow(mViewPositionHolder);
+                View contentView = getRootView().findViewById(android.R.id.content);
+                ViewUtils.getRelativeLayoutPosition(contentView, mUrlBar, mViewPositionHolder);
                 return mViewPositionHolder[0];
             } else {
                 return ApiCompatibilityUtils.isLayoutRtl(this) ? mPhoneUrlBarLeftOffsetRtlPx
@@ -875,7 +910,8 @@ class SuggestionView extends ViewGroup {
             if (mLocationBar == null) return 0;
 
             int leftOffset = getUrlBarLeftOffset();
-            getLocationInWindow(mViewPositionHolder);
+            View contentView = getRootView().findViewById(android.R.id.content);
+            ViewUtils.getRelativeLayoutPosition(contentView, this, mViewPositionHolder);
             return leftOffset + mUrlBar.getPaddingLeft() - mViewPositionHolder[0];
         }
 
@@ -886,7 +922,8 @@ class SuggestionView extends ViewGroup {
             if (mLocationBar == null) return 0;
 
             int leftOffset = getUrlBarLeftOffset();
-            getLocationInWindow(mViewPositionHolder);
+            View contentView = getRootView().findViewById(android.R.id.content);
+            ViewUtils.getRelativeLayoutPosition(contentView, this, mViewPositionHolder);
             return leftOffset + mUrlBar.getWidth() - mUrlBar.getPaddingRight()
                     - mViewPositionHolder[0];
         }

@@ -374,6 +374,10 @@ GURL GURL::GetWithEmptyPath() const {
   return other;
 }
 
+GURL GURL::GetWithoutFilename() const {
+  return Resolve(".");
+}
+
 bool GURL::IsStandard() const {
   return url::IsStandard(spec_.data(), parsed_.scheme);
 }
@@ -452,13 +456,17 @@ std::string GURL::PathForRequest() const {
 }
 
 std::string GURL::HostNoBrackets() const {
+  return HostNoBracketsPiece().as_string();
+}
+
+base::StringPiece GURL::HostNoBracketsPiece() const {
   // If host looks like an IPv6 literal, strip the square brackets.
   url::Component h(parsed_.host);
   if (h.len >= 2 && spec_[h.begin] == '[' && spec_[h.end() - 1] == ']') {
     h.begin++;
     h.len -= 2;
   }
-  return ComponentString(h);
+  return ComponentStringPiece(h);
 }
 
 std::string GURL::GetContent() const {
@@ -501,14 +509,14 @@ const GURL& GURL::EmptyGURL() {
 
 #endif  // WIN32
 
-bool GURL::DomainIs(base::StringPiece lower_ascii_domain) const {
+bool GURL::DomainIs(base::StringPiece canonical_domain) const {
   if (!is_valid_)
     return false;
 
   // FileSystem URLs have empty host_piece, so check this first.
-  if (SchemeIsFileSystem() && inner_url_)
-    return inner_url_->DomainIs(lower_ascii_domain);
-  return url::DomainIs(host_piece(), lower_ascii_domain);
+  if (inner_url_ && SchemeIsFileSystem())
+    return inner_url_->DomainIs(canonical_domain);
+  return url::DomainIs(host_piece(), canonical_domain);
 }
 
 bool GURL::EqualsIgnoringRef(const GURL& other) const {
@@ -549,6 +557,14 @@ bool operator==(const GURL& x, const base::StringPiece& spec) {
   return x.possibly_invalid_spec() == spec;
 }
 
+bool operator==(const base::StringPiece& spec, const GURL& x) {
+  return x == spec;
+}
+
 bool operator!=(const GURL& x, const base::StringPiece& spec) {
+  return !(x == spec);
+}
+
+bool operator!=(const base::StringPiece& spec, const GURL& x) {
   return !(x == spec);
 }

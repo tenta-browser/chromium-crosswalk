@@ -5,14 +5,14 @@
 #ifndef DictionaryTest_h
 #define DictionaryTest_h
 
-#include "bindings/core/v8/DoubleOrString.h"
 #include "bindings/core/v8/Nullable.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "bindings/core/v8/double_or_string.h"
 #include "core/dom/Element.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/HashMap.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -78,7 +78,6 @@ class DictionaryTest : public GarbageCollectedFinalized<DictionaryTest>,
   String enum_member_;
   String enum_member_with_default_;
   String enum_or_null_member_;
-  Nullable<Vector<String>> enum_array_member_;
   Member<Element> element_member_;
   Member<Element> element_or_null_member_;
   ScriptValue object_member_;
@@ -91,7 +90,6 @@ class DictionaryTest : public GarbageCollectedFinalized<DictionaryTest>,
   String derived_derived_string_member_;
   bool required_boolean_member_;
   Nullable<HashMap<String, String>> dictionary_member_properties_;
-  ScriptValue prefix_get_member_;
 };
 
 }  // namespace blink

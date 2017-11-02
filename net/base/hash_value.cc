@@ -5,10 +5,10 @@
 #include "net/base/hash_value.h"
 
 #include <stdlib.h>
+#include <algorithm>
 
 #include "base/base64.h"
 #include "base/logging.h"
-#include "base/sha1.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "crypto/sha2.h"
@@ -17,18 +17,23 @@ namespace net {
 
 namespace {
 
-// CompareSHA1Hashes is a helper function for using bsearch() with an array of
-// SHA1 hashes.
-int CompareSHA1Hashes(const void* a, const void* b) {
-  return memcmp(a, b, base::kSHA1Length);
-}
+// LessThan comparator for use with std::binary_search() in determining
+// whether a SHA-256 HashValue appears within a sorted array of
+// SHA256HashValues.
+struct SHA256ToHashValueComparator {
+  bool operator()(const SHA256HashValue& lhs, const HashValue& rhs) const {
+    DCHECK_EQ(HASH_VALUE_SHA256, rhs.tag);
+    return memcmp(lhs.data, rhs.data(), rhs.size()) < 0;
+  }
+
+  bool operator()(const HashValue& lhs, const SHA256HashValue& rhs) const {
+    DCHECK_EQ(HASH_VALUE_SHA256, lhs.tag);
+    return memcmp(lhs.data(), rhs.data, lhs.size()) < 0;
+  }
+};
 
 }  // namespace
 
-
-HashValue::HashValue(const SHA1HashValue& hash) : HashValue(HASH_VALUE_SHA1) {
-  fingerprint.sha1 = hash;
-}
 
 HashValue::HashValue(const SHA256HashValue& hash)
     : HashValue(HASH_VALUE_SHA256) {
@@ -37,10 +42,7 @@ HashValue::HashValue(const SHA256HashValue& hash)
 
 bool HashValue::FromString(const base::StringPiece value) {
   base::StringPiece base64_str;
-  if (value.starts_with("sha1/")) {
-    tag = HASH_VALUE_SHA1;
-    base64_str = value.substr(5);
-  } else if (value.starts_with("sha256/")) {
+  if (value.starts_with("sha256/")) {
     tag = HASH_VALUE_SHA256;
     base64_str = value.substr(7);
   } else {
@@ -60,8 +62,6 @@ std::string HashValue::ToString() const {
   base::Base64Encode(base::StringPiece(reinterpret_cast<const char*>(data()),
                                        size()), &base64_str);
   switch (tag) {
-  case HASH_VALUE_SHA1:
-    return std::string("sha1/") + base64_str;
   case HASH_VALUE_SHA256:
     return std::string("sha256/") + base64_str;
   default:
@@ -72,8 +72,6 @@ std::string HashValue::ToString() const {
 
 size_t HashValue::size() const {
   switch (tag) {
-    case HASH_VALUE_SHA1:
-      return sizeof(fingerprint.sha1.data);
     case HASH_VALUE_SHA256:
       return sizeof(fingerprint.sha256.data);
     default:
@@ -81,7 +79,7 @@ size_t HashValue::size() const {
       // While an invalid tag should not happen, return a non-zero length
       // to avoid compiler warnings when the result of size() is
       // used with functions like memset.
-      return sizeof(fingerprint.sha1.data);
+      return sizeof(fingerprint.sha256.data);
   }
 }
 
@@ -91,8 +89,6 @@ unsigned char* HashValue::data() {
 
 const unsigned char* HashValue::data() const {
   switch (tag) {
-    case HASH_VALUE_SHA1:
-      return fingerprint.sha1.data;
     case HASH_VALUE_SHA256:
       return fingerprint.sha256.data;
     default:
@@ -101,13 +97,24 @@ const unsigned char* HashValue::data() const {
   }
 }
 
-bool IsSHA256HashInSortedArray(const SHA256HashValue& hash,
-                               const uint8_t* array,
-                               size_t array_byte_len) {
-  DCHECK_EQ(0u, array_byte_len % crypto::kSHA256Length);
-  const size_t arraylen = array_byte_len / crypto::kSHA256Length;
-  return NULL != bsearch(hash.data, array, arraylen, crypto::kSHA256Length,
-                         CompareSHA1Hashes);
+bool IsSHA256HashInSortedArray(const HashValue& hash,
+                               const SHA256HashValue* array,
+                               size_t array_len) {
+  return std::binary_search(array, array + array_len, hash,
+                            SHA256ToHashValueComparator());
+}
+
+bool IsAnySHA256HashInSortedArray(const HashValueVector& hashes,
+                                  const SHA256HashValue* list,
+                                  size_t list_length) {
+  for (const auto& hash : hashes) {
+    if (hash.tag != HASH_VALUE_SHA256)
+      continue;
+
+    if (IsSHA256HashInSortedArray(hash, list, list_length))
+      return true;
+  }
+  return false;
 }
 
 }  // namespace net

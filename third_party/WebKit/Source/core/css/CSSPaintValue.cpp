@@ -21,7 +21,7 @@ CSSPaintValue::CSSPaintValue(CSSCustomIdentValue* name)
 CSSPaintValue::CSSPaintValue(CSSCustomIdentValue* name,
                              Vector<RefPtr<CSSVariableData>>& variable_data)
     : CSSPaintValue(name) {
-  argument_variable_data_.Swap(variable_data);
+  argument_variable_data_.swap(variable_data);
 }
 
 CSSPaintValue::~CSSPaintValue() {}
@@ -32,7 +32,7 @@ String CSSPaintValue::CustomCSSText() const {
   result.Append(name_->CustomCSSText());
   for (const auto& variable_data : argument_variable_data_) {
     result.Append(", ");
-    result.Append(variable_data.Get()->TokenRange().Serialize());
+    result.Append(variable_data.get()->TokenRange().Serialize());
   }
   result.Append(')');
   return result.ToString();
@@ -42,18 +42,21 @@ String CSSPaintValue::GetName() const {
   return name_->Value();
 }
 
-PassRefPtr<Image> CSSPaintValue::GetImage(const LayoutObject& layout_object,
-                                          const IntSize& size,
-                                          float zoom) {
-  if (!generator_)
-    generator_ =
-        CSSPaintImageGenerator::Create(GetName(), layout_object.GetDocument(),
-                                       paint_image_generator_observer_);
+RefPtr<Image> CSSPaintValue::GetImage(const ImageResourceObserver& client,
+                                      const Document& document,
+                                      const ComputedStyle&,
+                                      const IntSize& container_size,
+                                      const LayoutSize* logical_size) {
+  if (!generator_) {
+    generator_ = CSSPaintImageGenerator::Create(
+        GetName(), document, paint_image_generator_observer_);
+  }
 
   if (!ParseInputArguments())
     return nullptr;
 
-  return generator_->Paint(layout_object, size, zoom, parsed_input_arguments_);
+  return generator_->Paint(client, container_size, parsed_input_arguments_,
+                           logical_size);
 }
 
 bool CSSPaintValue::ParseInputArguments() {
@@ -61,7 +64,7 @@ bool CSSPaintValue::ParseInputArguments() {
     return false;
 
   if (parsed_input_arguments_ ||
-      !RuntimeEnabledFeatures::cssPaintAPIArgumentsEnabled())
+      !RuntimeEnabledFeatures::CSSPaintAPIArgumentsEnabled())
     return true;
 
   if (!generator_->IsImageGeneratorReady())
@@ -95,13 +98,16 @@ void CSSPaintValue::Observer::PaintImageGeneratorReady() {
 }
 
 void CSSPaintValue::PaintImageGeneratorReady() {
-  for (const LayoutObject* client : Clients().Keys()) {
-    const_cast<LayoutObject*>(client)->ImageChanged(
+  for (const ImageResourceObserver* client : Clients().Keys()) {
+    // TODO(ikilpatrick): We shouldn't be casting like this or mutate the layout
+    // tree from a const pointer.
+    const_cast<ImageResourceObserver*>(client)->ImageChanged(
         static_cast<WrappedImagePtr>(this));
   }
 }
 
-bool CSSPaintValue::KnownToBeOpaque(const LayoutObject& layout_object) const {
+bool CSSPaintValue::KnownToBeOpaque(const Document&,
+                                    const ComputedStyle&) const {
   return generator_ && !generator_->HasAlpha();
 }
 

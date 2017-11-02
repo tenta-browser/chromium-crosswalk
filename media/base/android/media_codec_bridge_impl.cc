@@ -28,6 +28,7 @@ using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaIntArrayToIntVector;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 
 #define RETURN_ON_ERROR(condition)                             \
@@ -48,7 +49,7 @@ enum {
 };
 
 // Parses |extra_data| and sets the appropriate fields of the given MediaFormat.
-bool ConfigureMediaFormatForAudio(jobject j_format,
+bool ConfigureMediaFormatForAudio(const JavaRef<jobject>& j_format,
                                   AudioCodec codec,
                                   const uint8_t* extra_data,
                                   size_t extra_data_size,
@@ -183,9 +184,9 @@ bool ConfigureMediaFormatForAudio(jobject j_format,
 // static
 std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateAudioDecoder(
     const AudioDecoderConfig& config,
-    jobject media_crypto) {
+    const JavaRef<jobject>& media_crypto) {
   DVLOG(2) << __func__ << ": " << config.AsHumanReadableString()
-           << " media_crypto:" << media_crypto;
+           << " media_crypto:" << media_crypto.obj();
 
   if (!MediaCodecUtil::IsMediaCodecAvailable())
     return nullptr;
@@ -196,7 +197,7 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateAudioDecoder(
     return nullptr;
 
   auto bridge = base::WrapUnique(new MediaCodecBridgeImpl(
-      mime, false, MediaCodecDirection::DECODER, false));
+      mime, CodecType::kAny, MediaCodecDirection::DECODER, media_crypto));
   if (bridge->j_bridge_.is_null())
     return nullptr;
 
@@ -217,7 +218,7 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateAudioDecoder(
   const int64_t seek_preroll_ns = config.seek_preroll().InMicroseconds() *
                                   base::Time::kNanosecondsPerMicrosecond;
   if (!ConfigureMediaFormatForAudio(
-          j_format.obj(), config.codec(), config.extra_data().data(),
+          j_format, config.codec(), config.extra_data().data(),
           config.extra_data().size(), codec_delay_ns, seek_preroll_ns)) {
     return nullptr;
   }
@@ -233,14 +234,13 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateAudioDecoder(
 // static
 std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateVideoDecoder(
     VideoCodec codec,
-    bool is_secure,
+    CodecType codec_type,
     const gfx::Size& size,
-    jobject surface,
-    jobject media_crypto,
+    const JavaRef<jobject>& surface,
+    const JavaRef<jobject>& media_crypto,
     const std::vector<uint8_t>& csd0,
     const std::vector<uint8_t>& csd1,
-    bool allow_adaptive_playback,
-    bool require_software_codec) {
+    bool allow_adaptive_playback) {
   if (!MediaCodecUtil::IsMediaCodecAvailable())
     return nullptr;
 
@@ -249,7 +249,7 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateVideoDecoder(
     return nullptr;
 
   std::unique_ptr<MediaCodecBridgeImpl> bridge(new MediaCodecBridgeImpl(
-      mime, is_secure, MediaCodecDirection::DECODER, require_software_codec));
+      mime, codec_type, MediaCodecDirection::DECODER, media_crypto));
   if (bridge->j_bridge_.is_null())
     return nullptr;
 
@@ -297,7 +297,7 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateVideoEncoder(
     return nullptr;
 
   std::unique_ptr<MediaCodecBridgeImpl> bridge(new MediaCodecBridgeImpl(
-      mime, false, MediaCodecDirection::ENCODER, false));
+      mime, CodecType::kAny, MediaCodecDirection::ENCODER, nullptr));
   if (bridge->j_bridge_.is_null())
     return nullptr;
 
@@ -317,16 +317,17 @@ std::unique_ptr<MediaCodecBridge> MediaCodecBridgeImpl::CreateVideoEncoder(
   return bridge->Start() ? std::move(bridge) : nullptr;
 }
 
-MediaCodecBridgeImpl::MediaCodecBridgeImpl(const std::string& mime,
-                                           bool is_secure,
-                                           MediaCodecDirection direction,
-                                           bool require_software_codec) {
+MediaCodecBridgeImpl::MediaCodecBridgeImpl(
+    const std::string& mime,
+    CodecType codec_type,
+    MediaCodecDirection direction,
+    const JavaRef<jobject>& media_crypto) {
   JNIEnv* env = AttachCurrentThread();
   DCHECK(!mime.empty());
   ScopedJavaLocalRef<jstring> j_mime = ConvertUTF8ToJavaString(env, mime);
-  j_bridge_.Reset(Java_MediaCodecBridge_create(env, j_mime, is_secure,
-                                               static_cast<int>(direction),
-                                               require_software_codec));
+  j_bridge_.Reset(
+      Java_MediaCodecBridge_create(env, j_mime, static_cast<int>(codec_type),
+                                   static_cast<int>(direction), media_crypto));
 }
 
 MediaCodecBridgeImpl::~MediaCodecBridgeImpl() {
@@ -461,9 +462,8 @@ MediaCodecStatus MediaCodecBridgeImpl::QueueSecureInputBuffer(
 
   return static_cast<MediaCodecStatus>(
       Java_MediaCodecBridge_queueSecureInputBuffer(
-          env, j_bridge_.obj(), index, 0, j_iv.obj(), j_key_id.obj(),
-          clear_array, cypher_array, num_subsamples,
-          static_cast<int>(encryption_scheme.mode()),
+          env, j_bridge_, index, 0, j_iv, j_key_id, clear_array, cypher_array,
+          num_subsamples, static_cast<int>(encryption_scheme.mode()),
           static_cast<int>(encryption_scheme.pattern().encrypt_blocks()),
           static_cast<int>(encryption_scheme.pattern().skip_blocks()),
           presentation_time.InMicroseconds()));
@@ -587,7 +587,7 @@ std::string MediaCodecBridgeImpl::GetName() {
   return ConvertJavaStringToUTF8(env, j_name);
 }
 
-bool MediaCodecBridgeImpl::SetSurface(jobject surface) {
+bool MediaCodecBridgeImpl::SetSurface(const JavaRef<jobject>& surface) {
   DCHECK_GE(base::android::BuildInfo::GetInstance()->sdk_int(), 23);
   JNIEnv* env = AttachCurrentThread();
   return Java_MediaCodecBridge_setSurface(env, j_bridge_, surface);

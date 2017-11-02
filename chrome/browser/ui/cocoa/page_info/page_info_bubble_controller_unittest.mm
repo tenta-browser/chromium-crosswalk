@@ -9,9 +9,11 @@
 #include "base/i18n/rtl.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
-#include "chrome/test/base/testing_profile.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/cocoa/browser_window_controller.h"
+#include "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
+#import "chrome/browser/ui/cocoa/location_bar/page_info_bubble_decoration.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "content/public/test/test_web_contents_factory.h"
 #include "net/test/test_certificate_data.h"
 #include "testing/gtest_mac.h"
@@ -31,6 +33,12 @@
 }
 - (NSButton*)connectionHelpButton {
   return connectionHelpButton_;
+}
+- (NSButton*)changePasswordButton {
+  return changePasswordButton_;
+}
+- (NSButton*)whitelistPasswordReuseButton {
+  return whitelistPasswordReuseButton_;
 }
 @end
 
@@ -87,13 +95,13 @@ const content_settings::SettingSource kTestSettingSources[] = {
     content_settings::SETTING_SOURCE_POLICY,
     content_settings::SETTING_SOURCE_EXTENSION};
 
-class PageInfoBubbleControllerTest : public CocoaTest {
+class PageInfoBubbleControllerTest : public CocoaProfileTest {
  public:
   PageInfoBubbleControllerTest() { controller_ = nil; }
 
   void TearDown() override {
     [controller_ close];
-    CocoaTest::TearDown();
+    CocoaProfileTest::TearDown();
   }
 
  protected:
@@ -109,11 +117,11 @@ class PageInfoBubbleControllerTest : public CocoaTest {
     // The controller cleans up after itself when the window closes.
     controller_ = [PageInfoBubbleControllerForTesting alloc];
     [controller_ setDefaultWindowWidth:default_width];
-    [controller_
-        initWithParentWindow:test_window()
-            pageInfoUIBridge:bridge_
-                 webContents:web_contents_factory_.CreateWebContents(&profile_)
-                         url:GURL("https://www.google.com")];
+    [controller_ initWithParentWindow:browser()->window()->GetNativeWindow()
+                     pageInfoUIBridge:bridge_
+                          webContents:web_contents_factory_.CreateWebContents(
+                                          browser()->profile())
+                                  url:GURL("https://www.google.com")];
     window_ = [controller_ window];
     [controller_ showWindow:nil];
   }
@@ -191,8 +199,6 @@ class PageInfoBubbleControllerTest : public CocoaTest {
     return num_non_user_settings;
   }
 
-  content::TestBrowserThreadBundle thread_bundle_;
-  TestingProfile profile_;
   content::TestWebContentsFactory web_contents_factory_;
 
   PageInfoBubbleControllerForTesting* controller_;  // Weak, owns self.
@@ -316,6 +322,48 @@ TEST_F(PageInfoBubbleControllerTest, WindowWidth) {
       }
     }
   }
+}
+
+// Tests the page icon decoration's active state.
+TEST_F(PageInfoBubbleControllerTest, PageIconDecorationActiveState) {
+  NSWindow* window = browser()->window()->GetNativeWindow();
+  BrowserWindowController* controller =
+      [BrowserWindowController browserWindowControllerForWindow:window];
+  LocationBarDecoration* decoration =
+      [controller locationBarBridge]->page_info_decoration();
+
+  CreateBubble();
+  EXPECT_TRUE([[controller_ window] isVisible]);
+  EXPECT_TRUE(decoration->active());
+
+  [controller_ close];
+  EXPECT_FALSE(decoration->active());
+}
+
+TEST_F(PageInfoBubbleControllerTest, PasswordReuseButtons) {
+  PageInfoUI::IdentityInfo info;
+  info.site_identity = std::string("example.com");
+  info.identity_status = PageInfo::SITE_IDENTITY_STATUS_UNKNOWN;
+
+  CreateBubble();
+
+  // Set identity info, specifying that buttons should not be shown.
+  info.show_change_password_buttons = false;
+  bridge_->SetIdentityInfo(const_cast<PageInfoUI::IdentityInfo&>(info));
+  EXPECT_EQ([controller_ changePasswordButton], nil);
+  EXPECT_EQ([controller_ whitelistPasswordReuseButton], nil);
+
+  // Set identity info, specifying that buttons should be shown.
+  info.show_change_password_buttons = true;
+  bridge_->SetIdentityInfo(const_cast<PageInfoUI::IdentityInfo&>(info));
+  EXPECT_NE([controller_ changePasswordButton], nil);
+  EXPECT_NE([controller_ whitelistPasswordReuseButton], nil);
+
+  // Check that clicking the button calls the right selector.
+  EXPECT_EQ([[controller_ changePasswordButton] action],
+            @selector(changePasswordDecisions:));
+  EXPECT_EQ([[controller_ whitelistPasswordReuseButton] action],
+            @selector(whitelistPasswordReuseDecisions:));
 }
 
 }  // namespace

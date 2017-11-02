@@ -201,7 +201,6 @@ TEST_F('NetInternalsTest', 'netInternalsLogViewPainterPrintAsText', function() {
   runTestCase(painterTestSpdyURLRequestStripCookies());
   runTestCase(painterTestExtraCustomParameter());
   runTestCase(painterTestMissingCustomParameter());
-  runTestCase(painterTestSSLVersionFallback());
   runTestCase(painterTestInProgressURLRequest());
   runTestCase(painterTestBaseTime());
 
@@ -392,7 +391,7 @@ function painterTestURLRequest() {
           'Connection: keep-alive',
           'User-Agent: Mozilla/5.0',
           'Accept: text/html',
-          'Accept-Encoding: gzip,deflate,sdch',
+          'Accept-Encoding: gzip,deflate',
           'Accept-Language: en-US,en;q=0.8',
           'Accept-Charset: ISO-8859-1'
         ],
@@ -796,7 +795,7 @@ function painterTestURLRequest() {
 '                                    Connection: keep-alive\n' +
 '                                    User-Agent: Mozilla/5.0\n' +
 '                                    Accept: text/html\n' +
-'                                    Accept-Encoding: gzip,deflate,sdch\n' +
+'                                    Accept-Encoding: gzip,deflate\n' +
 '                                    Accept-Language: en-US,en;q=0.8\n' +
 '                                    Accept-Charset: ISO-8859-1\n' +
 't=1338864633361 [st=137]     -HTTP_TRANSACTION_SEND_REQUEST\n' +
@@ -1777,7 +1776,7 @@ function painterTestDontStripCookiesURLRequest() {
           'Connection: keep-alive',
           'User-Agent: Mozilla/5.0',
           'Accept: text/html',
-          'Accept-Encoding: gzip,deflate,sdch',
+          'Accept-Encoding: gzip,deflate',
           'Accept-Language: en-US,en;q=0.8',
           'Accept-Charset: ISO-8859-1',
           'Cookie: MyMagicPony'
@@ -1814,7 +1813,7 @@ function painterTestDontStripCookiesURLRequest() {
 '                              Connection: keep-alive\n' +
 '                              User-Agent: Mozilla/5.0\n' +
 '                              Accept: text/html\n' +
-'                              Accept-Encoding: gzip,deflate,sdch\n' +
+'                              Accept-Encoding: gzip,deflate\n' +
 '                              Accept-Language: en-US,en;q=0.8\n' +
 '                              Accept-Charset: ISO-8859-1\n' +
 '                              Cookie: MyMagicPony';
@@ -1854,7 +1853,7 @@ function painterTestDontStripCookiesSPDYSession() {
           ':version: HTTP/1.1',
           'accept: text/html',
           'accept-charset: ISO-8859-1',
-          'accept-encoding: gzip,deflate,sdch',
+          'accept-encoding: gzip,deflate',
           'accept-language: en-US,en;q=0.8',
           'cookie: MyMagicPony',
           'user-agent: Mozilla/5.0'
@@ -1902,7 +1901,7 @@ function painterTestDontStripCookiesSPDYSession() {
     '                               :version: HTTP/1.1\n' +
     '                               accept: text/html\n' +
     '                               accept-charset: ISO-8859-1\n' +
-    '                               accept-encoding: gzip,deflate,sdch\n' +
+    '                               accept-encoding: gzip,deflate\n' +
     '                               accept-language: en-US,en;q=0.8\n' +
     '                               cookie: MyMagicPony\n' +
     '                               user-agent: Mozilla/5.0\n' +
@@ -2054,74 +2053,6 @@ function painterTestMissingCustomParameter() {
 '                        --> headersWRONG = ["Host: www.google.com",' +
     '"Connection: keep-alive"]\n' +
 '                        --> line = "GET / HTTP/1.1\\r\\n"';
-
-  return testCase;
-}
-
-/**
- * Tests the formatting for an SSL version fallback event.
- */
-function painterTestSSLVersionFallback() {
-  var testCase = {};
-  testCase.tickOffset = '1337911098400';
-
-  testCase.logEntries = [
-    {
-      'params': {
-        'host_and_port': 'www-927.ibm.com:443',
-        'net_error': -107,
-        'version_after': 0x301,
-        'version_before': 0x302
-      },
-        'phase': EventPhase.PHASE_NONE,
-        'source': {
-          'id': 124,
-          'type': EventSourceType.URL_REQUEST
-        },
-        'time': '1119062679',
-        'type': EventType.SSL_VERSION_FALLBACK
-    },
-    {
-      'params': {
-        'host_and_port': 'www-927.ibm.com:443',
-        'net_error': -107,
-        'version_after': 0x300,
-        'version_before': 0x301
-      },
-      'phase': EventPhase.PHASE_NONE,
-      'source': {
-        'id': 124,
-        'type': EventSourceType.URL_REQUEST
-      },
-      'time': '1119062850',
-      'type': EventType.SSL_VERSION_FALLBACK
-    },
-    {
-      'params': {
-        'version_after': 0x123456,
-        'version_before': 0x300
-      },
-      'phase': EventPhase.PHASE_NONE,
-      'source': {
-        'id': 124,
-        'type': EventSourceType.URL_REQUEST
-      },
-      'time': '1119062850',
-      'type': EventType.SSL_VERSION_FALLBACK
-    },
-  ];
-
-  testCase.expectedText =
-'t=1339030161079 [st=  0]  SSL_VERSION_FALLBACK\n' +
-'                          --> TLS 1.1 ==> TLS 1.0\n' +
-'                          --> host_and_port = "www-927.ibm.com:443"\n' +
-'                          --> net_error = -107 (ERR_SSL_PROTOCOL_ERROR)\n' +
-'t=1339030161250 [st=171]  SSL_VERSION_FALLBACK\n' +
-'                          --> TLS 1.0 ==> SSL 3.0\n' +
-'                          --> host_and_port = "www-927.ibm.com:443"\n' +
-'                          --> net_error = -107 (ERR_SSL_PROTOCOL_ERROR)\n' +
-'t=1339030161250 [st=171]  SSL_VERSION_FALLBACK\n' +
-'                          --> SSL 3.0 ==> SSL 0x123456';
 
   return testCase;
 }

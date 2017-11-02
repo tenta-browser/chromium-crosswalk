@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 #include <gtk/gtk.h>
-#include <math.h>
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/numerics/math_constants.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "remoting/base/string_resources.h"
@@ -74,10 +74,14 @@ class DisconnectWindowGtk : public HostWindow {
 void AddRoundRectPath(cairo_t* cairo_context, int width, int height,
                       int radius) {
   cairo_new_sub_path(cairo_context);
-  cairo_arc(cairo_context, width - radius, radius, radius, -M_PI_2, 0);
-  cairo_arc(cairo_context, width - radius, height - radius, radius, 0, M_PI_2);
-  cairo_arc(cairo_context, radius, height - radius, radius, M_PI_2, 2 * M_PI_2);
-  cairo_arc(cairo_context, radius, radius, radius, 2 * M_PI_2, 3 * M_PI_2);
+  cairo_arc(cairo_context, width - radius, radius, radius, -base::kPiDouble / 2,
+            0);
+  cairo_arc(cairo_context, width - radius, height - radius, radius, 0,
+            base::kPiDouble / 2);
+  cairo_arc(cairo_context, radius, height - radius, radius, base::kPiDouble / 2,
+            base::kPiDouble);
+  cairo_arc(cairo_context, radius, radius, radius, base::kPiDouble,
+            3 * base::kPiDouble / 2);
   cairo_close_path(cairo_context);
 }
 
@@ -141,7 +145,7 @@ DisconnectWindowGtk::DisconnectWindowGtk()
 }
 
 DisconnectWindowGtk::~DisconnectWindowGtk() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (disconnect_window_) {
     gtk_widget_destroy(disconnect_window_);
@@ -151,7 +155,7 @@ DisconnectWindowGtk::~DisconnectWindowGtk() {
 
 void DisconnectWindowGtk::Start(
     const base::WeakPtr<ClientSessionControl>& client_session_control) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!client_session_control_.get());
   DCHECK(client_session_control.get());
   DCHECK(!disconnect_window_);
@@ -254,7 +258,7 @@ void DisconnectWindowGtk::Start(
 }
 
 void DisconnectWindowGtk::OnClicked(GtkButton* button) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (client_session_control_.get())
     client_session_control_->DisconnectSession(protocol::OK);
@@ -262,7 +266,7 @@ void DisconnectWindowGtk::OnClicked(GtkButton* button) {
 
 gboolean DisconnectWindowGtk::OnDelete(GtkWidget* window,
                                        GdkEvent* event) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (client_session_control_.get())
     client_session_control_->DisconnectSession(protocol::OK);
@@ -271,7 +275,7 @@ gboolean DisconnectWindowGtk::OnDelete(GtkWidget* window,
 
 gboolean DisconnectWindowGtk::OnConfigure(GtkWidget* widget,
                                           GdkEventConfigure* event) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Only generate bitmaps if the size has actually changed.
   if (event->width == current_width_ && event->height == current_height_)
@@ -327,7 +331,7 @@ gboolean DisconnectWindowGtk::OnDraw(GtkWidget* widget, cairo_t* cr) {
 #if GTK_MAJOR_VERSION == 2
   NOTREACHED();
 #endif
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   DrawBackground(cr, current_width_, current_height_);
   return FALSE;
@@ -335,7 +339,7 @@ gboolean DisconnectWindowGtk::OnDraw(GtkWidget* widget, cairo_t* cr) {
 
 gboolean DisconnectWindowGtk::OnButtonPress(GtkWidget* widget,
                                             GdkEventButton* event) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   gtk_window_begin_move_drag(GTK_WINDOW(disconnect_window_),
                              event->button,

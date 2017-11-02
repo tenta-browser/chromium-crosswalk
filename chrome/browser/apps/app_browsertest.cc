@@ -13,8 +13,10 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
@@ -601,6 +603,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppWithFileBrowserTest,
 // a handler accepts "".
 IN_PROC_BROWSER_TEST_F(PlatformAppWithFileBrowserTest,
                        LaunchWithFileEmptyExtension) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath test_file;
@@ -615,6 +618,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppWithFileBrowserTest,
 // a handler accepts *.
 IN_PROC_BROWSER_TEST_F(PlatformAppWithFileBrowserTest,
                        LaunchWithFileEmptyExtensionAcceptAny) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   base::FilePath test_file;
@@ -723,6 +727,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppWithFileBrowserTest, GetDisplayPath) {
 // Tests that the file is created if the file does not exist and the app has the
 // fileSystem.write permission.
 IN_PROC_BROWSER_TEST_F(PlatformAppWithFileBrowserTest, LaunchNewFile) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
   ASSERT_TRUE(RunPlatformAppTestWithFile(
@@ -747,9 +752,10 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, MutationEventsDisabled) {
   ASSERT_TRUE(RunPlatformAppTest("platform_apps/mutation_events")) << message_;
 }
 
-// This appears to be unreliable on linux.
+// This appears to be unreliable.
 // TODO(stevenjb): Investigate and enable
-#if defined(OS_LINUX) && !defined(USE_ASH)
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS) || defined(OS_WIN) || \
+    defined(OS_MACOSX)
 #define MAYBE_AppWindowRestoreState DISABLED_AppWindowRestoreState
 #else
 #define MAYBE_AppWindowRestoreState AppWindowRestoreState
@@ -933,11 +939,28 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest, ReloadRelaunches) {
   ASSERT_TRUE(extension);
   ASSERT_TRUE(GetFirstAppWindow());
 
-  // Now tell the app to reload itself
+  // Now tell the app to reload itself.
   ExtensionTestMessageListener launched_listener2("Launched", false);
   launched_listener.Reply("reload");
   ASSERT_TRUE(launched_listener2.WaitUntilSatisfied());
   ASSERT_TRUE(GetFirstAppWindow());
+}
+
+// Tests that reloading a component app loads its (lazy) background page.
+IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest,
+                       ComponentReloadLoadsLazyBackgroundPage) {
+  ExtensionTestMessageListener launched_listener("Launched", true);
+  const Extension* component_app = LoadExtensionAsComponentWithManifest(
+      test_data_dir_.AppendASCII("platform_apps")
+          .AppendASCII("component_reload"),
+      FILE_PATH_LITERAL("manifest.json"));
+  ASSERT_TRUE(component_app);
+  ASSERT_TRUE(launched_listener.WaitUntilSatisfied());
+
+  // Now tell the app to reload itself.
+  ExtensionTestMessageListener launched_listener2("Launched", false);
+  launched_listener.Reply("reload");
+  ASSERT_TRUE(launched_listener2.WaitUntilSatisfied());
 }
 
 namespace {
@@ -1033,7 +1056,7 @@ IN_PROC_BROWSER_TEST_F(PlatformAppBrowserTest,
 
   // Clear the registered events to ensure they are updated.
   extensions::EventRouter::Get(browser()->profile())
-      ->SetRegisteredEvents(extension->id(), std::set<std::string>());
+      ->ClearRegisteredEventsForTest(extension->id());
 
   DictionaryPrefUpdate update(extension_prefs->pref_service(),
                               extensions::pref_names::kExtensions);

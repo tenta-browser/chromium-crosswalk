@@ -30,7 +30,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/timer/elapsed_timer.h"
 #include "build/build_config.h"
@@ -181,8 +180,9 @@ class URLRequestExtensionJob : public net::URLRequestFileJob {
             request,
             network_delegate,
             base::FilePath(),
-            BrowserThread::GetBlockingPool()->GetTaskRunnerWithShutdownBehavior(
-                base::SequencedWorkerPool::SKIP_ON_SHUTDOWN)),
+            base::CreateTaskRunnerWithTraits(
+                {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                 base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
         verify_job_(verify_job),
         seek_position_(0),
         bytes_read_(0),
@@ -199,12 +199,18 @@ class URLRequestExtensionJob : public net::URLRequestFileJob {
   }
 
   void GetResponseInfo(net::HttpResponseInfo* info) override {
+    // Set the mime type for the request. We do this here (rather than when we
+    // build the rest of the headers) because the mime type is retrieved only
+    // after URLRequestFileJob::Start() is called. Using an accurate mime type
+    // is necessary at least for modules, which enforce strict mime type
+    // requirements.
+    std::string mime_type;
+    bool found_mime_type = GetMimeType(&mime_type);
+    if (found_mime_type)
+      response_info_.headers->AddHeader("Content-Type: " + mime_type);
+
     *info = response_info_;
   }
-
-  // This always returns 200 because a URLRequestExtensionJob will only get
-  // created in MaybeCreateJob() if the file exists.
-  int GetResponseCode() const override { return 200; }
 
   void Start() override {
     request_timer_.reset(new base::ElapsedTimer());
@@ -213,7 +219,7 @@ class URLRequestExtensionJob : public net::URLRequestFileJob {
 
     // Inherit task priority from the calling context.
     base::PostTaskWithTraitsAndReply(
-        FROM_HERE, base::TaskTraits().MayBlock(),
+        FROM_HERE, {base::MayBlock()},
         base::Bind(&ReadResourceFilePathAndLastModifiedTime, resource_,
                    directory_path_, base::Unretained(read_file_path),
                    base::Unretained(last_modified_time)),
@@ -286,6 +292,13 @@ class URLRequestExtensionJob : public net::URLRequestFileJob {
     if (request_timer_.get())
       UMA_HISTOGRAM_TIMES("ExtensionUrlRequest.Latency",
                           request_timer_->Elapsed());
+  }
+
+  bool CanAccessFile(const base::FilePath& original_path,
+                     const base::FilePath& absolute_path) override {
+    // The access checks for the file are performed before the job is
+    // created, so we should know that this is safe.
+    return true;
   }
 
   void OnFilePathAndLastModifiedTimeRead(base::FilePath* read_file_path,
@@ -612,7 +625,7 @@ net::HttpResponseHeaders* BuildHttpHeaders(
 std::unique_ptr<net::URLRequestJobFactory::ProtocolHandler>
 CreateExtensionProtocolHandler(bool is_incognito,
                                extensions::InfoMap* extension_info_map) {
-  return base::MakeUnique<ExtensionProtocolHandler>(is_incognito,
+  return std::make_unique<ExtensionProtocolHandler>(is_incognito,
                                                     extension_info_map);
 }
 

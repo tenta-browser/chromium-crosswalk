@@ -4,4 +4,17 @@
 
 #include "core/css/properties/CSSPropertyAPIWidthOrHeight.h"
 
-namespace blink {}  // namespace blink
+#include "core/css/parser/CSSPropertyParserHelpers.h"
+#include "core/css/properties/CSSPropertyLengthUtils.h"
+
+namespace blink {
+
+const CSSValue* CSSPropertyAPIWidthOrHeight::ParseSingleValue(
+    CSSParserTokenRange& range,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return CSSPropertyLengthUtils::ConsumeWidthOrHeight(
+      range, context, CSSPropertyParserHelpers::UnitlessQuirk::kAllow);
+}
+
+}  // namespace blink

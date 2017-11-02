@@ -68,7 +68,6 @@ class AlertIndicatorButton : public views::ImageButton,
   void OnMouseExited(const ui::MouseEvent& event) override;
   void OnMouseMoved(const ui::MouseEvent& event) override;
   void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
-  void OnPaint(gfx::Canvas* canvas) override;
 
   // views::ViewTargeterDelegate
   bool DoesIntersectRect(const View* target,
@@ -77,8 +76,9 @@ class AlertIndicatorButton : public views::ImageButton,
   // views::Button:
   void NotifyClick(const ui::Event& event) override;
 
-  // views::CustomButton:
+  // views::Button:
   bool IsTriggerableEvent(const ui::Event& event) override;
+  void PaintButtonContents(gfx::Canvas* canvas) override;
 
   // views::ImageButton:
   gfx::ImageSkia GetImageToPaint() override;

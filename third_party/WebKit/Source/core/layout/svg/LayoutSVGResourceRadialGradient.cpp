@@ -35,7 +35,7 @@ LayoutSVGResourceRadialGradient::~LayoutSVGResourceRadialGradient() {}
 bool LayoutSVGResourceRadialGradient::CollectGradientAttributes() {
   DCHECK(GetElement());
   attributes_wrapper_->Set(RadialGradientAttributes());
-  return toSVGRadialGradientElement(GetElement())
+  return ToSVGRadialGradientElement(GetElement())
       ->CollectGradientAttributes(MutableAttributes());
 }
 
@@ -65,7 +65,7 @@ float LayoutSVGResourceRadialGradient::FocalRadius(
       GetElement(), attributes.GradientUnits(), *attributes.Fr());
 }
 
-PassRefPtr<Gradient> LayoutSVGResourceRadialGradient::BuildGradient() const {
+RefPtr<Gradient> LayoutSVGResourceRadialGradient::BuildGradient() const {
   const RadialGradientAttributes& attributes = this->Attributes();
   RefPtr<Gradient> gradient = Gradient::CreateRadial(
       FocalPoint(attributes), FocalRadius(attributes), CenterPoint(attributes),
@@ -73,7 +73,7 @@ PassRefPtr<Gradient> LayoutSVGResourceRadialGradient::BuildGradient() const {
       PlatformSpreadMethodFromSVGType(attributes.SpreadMethod()),
       Gradient::ColorInterpolation::kUnpremultiplied);
   gradient->AddColorStops(attributes.Stops());
-  return gradient.Release();
+  return gradient;
 }
 
 }  // namespace blink

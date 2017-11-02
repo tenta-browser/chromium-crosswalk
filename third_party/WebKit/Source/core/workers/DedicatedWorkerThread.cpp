@@ -33,41 +33,38 @@
 
 #include <memory>
 #include "core/workers/DedicatedWorkerGlobalScope.h"
-#include "core/workers/InProcessWorkerObjectProxy.h"
+#include "core/workers/DedicatedWorkerObjectProxy.h"
+#include "core/workers/GlobalScopeCreationParams.h"
 #include "core/workers/WorkerBackingThread.h"
-#include "core/workers/WorkerThreadStartupData.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
 
 std::unique_ptr<DedicatedWorkerThread> DedicatedWorkerThread::Create(
-    PassRefPtr<WorkerLoaderProxy> worker_loader_proxy,
-    InProcessWorkerObjectProxy& worker_object_proxy,
-    double time_origin) {
-  return WTF::WrapUnique(new DedicatedWorkerThread(
-      std::move(worker_loader_proxy), worker_object_proxy, time_origin));
+    ThreadableLoadingContext* loading_context,
+    DedicatedWorkerObjectProxy& worker_object_proxy) {
+  return WTF::WrapUnique(
+      new DedicatedWorkerThread(loading_context, worker_object_proxy));
 }
 
 DedicatedWorkerThread::DedicatedWorkerThread(
-    PassRefPtr<WorkerLoaderProxy> worker_loader_proxy,
-    InProcessWorkerObjectProxy& worker_object_proxy,
-    double time_origin)
-    : WorkerThread(std::move(worker_loader_proxy), worker_object_proxy),
+    ThreadableLoadingContext* loading_context,
+    DedicatedWorkerObjectProxy& worker_object_proxy)
+    : WorkerThread(loading_context, worker_object_proxy),
       worker_backing_thread_(
           WorkerBackingThread::Create("DedicatedWorker Thread")),
-      worker_object_proxy_(worker_object_proxy),
-      time_origin_(time_origin) {}
+      worker_object_proxy_(worker_object_proxy) {}
 
 DedicatedWorkerThread::~DedicatedWorkerThread() {}
 
-WorkerOrWorkletGlobalScope* DedicatedWorkerThread::CreateWorkerGlobalScope(
-    std::unique_ptr<WorkerThreadStartupData> startup_data) {
-  return DedicatedWorkerGlobalScope::Create(this, std::move(startup_data),
-                                            time_origin_);
-}
-
 void DedicatedWorkerThread::ClearWorkerBackingThread() {
   worker_backing_thread_ = nullptr;
+}
+
+WorkerOrWorkletGlobalScope* DedicatedWorkerThread::CreateWorkerGlobalScope(
+    std::unique_ptr<GlobalScopeCreationParams> creation_params) {
+  return new DedicatedWorkerGlobalScope(std::move(creation_params), this,
+                                        time_origin_);
 }
 
 }  // namespace blink

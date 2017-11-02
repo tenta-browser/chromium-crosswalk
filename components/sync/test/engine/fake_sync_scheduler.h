@@ -23,16 +23,15 @@ class FakeSyncScheduler : public SyncScheduler {
 
   void Start(Mode mode, base::Time last_poll_time) override;
   void Stop() override;
-  void ScheduleLocalNudge(
-      ModelTypeSet types,
-      const tracked_objects::Location& nudge_location) override;
+  void ScheduleLocalNudge(ModelTypeSet types,
+                          const base::Location& nudge_location) override;
   void ScheduleLocalRefreshRequest(
       ModelTypeSet types,
-      const tracked_objects::Location& nudge_location) override;
+      const base::Location& nudge_location) override;
   void ScheduleInvalidationNudge(
       ModelType type,
       std::unique_ptr<InvalidationInterface> interface,
-      const tracked_objects::Location& nudge_location) override;
+      const base::Location& nudge_location) override;
   void ScheduleConfiguration(const ConfigurationParams& params) override;
   void ScheduleClearServerData(const ClearParams& params) override;
 
@@ -47,7 +46,7 @@ class FakeSyncScheduler : public SyncScheduler {
   void OnTypesThrottled(ModelTypeSet types,
                         const base::TimeDelta& throttle_duration) override;
   void OnTypesBackedOff(ModelTypeSet types) override;
-  bool IsCurrentlyThrottled() override;
+  bool IsAnyThrottleOrBackoff() override;
   void OnReceivedShortPollIntervalUpdate(
       const base::TimeDelta& new_interval) override;
   void OnReceivedLongPollIntervalUpdate(

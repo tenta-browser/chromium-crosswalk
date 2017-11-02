@@ -39,6 +39,7 @@ const char kInsetsLeftKey[] = "insets_left";
 const char kInsetsBottomKey[] = "insets_bottom";
 const char kInsetsRightKey[] = "insets_right";
 
+const char kTouchCalibrationMap[] = "touch_calibration_map";
 const char kTouchCalibrationWidth[] = "touch_calibration_width";
 const char kTouchCalibrationHeight[] = "touch_calibration_height";
 const char kTouchCalibrationPointPairs[] = "touch_calibration_point_pairs";
@@ -122,6 +123,29 @@ bool ValueToTouchData(const base::DictionaryValue& value,
   return true;
 }
 
+bool ValueToTouchDataMap(
+    const base::DictionaryValue& value,
+    std::map<uint32_t, display::TouchCalibrationData>* touch_calibration_map) {
+  const base::DictionaryValue* map_dictionary;
+
+  if (!value.GetDictionary(kTouchCalibrationMap, &map_dictionary))
+    return false;
+
+  for (const auto& data_pair : *map_dictionary) {
+    uint32_t touch_device_identifier;
+    if (!base::StringToUint(data_pair.first, &touch_device_identifier))
+      return false;
+    const base::DictionaryValue* data_dict;
+    if (!data_pair.second->GetAsDictionary(&data_dict))
+      return false;
+    display::TouchCalibrationData data;
+    if (!ValueToTouchData(*data_dict, &data))
+      return false;
+    touch_calibration_map->emplace(touch_device_identifier, data);
+  }
+  return true;
+}
+
 // Stores the touch calibration data into the dictionary.
 void TouchDataToValue(
     const display::TouchCalibrationData& touch_calibration_data,
@@ -151,35 +175,23 @@ void TouchDataToValue(
                     touch_calibration_data.bounds.height());
 }
 
-std::string ColorProfileToString(display::ColorCalibrationProfile profile) {
-  switch (profile) {
-    case display::COLOR_PROFILE_STANDARD:
-      return "standard";
-    case display::COLOR_PROFILE_DYNAMIC:
-      return "dynamic";
-    case display::COLOR_PROFILE_MOVIE:
-      return "movie";
-    case display::COLOR_PROFILE_READING:
-      return "reading";
-    case display::NUM_COLOR_PROFILES:
-      break;
-  }
-  NOTREACHED();
-  return "";
-}
+// Stores the entire touch calibration data map to the dictionary.
+void TouchDataMapToValue(
+    const std::map<uint32_t, display::TouchCalibrationData>& touch_data_map,
+    base::DictionaryValue* value) {
+  std::unique_ptr<base::DictionaryValue> touch_data_map_dictionary =
+      std::make_unique<base::DictionaryValue>();
 
-display::ColorCalibrationProfile StringToColorProfile(
-    const std::string& value) {
-  if (value == "standard")
-    return display::COLOR_PROFILE_STANDARD;
-  else if (value == "dynamic")
-    return display::COLOR_PROFILE_DYNAMIC;
-  else if (value == "movie")
-    return display::COLOR_PROFILE_MOVIE;
-  else if (value == "reading")
-    return display::COLOR_PROFILE_READING;
-  NOTREACHED();
-  return display::COLOR_PROFILE_STANDARD;
+  for (const auto& pair : touch_data_map) {
+    std::unique_ptr<base::DictionaryValue> touch_data_dictionary =
+        std::make_unique<base::DictionaryValue>();
+    TouchDataToValue(pair.second, touch_data_dictionary.get());
+
+    touch_data_map_dictionary->SetDictionary(base::UintToString(pair.first),
+                                             std::move(touch_data_dictionary));
+  }
+  value->SetDictionary(kTouchCalibrationMap,
+                       std::move(touch_data_map_dictionary));
 }
 
 display::DisplayManager* GetDisplayManager() {
@@ -268,19 +280,39 @@ void LoadDisplayProperties() {
     if (ValueToInsets(*dict_value, &insets))
       insets_to_set = &insets;
 
+    // Retrive any legacy touch calibration data.
     display::TouchCalibrationData calibration_data;
     display::TouchCalibrationData* calibration_data_to_set = nullptr;
     if (ValueToTouchData(*dict_value, &calibration_data))
       calibration_data_to_set = &calibration_data;
 
-    display::ColorCalibrationProfile color_profile =
-        display::COLOR_PROFILE_STANDARD;
-    std::string color_profile_name;
-    if (dict_value->GetString("color_profile_name", &color_profile_name))
-      color_profile = StringToColorProfile(color_profile_name);
+    std::map<uint32_t, display::TouchCalibrationData> calibration_data_map;
+    std::map<uint32_t, display::TouchCalibrationData>*
+        calibration_data_map_to_set = nullptr;
+    if (ValueToTouchDataMap(*dict_value, &calibration_data_map))
+      calibration_data_map_to_set = &calibration_data_map;
+
+    // Migrate legacy touch calibration data to updated model. Use it as a
+    // fallback mechanism.
+    if (calibration_data_to_set) {
+      const uint32_t fallback_identifier =
+          display::TouchCalibrationData::GetFallbackTouchDeviceIdentifier();
+      // Store the legacy cailbration data in the calibration data map if we
+      // have a non-null calibration data map with no previous fallback
+      // calibration data stored in it.
+      if (calibration_data_map_to_set &&
+          calibration_data_map_to_set->count(fallback_identifier) == 0) {
+        (*calibration_data_map_to_set)[fallback_identifier] =
+            *calibration_data_to_set;
+      } else {
+        calibration_data_map[fallback_identifier] = *calibration_data_to_set;
+        calibration_data_map_to_set = &calibration_data_map;
+      }
+    }
+
     GetDisplayManager()->RegisterDisplayProperty(
         id, rotation, ui_scale, insets_to_set, resolution_in_pixels,
-        device_scale_factor, color_profile, calibration_data_to_set);
+        device_scale_factor, calibration_data_map_to_set);
   }
 }
 
@@ -303,6 +335,7 @@ void LoadDisplayRotationState() {
 
 void StoreDisplayLayoutPref(const display::DisplayIdList& list,
                             const display::DisplayLayout& display_layout) {
+  DCHECK(display::DisplayLayout::Validate(list, display_layout));
   std::string name = display::DisplayIdListToString(list);
 
   PrefService* local_state = g_browser_process->local_state();
@@ -328,6 +361,15 @@ void StoreCurrentDisplayLayoutPrefs() {
   display::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
   const display::DisplayLayout& display_layout =
       display_manager->layout_store()->GetRegisteredDisplayLayout(list);
+
+  if (!display::DisplayLayout::Validate(list, display_layout)) {
+    // We should never apply an invalid layout, if we do, it persists and the
+    // user has no way of fixing it except by deleting the local state.
+    LOG(ERROR) << "Attempting to store an invalid display layout in the local"
+               << " state. Skipping.";
+    return;
+  }
+
   StoreDisplayLayoutPref(list, display_layout);
 }
 
@@ -367,12 +409,20 @@ void StoreCurrentDisplayProperties() {
     }
     if (!info.overscan_insets_in_dip().IsEmpty())
       InsetsToValue(info.overscan_insets_in_dip(), property_value.get());
-    if (info.color_profile() != display::COLOR_PROFILE_STANDARD) {
-      property_value->SetString(
-          "color_profile_name", ColorProfileToString(info.color_profile()));
+
+    if (info.touch_calibration_data_map().size()) {
+      TouchDataMapToValue(info.touch_calibration_data_map(),
+                          property_value.get());
+
+      // Ensure that the legacy data is still stored just in case.
+      uint32_t fallback_identifier =
+          display::TouchCalibrationData::GetFallbackTouchDeviceIdentifier();
+      if (info.HasTouchCalibrationData(fallback_identifier)) {
+        TouchDataToValue(info.GetTouchCalibrationData(fallback_identifier),
+                         property_value.get());
+      }
     }
-    if (info.has_touch_calibration_data())
-      TouchDataToValue(info.GetTouchCalibrationData(), property_value.get());
+
     pref_data->Set(base::Int64ToString(id), std::move(property_value));
   }
 }

@@ -8,7 +8,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/tracked_objects.h"
 #include "components/sync/driver/sync_service.h"
 #include "components/sync/engine/configure_reason.h"
 #include "components/sync/protocol/sync.pb.h"
@@ -68,11 +67,6 @@ void BackendMigrator::MigrateTypes(ModelTypeSet types) {
 
 void BackendMigrator::AddMigrationObserver(MigrationObserver* observer) {
   migration_observers_.AddObserver(observer);
-}
-
-bool BackendMigrator::HasMigrationObserver(
-    const MigrationObserver* observer) const {
-  return migration_observers_.HasObserver(observer);
 }
 
 void BackendMigrator::RemoveMigrationObserver(MigrationObserver* observer) {

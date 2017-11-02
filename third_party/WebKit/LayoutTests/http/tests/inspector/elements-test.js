@@ -104,36 +104,22 @@ InspectorTest.findNode = function(matchFunction, callback)
             callback(null);
     }
 
-    InspectorTest.domModel.requestDocument(documentRequested.bind(this));
-    function documentRequested(doc)
-    {
+    InspectorTest.domModel.requestDocument(doc => {
         pendingRequests++;
         doc.getChildNodes(processChildren.bind(null, doc));
-    }
+    });
 };
 
 InspectorTest.nodeWithId = function(idValue, callback)
 {
-    function nodeIdMatches(node)
-    {
-        return node.getAttribute("id") === idValue;
-    }
-    InspectorTest.findNode(nodeIdMatches, callback);
+    InspectorTest.findNode(node => node.getAttribute("id") === idValue, callback);
 }
 
-InspectorTest.querySelector = function(selector, callback)
+InspectorTest.querySelector = async function(selector, callback)
 {
-    InspectorTest.domModel.requestDocument(documentRequested.bind(this));
-
-    function documentRequested(doc)
-    {
-        InspectorTest.domModel.querySelector(doc.id, selector, nodeSelected);
-    }
-
-    function nodeSelected(nodeId)
-    {
-        callback(InspectorTest.domModel.nodeForId(nodeId));
-    }
+    var doc = await InspectorTest.domModel.requestDocumentPromise();
+    var nodeId = await InspectorTest.domModel.querySelector(doc.id, selector);
+    callback(InspectorTest.domModel.nodeForId(nodeId));
 }
 
 InspectorTest.shadowRootByHostId = function(idValue, callback)
@@ -158,11 +144,7 @@ InspectorTest.nodeWithClass = function(classValue, callback)
 InspectorTest.expandedNodeWithId = function(idValue)
 {
     var result;
-    function callback(node)
-    {
-        result = node;
-    }
-    InspectorTest.nodeWithId(idValue, callback);
+    InspectorTest.nodeWithId(idValue, node => result = node);
     return result;
 }
 
@@ -299,7 +281,7 @@ InspectorTest.filterMatchedStyles = function(text)
 {
     var regex = text ? new RegExp(text, "i") : null;
     InspectorTest.addResult("Filtering styles by: " + text);
-    UI.panels.elements._stylesWidget.onFilterChanged(regex);
+    UI.panels.elements._stylesWidget._onFilterChanged(regex);
 }
 
 InspectorTest.dumpRenderedMatchedStyles = function()
@@ -766,7 +748,7 @@ InspectorTest.generateUndoTest = function(testBody)
                     InspectorTest.addResult("== Expanded: ==");
                     InspectorTest.dumpElementsTree(testNode);
                 }
-                InspectorTest.domModel.undo(redo);
+                InspectorTest.domModel.undo().then(redo);
             }
         }
 
@@ -782,7 +764,7 @@ InspectorTest.generateUndoTest = function(testBody)
                     InspectorTest.addResult("== Expanded: ==");
                     InspectorTest.dumpElementsTree(testNode);
                 }
-                InspectorTest.domModel.redo(done);
+                InspectorTest.domModel.redo().then(done);
             }
         }
 
@@ -948,7 +930,7 @@ InspectorTest.addNewRuleInStyleSheet = function(styleSheetHeader, selector, call
 InspectorTest.addNewRule = function(selector, callback)
 {
     // Click "Add new rule".
-    document.querySelector(".styles-pane-toolbar").shadowRoot.querySelector(".largeicon-add").click();
+    UI.panels.elements._stylesWidget.contentElement.querySelector(".styles-pane-toolbar").shadowRoot.querySelector(".largeicon-add").click();
     InspectorTest.addSniffer(Elements.StylesSidebarPane.prototype, "_addBlankSection", onBlankSection.bind(null, selector, callback));
 }
 
@@ -965,13 +947,9 @@ InspectorTest.dumpInspectorHighlightJSON = function(idValue, callback)
 {
     InspectorTest.nodeWithId(idValue, nodeResolved);
 
-    function nodeResolved(node)
+    async function nodeResolved(node)
     {
-        InspectorTest.DOMAgent.getHighlightObjectForTest(node.id, report);
-    }
-
-    function report(error, result)
-    {
+        var result = await InspectorTest.OverlayAgent.getHighlightObjectForTest(node.id);
         InspectorTest.addResult(idValue + JSON.stringify(result, null, 2));
         callback();
     }

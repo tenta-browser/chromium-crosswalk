@@ -32,8 +32,6 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
-#include "chrome/browser/lifetime/keep_alive_registry.h"
-#include "chrome/browser/lifetime/keep_alive_types.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -55,8 +53,11 @@
 #include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/keep_alive_registry/keep_alive_registry.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "components/startup_metric_utils/browser/startup_metric_utils.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/constants.h"
@@ -153,7 +154,7 @@ void BackgroundModeManager::BackgroundModeData::BuildProfileMenu(
       DCHECK_LT(command_id, IDC_MinimumLabelValue);
       command_id_handler_vector_->push_back(
           base::Bind(&BackgroundModeManager::LaunchBackgroundApplication,
-                     profile_, application.get()));
+                     profile_, base::RetainedRef(application)));
       menu->AddItem(command_id, base::UTF8ToUTF16(name));
       if (icon)
         menu->SetIcon(menu->GetItemCount() - 1, gfx::Image(*icon));
@@ -286,6 +287,7 @@ BackgroundModeManager::BackgroundModeManager(
       in_background_mode_(false),
       keep_alive_for_test_(false),
       background_mode_suspended_(false),
+      task_runner_(CreateTaskRunner()),
       weak_factory_(this) {
   // We should never start up if there is no browser process or if we are
   // currently quitting.
@@ -643,7 +645,6 @@ void BackgroundModeManager::ExecuteCommand(int command_id, int event_flags) {
         chrome::ShowAboutChrome(bmd->GetBrowserWindow());
       } else {
         UserManager::Show(base::FilePath(),
-                          profiles::USER_MANAGER_NO_TUTORIAL,
                           profiles::USER_MANAGER_SELECT_PROFILE_ABOUT_CHROME);
       }
       break;
@@ -653,7 +654,6 @@ void BackgroundModeManager::ExecuteCommand(int command_id, int event_flags) {
         chrome::OpenTaskManager(bmd->GetBrowserWindow());
       } else {
         UserManager::Show(base::FilePath(),
-                          profiles::USER_MANAGER_NO_TUTORIAL,
                           profiles::USER_MANAGER_SELECT_PROFILE_TASK_MANAGER);
       }
       break;
@@ -682,7 +682,6 @@ void BackgroundModeManager::ExecuteCommand(int command_id, int event_flags) {
         bmd->ExecuteCommand(command_id, event_flags);
       } else {
         UserManager::Show(base::FilePath(),
-                          profiles::USER_MANAGER_NO_TUTORIAL,
                           profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION);
       }
       break;
@@ -705,8 +704,8 @@ void BackgroundModeManager::ReleaseStartupKeepAlive() {
     // alive by the browser process until after the callback is called.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&BackgroundModeManager::ReleaseStartupKeepAliveCallback,
-                   base::Unretained(this)));
+        base::BindOnce(&BackgroundModeManager::ReleaseStartupKeepAliveCallback,
+                       base::Unretained(this)));
   }
 }
 
@@ -716,6 +715,8 @@ void BackgroundModeManager::StartBackgroundMode() {
   // or if background mode is disabled.
   if (in_background_mode_)
     return;
+
+  startup_metric_utils::SetBackgroundModeEnabled();
 
   // Mark ourselves as running in background mode.
   in_background_mode_ = true;

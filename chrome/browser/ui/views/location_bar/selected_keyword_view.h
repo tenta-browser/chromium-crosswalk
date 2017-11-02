@@ -33,13 +33,15 @@ class SelectedKeywordView : public IconLabelBubbleView {
   SkColor GetTextColor() const override;
 
   // views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   gfx::Size GetMinimumSize() const override;
   void Layout() override;
 
   // The current keyword, or an empty string if no keyword is displayed.
   void SetKeyword(const base::string16& keyword);
   const base::string16& keyword() const { return keyword_; }
+
+  using IconLabelBubbleView::label;
 
  private:
   // IconLabelBubbleView:

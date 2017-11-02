@@ -31,9 +31,11 @@ class RtcDtmfSenderHandler::Observer :
   ~Observer() override {}
 
   void OnToneChange(const std::string& tone) override {
-    main_thread_->PostTask(FROM_HERE,
-        base::Bind(&RtcDtmfSenderHandler::Observer::OnToneChangeOnMainThread,
-                   this, tone));
+    main_thread_->PostTask(
+        FROM_HERE,
+        base::BindOnce(
+            &RtcDtmfSenderHandler::Observer::OnToneChangeOnMainThread, this,
+            tone));
   }
 
   void OnToneChangeOnMainThread(const std::string& tone) {
@@ -57,6 +59,7 @@ RtcDtmfSenderHandler::RtcDtmfSenderHandler(DtmfSenderInterface* dtmf_sender)
 }
 
 RtcDtmfSenderHandler::~RtcDtmfSenderHandler() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DVLOG(1) << "::dtor";
   dtmf_sender_->UnregisterObserver();
   // Release |observer| before |weak_factory_| is destroyed.

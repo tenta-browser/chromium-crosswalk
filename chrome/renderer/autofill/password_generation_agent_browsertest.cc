@@ -11,6 +11,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/renderer/autofill/fake_content_password_manager_driver.h"
 #include "chrome/renderer/autofill/fake_password_manager_client.h"
 #include "chrome/renderer/autofill/password_generation_test_utils.h"
@@ -20,6 +21,7 @@
 #include "components/autofill/content/renderer/test_password_generation_agent.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/password_generation_util.h"
+#include "components/password_manager/core/common/password_manager_features.h"
 #include "content/public/common/associated_interface_provider.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
@@ -91,13 +93,7 @@ class PasswordGenerationAgentTest : public ChromeRenderViewTest {
                                  bool available) {
     FocusField(element_id);
     base::RunLoop().RunUntilIdle();
-    fake_pw_client_.Flush();
-    bool called = fake_pw_client_.called_show_pw_generation_popup();
-    if (available)
-      ASSERT_TRUE(called);
-    else
-      ASSERT_FALSE(called);
-
+    ASSERT_EQ(available, GetCalledShowPasswordGenerationPopup());
     fake_pw_client_.reset_called_show_pw_generation_popup();
   }
 
@@ -130,21 +126,32 @@ class PasswordGenerationAgentTest : public ChromeRenderViewTest {
     password_generation_->UserTriggeredGeneratePassword();
   }
 
+  void SelectGenerationFallback(const char* element_id) {
+    FocusField(element_id);
+    password_generation_->UserSelectedManualGenerationOption();
+  }
+
   void BindPasswordManagerDriver(mojo::ScopedMessagePipeHandle handle) {
     fake_driver_.BindRequest(
-        mojo::MakeRequest<mojom::PasswordManagerDriver>(std::move(handle)));
+        mojom::PasswordManagerDriverRequest(std::move(handle)));
   }
 
   void BindPasswordManagerClient(mojo::ScopedInterfaceEndpointHandle handle) {
     fake_pw_client_.BindRequest(
-        mojo::MakeAssociatedRequest<mojom::PasswordManagerClient>(
-            std::move(handle)));
+        mojom::PasswordManagerClientAssociatedRequest(std::move(handle)));
+  }
+
+  void SetManualGenerationFallback() {
+    scoped_feature_list_.InitAndEnableFeature(
+        password_manager::features::kEnableManualFallbacksGeneration);
   }
 
   FakeContentPasswordManagerDriver fake_driver_;
   FakePasswordManagerClient fake_pw_client_;
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+
   DISALLOW_COPY_AND_ASSIGN(PasswordGenerationAgentTest);
 };
 
@@ -250,6 +257,18 @@ const char kNewPasswordAutocompleteAttributeFormHTML[] =
     "  <INPUT type = 'submit' value = 'LOGIN' />"
     "</FORM>";
 
+const char kCurrentAndNewPasswordAutocompleteAttributeFormHTML[] =
+    "<FORM name = 'blah' action = 'http://www.random.com/'> "
+    "  <INPUT type = 'password' id = 'old_password' "
+    "         autocomplete='current-password'/>"
+    "  <INPUT type = 'password' id = 'new_password' "
+    "         autocomplete='new-password'/>"
+    "  <INPUT type = 'password' id = 'confirm_password' "
+    "         autocomplete='new-password'/>"
+    "  <INPUT type = 'button' id = 'dummy'/> "
+    "  <INPUT type = 'submit' value = 'LOGIN' />"
+    "</FORM>";
+
 const char kPasswordChangeFormHTML[] =
     "<FORM name = 'ChangeWithUsernameForm' action = 'http://www.bidule.com'> "
     "  <INPUT type = 'text' id = 'username'/> "
@@ -313,12 +332,13 @@ TEST_F(PasswordGenerationAgentTest, FillTest) {
   // Make sure that we are enabled before loading HTML.
   std::string html =
       std::string(kAccountCreationFormHTML) + events_registration_script;
-  LoadHTMLWithUserGesture(html.c_str());
-  SetNotBlacklistedMessage(password_generation_, html.c_str());
-  SetAccountCreationFormsDetectedMessage(password_generation_,
-                                         GetMainFrame()->GetDocument(), 0, 1);
-
+  // Begin with no gesture and therefore no focused element.
+  LoadHTML(html.c_str());
   WebDocument document = GetMainFrame()->GetDocument();
+  ASSERT_TRUE(document.FocusedElement().IsNull());
+  SetNotBlacklistedMessage(password_generation_, html.c_str());
+  SetAccountCreationFormsDetectedMessage(password_generation_, document, 0, 1);
+
   WebElement element =
       document.GetElementById(WebString::FromUTF8("first_password"));
   ASSERT_FALSE(element.IsNull());
@@ -606,21 +626,27 @@ TEST_F(PasswordGenerationAgentTest, AutocompleteAttributesTest) {
   LoadHTMLWithUserGesture(kBothAutocompleteAttributesFormHTML);
   SetNotBlacklistedMessage(password_generation_,
                            kBothAutocompleteAttributesFormHTML);
-
   ExpectGenerationAvailable("first_password", true);
 
-  // Only setting one of the two attributes doesn't trigger generation.
+  // Only username autocomplete attribute enabled doesn't trigger generation.
   LoadHTMLWithUserGesture(kUsernameAutocompleteAttributeFormHTML);
   SetNotBlacklistedMessage(password_generation_,
                            kUsernameAutocompleteAttributeFormHTML);
-
   ExpectGenerationAvailable("first_password", false);
 
+  // Only new-password autocomplete attribute enabled does trigger generation.
   LoadHTMLWithUserGesture(kNewPasswordAutocompleteAttributeFormHTML);
   SetNotBlacklistedMessage(password_generation_,
                            kNewPasswordAutocompleteAttributeFormHTML);
+  ExpectGenerationAvailable("first_password", true);
 
-  ExpectGenerationAvailable("first_password", false);
+  // Generation is triggered if the form has only password fields.
+  LoadHTMLWithUserGesture(kCurrentAndNewPasswordAutocompleteAttributeFormHTML);
+  SetNotBlacklistedMessage(password_generation_,
+                           kCurrentAndNewPasswordAutocompleteAttributeFormHTML);
+  ExpectGenerationAvailable("old_password", false);
+  ExpectGenerationAvailable("new_password", true);
+  ExpectGenerationAvailable("confirm_password", false);
 }
 
 TEST_F(PasswordGenerationAgentTest, ChangePasswordFormDetectionTest) {
@@ -811,6 +837,19 @@ TEST_F(PasswordGenerationAgentTest, JavascriptClearedTheField) {
   FocusField(kGenerationElementId);
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(fake_driver_.called_password_no_longer_generated());
+}
+
+TEST_F(PasswordGenerationAgentTest, GenerationFallbackTest) {
+  SetManualGenerationFallback();
+  LoadHTMLWithUserGesture(kAccountCreationFormHTML);
+  WebDocument document = GetMainFrame()->GetDocument();
+  WebElement element =
+      document.GetElementById(WebString::FromUTF8("first_password"));
+  ASSERT_FALSE(element.IsNull());
+  WebInputElement first_password_element = element.To<WebInputElement>();
+  EXPECT_TRUE(first_password_element.Value().IsNull());
+  SelectGenerationFallback("first_password");
+  EXPECT_TRUE(first_password_element.Value().IsNull());
 }
 
 }  // namespace autofill

@@ -30,12 +30,11 @@ ComputedStyle* SVGElementRareData::OverrideComputedStyle(
     // animation sandwhich model.
     override_computed_style_ =
         element->GetDocument().EnsureStyleResolver().StyleForElement(
-            element, parent_style, parent_style, kDisallowStyleSharing,
-            kMatchAllRulesExcludingSMIL);
+            element, parent_style, parent_style, kMatchAllRulesExcludingSMIL);
     needs_override_computed_style_update_ = false;
   }
   DCHECK(override_computed_style_);
-  return override_computed_style_.Get();
+  return override_computed_style_.get();
 }
 
 DEFINE_TRACE(SVGElementRareData) {

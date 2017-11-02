@@ -30,6 +30,7 @@
 #include <memory>
 #include "core/dom/SynchronousMutationObserver.h"
 #include "core/editing/CaretDisplayItemClient.h"
+#include "core/editing/PositionWithAffinity.h"
 #include "platform/graphics/PaintInvalidationReason.h"
 
 namespace blink {
@@ -51,8 +52,7 @@ class DragCaret final : public GarbageCollectedFinalized<DragCaret>,
   void ClearPreviousVisualRect(const LayoutBlock&);
   void LayoutBlockWillBeDestroyed(const LayoutBlock&);
   void UpdateStyleAndLayoutIfNeeded();
-  void InvalidatePaintIfNeeded(const LayoutBlock&,
-                               const PaintInvalidatorContext&);
+  void InvalidatePaint(const LayoutBlock&, const PaintInvalidatorContext&);
 
   bool ShouldPaintCaret(const LayoutBlock&) const;
   void PaintDragCaret(const LocalFrame*,

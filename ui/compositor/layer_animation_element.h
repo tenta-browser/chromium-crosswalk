@@ -14,6 +14,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "cc/animation/animation.h"
+#include "cc/trees/target_property.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/gfx/animation/tween.h"
@@ -45,10 +46,11 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
     BRIGHTNESS = (1 << 4),
     GRAYSCALE = (1 << 5),
     COLOR = (1 << 6),
+    TEMPERATURE = (1 << 7),
 
     // Used when iterating over properties.
     FIRST_PROPERTY = TRANSFORM,
-    SENTINEL = (1 << 7)
+    SENTINEL = (1 << 8)
   };
 
   static AnimatableProperty ToAnimatableProperty(
@@ -66,6 +68,7 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
     float brightness;
     float grayscale;
     SkColor color;
+    float temperature;
   };
 
   typedef uint32_t AnimatableProperties;
@@ -74,6 +77,9 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
                         base::TimeDelta duration);
 
   virtual ~LayerAnimationElement();
+
+  static std::string AnimatablePropertiesToString(
+      AnimatableProperties properties);
 
   // Creates an element that transitions to the given transform. The caller owns
   // the return value.
@@ -135,6 +141,12 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
       SkColor color,
       base::TimeDelta duration);
 
+  // Creates an element that transitions to the given color temperature. The
+  // caller owns the return value.
+  static std::unique_ptr<LayerAnimationElement> CreateTemperatureElement(
+      float temperature,
+      base::TimeDelta duration);
+
   // Sets the start time for the animation. This must be called before the first
   // call to {Start, IsFinished}. Once the animation is finished, this must
   // be called again in order to restart the animation.
@@ -157,7 +169,7 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
   void Start(LayerAnimationDelegate* delegate, int animation_group_id);
 
   // Returns true if the animation has started but hasn't finished.
-  bool Started() { return !first_frame_; }
+  bool Started() const { return !first_frame_; }
 
   // Updates the delegate to the appropriate value for |now|. Returns true
   // if a redraw is required.
@@ -183,7 +195,7 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
   AnimatableProperties properties() const { return properties_; }
 
   // Whether this element animates on the compositor thread.
-  virtual bool IsThreaded() const;
+  virtual bool IsThreaded(LayerAnimationDelegate* delegate) const;
 
   gfx::Tween::Type tween_type() const { return tween_type_; }
   void set_tween_type(gfx::Tween::Type tween_type) { tween_type_ = tween_type; }
@@ -205,7 +217,11 @@ class COMPOSITOR_EXPORT LayerAnimationElement {
   // call made to {Progress, ProgressToEnd}.
   double last_progressed_fraction() const { return last_progressed_fraction_; }
 
+  std::string ToString() const;
+
  protected:
+  virtual std::string DebugName() const;
+
   // Called once each time the animation element is run before any call to
   // OnProgress.
   virtual void OnStart(LayerAnimationDelegate* delegate) = 0;

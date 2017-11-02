@@ -32,6 +32,7 @@ class UserAddingScreenImpl : public UserAddingScreen {
   void RemoveObserver(Observer* observer) override;
 
   static UserAddingScreenImpl* GetInstance();
+
  private:
   friend struct base::DefaultSingletonTraits<UserAddingScreenImpl>;
 
@@ -50,9 +51,8 @@ void UserAddingScreenImpl::Start() {
   CHECK(!IsRunning());
   gfx::Rect screen_bounds(chromeos::CalculateScreenBounds(gfx::Size()));
   display_host_ = new chromeos::LoginDisplayHostImpl(screen_bounds);
-  display_host_->StartUserAdding(
-      base::Bind(&UserAddingScreenImpl::OnDisplayHostCompletion,
-                 base::Unretained(this)));
+  display_host_->StartUserAdding(base::BindOnce(
+      &UserAddingScreenImpl::OnDisplayHostCompletion, base::Unretained(this)));
 
   session_manager::SessionManager::Get()->SetSessionState(
       session_manager::SessionState::LOGIN_SECONDARY);
@@ -102,11 +102,9 @@ UserAddingScreenImpl* UserAddingScreenImpl::GetInstance() {
 }
 
 UserAddingScreenImpl::UserAddingScreenImpl()
-    : display_host_(NULL), im_controller_(this) {
-}
+    : display_host_(NULL), im_controller_(this) {}
 
-UserAddingScreenImpl::~UserAddingScreenImpl() {
-}
+UserAddingScreenImpl::~UserAddingScreenImpl() {}
 
 }  // anonymous namespace
 

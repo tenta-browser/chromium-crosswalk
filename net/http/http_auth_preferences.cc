@@ -2,25 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/strings/string_split.h"
-#include "net/http/http_auth_filter.h"
 #include "net/http/http_auth_preferences.h"
+
+#include "base/strings/string_split.h"
+#include "build/build_config.h"
+#include "net/http/http_auth_filter.h"
 #include "net/http/url_security_manager.h"
 
 namespace net {
 
 HttpAuthPreferences::HttpAuthPreferences(
     const std::vector<std::string>& auth_schemes
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
     ,
     const std::string& gssapi_library_name
+#endif
+#if defined(OS_CHROMEOS)
+    ,
+    bool allow_gssapi_library_load
 #endif
     )
     : auth_schemes_(auth_schemes.begin(), auth_schemes.end()),
       negotiate_disable_cname_lookup_(false),
       negotiate_enable_port_(false),
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
       gssapi_library_name_(gssapi_library_name),
+#endif
+#if defined(OS_CHROMEOS)
+      allow_gssapi_library_load_(allow_gssapi_library_load),
 #endif
       security_manager_(URLSecurityManager::Create()) {
 }
@@ -44,9 +53,14 @@ std::string HttpAuthPreferences::AuthAndroidNegotiateAccountType() const {
   return auth_android_negotiate_account_type_;
 }
 #endif
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
 std::string HttpAuthPreferences::GssapiLibraryName() const {
   return gssapi_library_name_;
+}
+#endif
+#if defined(OS_CHROMEOS)
+bool HttpAuthPreferences::AllowGssapiLibraryLoad() const {
+  return allow_gssapi_library_load_;
 }
 #endif
 

@@ -25,7 +25,10 @@
 #define SimpleFontData_h
 
 #include <SkPaint.h>
+
 #include <memory>
+
+#include "build/build_config.h"
 #include "platform/PlatformExport.h"
 #include "platform/fonts/CustomFontData.h"
 #include "platform/fonts/FontBaseline.h"
@@ -38,7 +41,7 @@
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/text/StringHash.h"
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
 #include "platform/fonts/GlyphMetricsMap.h"
 #endif
 
@@ -66,26 +69,26 @@ enum FontDataVariant {
 class PLATFORM_EXPORT SimpleFontData : public FontData {
  public:
   // Used to create platform fonts.
-  static PassRefPtr<SimpleFontData> Create(
+  static RefPtr<SimpleFontData> Create(
       const FontPlatformData& platform_data,
-      PassRefPtr<CustomFontData> custom_data = nullptr,
+      RefPtr<CustomFontData> custom_data = nullptr,
       bool is_text_orientation_fallback = false,
       bool subpixel_ascent_descent = false) {
-    return AdoptRef(new SimpleFontData(platform_data, std::move(custom_data),
-                                       is_text_orientation_fallback,
-                                       subpixel_ascent_descent));
+    return WTF::AdoptRef(new SimpleFontData(
+        platform_data, std::move(custom_data), is_text_orientation_fallback,
+        subpixel_ascent_descent));
   }
 
   const FontPlatformData& PlatformData() const { return platform_data_; }
   const OpenTypeVerticalData* VerticalData() const {
-    return vertical_data_.Get();
+    return vertical_data_.get();
   }
 
-  PassRefPtr<SimpleFontData> SmallCapsFontData(const FontDescription&) const;
-  PassRefPtr<SimpleFontData> EmphasisMarkFontData(const FontDescription&) const;
+  RefPtr<SimpleFontData> SmallCapsFontData(const FontDescription&) const;
+  RefPtr<SimpleFontData> EmphasisMarkFontData(const FontDescription&) const;
 
-  PassRefPtr<SimpleFontData> VariantFontData(const FontDescription& description,
-                                             FontDataVariant variant) const {
+  RefPtr<SimpleFontData> VariantFontData(const FontDescription& description,
+                                         FontDataVariant variant) const {
     switch (variant) {
       case kSmallCapsVariant:
         return SmallCapsFontData(description);
@@ -99,8 +102,8 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
     return const_cast<SimpleFontData*>(this);
   }
 
-  PassRefPtr<SimpleFontData> VerticalRightOrientationFontData() const;
-  PassRefPtr<SimpleFontData> UprightOrientationFontData() const;
+  RefPtr<SimpleFontData> VerticalRightOrientationFontData() const;
+  RefPtr<SimpleFontData> UprightOrientationFontData() const;
 
   bool HasVerticalGlyphs() const { return has_vertical_glyphs_; }
   bool IsTextOrientationFallback() const {
@@ -117,6 +120,11 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
   float InternalLeading() const {
     return GetFontMetrics().FloatHeight() - PlatformData().size();
   }
+
+  // "em height" metrics.
+  // https://drafts.css-houdini.org/font-metrics-api-1/#fontmetrics
+  LayoutUnit EmHeightAscent(FontBaseline = kAlphabeticBaseline) const;
+  LayoutUnit EmHeightDescent(FontBaseline = kAlphabeticBaseline) const;
 
   float MaxCharWidth() const { return max_char_width_; }
   void SetMaxCharWidth(float max_char_width) {
@@ -145,7 +153,7 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
 
   Glyph GlyphForCharacter(UChar32) const;
 
-  bool IsCustomFont() const override { return custom_font_data_.Get(); }
+  bool IsCustomFont() const override { return custom_font_data_.get(); }
   bool IsLoading() const override {
     return custom_font_data_ ? custom_font_data_->IsLoading() : false;
   }
@@ -162,7 +170,7 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
     missing_glyph_data_ = glyph_data;
   }
 
-  CustomFontData* GetCustomFontData() const { return custom_font_data_.Get(); }
+  CustomFontData* GetCustomFontData() const { return custom_font_data_.get(); }
 
   unsigned VisualOverflowInflationForAscent() const {
     return visual_overflow_inflation_for_ascent_;
@@ -173,19 +181,22 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
 
  protected:
   SimpleFontData(const FontPlatformData&,
-                 PassRefPtr<CustomFontData> custom_data,
+                 RefPtr<CustomFontData> custom_data,
                  bool is_text_orientation_fallback = false,
                  bool subpixel_ascent_descent = false);
 
   // Only used for testing.
-  SimpleFontData(const FontPlatformData&, PassRefPtr<OpenTypeVerticalData>);
+  SimpleFontData(const FontPlatformData&, RefPtr<OpenTypeVerticalData>);
 
  private:
   void PlatformInit(bool subpixel_ascent_descent);
   void PlatformGlyphInit();
 
-  PassRefPtr<SimpleFontData> CreateScaledFontData(const FontDescription&,
-                                                  float scale_factor) const;
+  RefPtr<SimpleFontData> CreateScaledFontData(const FontDescription&,
+                                              float scale_factor) const;
+
+  void ComputeEmHeightMetrics() const;
+  bool NormalizeEmHeightMetrics(float, float) const;
 
   FontMetrics font_metrics_;
   float max_char_width_;
@@ -231,18 +242,21 @@ class PLATFORM_EXPORT SimpleFontData : public FontData {
   unsigned visual_overflow_inflation_for_ascent_ : 2;
   unsigned visual_overflow_inflation_for_descent_ : 2;
 
+  mutable LayoutUnit em_height_ascent_;
+  mutable LayoutUnit em_height_descent_;
+
 // See discussion on crbug.com/631032 and Skiaissue
 // https://bugs.chromium.org/p/skia/issues/detail?id=5328 :
 // On Mac we're still using path based glyph metrics, and they seem to be
 // too slow to be able to remove the caching layer we have here.
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   mutable std::unique_ptr<GlyphMetricsMap<FloatRect>> glyph_to_bounds_map_;
   mutable GlyphMetricsMap<float> glyph_to_width_map_;
 #endif
 };
 
 ALWAYS_INLINE FloatRect SimpleFontData::BoundsForGlyph(Glyph glyph) const {
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   return PlatformBoundsForGlyph(glyph);
 #else
   FloatRect bounds_result;
@@ -262,7 +276,7 @@ ALWAYS_INLINE FloatRect SimpleFontData::BoundsForGlyph(Glyph glyph) const {
 }
 
 ALWAYS_INLINE float SimpleFontData::WidthForGlyph(Glyph glyph) const {
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   return PlatformWidthForGlyph(glyph);
 #else
   float width = glyph_to_width_map_.MetricsForGlyph(glyph);

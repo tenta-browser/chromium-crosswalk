@@ -12,9 +12,8 @@
 namespace arc {
 
 // Please keep alphabetized.
-extern const base::Feature kArcUseAuthEndpointFeature;
 extern const base::Feature kBootCompletedBroadcastFeature;
-extern const base::Feature kShowArcFilesAppFeature;
+extern const base::Feature kNativeBridgeExperimentFeature;
 
 }  // namespace arc
 

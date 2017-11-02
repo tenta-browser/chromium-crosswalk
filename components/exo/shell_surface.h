@@ -6,18 +6,20 @@
 #define COMPONENTS_EXO_SHELL_SURFACE_H_
 
 #include <cstdint>
-#include <deque>
 #include <memory>
 #include <string>
 
 #include "ash/wm/window_state_observer.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "base/strings/string16.h"
-#include "components/exo/surface_delegate.h"
 #include "components/exo/surface_observer.h"
+#include "components/exo/surface_tree_host.h"
 #include "components/exo/wm_helper.h"
-#include "ui/aura/window_observer.h"
 #include "ui/base/hit_test.h"
+#include "ui/compositor/compositor_lock.h"
+#include "ui/display/display_observer.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -36,21 +38,27 @@ class TracedValue;
 }
 }
 
+namespace ui {
+class CompositorLock;
+}  // namespace ui
+
 namespace exo {
 class Surface;
+
+enum class Orientation { PORTRAIT, LANDSCAPE };
 
 // This class provides functions for treating a surfaces like toplevel,
 // fullscreen or popup widgets, move, resize or maximize them, associate
 // metadata like title and class, etc.
-class ShellSurface : public SurfaceDelegate,
+class ShellSurface : public SurfaceTreeHost,
                      public SurfaceObserver,
                      public views::WidgetDelegate,
                      public views::View,
+                     public display::DisplayObserver,
                      public ash::wm::WindowStateObserver,
-                     public aura::WindowObserver,
                      public WMHelper::ActivationObserver,
-                     public WMHelper::AccessibilityObserver,
-                     public WMHelper::DisplayConfigurationObserver {
+                     public WMHelper::DisplayConfigurationObserver,
+                     public ui::CompositorLockClient {
  public:
   enum class BoundsMode { SHELL, CLIENT, FIXED };
 
@@ -87,8 +95,8 @@ class ShellSurface : public SurfaceDelegate,
 
   // Set the callback to run when the surface state changed.
   using StateChangedCallback =
-      base::Callback<void(ash::wm::WindowStateType old_state_type,
-                          ash::wm::WindowStateType new_state_type)>;
+      base::Callback<void(ash::mojom::WindowStateType old_state_type,
+                          ash::mojom::WindowStateType new_state_type)>;
   void set_state_changed_callback(
       const StateChangedCallback& state_changed_callback) {
     state_changed_callback_ = state_changed_callback;
@@ -100,7 +108,7 @@ class ShellSurface : public SurfaceDelegate,
   // in steps of NxM pixels).
   using ConfigureCallback =
       base::Callback<uint32_t(const gfx::Size& size,
-                              ash::wm::WindowStateType state_type,
+                              ash::mojom::WindowStateType state_type,
                               bool resizing,
                               bool activated,
                               const gfx::Vector2d& origin_offset)>;
@@ -138,8 +146,14 @@ class ShellSurface : public SurfaceDelegate,
   // Sets whether or not the shell surface should autohide the system UI.
   void SetSystemUiVisibility(bool autohide);
 
-  // Set title for surface.
+  // Set whether the surface is always on top.
+  void SetAlwaysOnTop(bool always_on_top);
+
+  // Set title for the surface.
   void SetTitle(const base::string16& title);
+
+  // Set icon for the surface.
+  void SetIcon(const gfx::ImageSkia& icon);
 
   // Sets the system modality.
   void SetSystemModal(bool system_modal);
@@ -147,7 +161,7 @@ class ShellSurface : public SurfaceDelegate,
   // Sets the application ID for the window. The application ID identifies the
   // general class of applications to which the window belongs.
   static void SetApplicationId(aura::Window* window, const std::string& id);
-  static const std::string GetApplicationId(aura::Window* window);
+  static const std::string* GetApplicationId(aura::Window* window);
 
   // Set the application ID for the surface.
   void SetApplicationId(const std::string& application_id);
@@ -168,24 +182,11 @@ class ShellSurface : public SurfaceDelegate,
   // for the surface from the user's perspective.
   void SetGeometry(const gfx::Rect& geometry);
 
-  // Enable/disable rectangular shadow that uses the widget bounds as a content
-  // bounds.
-  void SetRectangularShadowEnabled(bool enabled);
+  // Set orientation for surface.
+  void SetOrientation(Orientation orientation);
 
-  // [Deprecated] Set the content bounds for the shadow. Shell surface geometry
-  // will be
-  // used if bounds are empty.
-  void SetRectangularShadow_DEPRECATED(const gfx::Rect& content_bounds);
-
-  // Set the content bounds for the shadow in the surface's coordinates.
-  // Setting empty bounds will disable the shadow.
-  void SetRectangularSurfaceShadow(const gfx::Rect& content_bounds);
-
-  // Set the pacity of the background for the window that has a shadow.
-  void SetRectangularShadowBackgroundOpacity(float opacity);
-
-  // Enable/disable window frame.
-  void SetFrame(bool enabled);
+  // Set shadow bounds in surface coordinates. Empty bounds disable the shadow.
+  void SetShadowBounds(const gfx::Rect& bounds);
 
   // Set scale factor for surface. The scale factor will be applied to surface
   // and all descendants.
@@ -215,7 +216,7 @@ class ShellSurface : public SurfaceDelegate,
 
   // Overridden from SurfaceDelegate:
   void OnSurfaceCommit() override;
-  bool IsSurfaceSynchronized() const override;
+  void OnSetFrame(SurfaceFrameType type) override;
 
   // Overridden from SurfaceObserver:
   void OnSurfaceDestroying(Surface* surface) override;
@@ -225,6 +226,7 @@ class ShellSurface : public SurfaceDelegate,
   bool CanMaximize() const override;
   bool CanMinimize() const override;
   base::string16 GetWindowTitle() const override;
+  gfx::ImageSkia GetWindowIcon() override;
   void SaveWindowPlacement(const gfx::Rect& bounds,
                            ui::WindowShowState show_state) override;
   bool GetSavedWindowPlacement(const views::Widget* widget,
@@ -240,19 +242,24 @@ class ShellSurface : public SurfaceDelegate,
   void GetWidgetHitTestMask(gfx::Path* mask) const override;
 
   // Overridden from views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   gfx::Size GetMinimumSize() const override;
 
   // Overridden from ash::wm::WindowStateObserver:
-  void OnPreWindowStateTypeChange(ash::wm::WindowState* window_state,
-                                  ash::wm::WindowStateType old_type) override;
-  void OnPostWindowStateTypeChange(ash::wm::WindowState* window_state,
-                                   ash::wm::WindowStateType old_type) override;
+  void OnPreWindowStateTypeChange(
+      ash::wm::WindowState* window_state,
+      ash::mojom::WindowStateType old_type) override;
+  void OnPostWindowStateTypeChange(
+      ash::wm::WindowState* window_state,
+      ash::mojom::WindowStateType old_type) override;
 
   // Overridden from aura::WindowObserver:
   void OnWindowBoundsChanged(aura::Window* window,
                              const gfx::Rect& old_bounds,
                              const gfx::Rect& new_bounds) override;
+  void OnWindowAddedToRootWindow(aura::Window* window) override;
+  void OnWindowRemovingFromRootWindow(aura::Window* window,
+                                      aura::Window* new_root) override;
   void OnWindowDestroying(aura::Window* window) override;
 
   // Overridden from WMHelper::ActivationObserver:
@@ -260,34 +267,30 @@ class ShellSurface : public SurfaceDelegate,
       aura::Window* gained_active,
       aura::Window* lost_active) override;
 
-  // Overridden from WMHelper::AccessibilityObserver:
-  void OnAccessibilityModeChanged() override;
-
   // Overridden from WMHelper::DisplayConfigurationObserver:
   void OnDisplayConfigurationChanged() override;
 
   // Overridden from ui::EventHandler:
   void OnKeyEvent(ui::KeyEvent* event) override;
   void OnMouseEvent(ui::MouseEvent* event) override;
+  void OnGestureEvent(ui::GestureEvent* event) override;
 
   // Overridden from ui::AcceleratorTarget:
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
 
-  aura::Window* shadow_overlay() { return shadow_overlay_.get(); }
-  aura::Window* shadow_underlay() { return shadow_underlay_.get(); }
+  // Overridden from display::DisplayObserver:
+  void OnDisplayMetricsChanged(const display::Display& display,
+                               uint32_t changed_metrics) override;
 
-  Surface* surface_for_testing() { return surface_; }
+  // Overridden from ui::CompositorLockClient:
+  void CompositorLockTimedOut() override;
+
+  Surface* surface_for_testing() { return root_surface(); }
 
  private:
+  struct Config;
   class ScopedConfigure;
   class ScopedAnimationsDisabled;
-
-  // Surface state associated with each configure request.
-  struct Config {
-    uint32_t serial;
-    gfx::Vector2d origin_offset;
-    int resize_component;
-  };
 
   // Creates the |widget_| for |surface_|. |show_state| is the initial state
   // of the widget (e.g. maximized).
@@ -297,7 +300,7 @@ class ShellSurface : public SurfaceDelegate,
   void Configure();
 
   // Returns the window that has capture during dragging.
-  aura::Window* GetDragWindow() const;
+  aura::Window* GetDragWindow();
 
   // Attempt to start a drag operation. The type of drag operation to start is
   // determined by |component|.
@@ -329,11 +332,20 @@ class ShellSurface : public SurfaceDelegate,
   // Applies |system_modal_| to |widget_|.
   void UpdateSystemModal();
 
+  // Updates the backdrop state of the shell surface based on the
+  // bounds mode and window state.
+  void UpdateBackdrop();
+
   // In the coordinate system of the parent root window.
   gfx::Point GetMouseLocation() const;
 
+  // Lock the compositor if it's not already locked, or extends the
+  // lock timeout if it's already locked.
+  // TODO(reveman): Remove this when using configure callbacks for orientation.
+  // crbug.com/765954
+  void EnsureCompositorIsLockedForOrientationChange();
+
   views::Widget* widget_ = nullptr;
-  Surface* surface_;
   aura::Window* parent_;
   const BoundsMode bounds_mode_;
   int64_t primary_display_id_;
@@ -343,7 +355,6 @@ class ShellSurface : public SurfaceDelegate,
   // Container Window Id (see ash/public/cpp/shell_window_ids.h)
   int container_;
   bool frame_enabled_ = false;
-  bool shadow_enabled_ = false;
   bool pending_show_widget_ = false;
   base::string16 title_;
   std::string application_id_;
@@ -356,25 +367,28 @@ class ShellSurface : public SurfaceDelegate,
   StateChangedCallback state_changed_callback_;
   ConfigureCallback configure_callback_;
   ScopedConfigure* scoped_configure_ = nullptr;
+  std::unique_ptr<ui::CompositorLock> configure_compositor_lock_;
   bool ignore_window_bounds_changes_ = false;
   gfx::Vector2d origin_offset_;
   gfx::Vector2d pending_origin_offset_;
   gfx::Vector2d pending_origin_offset_accumulator_;
   int resize_component_ = HTCAPTION;  // HT constant (see ui/base/hit_test.h)
   int pending_resize_component_ = HTCAPTION;
-  std::unique_ptr<aura::Window> shadow_overlay_;
-  std::unique_ptr<aura::Window> shadow_underlay_;
-  std::unique_ptr<ui::EventHandler> shadow_underlay_event_handler_;
-  gfx::Rect shadow_content_bounds_;
-  float shadow_background_opacity_ = 1.0;
-  std::deque<Config> pending_configs_;
+  base::Optional<gfx::Rect> shadow_bounds_;
+  bool shadow_bounds_changed_ = false;
+  base::circular_deque<std::unique_ptr<Config>> pending_configs_;
   std::unique_ptr<ash::WindowResizer> resizer_;
   std::unique_ptr<ScopedAnimationsDisabled> scoped_animations_disabled_;
   int top_inset_height_ = 0;
   int pending_top_inset_height_ = 0;
-  bool shadow_underlay_in_surface_ = true;
-  bool pending_shadow_underlay_in_surface_ = true;
+  // TODO(reveman): Use configure callbacks for orientation. crbug.com/765954
+  Orientation pending_orientation_ = Orientation::LANDSCAPE;
+  Orientation orientation_ = Orientation::LANDSCAPE;
+  Orientation expected_orientation_ = Orientation::LANDSCAPE;
+  std::unique_ptr<ui::CompositorLock> orientation_compositor_lock_;
   bool system_modal_ = false;
+  bool non_system_modal_window_was_active_ = false;
+  gfx::ImageSkia icon_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellSurface);
 };

@@ -5,7 +5,8 @@
 // https://notifications.spec.whatwg.org/#service-worker-api
 
 [
-    RuntimeEnabled=Notifications,
+    ImplementedAs=ServiceWorkerGlobalScopeNotifications,
+    RuntimeEnabled=Notifications
 ] partial interface ServiceWorkerGlobalScope {
     attribute EventHandler onnotificationclick;
     attribute EventHandler onnotificationclose;

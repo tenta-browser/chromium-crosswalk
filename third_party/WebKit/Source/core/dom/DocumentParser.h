@@ -26,6 +26,7 @@
 
 #include <memory>
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 
@@ -38,12 +39,15 @@ class ScriptableDocumentParser;
 class TextResourceDecoder;
 
 class CORE_EXPORT DocumentParser
-    : public GarbageCollectedFinalized<DocumentParser> {
+    : public GarbageCollectedFinalized<DocumentParser>,
+      public TraceWrapperBase {
  public:
   virtual ~DocumentParser();
   DECLARE_VIRTUAL_TRACE();
 
-  virtual ScriptableDocumentParser* AsScriptableDocumentParser() { return 0; }
+  virtual ScriptableDocumentParser* AsScriptableDocumentParser() {
+    return nullptr;
+  }
 
   // http://www.whatwg.org/specs/web-apps/current-work/#insertion-point
   virtual bool HasInsertionPoint() { return true; }

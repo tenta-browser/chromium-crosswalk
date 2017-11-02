@@ -12,11 +12,10 @@
 #include "base/files/file.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
-#include "cc/paint/paint_canvas.h"
 #include "cc/paint/paint_record.h"
 #include "cc/paint/paint_recorder.h"
+#include "cc/paint/skia_paint_canvas.h"
 #include "printing/print_settings.h"
-#include "third_party/skia/include/core/SkDocument.h"
 #include "third_party/skia/include/core/SkStream.h"
 // Note that headers in third_party/skia/src are fragile.  This is
 // an experimental, fragile, and diagnostic-only document type.
@@ -43,35 +42,6 @@ bool WriteAssetToBuffer(const SkStreamAsset* asset,
   if (length > size)
     return false;
   return (length == assetCopy->read(buffer, length));
-}
-
-SkTime::DateTime TimeToSkTime(base::Time time) {
-  base::Time::Exploded exploded;
-  time.UTCExplode(&exploded);
-  SkTime::DateTime skdate;
-  skdate.fTimeZoneMinutes = 0;
-  skdate.fYear = exploded.year;
-  skdate.fMonth = exploded.month;
-  skdate.fDayOfWeek = exploded.day_of_week;
-  skdate.fDay = exploded.day_of_month;
-  skdate.fHour = exploded.hour;
-  skdate.fMinute = exploded.minute;
-  skdate.fSecond = exploded.second;
-  return skdate;
-}
-
-sk_sp<SkDocument> MakePdfDocument(SkWStream* wStream) {
-  SkDocument::PDFMetadata metadata;
-  SkTime::DateTime now = TimeToSkTime(base::Time::Now());
-  metadata.fCreation.fEnabled = true;
-  metadata.fCreation.fDateTime = now;
-  metadata.fModified.fEnabled = true;
-  metadata.fModified.fDateTime = now;
-  const std::string& agent = printing::GetAgent();
-  metadata.fCreator = agent.empty() ? SkString("Chromium")
-                                    : SkString(agent.c_str(), agent.size());
-  return SkDocument::MakePDF(wStream, SK_ScalarDefaultRasterDPI, metadata,
-                             nullptr, false);
 }
 
 }  // namespace
@@ -191,10 +161,10 @@ bool PdfMetafileSkia::FinishDocument() {
   SkDynamicMemoryWStream stream;
   sk_sp<SkDocument> doc;
   switch (data_->type_) {
-    case PDF_SKIA_DOCUMENT_TYPE:
-      doc = MakePdfDocument(&stream);
+    case SkiaDocumentType::PDF:
+      doc = MakePdfDocument(printing::GetAgent(), &stream);
       break;
-    case MSKP_SKIA_DOCUMENT_TYPE:
+    case SkiaDocumentType::MSKP:
       doc = SkMakeMultiPictureDocument(&stream);
       break;
   }
@@ -238,20 +208,20 @@ unsigned int PdfMetafileSkia::GetPageCount() const {
   return base::checked_cast<unsigned int>(data_->pages_.size());
 }
 
-skia::NativeDrawingContext PdfMetafileSkia::context() const {
+printing::NativeDrawingContext PdfMetafileSkia::context() const {
   NOTREACHED();
   return nullptr;
 }
 
 
 #if defined(OS_WIN)
-bool PdfMetafileSkia::Playback(skia::NativeDrawingContext hdc,
+bool PdfMetafileSkia::Playback(printing::NativeDrawingContext hdc,
                                const RECT* rect) const {
   NOTREACHED();
   return false;
 }
 
-bool PdfMetafileSkia::SafePlayback(skia::NativeDrawingContext hdc) const {
+bool PdfMetafileSkia::SafePlayback(printing::NativeDrawingContext hdc) const {
   NOTREACHED();
   return false;
 }

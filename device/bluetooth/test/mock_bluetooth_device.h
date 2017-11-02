@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/queue.h"
 #include "base/optional.h"
 #include "base/strings/string16.h"
 #include "device/bluetooth/bluetooth_common.h"
@@ -58,6 +59,10 @@ class MockBluetoothDevice : public BluetoothDevice {
   MOCK_CONST_METHOD0(ExpectingPasskey, bool());
   MOCK_CONST_METHOD0(ExpectingConfirmation, bool());
   MOCK_METHOD1(GetConnectionInfo, void(const ConnectionInfoCallback& callback));
+  MOCK_METHOD3(SetConnectionLatency,
+               void(ConnectionLatency connection_latency,
+                    const base::Closure& callback,
+                    const ErrorCallback& error_callback));
   MOCK_METHOD3(Connect,
                void(BluetoothDevice::PairingDelegate* pairing_delegate,
                     const base::Closure& callback,
@@ -134,7 +139,7 @@ class MockBluetoothDevice : public BluetoothDevice {
   bool connected_;
 
   // Used by tests to save callbacks that will be run in the future.
-  std::queue<base::Closure> pending_callbacks_;
+  base::queue<base::Closure> pending_callbacks_;
 
   std::vector<std::unique_ptr<MockBluetoothGattService>> mock_services_;
 };

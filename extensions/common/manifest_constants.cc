@@ -32,6 +32,8 @@ const char kConvertedFromUserScript[] = "converted_from_user_script";
 const char kCss[] = "css";
 const char kCtrlKey[] = "ctrlKey";
 const char kCurrentLocale[] = "current_locale";
+const char kDeclarativeNetRequestKey[] = "declarative_net_request";
+const char kDeclarativeRuleResourcesKey[] = "rule_resources";
 const char kDefaultLocale[] = "default_locale";
 const char kDescription[] = "description";
 const char kDevToolsPage[] = "devtools_page";
@@ -188,6 +190,8 @@ const char kWebviewPartitions[] = "partitions";
 const char kWhitelist[] = "whitelist";
 #if defined(OS_CHROMEOS)
 const char kActionHandlers[] = "action_handlers";
+const char kActionHandlerActionKey[] = "action";
+const char kActionHandlerEnabledOnLockScreenKey[] = "enabled_on_lock_screen";
 const char kFileSystemProviderCapabilities[] =
     "file_system_provider_capabilities";
 #endif
@@ -289,12 +293,15 @@ const char kCannotClaimAllURLsInExtent[] =
     "Cannot claim all URLs in an extent.";
 const char kCannotScriptGallery[] =
     "The extensions gallery cannot be scripted.";
+const char kCannotScriptNtp[] = "The New Tab Page cannot be scripted.";
 const char kCannotScriptSigninPage[] =
     "The sign-in page cannot be scripted.";
 const char kChromeVersionTooLow[] =
     "This extension requires * version * or greater.";
-const char kDisabledByPolicy[] =
-    "This extension has been disabled by your administrator.";
+const char kDeclarativeNetRequestPermissionNeeded[] =
+    "The extension requires '*' permission for the '*' manifest key.";
+const char kDeclarativeNetRequestListNotPassed[] =
+    "Declarative Net Request: Ruleset must be a list.";
 const char kExpectString[] = "Expect string value.";
 const char kFileNotFound[] = "File not found: *.";
 const char kInvalidAboutPage[] = "Invalid value for 'about_page'.";
@@ -354,6 +361,10 @@ const char kInvalidCss[] =
     "Invalid value for 'content_scripts[*].css[*]'.";
 const char kInvalidCssList[] =
     "Required value 'content_scripts[*].css' is invalid.";
+const char kInvalidDeclarativeNetRequestKey[] = "Invalid value for '*' key";
+const char kInvalidDeclarativeRulesFileKey[] =
+    "Invalid value for '*.*' key. It must be a list containing a single "
+    "string.";
 const char kInvalidDefaultLocale[] =
     "Invalid value for default locale - locale name must be a string.";
 const char kInvalidDescription[] =
@@ -715,8 +726,6 @@ const char kMissingFile[] =
     "At least one js or css file is required for 'content_scripts[*]'.";
 const char kMultipleOverrides[] =
     "An extension cannot override more than one page.";
-const char kNoPermissionForMIMETypes[] =
-    "The extension is not allowed to use mime_types key.";
 const char kNoWildCardsInPaths[] =
   "Wildcards are not allowed in extent URL pattern paths.";
 const char kOneUISurfaceOnly[] =
@@ -731,18 +740,28 @@ const char kPermissionUnknownOrMalformed[] =
     "Permission '*' is unknown or URL pattern is malformed.";
 const char kReservedMessageFound[] =
     "Reserved key * found in message catalog.";
+const char kRulesFileIsInvalid[] =
+    "Invalid value for key '*.*': The provided path is invalid.";
 const char kUnrecognizedManifestKey[] = "Unrecognized manifest key '*'.";
 const char kUnrecognizedManifestProperty[] =
     "Unrecognized property '*' of manifest key '*'.";
+const char kUrlHandlersInHostedApps[] =
+    "'url_handlers' cannot be used in Hosted Apps.";
 const char kWebRequestConflictsWithLazyBackground[] =
     "The 'webRequest' API cannot be used with event pages.";
 #if defined(OS_CHROMEOS)
+const char kDuplicateActionHandlerFound[] =
+    "'action_handlers' list contains duplicate entries for the action: \"*\".";
 const char kIllegalPlugins[] =
     "Extensions cannot install plugins on Chrome OS.";
+const char kInvalidActionHandlerDictionary[] =
+    "Invalid action handler dictionary in 'action_handlers': 'action' key "
+    "missing.";
 const char kInvalidActionHandlersActionType[] =
     "Invalid entry in 'action_handlers': \"*\".";
 const char kInvalidActionHandlersType[] =
-    "Invalid value for 'action_handlers'. Value must be a list of strings.";
+    "Invalid value for 'action_handlers'. Value must be a list of strings or a "
+    "dictionary with 'action' key.";
 const char kInvalidFileSystemProviderMissingCapabilities[] =
     "The 'fileSystemProvider' permission requires the "
     "'file_system_provider_capabilities' section to be specified in the "

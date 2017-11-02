@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/views/ime_driver/input_method_bridge_chromeos.h"
 
+#include <utility>
+
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/views/ime_driver/remote_text_input_client.h"
 
@@ -11,7 +13,7 @@ InputMethodBridge::InputMethodBridge(
     std::unique_ptr<RemoteTextInputClient> client)
     : client_(std::move(client)),
       input_method_chromeos_(
-          base::MakeUnique<ui::InputMethodChromeOS>(nullptr)) {
+          base::MakeUnique<ui::InputMethodChromeOS>(client_.get())) {
   input_method_chromeos_->SetFocusedTextInputClient(client_.get());
 }
 
@@ -28,17 +30,15 @@ void InputMethodBridge::OnCaretBoundsChanged(const gfx::Rect& caret_bounds) {
   input_method_chromeos_->OnCaretBoundsChanged(client_.get());
 }
 
-void InputMethodBridge::ProcessKeyEvent(
-    std::unique_ptr<ui::Event> event,
-    const ProcessKeyEventCallback& callback) {
+void InputMethodBridge::ProcessKeyEvent(std::unique_ptr<ui::Event> event,
+                                        ProcessKeyEventCallback callback) {
   DCHECK(event->IsKeyEvent());
   ui::KeyEvent* key_event = event->AsKeyEvent();
   if (!key_event->is_char()) {
-    input_method_chromeos_->DispatchKeyEvent(
-        key_event, base::MakeUnique<base::Callback<void(bool)>>(callback));
+    input_method_chromeos_->DispatchKeyEvent(key_event, std::move(callback));
   } else {
     const bool handled = false;
-    callback.Run(handled);
+    std::move(callback).Run(handled);
   }
 }
 

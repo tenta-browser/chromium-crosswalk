@@ -7,14 +7,14 @@
 #include "core/css/CSSValueList.h"
 #include "core/css/parser/CSSParserContext.h"
 #include "core/css/parser/CSSPropertyParserHelpers.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPITextIndent::parseSingleValue(
+const CSSValue* CSSPropertyAPITextIndent::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   // [ <length> | <percentage> ] && hanging? && each-line?
   // Keywords only allowed when css3Text is enabled.
   CSSValueList* list = CSSValueList::CreateSpaceSeparated();
@@ -35,7 +35,7 @@ const CSSValue* CSSPropertyAPITextIndent::parseSingleValue(
       }
     }
 
-    if (RuntimeEnabledFeatures::css3TextEnabled()) {
+    if (RuntimeEnabledFeatures::CSS3TextEnabled()) {
       CSSValueID id = range.Peek().Id();
       if (!has_each_line && id == CSSValueEachLine) {
         list->Append(*CSSPropertyParserHelpers::ConsumeIdent(range));

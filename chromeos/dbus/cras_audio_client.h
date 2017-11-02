@@ -7,12 +7,16 @@
 
 #include <stdint.h>
 
+#include <string>
+#include <vector>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/audio_node.h"
 #include "chromeos/dbus/dbus_client.h"
+#include "chromeos/dbus/dbus_method_call_status.h"
 #include "chromeos/dbus/volume_state.h"
 
 namespace chromeos {
@@ -45,6 +49,9 @@ class CHROMEOS_EXPORT CrasAudioClient : public DBusClient {
     // Called when output node's volume changed.
     virtual void OutputNodeVolumeChanged(uint64_t node_id, int volume);
 
+    // Called when hotword is triggered.
+    virtual void HotwordTriggered(uint64_t tv_sec, uint64_t tv_nsec);
+
    protected:
     virtual ~Observer();
   };
@@ -63,6 +70,12 @@ class CHROMEOS_EXPORT CrasAudioClient : public DBusClient {
   // succeeded.
   typedef base::Callback<void(const VolumeState&, bool)> GetVolumeStateCallback;
 
+  // Used for GetDefaultOutputBufferSize method. The first argument is the
+  // default output buffer size. The second argument indicates whether the
+  // request succeeded. The first argument is valid only when the request
+  // succeeded.
+  typedef base::Callback<void(int, bool)> GetDefaultOutputBufferSizeCallback;
+
   // GetNodesCallback is used for GetNodes method. It receives 2 arguments,
   // |audio_nodes| which containing a list of audio nodes data and
   // |success| which indicates whether or not the request succeeded.
@@ -73,12 +86,13 @@ class CHROMEOS_EXPORT CrasAudioClient : public DBusClient {
   // contains the detailed dbus error message.
   typedef base::Callback<void(const std::string&,
                               const std::string&)> ErrorCallback;
-  // A callback for cras dbus method WaitForServiceToBeAvailable.
-  typedef base::Callback<void(bool service_is_ready)>
-      WaitForServiceToBeAvailableCallback;
 
   // Gets the volume state, asynchronously.
   virtual void GetVolumeState(const GetVolumeStateCallback& callback) = 0;
+
+  // Gets the default output buffer size in frames.
+  virtual void GetDefaultOutputBufferSize(
+      const GetDefaultOutputBufferSizeCallback& callback) = 0;
 
   // Gets an array of audio input and output nodes.
   virtual void GetNodes(const GetNodesCallback& callback,
@@ -136,7 +150,7 @@ class CHROMEOS_EXPORT CrasAudioClient : public DBusClient {
 
   // Runs the callback as soon as the service becomes available.
   virtual void WaitForServiceToBeAvailable(
-      const WaitForServiceToBeAvailableCallback& callback) = 0;
+      WaitForServiceToBeAvailableCallback callback) = 0;
 
   // Creates the instance.
   static CrasAudioClient* Create();

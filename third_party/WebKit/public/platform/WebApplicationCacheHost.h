@@ -42,7 +42,7 @@ class WebURLRequest;
 class WebURLResponse;
 
 // This interface is used by webkit to call out to the embedder. Webkit uses
-// the WebFrameClient::createApplicationCacheHost method to create instances,
+// the WebFrameClient::CreateApplicationCacheHost method to create instances,
 // and calls delete when the instance is no longer needed.
 class WebApplicationCacheHost {
  public:
@@ -78,6 +78,8 @@ class WebApplicationCacheHost {
     kPolicyError,
     kUnknownError
   };
+
+  static const int kAppCacheNoHostId = 0;
 
   virtual ~WebApplicationCacheHost() {}
 
@@ -134,6 +136,7 @@ class WebApplicationCacheHost {
   virtual void GetAssociatedCacheInfo(CacheInfo*) {}
   virtual void GetResourceList(WebVector<ResourceInfo>*) {}
   virtual void DeleteAssociatedCacheGroup() {}
+  virtual int GetHostID() const { return kAppCacheNoHostId; }
 };
 
 }  // namespace blink

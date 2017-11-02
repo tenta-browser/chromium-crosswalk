@@ -30,7 +30,7 @@
 #include "platform/fonts/FontDescription.h"
 #include "platform/fonts/FontVariantNumeric.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
@@ -42,7 +42,7 @@ class CORE_EXPORT FontBuilder {
   WTF_MAKE_NONCOPYABLE(FontBuilder);
 
  public:
-  FontBuilder(const Document&);
+  FontBuilder(const Document*);
 
   void SetInitial(float effective_zoom);
 
@@ -56,23 +56,28 @@ class CORE_EXPORT FontBuilder {
 
   float FontSizeForKeyword(unsigned keyword, bool is_monospace) const;
 
-  void SetWeight(FontWeight);
   void SetSize(const FontDescription::Size&);
   void SetSizeAdjust(const float aspect_value);
-  void SetStretch(FontStretch);
+
+  void SetStretch(FontSelectionValue);
+  void SetStyle(FontSelectionValue);
+  void SetWeight(FontSelectionValue);
+
   void SetFamilyDescription(const FontDescription::FamilyDescription&);
-  void SetFeatureSettings(PassRefPtr<FontFeatureSettings>);
-  void SetLocale(PassRefPtr<const LayoutLocale>);
-  void SetStyle(FontStyle);
+  void SetFeatureSettings(RefPtr<FontFeatureSettings>);
+  void SetLocale(RefPtr<const LayoutLocale>);
   void SetVariantCaps(FontDescription::FontVariantCaps);
+  void SetVariantEastAsian(const FontVariantEastAsian);
   void SetVariantLigatures(const FontDescription::VariantLigatures&);
   void SetVariantNumeric(const FontVariantNumeric&);
   void SetTextRendering(TextRenderingMode);
   void SetKerning(FontDescription::Kerning);
   void SetFontSmoothing(FontSmoothingMode);
-  void SetVariationSettings(PassRefPtr<FontVariationSettings>);
+  void SetVariationSettings(RefPtr<FontVariationSettings>);
 
   // FIXME: These need to just vend a Font object eventually.
+  void UpdateFontDescription(FontDescription&,
+                             FontOrientation = FontOrientation::kHorizontal);
   void CreateFont(FontSelector*, ComputedStyle&);
 
   void CreateFontForDocument(FontSelector*, ComputedStyle&);
@@ -95,6 +100,9 @@ class CORE_EXPORT FontBuilder {
   static FontDescription::FontVariantCaps InitialVariantCaps() {
     return FontDescription::kCapsNormal;
   }
+  static FontVariantEastAsian InitialVariantEastAsian() {
+    return FontVariantEastAsian();
+  };
   static FontDescription::VariantLigatures InitialVariantLigatures() {
     return FontDescription::VariantLigatures();
   }
@@ -102,19 +110,19 @@ class CORE_EXPORT FontBuilder {
     return FontVariantNumeric();
   };
   static LayoutLocale* InitialLocale() { return nullptr; }
-  static FontStyle InitialStyle() { return kFontStyleNormal; }
   static FontDescription::Kerning InitialKerning() {
     return FontDescription::kAutoKerning;
   }
   static FontSmoothingMode InitialFontSmoothing() { return kAutoSmoothing; }
-  static FontStretch InitialStretch() { return kFontStretchNormal; }
-  static FontWeight InitialWeight() { return kFontWeightNormal; }
+
+  static FontSelectionValue InitialStretch() { return NormalWidthValue(); }
+  static FontSelectionValue InitialStyle() { return NormalSlopeValue(); }
+  static FontSelectionValue InitialWeight() { return NormalWeightValue(); }
 
  private:
   void SetFamilyDescription(FontDescription&,
                             const FontDescription::FamilyDescription&);
   void SetSize(FontDescription&, const FontDescription::Size&);
-  void UpdateOrientation(FontDescription&, const ComputedStyle&);
   // This function fixes up the default font size if it detects that the current
   // generic font family has changed. -dwh
   void CheckForGenericFamilyChange(const FontDescription&, FontDescription&);
@@ -141,6 +149,7 @@ class CORE_EXPORT FontBuilder {
     kStyle,
     kSizeAdjust,
     kVariantCaps,
+    kVariantEastAsian,
     kVariantLigatures,
     kVariantNumeric,
     kVariationSettings,

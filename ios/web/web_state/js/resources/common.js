@@ -507,16 +507,8 @@ __gCrWeb['common'] = __gCrWeb.common;
    * @return {string} Web page URL with query and reference removed.
    */
   __gCrWeb.common.removeQueryAndReferenceFromURL = function(url) {
-    var queryIndex = url.indexOf('?');
-    if (queryIndex != -1) {
-      return url.substring(0, queryIndex);
-    }
-
-    var hashIndex = url.indexOf('#');
-    if (hashIndex != -1) {
-      return url.substring(0, hashIndex);
-    }
-    return url;
+    var parsed = new URL(url);
+    return parsed.origin + parsed.pathname;
   };
 
   /**
@@ -634,19 +626,6 @@ __gCrWeb['common'] = __gCrWeb.common;
         }
       }
     }
-    if (!hasFavicon) {
-      // If an HTTP(S)? webpage does not reference a "favicon" then search
-      // for a file named "favicon.ico" at the root of the website (legacy).
-      // http://en.wikipedia.org/wiki/Favicon
-      var location = document.location;
-      if (location.protocol == 'http:' || location.protocol == 'https:') {
-        var favicon = {
-          rel: 'icon',
-          href: location.origin + '/favicon.ico'
-        };
-        favicons.push(favicon);
-      }
-    }
     return favicons;
   };
 
@@ -715,5 +694,12 @@ __gCrWeb['common'] = __gCrWeb.common;
     }
     return false;
   };
+
+  /**
+   * Checks whether the two URLs are from the same origin.
+   */
+  __gCrWeb.common.isSameOrigin = function(url_one, url_two) {
+    return new URL(url_one).origin == new URL(url_two).origin;
+  }
 
 }());  // End of anonymous object

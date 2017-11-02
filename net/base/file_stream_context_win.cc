@@ -10,10 +10,10 @@
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/threading/worker_pool.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 
@@ -84,7 +84,7 @@ int FileStream::Context::Read(IOBuffer* buf,
   task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&FileStream::Context::ReadAsync, base::Unretained(this),
-                 file_.GetPlatformFile(), make_scoped_refptr(buf), buf_len,
+                 file_.GetPlatformFile(), base::WrapRefCounted(buf), buf_len,
                  &io_context_.overlapped, base::ThreadTaskRunnerHandle::Get()));
   return ERR_IO_PENDING;
 }

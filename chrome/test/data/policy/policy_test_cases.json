@@ -14,7 +14,7 @@
         "check_for_recommended": "Should the preference be tested when a recommended value is set for the policy? Defaults to |true| if not specified.",
         "note": "When |can_be_recommended| is |false|, the policy is never set to a recommended value so |check_for_recommended| has no effect.",
         "note": "The following entries should be specified if controlled setting indicators exist for |pref| in the settings UI.",
-        "indicator_test_url": "The URL to navigate to in order to test the indicators. Defaults to |chrome://settings-frame/| if not specified.",
+        "indicator_test_url": "The URL to navigate to in order to test the indicators. Defaults to |chrome://extensions-frame/| if not specified.",
         "indicator_test_setup_js": "Any JavaScript that should be executed before testing the indicators. This should be specified only if an explicit user action must be simulated (e.g. clicking a button).",
         "indicator_selector": "A CSS selector that locates all controlled setting indicators for |pref|. This is appended to the selector 'span.controlled-setting-indicator' and if not specified, defaults to '[pref=(the value of |pref|)', e.g. '[pref=homepage]'.",
         "note": "Any number of test cases may be specified in the following array.",
@@ -221,6 +221,9 @@
   "RemoteAccessHostClientDomain": {
   },
 
+  "RemoteAccessHostClientDomainList": {
+  },
+
   "RemoteAccessHostFirewallTraversal": {
   },
 
@@ -228,6 +231,9 @@
   },
 
   "RemoteAccessHostDomain": {
+  },
+
+  "RemoteAccessHostDomainList": {
   },
 
   "RemoteAccessHostTalkGadgetPrefix": {
@@ -310,6 +316,45 @@
     },
     "pref_mappings": [
       { "pref": "native_printing.recommended_printers" }
+    ]
+  },
+
+  "NativePrintersBulkConfiguration": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkConfiguration": {
+        "url": "https://example.com/policyfile",
+        "hash": "deadbeefdeadbeefdeadbeef"
+      }
+    }
+  },
+
+  "NativePrintersBulkAccessMode": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkAccessMode": 1
+    },
+    "pref_mappings": [
+      { "pref": "native_printing.recommended_printers_access_mode" }
+    ]
+  },
+
+  "NativePrintersBulkBlacklist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkBlacklist": ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "native_printing.recommended_printers_blacklist" }
+    ]
+  },
+  "NativePrintersBulkWhitelist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "NativePrintersBulkWhitelist":  ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "native_printing.recommended_printers_whitelist" }
     ]
   },
 
@@ -396,6 +441,19 @@
       { "pref": "autofill.enabled",
         "indicator_tests": [
           { "policy": { "AutoFillEnabled": false } }
+        ]
+      }
+    ]
+  },
+
+  "AutofillCreditCardEnabled": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "can_be_recommended": true,
+    "test_policy": { "AutofillCreditCardEnabled": false },
+    "pref_mappings": [
+      { "pref": "autofill.credit_card_enabled",
+        "indicator_tests": [
+          { "policy": { "AutofillCreditCardEnabled": false } }
         ]
       }
     ]
@@ -531,6 +589,24 @@
     "test_policy": { "MediaCacheSize": 200 },
     "pref_mappings": [
       { "pref": "browser.media_cache_size" }
+    ]
+  },
+
+  "DownloadRestrictions": {
+    "os": ["win", "mac", "linux", "chromeos"],
+    "can_be_recommended": true,
+    "test_policy": { "DownloadRestrictions": 3 },
+    "pref_mappings": [
+      { "pref": "download_restrictions" }
+    ]
+  },
+
+  "SafeBrowsingForTrustedSourcesEnabled": {
+    "os": ["win"],
+    "can_be_recommended": true,
+    "test_policy": { "SafeBrowsingForTrustedSourcesEnabled": false },
+    "pref_mappings": [
+      { "pref": "safebrowsing_for_trusted_sources_enabled" }
     ]
   },
 
@@ -1594,6 +1670,14 @@
     ]
   },
 
+  "RunAllFlashInAllowMode": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "RunAllFlashInAllowMode": true },
+    "pref_mappings": [
+      { "pref": "plugins.run_all_flash_in_allow_mode" }
+    ]
+  },
+
   "BookmarkBarEnabled": {
     "os": ["win", "linux", "mac", "chromeos"],
     "can_be_recommended": true,
@@ -1767,6 +1851,14 @@
     },
     "pref_mappings": [
       { "pref": "printing.default_destination_selection_rules" }
+    ]
+  },
+
+  "PrintPreviewUseSystemDefaultPrinter": {
+    "os": ["win", "mac", "linux"],
+    "test_policy": { "PrintPreviewUseSystemDefaultPrinter": false },
+    "pref_mappings": [
+      { "pref": "printing.use_system_default_printer" }
     ]
   },
 
@@ -2476,7 +2568,7 @@
           { "policy": { "ScreenMagnifierType": 1 } }
         ]
       },
-      { "pref": "settings.a11y.screen_magnifier_type2" }
+      { "pref": "settings.a11y.screen_magnifier" }
     ]
   },
 
@@ -2751,6 +2843,33 @@
       { "pref": "arc.status_reporting_enabled" }
     ]
   },
+
+  "InstantTetheringAllowed": {
+    "os": ["chromeos"],
+    "test_policy": { "InstantTetheringAllowed": false },
+    "pref_mappings": [
+      { "pref": "tether.allowed" }
+    ]
+  },
+
+  "EcryptfsMigrationStrategy": {
+    "os": ["chromeos"],
+    "test_policy": { "EcryptfsMigrationStrategy": 1 },
+    "pref_mappings": [
+      { "pref": "ecryptfs_migration_strategy" }
+    ]
+  },
+
+  "CloudPolicyOverridesMachinePolicy": {
+    "os": ["win", "linux", "mac"],
+    "test_policy": { "CloudPolicyOverridesMachinePolicy": false },
+    "pref_mappings": [
+      { "pref": "policy.cloud_override",
+        "local_state": true
+      }
+    ]
+  },
+
 
   "----- Chrome OS device policies ---------------------------------------": {},
 
@@ -3064,6 +3183,113 @@
     ]
   },
 
+  "BrowserNetworkTimeQueriesEnabled": {
+    "os": ["win", "linux", "mac", "chromeos"],
+    "test_policy": { "BrowserNetworkTimeQueriesEnabled": true },
+    "pref_mappings": [
+      { "pref": "network_time.network_time_queries_enabled",
+        "local_state": true
+      }
+    ]
+  },
+
+  "DeviceSecondFactorAuthentication": {
+    "os": ["chromeos"]
+  },
+
+  "DeviceEcryptfsMigrationStrategy": {
+    "note": "This policy is deprecated.",
+    "os": ["chromeos"]
+  },
+
+  "NoteTakingAppsLockScreenWhitelist": {
+    "os": ["chromeos"],
+    "test_policy": { "NoteTakingAppsLockScreenWhitelist": [] },
+    "pref_mappings": [
+      {"pref": "settings.note_taking_apps_lock_screen_whitelist"}
+    ]
+  },
+
+  "CastReceiverEnabled": {
+    "os": ["chromeos"],
+    "test_policy": { "CastReceiverEnabled": true },
+    "pref_mappings": [
+      { "pref": "cast_receiver.enabled" }
+    ]
+  },
+
+  "CastReceiverName": {
+    "os": ["chromeos"],
+    "test_policy": { "CastReceiverName": "Hallway" },
+    "pref_mappings": [
+      { "pref": "cast_receiver.name",
+        "local_state": true }
+    ]
+  },
+
+  "DeviceNativePrinters": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrinters": {
+        "url": "https://example.com/policyfile",
+        "hash": "deadbeefdeadbeefdeadbeef"
+      }
+    },
+    "pref_mappings": [{
+      "pref": "cros.device.printer_configurations",
+      "local_state": true
+    }]
+  },
+
+  "DeviceNativePrintersAccessMode": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrintersAccessMode": 1
+    },
+    "pref_mappings": [
+      { "pref": "cros.device.printers_access_mode" }
+    ]
+  },
+
+  "DeviceNativePrintersBlacklist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrintersBlacklist": ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "cros.device.printers_blacklist" }
+    ]
+  },
+  "DeviceNativePrintersWhitelist": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "DeviceNativePrintersWhitelist":  ["id4", "id7", "id10"]
+    },
+    "pref_mappings": [
+      { "pref": "cros.device.printers_whitelist" }
+    ]
+  },
+
+  "TPMFirmwareUpdateSettings": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "allow-user-initiated-powerwash": true
+    },
+    "pref_mappings": [
+      { "pref": "cros.tpm_firmware_update_settings" }
+    ]
+  },
+
+  "DeviceUserAvatarSettings": {
+    "os": ["chromeos"],
+    "test_policy": {
+      "allow-videos": true
+    },
+    "pref_mappings": [
+      { "pref": "cros.allow_user_avatar_videos"}
+    ]
+  },
+
   "----- Chrome Frame policies -------------------------------------------": {},
 
   "ChromeFrameRendererSettings": {
@@ -3088,5 +3314,10 @@
   },
 
   "SkipMetadataCheck": {
+  },
+
+  "DeviceOffHours": {
+    "os": ["chromeos"],
+    "test_policy": {"DeviceOffHours": {"intervals": [{"start" : {"day_of_week" : 1, "time": 12840000}, "end": {"day_of_week" : 1, "time": 21720000}}], "timezone" : "GMT", "ignored_policy_proto_tags": [8, 3]}}
   }
 }

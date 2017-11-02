@@ -4,11 +4,11 @@
 <script src="../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
 'use strict';
-promise_test(() => {
+bluetooth_test(() => {
   let devices = [];
   let push = device => devices.push(device);
 
-  return setBluetoothFakeAdapter('HeartRateAdapter')
+  return setUpHealthThermometerAndHeartRateDevices()
     .then(() => requestDeviceWithKeyDown({
       filters: [{services: [heart_rate.alias]}]}))
     .then(push)

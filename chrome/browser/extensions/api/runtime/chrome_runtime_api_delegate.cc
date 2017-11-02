@@ -39,6 +39,7 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "components/user_manager/user_manager.h"
+#include "third_party/cros_system_api/dbus/service_constants.h"
 #endif
 
 using extensions::Extension;
@@ -170,17 +171,6 @@ void ChromeRuntimeAPIDelegate::RemoveUpdateObserver(
   }
 }
 
-base::Version ChromeRuntimeAPIDelegate::GetPreviousExtensionVersion(
-    const Extension* extension) {
-  // Get the previous version to check if this is an upgrade.
-  ExtensionService* service =
-      ExtensionSystem::Get(browser_context_)->extension_service();
-  const Extension* old = service->GetExtensionById(extension->id(), true);
-  if (old)
-    return *old->version();
-  return base::Version();
-}
-
 void ChromeRuntimeAPIDelegate::ReloadExtension(
     const std::string& extension_id) {
   std::pair<base::TimeTicks, int>& reload_info =
@@ -209,22 +199,23 @@ void ChromeRuntimeAPIDelegate::ReloadExtension(
     // asynchronously. Fortunately PostTask guarentees FIFO order so just
     // post both tasks.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&ExtensionService::TerminateExtension,
-                              service->AsWeakPtr(), extension_id));
+        FROM_HERE, base::BindOnce(&ExtensionService::TerminateExtension,
+                                  service->AsWeakPtr(), extension_id));
     extensions::WarningSet warnings;
     warnings.insert(
         extensions::Warning::CreateReloadTooFrequentWarning(
             extension_id));
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&extensions::WarningService::NotifyWarningsOnUI,
-                              browser_context_, warnings));
+        FROM_HERE,
+        base::BindOnce(&extensions::WarningService::NotifyWarningsOnUI,
+                       browser_context_, warnings));
   } else {
     // We can't call ReloadExtension directly, since when this method finishes
     // it tries to decrease the reference count for the extension, which fails
     // if the extension has already been reloaded; so instead we post a task.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&ExtensionService::ReloadExtension,
-                              service->AsWeakPtr(), extension_id));
+        FROM_HERE, base::BindOnce(&ExtensionService::ReloadExtension,
+                                  service->AsWeakPtr(), extension_id));
   }
 }
 
@@ -244,8 +235,8 @@ bool ChromeRuntimeAPIDelegate::CheckForUpdates(
   // return a status of throttled.
   if (info.backoff->ShouldRejectRequest() || info.callbacks.size() >= 10) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(callback, UpdateCheckResult(true, kUpdateThrottled, "")));
+        FROM_HERE, base::BindOnce(callback, UpdateCheckResult(
+                                                true, kUpdateThrottled, "")));
   } else {
     info.callbacks.push_back(callback);
     updater->CheckExtensionSoon(
@@ -315,9 +306,8 @@ bool ChromeRuntimeAPIDelegate::GetPlatformInfo(PlatformInfo* info) {
 bool ChromeRuntimeAPIDelegate::RestartDevice(std::string* error_message) {
 #if defined(OS_CHROMEOS)
   if (user_manager::UserManager::Get()->IsLoggedInAsKioskApp()) {
-    chromeos::DBusThreadManager::Get()
-        ->GetPowerManagerClient()
-        ->RequestRestart();
+    chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->RequestRestart(
+        power_manager::REQUEST_RESTART_OTHER, "chrome.runtime API");
     return true;
   }
 #endif

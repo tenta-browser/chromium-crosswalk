@@ -48,7 +48,7 @@ static base::android::ScopedJavaLocalRef<jobject> CreateJavaNavigationEntry(
       ConvertUTF16ToJavaString(env, entry->GetTitle()));
   ScopedJavaLocalRef<jobject> j_bitmap;
   const content::FaviconStatus& status = entry->GetFavicon();
-  if (status.valid && status.image.ToSkBitmap()->getSize() > 0)
+  if (status.valid && status.image.ToSkBitmap()->computeByteSize() > 0)
     j_bitmap = gfx::ConvertToJavaBitmap(status.image.ToSkBitmap());
 
   return content::Java_NavigationControllerImpl_createNavigationEntry(
@@ -67,11 +67,6 @@ static void AddNavigationEntryToHistory(JNIEnv* env,
 }  // namespace
 
 namespace content {
-
-// static
-bool NavigationControllerAndroid::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
 
 NavigationControllerAndroid::NavigationControllerAndroid(
     NavigationControllerImpl* navigation_controller)
@@ -397,10 +392,13 @@ jboolean NavigationControllerAndroid::CanPruneAllButLastCommitted(
 void NavigationControllerAndroid::CopyStateFrom(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
-    jlong source_navigation_controller_android) {
+    jlong source_navigation_controller_android,
+    jboolean needs_reload) {
   navigation_controller_->CopyStateFrom(
       *(reinterpret_cast<NavigationControllerAndroid*>(
-          source_navigation_controller_android)->navigation_controller_));
+            source_navigation_controller_android)
+            ->navigation_controller_),
+      needs_reload);
 }
 
 void NavigationControllerAndroid::CopyStateFromAndPrune(

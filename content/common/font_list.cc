@@ -4,6 +4,20 @@
 
 #include "content/common/font_list.h"
 
+#include "base/task_scheduler/lazy_task_runner.h"
+
 namespace content {
-const char kFontListSequenceToken[] = "_font_list_sequence_token_";
+
+namespace {
+
+base::LazySequencedTaskRunner g_font_list_task_runner =
+    LAZY_SEQUENCED_TASK_RUNNER_INITIALIZER(
+        base::TaskTraits(base::MayBlock(), base::TaskPriority::USER_VISIBLE));
+
+}  // namespace
+
+scoped_refptr<base::SequencedTaskRunner> GetFontListTaskRunner() {
+  return g_font_list_task_runner.Get();
 }
+
+}  // content

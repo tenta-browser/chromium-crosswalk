@@ -709,15 +709,24 @@ TEST(HttpUtilTest, SpecForRequestForUrlWithFtpScheme) {
 }
 
 TEST(HttpUtilTest, GenerateAcceptLanguageHeader) {
-  EXPECT_EQ(std::string("en-US,fr;q=0.8,de;q=0.6"),
-            HttpUtil::GenerateAcceptLanguageHeader("en-US,fr,de"));
-  EXPECT_EQ(std::string("en-US,fr;q=0.8,de;q=0.6,ko;q=0.4,zh-CN;q=0.2,"
-                        "ja;q=0.2"),
-            HttpUtil::GenerateAcceptLanguageHeader("en-US,fr,de,ko,zh-CN,ja"));
+  std::string header = HttpUtil::GenerateAcceptLanguageHeader("");
+  EXPECT_TRUE(header.empty());
+
+  header = HttpUtil::GenerateAcceptLanguageHeader("es");
+  EXPECT_EQ(std::string("es"), header);
+
+  header = HttpUtil::GenerateAcceptLanguageHeader("en-US,fr,de");
+  EXPECT_EQ(std::string("en-US,fr;q=0.9,de;q=0.8"), header);
+
+  header = HttpUtil::GenerateAcceptLanguageHeader("en-US,fr,de,ko,zh-CN,ja");
+  EXPECT_EQ(
+      std::string("en-US,fr;q=0.9,de;q=0.8,ko;q=0.7,zh-CN;q=0.6,ja;q=0.5"),
+      header);
 }
 
 // HttpResponseHeadersTest.GetMimeType also tests ParseContentType.
 TEST(HttpUtilTest, ParseContentType) {
+  // clang-format off
   const struct {
     const char* const content_type;
     const char* const expected_mime_type;
@@ -785,8 +794,23 @@ TEST(HttpUtilTest, ParseContentType) {
       false,
       "WebKit-ada-df-dsf-adsfadsfs"
     },
+    { "text/html; charset=\"utf-8\"",
+      "text/html",
+      "utf-8",
+      true,
+      ""
+    },
+    // Regression test for https://crbug.com/772350:
+    // Single quotes are not delimiters but must be treated as part of charset.
+    { "text/html; charset='utf-8'",
+      "text/html",
+      "'utf-8'",
+      true,
+      ""
+    },
     // TODO(abarth): Add more interesting test cases.
   };
+  // clang-format on
   for (size_t i = 0; i < arraysize(tests); ++i) {
     std::string mime_type;
     std::string charset;

@@ -10,9 +10,11 @@
 #include "base/numerics/safe_math.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/hid/hid_connection_mac.h"
+#include "device/hid/hid_service.h"
 
 namespace device {
 
@@ -24,23 +26,19 @@ std::string HexErrorCode(IOReturn error_code) {
 
 }  // namespace
 
-HidConnectionMac::HidConnectionMac(
-    base::ScopedCFTypeRef<IOHIDDeviceRef> device,
-    scoped_refptr<HidDeviceInfo> device_info,
-    scoped_refptr<base::SingleThreadTaskRunner> file_task_runner)
+HidConnectionMac::HidConnectionMac(base::ScopedCFTypeRef<IOHIDDeviceRef> device,
+                                   scoped_refptr<HidDeviceInfo> device_info)
     : HidConnection(device_info),
       device_(std::move(device)),
-      file_task_runner_(file_task_runner) {
-  task_runner_ = base::ThreadTaskRunnerHandle::Get();
-  DCHECK(task_runner_.get());
-
+      task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      blocking_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          HidService::kBlockingTaskTraits)) {
   IOHIDDeviceScheduleWithRunLoop(
       device_.get(), CFRunLoopGetMain(), kCFRunLoopDefaultMode);
 
   size_t expected_report_size = device_info->max_input_report_size();
-  if (device_info->has_report_id()) {
+  if (device_info->has_report_id())
     expected_report_size++;
-  }
   inbound_buffer_.resize(expected_report_size);
 
   if (inbound_buffer_.size() > 0) {
@@ -54,8 +52,7 @@ HidConnectionMac::HidConnectionMac(
   }
 }
 
-HidConnectionMac::~HidConnectionMac() {
-}
+HidConnectionMac::~HidConnectionMac() {}
 
 void HidConnectionMac::PlatformClose() {
   if (inbound_buffer_.size() > 0) {
@@ -73,50 +70,43 @@ void HidConnectionMac::PlatformClose() {
   }
 
   while (!pending_reads_.empty()) {
-    pending_reads_.front().callback.Run(false, NULL, 0);
+    std::move(pending_reads_.front().callback).Run(false, NULL, 0);
     pending_reads_.pop();
   }
 }
 
-void HidConnectionMac::PlatformRead(const ReadCallback& callback) {
+void HidConnectionMac::PlatformRead(ReadCallback callback) {
   DCHECK(thread_checker().CalledOnValidThread());
   PendingHidRead pending_read;
-  pending_read.callback = callback;
-  pending_reads_.push(pending_read);
+  pending_read.callback = std::move(callback);
+  pending_reads_.push(std::move(pending_read));
   ProcessReadQueue();
 }
 
 void HidConnectionMac::PlatformWrite(scoped_refptr<net::IOBuffer> buffer,
                                      size_t size,
-                                     const WriteCallback& callback) {
-  file_task_runner_->PostTask(FROM_HERE,
-                              base::Bind(&HidConnectionMac::SetReportAsync,
-                                         this,
-                                         kIOHIDReportTypeOutput,
-                                         buffer,
-                                         size,
-                                         callback));
+                                     WriteCallback callback) {
+  blocking_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&HidConnectionMac::SetReportAsync, this,
+                                kIOHIDReportTypeOutput, buffer, size,
+                                std::move(callback)));
 }
 
 void HidConnectionMac::PlatformGetFeatureReport(uint8_t report_id,
-                                                const ReadCallback& callback) {
-  file_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(
-          &HidConnectionMac::GetFeatureReportAsync, this, report_id, callback));
+                                                ReadCallback callback) {
+  blocking_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&HidConnectionMac::GetFeatureReportAsync, this,
+                                report_id, std::move(callback)));
 }
 
 void HidConnectionMac::PlatformSendFeatureReport(
     scoped_refptr<net::IOBuffer> buffer,
     size_t size,
-    const WriteCallback& callback) {
-  file_task_runner_->PostTask(FROM_HERE,
-                              base::Bind(&HidConnectionMac::SetReportAsync,
-                                         this,
-                                         kIOHIDReportTypeFeature,
-                                         buffer,
-                                         size,
-                                         callback));
+    WriteCallback callback) {
+  blocking_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&HidConnectionMac::SetReportAsync, this,
+                                kIOHIDReportTypeFeature, buffer, size,
+                                std::move(callback)));
 }
 
 // static
@@ -172,17 +162,17 @@ void HidConnectionMac::ProcessReadQueue() {
   // during the loop.
   scoped_refptr<HidConnectionMac> self(this);
   while (pending_reads_.size() && pending_reports_.size()) {
-    PendingHidRead read = pending_reads_.front();
+    PendingHidRead read = std::move(pending_reads_.front());
     PendingHidReport report = pending_reports_.front();
 
     pending_reads_.pop();
     pending_reports_.pop();
-    read.callback.Run(true, report.buffer, report.size);
+    std::move(read.callback).Run(true, report.buffer, report.size);
   }
 }
 
 void HidConnectionMac::GetFeatureReportAsync(uint8_t report_id,
-                                             const ReadCallback& callback) {
+                                             ReadCallback callback) {
   scoped_refptr<net::IOBufferWithSize> buffer(
       new net::IOBufferWithSize(device_info()->max_feature_report_size() + 1));
   CFIndex report_size = buffer->size();
@@ -200,23 +190,22 @@ void HidConnectionMac::GetFeatureReportAsync(uint8_t report_id,
                            &report_size);
   if (result == kIOReturnSuccess) {
     task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&HidConnectionMac::ReturnAsyncResult,
-                   this,
-                   base::Bind(callback, true, buffer, report_size)));
+        FROM_HERE, base::BindOnce(&HidConnectionMac::ReturnAsyncResult, this,
+                                  base::BindOnce(std::move(callback), true,
+                                                 buffer, report_size)));
   } else {
     HID_LOG(EVENT) << "Failed to get feature report: " << HexErrorCode(result);
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&HidConnectionMac::ReturnAsyncResult,
-                                      this,
-                                      base::Bind(callback, false, nullptr, 0)));
+    task_runner_->PostTask(
+        FROM_HERE,
+        base::BindOnce(&HidConnectionMac::ReturnAsyncResult, this,
+                       base::BindOnce(std::move(callback), false, nullptr, 0)));
   }
 }
 
 void HidConnectionMac::SetReportAsync(IOHIDReportType report_type,
                                       scoped_refptr<net::IOBuffer> buffer,
                                       size_t size,
-                                      const WriteCallback& callback) {
+                                      WriteCallback callback) {
   uint8_t* data = reinterpret_cast<uint8_t*>(buffer->data());
   DCHECK_GE(size, 1u);
   uint8_t report_id = data[0];
@@ -235,21 +224,21 @@ void HidConnectionMac::SetReportAsync(IOHIDReportType report_type,
   IOReturn result =
       IOHIDDeviceSetReport(device_.get(), report_type, report_id, data, size);
   if (result == kIOReturnSuccess) {
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&HidConnectionMac::ReturnAsyncResult,
-                                      this,
-                                      base::Bind(callback, true)));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&HidConnectionMac::ReturnAsyncResult, this,
+                                  base::BindOnce(std::move(callback), true)));
   } else {
     HID_LOG(EVENT) << "Failed to set report: " << HexErrorCode(result);
-    task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&HidConnectionMac::ReturnAsyncResult,
-                                      this,
-                                      base::Bind(callback, false)));
+    task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&HidConnectionMac::ReturnAsyncResult, this,
+                                  base::BindOnce(std::move(callback), false)));
   }
 }
 
-void HidConnectionMac::ReturnAsyncResult(const base::Closure& callback) {
-  callback.Run();
+void HidConnectionMac::ReturnAsyncResult(base::OnceClosure callback) {
+  // This function is used so that the last reference to |this| can be released
+  // on the thread where it was created.
+  std::move(callback).Run();
 }
 
 }  // namespace device

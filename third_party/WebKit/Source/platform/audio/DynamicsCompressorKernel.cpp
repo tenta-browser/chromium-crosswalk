@@ -73,10 +73,10 @@ void DynamicsCompressorKernel::SetNumberOfChannels(
   if (pre_delay_buffers_.size() == number_of_channels)
     return;
 
-  pre_delay_buffers_.Clear();
+  pre_delay_buffers_.clear();
   for (unsigned i = 0; i < number_of_channels; ++i) {
     pre_delay_buffers_.push_back(
-        WTF::MakeUnique<AudioFloatArray>(kMaxPreDelayFrames));
+        std::make_unique<AudioFloatArray>(kMaxPreDelayFrames));
   }
 }
 

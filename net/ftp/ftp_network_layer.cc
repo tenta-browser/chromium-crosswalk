@@ -5,7 +5,6 @@
 #include "net/ftp/ftp_network_layer.h"
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "net/ftp/ftp_network_session.h"
 #include "net/ftp/ftp_network_transaction.h"
 #include "net/socket/client_socket_factory.h"
@@ -25,7 +24,7 @@ std::unique_ptr<FtpTransaction> FtpNetworkLayer::CreateTransaction() {
   if (suspended_)
     return std::unique_ptr<FtpTransaction>();
 
-  return base::MakeUnique<FtpNetworkTransaction>(
+  return std::make_unique<FtpNetworkTransaction>(
       session_->host_resolver(), ClientSocketFactory::GetDefaultFactory());
 }
 

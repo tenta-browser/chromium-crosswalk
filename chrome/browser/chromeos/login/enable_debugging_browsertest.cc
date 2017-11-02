@@ -40,11 +40,9 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
       : got_reply_(false),
         num_query_debugging_features_(0),
         num_enable_debugging_features_(0),
-        num_remove_protection_(0) {
-  }
+        num_remove_protection_(0) {}
 
-  ~TestDebugDaemonClient() override {
-  }
+  ~TestDebugDaemonClient() override {}
 
   // FakeDebugDaemonClient overrides:
   void SetDebuggingFeaturesStatus(int featues_mask) override {
@@ -56,27 +54,23 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
       const std::string& password,
       const EnableDebuggingCallback& callback) override {
     FakeDebugDaemonClient::EnableDebuggingFeatures(
-        password,
-        base::Bind(&TestDebugDaemonClient::OnEnableDebuggingFeatures,
-                   base::Unretained(this),
-                   callback));
+        password, base::Bind(&TestDebugDaemonClient::OnEnableDebuggingFeatures,
+                             base::Unretained(this), callback));
   }
 
   void RemoveRootfsVerification(
       const DebugDaemonClient::EnableDebuggingCallback& callback) override {
     FakeDebugDaemonClient::RemoveRootfsVerification(
         base::Bind(&TestDebugDaemonClient::OnRemoveRootfsVerification,
-                   base::Unretained(this),
-                   callback));
+                   base::Unretained(this), callback));
   }
 
   void QueryDebuggingFeatures(
       const DebugDaemonClient::QueryDevFeaturesCallback& callback) override {
-      LOG(WARNING) << "QueryDebuggingFeatures";
+    LOG(WARNING) << "QueryDebuggingFeatures";
     FakeDebugDaemonClient::QueryDebuggingFeatures(
         base::Bind(&TestDebugDaemonClient::OnQueryDebuggingFeatures,
-                   base::Unretained(this),
-                   callback));
+                   base::Unretained(this), callback));
   }
 
   void OnRemoveRootfsVerification(
@@ -84,7 +78,7 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
       bool succeeded) {
     LOG(WARNING) << "OnRemoveRootfsVerification: succeeded = " << succeeded;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(original_callback, succeeded));
+        FROM_HERE, base::BindOnce(original_callback, succeeded));
     if (runner_.get())
       runner_->Quit();
     else
@@ -100,7 +94,7 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
     LOG(WARNING) << "OnQueryDebuggingFeatures: succeeded = " << succeeded
                  << ", feature_mask = " << feature_mask;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(original_callback, succeeded, feature_mask));
+        FROM_HERE, base::BindOnce(original_callback, succeeded, feature_mask));
     if (runner_.get())
       runner_->Quit();
     else
@@ -115,7 +109,7 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
     LOG(WARNING) << "OnEnableDebuggingFeatures: succeeded = " << succeeded
                  << ", feature_mask = ";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(original_callback, succeeded));
+        FROM_HERE, base::BindOnce(original_callback, succeeded));
     if (runner_.get())
       runner_->Quit();
     else
@@ -139,9 +133,7 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
     return num_enable_debugging_features_;
   }
 
-  int num_remove_protection() const {
-    return num_remove_protection_;
-  }
+  int num_remove_protection() const { return num_remove_protection_; }
 
   void WaitUntilCalled() {
     if (got_reply_)
@@ -161,10 +153,10 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
 
 class EnableDebuggingTest : public LoginManagerTest {
  public:
-  EnableDebuggingTest() : LoginManagerTest(false),
-      debug_daemon_client_(NULL),
-      power_manager_client_(NULL) {
-  }
+  EnableDebuggingTest()
+      : LoginManagerTest(false),
+        debug_daemon_client_(NULL),
+        power_manager_client_(NULL) {}
   ~EnableDebuggingTest() override {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -289,7 +281,6 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingTest, ShowAndRemoveProtection) {
   EXPECT_EQ(debug_daemon_client_->num_remove_protection(), 1);
   EXPECT_EQ(debug_daemon_client_->num_enable_debugging_features(), 0);
   EXPECT_EQ(power_manager_client_->num_request_restart_calls(), 1);
-
 }
 
 // Show setup screen. Click on [Enable] button. Wait until done screen is shown.
@@ -345,8 +336,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingTest, WaitForDebugDaemon) {
 
 class EnableDebuggingNonDevTest : public EnableDebuggingTest {
  public:
-  EnableDebuggingNonDevTest() {
-  }
+  EnableDebuggingNonDevTest() {}
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     // Skip EnableDebuggingTest::SetUpCommandLine().
@@ -378,8 +368,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingNonDevTest, NoShowInNonDevMode) {
 
 class EnableDebuggingRequestedTest : public EnableDebuggingTest {
  public:
-  EnableDebuggingRequestedTest() {
-  }
+  EnableDebuggingRequestedTest() {}
 
   // EnableDebuggingTest overrides:
   bool SetUpUserDataDirectory() override {

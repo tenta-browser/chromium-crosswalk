@@ -6,6 +6,7 @@
 
 #include <vector>
 
+#include "ash/strings/grit/ash_strings.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
@@ -22,6 +23,8 @@
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/system/statistics_provider.h"
 #include "components/version_info/version_info.h"
+#include "device/bluetooth/bluetooth_adapter.h"
+#include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace chromeos {
@@ -38,6 +41,9 @@ const char* const kReportingFlags[] = {
 // Strings used to generate the serial number part of the version string.
 const char kSerialNumberPrefix[] = "SN:";
 
+// Strings used to generate the bluetooth device name.
+const char kBluetoothDeviceNamePrefix[] = "Bluetooth device name: ";
+
 }  // namespace
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -46,8 +52,7 @@ const char kSerialNumberPrefix[] = "SN:";
 VersionInfoUpdater::VersionInfoUpdater(Delegate* delegate)
     : cros_settings_(chromeos::CrosSettings::Get()),
       delegate_(delegate),
-      weak_pointer_factory_(this) {
-}
+      weak_pointer_factory_(this) {}
 
 VersionInfoUpdater::~VersionInfoUpdater() {
   policy::BrowserPolicyConnectorChromeOS* connector =
@@ -61,8 +66,7 @@ VersionInfoUpdater::~VersionInfoUpdater() {
 void VersionInfoUpdater::StartUpdate(bool is_official_build) {
   if (base::SysInfo::IsRunningOnChromeOS()) {
     base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                       base::TaskPriority::BACKGROUND),
+        FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
         base::Bind(&version_loader::GetVersion,
                    is_official_build ? version_loader::VERSION_SHORT_WITH_DATE
                                      : version_loader::VERSION_FULL),
@@ -85,13 +89,16 @@ void VersionInfoUpdater::StartUpdate(bool is_official_build) {
   }
 
   // Watch for changes to the reporting flags.
-  base::Closure callback =
-      base::Bind(&VersionInfoUpdater::UpdateEnterpriseInfo,
-                 base::Unretained(this));
+  base::Closure callback = base::Bind(&VersionInfoUpdater::UpdateEnterpriseInfo,
+                                      base::Unretained(this));
   for (unsigned int i = 0; i < arraysize(kReportingFlags); ++i) {
     subscriptions_.push_back(
         cros_settings_->AddSettingsObserver(kReportingFlags[i], callback));
   }
+
+  // Update device bluetooth info.
+  device::BluetoothAdapterFactory::GetAdapter(base::Bind(
+      &VersionInfoUpdater::OnGetAdapter, weak_pointer_factory_.GetWeakPtr()));
 }
 
 void VersionInfoUpdater::UpdateVersionLabel() {
@@ -117,18 +124,19 @@ void VersionInfoUpdater::UpdateVersionLabel() {
 void VersionInfoUpdater::UpdateEnterpriseInfo() {
   policy::BrowserPolicyConnectorChromeOS* connector =
       g_browser_process->platform_part()->browser_policy_connector_chromeos();
-  SetEnterpriseInfo(connector->GetEnterpriseDomain(),
+  SetEnterpriseInfo(connector->GetEnterpriseDisplayDomain(),
                     connector->GetDeviceAssetID());
 }
 
-void VersionInfoUpdater::SetEnterpriseInfo(const std::string& domain_name,
-                                           const std::string& asset_id) {
+void VersionInfoUpdater::SetEnterpriseInfo(
+    const std::string& enterprise_display_domain,
+    const std::string& asset_id) {
   // Update the notification about device status reporting.
-  if (delegate_ && !domain_name.empty()) {
+  if (delegate_ && !enterprise_display_domain.empty()) {
     std::string enterprise_info;
-    enterprise_info = l10n_util::GetStringFUTF8(
-        IDS_DEVICE_OWNED_BY_NOTICE,
-        base::UTF8ToUTF16(domain_name));
+    enterprise_info =
+        l10n_util::GetStringFUTF8(IDS_ASH_ENTERPRISE_DEVICE_MANAGED_BY,
+                                  base::UTF8ToUTF16(enterprise_display_domain));
     delegate_->OnEnterpriseInfoUpdated(enterprise_info, asset_id);
   }
 }
@@ -145,6 +153,14 @@ void VersionInfoUpdater::UpdateSerialNumberInfo() {
 void VersionInfoUpdater::OnVersion(const std::string& version) {
   version_text_ = version;
   UpdateVersionLabel();
+}
+
+void VersionInfoUpdater::OnGetAdapter(
+    scoped_refptr<device::BluetoothAdapter> adapter) {
+  if (delegate_ && adapter->IsDiscoverable() && !adapter->GetName().empty()) {
+    delegate_->OnDeviceInfoUpdated(kBluetoothDeviceNamePrefix +
+                                   adapter->GetName());
+  }
 }
 
 void VersionInfoUpdater::OnStoreLoaded(policy::CloudPolicyStore* store) {

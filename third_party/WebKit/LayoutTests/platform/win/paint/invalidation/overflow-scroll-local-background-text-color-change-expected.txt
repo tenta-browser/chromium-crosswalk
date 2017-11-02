@@ -4,14 +4,12 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow DIV id='scroller'",
       "position": [8, 8],
       "bounds": [200, 200],
-      "shouldFlattenTransform": false,
-      "drawsContent": true,
       "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {
@@ -23,30 +21,36 @@
     },
     {
       "name": "Scrolling Layer",
+      "position": [8, 8],
       "bounds": [185, 185],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "Scrolling Contents Layer",
+      "position": [8, 8],
       "bounds": [185, 552],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='scroller'",
           "rect": [0, 0, 185, 552],
           "reason": "background on scrolling contents layer"
         }
-      ]
+      ],
+      "transform": 1
     },
     {
       "name": "Overflow Controls Host Layer",
-      "bounds": [200, 200]
+      "position": [8, 8],
+      "bounds": [200, 200],
+      "drawsContent": false
     },
     {
       "name": "Horizontal Scrollbar Layer",
-      "position": [0, 185],
+      "position": [8, 193],
       "bounds": [185, 15],
+      "drawsContent": false,
       "paintInvalidations": [
         {
           "object": "Horizontal Scrollbar Layer",
@@ -57,8 +61,9 @@
     },
     {
       "name": "Vertical Scrollbar Layer",
-      "position": [185, 0],
+      "position": [193, 8],
       "bounds": [15, 185],
+      "drawsContent": false,
       "paintInvalidations": [
         {
           "object": "Vertical Scrollbar Layer",
@@ -74,9 +79,20 @@
     },
     {
       "name": "Scroll Corner Layer",
-      "position": [185, 185],
-      "bounds": [15, 15],
-      "drawsContent": true
+      "position": [193, 193],
+      "bounds": [15, 15]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, -367, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ],
   "objectPaintInvalidations": [

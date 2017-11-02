@@ -6,20 +6,23 @@
 
 #include <utility>
 
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/confirm_bubble.h"
 #include "chrome/browser/ui/confirm_bubble_model.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "components/constrained_window/constrained_window_views.h"
 #include "ui/base/ui_features.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/layout/grid_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 
 ConfirmBubbleViews::ConfirmBubbleViews(
     std::unique_ptr<ConfirmBubbleModel> model)
     : model_(std::move(model)), link_(NULL) {
-  views::GridLayout* layout = views::GridLayout::CreatePanel(this);
+  set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
+      views::TEXT, views::TEXT));
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
 
   // Use a fixed maximum message width, so longer messages will wrap.
   const int kMaxMessageWidth = 400;
@@ -40,6 +43,8 @@ ConfirmBubbleViews::ConfirmBubbleViews(
   link_ = new views::Link(model_->GetLinkText());
   link_->set_listener(this);
   link_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::CONFIRM_BUBBLE);
 }
 
 ConfirmBubbleViews::~ConfirmBubbleViews() {

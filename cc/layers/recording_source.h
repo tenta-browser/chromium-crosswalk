@@ -46,15 +46,15 @@ class CC_EXPORT RecordingSource {
   gfx::Size GetSize() const;
   void SetEmptyBounds();
   void SetSlowdownRasterScaleFactor(int factor);
-  void SetGenerateDiscardableImagesMetadata(bool generate_metadata);
   void SetBackgroundColor(SkColor background_color);
   void SetRequiresClear(bool requires_clear);
 
   void SetNeedsDisplayRect(const gfx::Rect& layer_rect);
 
+  void SetRecordingScaleFactor(float recording_scale_factor);
+
   // These functions are virtual for testing.
-  virtual scoped_refptr<RasterSource> CreateRasterSource(
-      bool can_use_lcd_text) const;
+  virtual scoped_refptr<RasterSource> CreateRasterSource() const;
 
   const DisplayItemList* GetDisplayItemList();
   gfx::Rect recorded_viewport() const { return recorded_viewport_; }
@@ -63,7 +63,6 @@ class CC_EXPORT RecordingSource {
   gfx::Rect recorded_viewport_;
   gfx::Size size_;
   int slow_down_raster_scale_factor_for_debug_;
-  bool generate_discardable_images_metadata_;
   bool requires_clear_;
   bool is_solid_color_;
   bool clear_canvas_with_debug_color_;
@@ -71,6 +70,7 @@ class CC_EXPORT RecordingSource {
   SkColor background_color_;
   scoped_refptr<DisplayItemList> display_list_;
   size_t painter_reported_memory_usage_;
+  float recording_scale_factor_;
 
  private:
   void UpdateInvalidationForNewViewport(const gfx::Rect& old_recorded_viewport,

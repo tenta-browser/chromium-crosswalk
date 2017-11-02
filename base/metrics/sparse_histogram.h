@@ -59,7 +59,7 @@ class BASE_EXPORT SparseHistogram : public HistogramBase {
 
  protected:
   // HistogramBase implementation:
-  bool SerializeInfoImpl(base::Pickle* pickle) const override;
+  void SerializeInfoImpl(base::Pickle* pickle) const override;
 
  private:
   // Clients should always use FactoryGet to create SparseHistogram.
@@ -97,7 +97,7 @@ class BASE_EXPORT SparseHistogram : public HistogramBase {
   // Flag to indicate if PrepareFinalDelta has been previously called.
   mutable bool final_delta_created_ = false;
 
-  std::unique_ptr<HistogramSamples> samples_;
+  std::unique_ptr<HistogramSamples> unlogged_samples_;
   std::unique_ptr<HistogramSamples> logged_samples_;
 
   DISALLOW_COPY_AND_ASSIGN(SparseHistogram);

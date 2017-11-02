@@ -4,7 +4,6 @@
 
 #include "modules/fetch/FetchRequestData.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/loader/ThreadableLoader.h"
 #include "modules/credentialmanager/PasswordCredential.h"
@@ -12,7 +11,8 @@
 #include "modules/fetch/BodyStreamBuffer.h"
 #include "modules/fetch/BytesConsumer.h"
 #include "modules/fetch/FetchHeaderList.h"
-#include "platform/HTTPNames.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/http_names.h"
 #include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "public/platform/WebURLRequest.h"
@@ -48,6 +48,7 @@ FetchRequestData* FetchRequestData::Create(
   request->SetCacheMode(web_request.CacheMode());
   request->SetRedirect(web_request.RedirectMode());
   request->SetMIMEType(request->header_list_->ExtractMIMEType());
+  request->SetIntegrity(web_request.Integrity());
   return request;
 }
 
@@ -56,7 +57,6 @@ FetchRequestData* FetchRequestData::CloneExceptBody() {
   request->url_ = url_;
   request->method_ = method_;
   request->header_list_ = header_list_->Clone();
-  request->unsafe_request_flag_ = unsafe_request_flag_;
   request->origin_ = origin_;
   request->same_origin_data_url_flag_ = same_origin_data_url_flag_;
   request->context_ = context_;
@@ -99,7 +99,6 @@ FetchRequestData::~FetchRequestData() {}
 FetchRequestData::FetchRequestData()
     : method_(HTTPNames::GET),
       header_list_(FetchHeaderList::Create()),
-      unsafe_request_flag_(false),
       context_(WebURLRequest::kRequestContextUnspecified),
       same_origin_data_url_flag_(false),
       referrer_(Referrer(ClientReferrerString(), kReferrerPolicyDefault)),
@@ -113,7 +112,7 @@ void FetchRequestData::SetCredentials(
     WebURLRequest::FetchCredentialsMode credentials) {
   credentials_ = credentials;
   if (credentials_ != WebURLRequest::kFetchCredentialsModePassword)
-    attached_credential_.Clear();
+    attached_credential_ = nullptr;
 }
 
 DEFINE_TRACE(FetchRequestData) {

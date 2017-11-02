@@ -26,6 +26,7 @@ class StubPasswordManagerDriver : public PasswordManagerDriver {
   void FormsEligibleForGenerationFound(
       const std::vector<autofill::PasswordFormGenerationData>& forms) override;
   void GeneratedPasswordAccepted(const base::string16& password) override;
+  void UserSelectedManualGenerationOption() override;
   void FillSuggestion(const base::string16& username,
                       const base::string16& password) override;
   void PreviewSuggestion(const base::string16& username,
@@ -37,6 +38,8 @@ class StubPasswordManagerDriver : public PasswordManagerDriver {
   PasswordManager* GetPasswordManager() override;
   PasswordAutofillManager* GetPasswordAutofillManager() override;
   autofill::AutofillDriver* GetAutofillDriver() override;
+  bool IsMainFrame() const override;
+  void MatchingBlacklistedFormFound() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(StubPasswordManagerDriver);

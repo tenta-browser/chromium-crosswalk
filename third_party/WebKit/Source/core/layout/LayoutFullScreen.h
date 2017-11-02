@@ -28,7 +28,6 @@
 
 #include "core/CoreExport.h"
 #include "core/layout/LayoutFlexibleBox.h"
-#include "core/style/StyleInheritedData.h"
 
 namespace blink {
 
@@ -46,8 +45,7 @@ class CORE_EXPORT LayoutFullScreen final : public LayoutFlexibleBox {
 
   void ResetPlaceholder() { placeholder_ = nullptr; }
   LayoutBlockFlow* Placeholder() { return placeholder_; }
-  void CreatePlaceholder(PassRefPtr<ComputedStyle>,
-                         const LayoutRect& frame_rect);
+  void CreatePlaceholder(RefPtr<ComputedStyle>, const LayoutRect& frame_rect);
 
   static LayoutObject* WrapLayoutObject(LayoutObject*,
                                         LayoutObject*,
@@ -59,7 +57,7 @@ class CORE_EXPORT LayoutFullScreen final : public LayoutFlexibleBox {
   bool AnonymousHasStylePropagationOverride() override { return true; }
 
   // Must call setStyleWithWritingModeOfParent() instead.
-  void SetStyle(PassRefPtr<ComputedStyle>) = delete;
+  void SetStyle(RefPtr<ComputedStyle>) = delete;
 
  private:
   LayoutFullScreen();

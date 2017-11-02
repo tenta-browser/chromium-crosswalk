@@ -5,11 +5,11 @@
 #ifndef CHROMECAST_MEDIA_CMA_BACKEND_ALSA_STREAM_MIXER_ALSA_INPUT_IMPL_H_
 #define CHROMECAST_MEDIA_CMA_BACKEND_ALSA_STREAM_MIXER_ALSA_INPUT_IMPL_H_
 
-#include <deque>
 #include <memory>
 #include <string>
 
 #include "base/callback.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -107,8 +107,7 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
   void SetPaused(bool paused);
 
   // Sets the volume multiplier for this stream. If |multiplier| < 0, sets the
-  // volume multiplier to 0. If |multiplier| > 1, sets the volume multiplier
-  // to 1.
+  // volume multiplier to 0.
   void SetVolumeMultiplier(float multiplier);
 
   // Prevents any further calls to the delegate (ie, called when the delegate
@@ -141,6 +140,7 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
   void PrepareToDelete(const OnReadyToDeleteCb& delete_cb) override;
   void SetContentTypeVolume(float volume, int fade_ms) override;
   void SetMuted(bool muted) override;
+  float EffectiveVolume() override;
 
   // Tells the mixer to delete |this|. Makes sure not to call |delete_cb_| more
   // than once for |this|.
@@ -177,7 +177,7 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
 
   base::Lock queue_lock_;  // Lock for the following queue-related members.
   scoped_refptr<DecoderBufferBase> pending_data_;
-  std::deque<scoped_refptr<DecoderBufferBase>> queue_;
+  base::circular_deque<scoped_refptr<DecoderBufferBase>> queue_;
   int queued_frames_;
   double queued_frames_including_resampler_;
   MediaPipelineBackendAlsa::RenderingDelay mixer_rendering_delay_;

@@ -85,6 +85,13 @@ class MockConnectionToClientEventHandler
                void(const std::string& channel_name,
                     const TransportRoute& route));
 
+  MOCK_METHOD2(OnIncomingDataChannelPtr,
+               void(const std::string& channel_name, MessagePipe* pipe));
+  void OnIncomingDataChannel(const std::string& channel_name,
+                             std::unique_ptr<MessagePipe> pipe) override {
+    OnIncomingDataChannelPtr(channel_name, pipe.get());
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(MockConnectionToClientEventHandler);
 };
@@ -254,7 +261,7 @@ class SynchronousPairingRegistry : public PairingRegistry {
 
   // Runs tasks synchronously instead of posting them to |task_runner|.
   void PostTask(const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-                const tracked_objects::Location& from_here,
+                const base::Location& from_here,
                 const base::Closure& task) override;
 };
 

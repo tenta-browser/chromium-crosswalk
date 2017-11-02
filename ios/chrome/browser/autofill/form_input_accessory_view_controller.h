@@ -80,6 +80,11 @@ typedef void (^AccessoryViewReadyCompletion)(
 @interface FormInputAccessoryViewController
     : NSObject<CRWWebStateObserver, FormInputAccessoryViewDelegate>
 
+// The current web view proxy.
+// TODO(crbug.com/727716): This property should not be a part of the public
+// interface, it is used in tests as a backdoor.
+@property(nonatomic, readonly) id<CRWWebViewProxy> webViewProxy;
+
 // Initializes a new controller with the specified |providers| of input
 // accessory views.
 - (instancetype)initWithWebState:(web::WebState*)webState
@@ -90,6 +95,9 @@ typedef void (^AccessoryViewReadyCompletion)(
 
 // Notifies the controller that the owning tab was hidden.
 - (void)wasHidden;
+
+// Instructs the controller to detach itself from the WebState.
+- (void)detachFromWebState;
 
 // Hides the default input accessory view and replaces it with one that shows
 // |customView| and form navigation controls.

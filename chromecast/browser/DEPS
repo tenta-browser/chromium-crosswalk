@@ -10,6 +10,7 @@ include_rules = [
   "+components/cdm/browser",
   "+components/crash",
   "+components/network_hints/browser",
+  "+components/network_session_configurator/common",
   "+components/prefs",
   "+components/proxy_config",
   "+content/public/android",
@@ -32,7 +33,7 @@ include_rules = [
   "+ui/gfx",
   "+ui/gl",
   "+ui/display",
-  "+ui/ozone/platform/cast/overlay_manager_cast.h",
+  "+ui/ozone",
 
   # TODO(sanfin): Remove this by fixing the crash handler on android.
   "!chromecast/app",

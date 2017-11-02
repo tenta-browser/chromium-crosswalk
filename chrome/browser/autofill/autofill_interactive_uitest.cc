@@ -12,6 +12,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -54,7 +55,6 @@
 #include "net/url_request/url_request_status.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 #include "ui/events/keycodes/keyboard_codes.h"
@@ -69,8 +69,7 @@ static const char kDataURIPrefix[] = "data:text/html;charset=utf-8,";
 static const char kTestFormString[] =
     "<form action=\"http://www.example.com/\" method=\"POST\">"
     "<label for=\"firstname\">First name:</label>"
-    " <input type=\"text\" id=\"firstname\""
-    "        onfocus=\"domAutomationController.send(true)\"><br>"
+    " <input type=\"text\" id=\"firstname\"><br>"
     "<label for=\"lastname\">Last name:</label>"
     " <input type=\"text\" id=\"lastname\"><br>"
     "<label for=\"address1\">Address line 1:</label>"
@@ -120,8 +119,7 @@ static const char kTestEventFormString[] =
     "</script>"
     "<form action=\"http://www.example.com/\" method=\"POST\">"
     "<label for=\"firstname\">First name:</label>"
-    " <input type=\"text\" id=\"firstname\""
-    "        onfocus=\"domAutomationController.send(true)\"><br>"
+    " <input type=\"text\" id=\"firstname\"><br>"
     "<label for=\"lastname\">Last name:</label>"
     " <input type=\"text\" id=\"lastname\""
     " onfocus=\"inputfocus = true\" onkeydown=\"inputkeydown = true\""
@@ -215,11 +213,8 @@ class AutofillManagerTestDelegateImpl
 content::RenderFrameHost* RenderFrameHostForName(
     content::WebContents* web_contents,
     const std::string& name) {
-  for (content::RenderFrameHost* frame : web_contents->GetAllFrames()) {
-    if (frame->GetFrameName() == name)
-      return frame;
-  }
-  return nullptr;
+  return content::FrameMatchingPredicate(
+      web_contents, base::Bind(&content::FrameMatchesName, name));
 }
 
 }  // namespace
@@ -254,8 +249,9 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     reset_mouse = gfx::Point(reset_mouse.x() + 5, reset_mouse.y() + 5);
     ASSERT_TRUE(ui_test_utils::SendMouseMoveSync(reset_mouse));
 
+    // Ensure that |embedded_test_server()| serves both domains used below.
+    host_resolver()->AddRule("*", "127.0.0.1");
     ASSERT_TRUE(embedded_test_server()->Start());
-    InProcessBrowserTest::SetUpOnMainThread();
   }
 
   void TearDownOnMainThread() override {
@@ -361,27 +357,25 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
 
   void FocusFieldByName(const std::string& name) {
     bool result = false;
-    ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
-        GetRenderViewHost(),
-        "if (document.readyState === 'complete')"
-        "  document.getElementById('" + name + "').focus();"
-        "else"
-        "  domAutomationController.send(false);",
-        &result));
+    std::string script = base::StringPrintf(
+        R"( function onFocusHandler(e) {
+              e.target.removeEventListener(e.type, arguments.callee);
+              domAutomationController.send(true);
+            }
+            if (document.readyState === 'complete') {
+              var target = document.getElementById('%s');
+              target.addEventListener('focus', onFocusHandler);
+              target.focus();
+            } else {
+              domAutomationController.send(false);
+            })",
+        name.c_str());
+    ASSERT_TRUE(content::ExecuteScriptAndExtractBool(GetRenderViewHost(),
+                                                     script, &result));
     ASSERT_TRUE(result);
   }
 
-  void FocusFirstNameField() {
-    bool result = false;
-    ASSERT_TRUE(content::ExecuteScriptAndExtractBool(
-        GetRenderViewHost(),
-        "if (document.readyState === 'complete')"
-        "  document.getElementById('firstname').focus();"
-        "else"
-        "  domAutomationController.send(false);",
-        &result));
-    ASSERT_TRUE(result);
-  }
+  void FocusFirstNameField() { FocusFieldByName("firstname"); }
 
   // Simulates a click on the middle of the DOM element with the given |id|.
   void ClickElementWithId(const std::string& id) {
@@ -446,16 +440,6 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
     content::SimulateKeyPress(GetWebContents(), key, code, key_code, false,
                               false, false, false);
     test_delegate_.Wait();
-  }
-
-  void PasteStringAndWait(const std::string& pastedata) {
-    {
-      ui::ScopedClipboardWriter writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
-      writer.WriteText(base::ASCIIToUTF16(pastedata));
-    }
-    test_delegate_.Reset();
-    GetWebContents()->Paste();
-    test_delegate_.WaitForTextChange();
   }
 
   bool HandleKeyPressEvent(const content::NativeWebKeyboardEvent& event) {
@@ -568,8 +552,7 @@ class AutofillInteractiveTest : public InProcessBrowserTest {
 
 // Test that basic form fill is working.
 // Flakily times out on ChromeOS http://crbug.com/585885
-// Flakily fails on Windows http://crbug.com/639940
-#if defined(OS_CHROMEOS) || defined(OS_WIN)
+#if defined(OS_CHROMEOS)
 #define MAYBE_BasicFormFill DISABLED_BasicFormFill
 #else
 #define MAYBE_BasicFormFill BasicFormFill
@@ -781,8 +764,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
       browser(),
       GURL(std::string(kDataURIPrefix) +
            "<form action=\"http://www.example.com/\" method=\"POST\">"
-           "  <input list=\"dl\" type=\"search\" id=\"firstname\""
-           "         onfocus=\"domAutomationController.send(true)\"><br>"
+           "  <input list=\"dl\" type=\"search\" id=\"firstname\"><br>"
            "  <datalist id=\"dl\">"
            "  <option value=\"Adam\"></option>"
            "  <option value=\"Bob\"></option>"
@@ -882,7 +864,7 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_OnInputAfterAutofill) {
 }
 
 // Test that a JavaScript onchange event is fired after auto-filling a form.
-// Flaky on CrOS only.  http://crbug.com/578095
+// Flaky on CrOS.  http://crbug.com/578095
 #if defined(OS_CHROMEOS)
 #define MAYBE_OnChangeAfterAutofill DISABLED_OnChangeAfterAutofill
 #else
@@ -1046,9 +1028,10 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_InputFiresBeforeChange) {
 }
 
 // Test that we can autofill forms distinguished only by their |id| attribute.
-// Flaky on CrOS only.  http://crbug.com/578095
+// Flaky on CrOS.  http://crbug.com/578095
 #if defined(OS_CHROMEOS)
-#define MAYBE_AutofillFormsDistinguishedById DISABLED_AutofillFormsDistinguishedById
+#define MAYBE_AutofillFormsDistinguishedById \
+  DISABLED_AutofillFormsDistinguishedById
 #else
 #define MAYBE_AutofillFormsDistinguishedById AutofillFormsDistinguishedById
 #endif
@@ -1498,13 +1481,12 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_AutofillAfterTranslate) {
 // The high level key presses execute the following: Select the first text
 // field, invoke the autofill popup list, select the first profile within the
 // list, and commit to the profile to populate the form.
-// Flakily times out on windows (https://crbug.com/390564), and on CrOS
-// (https://crbug.com/516052).
-#if defined(OS_WIN) || defined(OS_CHROMEOS)
+// Flakily times out on CrOS (https://crbug.com/516052).
+#if defined(OS_CHROMEOS)
 #define MAYBE_ComparePhoneNumbers DISABLED_ComparePhoneNumbers
 #else
 #define MAYBE_ComparePhoneNumbers ComparePhoneNumbers
-#endif  // defined(OS_WIN) || defined(OS_CHROMEOS)
+#endif  // defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_ComparePhoneNumbers) {
   AutofillProfile profile;
   profile.SetRawInfo(NAME_FIRST, ASCIIToUTF16("Bob"));
@@ -1738,28 +1720,6 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
   SendKeyToPopupAndWait(ui::DomKey::ARROW_DOWN);
 }
 
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest,
-                       PastedPasswordIsSaved) {
-  // Serve test page from a HTTPS server so that Form Not Secure warnings do not
-  // interfere with the test.
-  net::EmbeddedTestServer https_server(net::EmbeddedTestServer::TYPE_HTTPS);
-  net::SSLServerConfig ssl_config;
-  ssl_config.client_cert_type =
-      net::SSLServerConfig::ClientCertType::NO_CLIENT_CERT;
-  https_server.SetSSLConfig(net::EmbeddedTestServer::CERT_OK, ssl_config);
-  https_server.ServeFilesFromSourceDirectory("chrome/test/data");
-  ASSERT_TRUE(https_server.Start());
-
-  GURL url = https_server.GetURL("/autofill/autofill_password_form.html");
-  ASSERT_NO_FATAL_FAILURE(ui_test_utils::NavigateToURL(browser(), url));
-
-  ASSERT_TRUE(content::ExecuteScript(
-      GetRenderViewHost(),
-      "document.getElementById('user').value = 'user';"));
-  FocusFieldByName("password");
-  PasteStringAndWait("foobar");
-}
-
 // An extension of the test fixture for tests with site isolation.
 class AutofillInteractiveIsolationTest : public AutofillInteractiveTest {
  protected:
@@ -1778,17 +1738,7 @@ class AutofillInteractiveIsolationTest : public AutofillInteractiveTest {
   }
 };
 
-#if defined(OS_WIN)
-// Flaky on Windows 7 in debug build. http://crbug.com/710436
-#define MAYBE_SimpleCrossSiteFill DISABLED_SimpleCrossSiteFill
-#else
-#define MAYBE_SimpleCrossSiteFill SimpleCrossSiteFill
-#endif
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveIsolationTest,
-                       MAYBE_SimpleCrossSiteFill) {
-  // Ensure that |embedded_test_server()| serves both domains used below.
-  host_resolver()->AddRule("*", "127.0.0.1");
-
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveIsolationTest, SimpleCrossSiteFill) {
   CreateTestProfile();
 
   // Main frame is on a.com, iframe is on b.com.
@@ -1832,10 +1782,13 @@ IN_PROC_BROWSER_TEST_F(AutofillInteractiveIsolationTest,
 
 // This test verifies that credit card (payment card list) popup works when the
 // form is inside an OOPIF.
-IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, CrossSitePaymentForms) {
-  // Ensure that |embedded_test_server()| serves both domains used below.
-  host_resolver()->AddRule("*", "127.0.0.1");
-
+// Flaky on Windows http://crbug.com/728488
+#if defined(OS_WIN)
+#define MAYBE_CrossSitePaymentForms DISABLED_CrossSitePaymentForms
+#else
+#define MAYBE_CrossSitePaymentForms CrossSitePaymentForms
+#endif
+IN_PROC_BROWSER_TEST_F(AutofillInteractiveTest, MAYBE_CrossSitePaymentForms) {
   // Main frame is on a.com, iframe is on b.com.
   GURL url = embedded_test_server()->GetURL(
       "a.com", "/autofill/cross_origin_iframe.html");

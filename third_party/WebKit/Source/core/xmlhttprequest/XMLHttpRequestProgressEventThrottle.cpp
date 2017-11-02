@@ -27,16 +27,16 @@
 
 #include "core/xmlhttprequest/XMLHttpRequestProgressEventThrottle.h"
 
-#include "core/EventTypeNames.h"
+#include "core/event_type_names.h"
 #include "core/events/ProgressEvent.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/probe/CoreProbes.h"
 #include "core/xmlhttprequest/XMLHttpRequest.h"
+#include "platform/scheduler/child/web_scheduler.h"
+#include "platform/wtf/Assertions.h"
+#include "platform/wtf/text/AtomicString.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
-#include "wtf/Assertions.h"
-#include "wtf/text/AtomicString.h"
 
 namespace blink {
 
@@ -77,8 +77,8 @@ Event* XMLHttpRequestProgressEventThrottle::DeferredEvent::Take() {
 
 XMLHttpRequestProgressEventThrottle::XMLHttpRequestProgressEventThrottle(
     XMLHttpRequest* target)
-    : TimerBase(
-          Platform::Current()->CurrentThread()->Scheduler()->TimerTaskRunner()),
+    : TimerBase(TaskRunnerHelper::Get(TaskType::kNetworking,
+                                      target->GetExecutionContext())),
       target_(target),
       has_dispatched_progress_progress_event_(false) {
   DCHECK(target);

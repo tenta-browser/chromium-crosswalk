@@ -36,10 +36,11 @@
 #include "core/css/resolver/StyleBuilderConverter.h"
 #include "core/css/resolver/StyleResolverState.h"
 #include "core/frame/UseCounter.h"
+#include "core/style/ComputedStyle.h"
 
 namespace blink {
 
-static const float kOffScreenCanvasEmFontSize = 10.0;
+static const float kOffScreenCanvasEmFontSize = 16.0;
 static const float kOffScreenCanvasRemFontSize = 16.0;
 
 FilterOperation::OperationType FilterOperationResolver::FilterOperationForType(
@@ -76,44 +77,44 @@ static void CountFilterUse(FilterOperation::OperationType operation_type,
                            const Document& document) {
   // This variable is always reassigned, but MSVC thinks it might be left
   // uninitialized.
-  UseCounter::Feature feature = UseCounter::kNumberOfFeatures;
+  WebFeature feature = WebFeature::kNumberOfFeatures;
   switch (operation_type) {
     case FilterOperation::NONE:
     case FilterOperation::BOX_REFLECT:
       NOTREACHED();
       return;
     case FilterOperation::REFERENCE:
-      feature = UseCounter::kCSSFilterReference;
+      feature = WebFeature::kCSSFilterReference;
       break;
     case FilterOperation::GRAYSCALE:
-      feature = UseCounter::kCSSFilterGrayscale;
+      feature = WebFeature::kCSSFilterGrayscale;
       break;
     case FilterOperation::SEPIA:
-      feature = UseCounter::kCSSFilterSepia;
+      feature = WebFeature::kCSSFilterSepia;
       break;
     case FilterOperation::SATURATE:
-      feature = UseCounter::kCSSFilterSaturate;
+      feature = WebFeature::kCSSFilterSaturate;
       break;
     case FilterOperation::HUE_ROTATE:
-      feature = UseCounter::kCSSFilterHueRotate;
+      feature = WebFeature::kCSSFilterHueRotate;
       break;
     case FilterOperation::INVERT:
-      feature = UseCounter::kCSSFilterInvert;
+      feature = WebFeature::kCSSFilterInvert;
       break;
     case FilterOperation::OPACITY:
-      feature = UseCounter::kCSSFilterOpacity;
+      feature = WebFeature::kCSSFilterOpacity;
       break;
     case FilterOperation::BRIGHTNESS:
-      feature = UseCounter::kCSSFilterBrightness;
+      feature = WebFeature::kCSSFilterBrightness;
       break;
     case FilterOperation::CONTRAST:
-      feature = UseCounter::kCSSFilterContrast;
+      feature = WebFeature::kCSSFilterContrast;
       break;
     case FilterOperation::BLUR:
-      feature = UseCounter::kCSSFilterBlur;
+      feature = WebFeature::kCSSFilterBlur;
       break;
     case FilterOperation::DROP_SHADOW:
-      feature = UseCounter::kCSSFilterDropShadow;
+      feature = WebFeature::kCSSFilterDropShadow;
       break;
   };
   UseCounter::Count(document, feature);
@@ -218,9 +219,10 @@ FilterOperations FilterOperationResolver::CreateOffscreenFilterOperations(
   Font font(font_description);
   CSSToLengthConversionData::FontSizes font_sizes(
       kOffScreenCanvasEmFontSize, kOffScreenCanvasRemFontSize, &font);
-  CSSToLengthConversionData::ViewportSize viewport_size(1024, 768);
-  CSSToLengthConversionData conversion_data(&ComputedStyle::InitialStyle(),
-                                            font_sizes, viewport_size, 1);
+  CSSToLengthConversionData::ViewportSize viewport_size(0, 0);
+  CSSToLengthConversionData conversion_data(nullptr,  // ComputedStyle
+                                            font_sizes, viewport_size,
+                                            1);  // zoom
 
   for (auto& curr_value : ToCSSValueList(in_value)) {
     if (curr_value->IsURIValue())

@@ -6,17 +6,15 @@ cr.define('extensions', function() {
   'use strict';
 
   /** @interface */
-  function LoadErrorDelegate() {}
-
-  LoadErrorDelegate.prototype = {
+  class LoadErrorDelegate {
     /**
      * Attempts to load the previously-attempted unpacked extension.
      * @param {string} retryId
      */
-    retryLoadUnpacked: assertNotReached,
-  };
+    retryLoadUnpacked(retryId) {}
+  }
 
-  var LoadError = Polymer({
+  const LoadError = Polymer({
     is: 'extensions-load-error',
     properties: {
       /** @type {extensions.LoadErrorDelegate} */
@@ -47,12 +45,12 @@ cr.define('extensions', function() {
     /** @private */
     observeLoadErrorChanges_: function() {
       assert(this.loadError);
-      var source = this.loadError.source;
+      const source = this.loadError.source;
       // CodeSection expects a RequestFileSourceResponse, rather than an
       // ErrorFileSource. Massage into place.
       // TODO(devlin): Make RequestFileSourceResponse use ErrorFileSource.
       /** @type {!chrome.developerPrivate.RequestFileSourceResponse} */
-      var codeSectionProperties = {
+      const codeSectionProperties = {
         beforeHighlight: source ? source.beforeHighlight : '',
         highlight: source ? source.highlight : '',
         afterHighlight: source ? source.afterHighlight : '',
@@ -64,6 +62,5 @@ cr.define('extensions', function() {
     },
   });
 
-  return {LoadError: LoadError,
-          LoadErrorDelegate: LoadErrorDelegate};
+  return {LoadError: LoadError, LoadErrorDelegate: LoadErrorDelegate};
 });

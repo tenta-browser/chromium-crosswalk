@@ -6,7 +6,7 @@
 #define ASH_SHELF_SHELF_TOOLTIP_MANAGER_H_
 
 #include "ash/ash_export.h"
-#include "ash/shelf/wm_shelf_observer.h"
+#include "ash/shelf/shelf_observer.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
@@ -21,15 +21,10 @@ class View;
 namespace ash {
 class ShelfView;
 
-namespace test {
-class ShelfTooltipManagerTest;
-class ShelfViewTest;
-}
-
 // ShelfTooltipManager manages the tooltip bubble that appears for shelf items.
 class ASH_EXPORT ShelfTooltipManager : public ui::EventHandler,
                                        public views::PointerWatcher,
-                                       public WmShelfObserver {
+                                       public ShelfObserver {
  public:
   explicit ShelfTooltipManager(ShelfView* shelf_view);
   ~ShelfTooltipManager() override;
@@ -60,16 +55,16 @@ class ASH_EXPORT ShelfTooltipManager : public ui::EventHandler,
   // views::PointerWatcher overrides:
   void OnPointerEventObserved(const ui::PointerEvent& event,
                               const gfx::Point& location_in_screen,
-                              views::Widget* target) override;
+                              gfx::NativeView target) override;
 
-  // WmShelfObserver overrides:
+  // ShelfObserver overrides:
   void WillChangeVisibilityState(ShelfVisibilityState new_state) override;
   void OnAutoHideStateChanged(ShelfAutoHideState new_state) override;
 
  private:
   class ShelfTooltipBubble;
-  friend class test::ShelfViewTest;
-  friend class test::ShelfTooltipManagerTest;
+  friend class ShelfViewTest;
+  friend class ShelfTooltipManagerTest;
 
   // A helper function to check for shelf visibility and view validity.
   bool ShouldShowTooltipForView(views::View* view);

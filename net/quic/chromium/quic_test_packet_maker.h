@@ -19,15 +19,15 @@
 #include "net/quic/platform/api/quic_string_piece.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/mock_random.h"
-#include "net/spdy/spdy_framer.h"
-#include "net/spdy/spdy_protocol.h"
+#include "net/spdy/core/spdy_framer.h"
+#include "net/spdy/core/spdy_protocol.h"
 
 namespace net {
 namespace test {
 
 class QuicTestPacketMaker {
  public:
-  QuicTestPacketMaker(QuicVersion version,
+  QuicTestPacketMaker(QuicTransportVersion version,
                       QuicConnectionId connection_id,
                       MockClock* clock,
                       const std::string& host,
@@ -56,14 +56,25 @@ class QuicTestPacketMaker {
       QuicStreamId stream_id,
       QuicRstStreamErrorCode error_code,
       QuicPacketNumber largest_received,
-      QuicPacketNumber ack_least_unacked,
-      QuicPacketNumber stop_least_unacked,
+      QuicPacketNumber smallest_received,
+      QuicPacketNumber least_unacked,
       bool send_feedback);
+  std::unique_ptr<QuicReceivedPacket> MakeAckAndRstPacket(
+      QuicPacketNumber num,
+      bool include_version,
+      QuicStreamId stream_id,
+      QuicRstStreamErrorCode error_code,
+      QuicPacketNumber largest_received,
+      QuicPacketNumber smallest_received,
+      QuicPacketNumber least_unacked,
+      bool send_feedback,
+      size_t bytes_written);
   std::unique_ptr<QuicReceivedPacket> MakeAckAndConnectionClosePacket(
       QuicPacketNumber num,
       bool include_version,
       QuicTime::Delta delta_time_largest_observed,
       QuicPacketNumber largest_received,
+      QuicPacketNumber smallest_received,
       QuicPacketNumber least_unacked,
       QuicErrorCode quic_error,
       const std::string& quic_error_details);
@@ -76,19 +87,14 @@ class QuicTestPacketMaker {
   std::unique_ptr<QuicReceivedPacket> MakeAckPacket(
       QuicPacketNumber packet_number,
       QuicPacketNumber largest_received,
+      QuicPacketNumber smallest_received,
       QuicPacketNumber least_unacked,
       bool send_feedback);
   std::unique_ptr<QuicReceivedPacket> MakeAckPacket(
       QuicPacketNumber packet_number,
       QuicPacketNumber largest_received,
-      QuicPacketNumber ack_least_unacked,
-      QuicPacketNumber stop_least_unacked,
-      bool send_feedback);
-  std::unique_ptr<QuicReceivedPacket> MakeAckPacket(
-      QuicPacketNumber packet_number,
-      QuicPacketNumber largest_received,
-      QuicPacketNumber ack_least_unacked,
-      QuicPacketNumber stop_least_unacked,
+      QuicPacketNumber smallest_received,
+      QuicPacketNumber least_unacked,
       bool send_feedback,
       QuicTime::Delta ack_delay_time);
   std::unique_ptr<QuicReceivedPacket> MakeDataPacket(
@@ -117,6 +123,7 @@ class QuicTestPacketMaker {
       bool include_version,
       QuicStreamId stream_id,
       QuicPacketNumber largest_received,
+      QuicPacketNumber smallest_received,
       QuicPacketNumber least_unacked,
       bool fin,
       QuicStreamOffset offset,
@@ -219,20 +226,16 @@ class QuicTestPacketMaker {
                                               SpdyHeaderBlock headers,
                                               QuicStreamOffset* offset);
 
-  std::unique_ptr<QuicReceivedPacket> MakeSettingsPacket(
+  // Creates a packet containing the initial SETTINGS frame, and saves the
+  // headers stream offset into |offset|.
+  std::unique_ptr<QuicReceivedPacket> MakeInitialSettingsPacket(
       QuicPacketNumber packet_number,
-      SpdySettingsIds id,
-      size_t value,
-      bool should_include_version,
       QuicStreamOffset* offset);
 
   // Same as above, but also saves the serialized QUIC stream data in
   // |stream_data|.
-  std::unique_ptr<QuicReceivedPacket> MakeSettingsPacketAndSaveData(
+  std::unique_ptr<QuicReceivedPacket> MakeInitialSettingsPacketAndSaveData(
       QuicPacketNumber packet_number,
-      SpdySettingsIds id,
-      size_t value,
-      bool should_include_version,
       QuicStreamOffset* offset,
       std::string* stream_data);
 
@@ -254,7 +257,7 @@ class QuicTestPacketMaker {
   void InitializeHeader(QuicPacketNumber packet_number,
                         bool should_include_version);
 
-  QuicVersion version_;
+  QuicTransportVersion version_;
   QuicConnectionId connection_id_;
   MockClock* clock_;  // Owned by QuicStreamFactory.
   std::string host_;

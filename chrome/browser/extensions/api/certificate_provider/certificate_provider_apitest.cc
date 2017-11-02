@@ -40,6 +40,7 @@
 #include "net/test/spawned_test_server/spawned_test_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "third_party/boringssl/src/include/openssl/evp.h"
+#include "third_party/boringssl/src/include/openssl/mem.h"
 #include "third_party/boringssl/src/include/openssl/rsa.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/textfield/textfield.h"
@@ -72,15 +73,8 @@ void StoreString(std::string* result,
 void StoreDigest(std::vector<uint8_t>* digest,
                  const base::Closure& callback,
                  const base::Value* value) {
-  const base::Value* binary = nullptr;
-  const bool is_binary = value->GetAsBinary(&binary);
-  EXPECT_TRUE(is_binary) << "Unexpected value in StoreDigest";
-  if (is_binary) {
-    const uint8_t* const binary_begin =
-        reinterpret_cast<const uint8_t*>(binary->GetBuffer());
-    digest->assign(binary_begin, binary_begin + binary->GetSize());
-  }
-
+  ASSERT_TRUE(value->is_blob()) << "Unexpected value in StoreDigest";
+  digest->assign(value->GetBlob().begin(), value->GetBlob().end());
   callback.Run();
 }
 
@@ -106,7 +100,7 @@ bool RsaSign(const std::vector<uint8_t>& digest,
       RSA_sign_raw(rsa_key, &len, signature->data(), signature->size(),
                    prefixed_digest, prefixed_digest_len, RSA_PKCS1_PADDING);
   if (is_alloced)
-    free(prefixed_digest);
+    OPENSSL_free(prefixed_digest);
 
   if (rv) {
     signature->resize(len);

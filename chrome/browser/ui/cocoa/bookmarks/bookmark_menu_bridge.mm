@@ -12,6 +12,7 @@
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/bookmarks/bookmark_utils_desktop.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_bridge.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_menu_cocoa_controller.h"
@@ -67,7 +68,7 @@ void BookmarkMenuBridge::UpdateMenuInternal(NSMenu* bookmark_menu,
     return;
 
   if (!folder_image_) {
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     folder_image_.reset(
         rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER).CopyNSImage());
     [folder_image_ setTemplate:YES];
@@ -75,28 +76,20 @@ void BookmarkMenuBridge::UpdateMenuInternal(NSMenu* bookmark_menu,
 
   ClearBookmarkMenu(bookmark_menu);
 
-  // Add at most one separator for the bookmark bar and the managed and
-  // supervised bookmarks folders.
+  // Add at most one separator for the bookmark bar and the managed bookmarks
+  // folder.
   bookmarks::ManagedBookmarkService* managed =
       ManagedBookmarkServiceFactory::GetForProfile(profile_);
   const BookmarkNode* barNode = model->bookmark_bar_node();
   const BookmarkNode* managedNode = managed->managed_node();
-  const BookmarkNode* supervisedNode = managed->supervised_node();
-  if (!barNode->empty() || !managedNode->empty() || !supervisedNode->empty())
+  if (!barNode->empty() || !managedNode->empty())
     [bookmark_menu addItem:[NSMenuItem separatorItem]];
   if (!managedNode->empty()) {
     // Most users never see this node, so the image is only loaded if needed.
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     NSImage* image =
         rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER_MANAGED).ToNSImage();
     AddNodeAsSubmenu(bookmark_menu, managedNode, image, !is_submenu);
-  }
-  if (!supervisedNode->empty()) {
-    // Most users never see this node, so the image is only loaded if needed.
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
-    NSImage* image =
-        rb.GetNativeImageNamed(IDR_BOOKMARK_BAR_FOLDER_SUPERVISED).ToNSImage();
-    AddNodeAsSubmenu(bookmark_menu, supervisedNode, image, !is_submenu);
   }
   if (!barNode->empty())
     AddNodeToMenu(barNode, bookmark_menu, !is_submenu);
@@ -202,7 +195,7 @@ void BookmarkMenuBridge::ObserveBookmarkModel() {
 
 BookmarkModel* BookmarkMenuBridge::GetBookmarkModel() {
   if (!profile_)
-    return NULL;
+    return nullptr;
   return BookmarkModelFactory::GetForBrowserContext(profile_);
 }
 
@@ -225,9 +218,6 @@ void BookmarkMenuBridge::ClearBookmarkMenu(NSMenu* menu) {
     // an action of openBookmarkMenuItem:.  Also, assume all items
     // with submenus are submenus of bookmarks.
     if (([item action] == @selector(openBookmarkMenuItem:)) ||
-        ([item action] == @selector(openAllBookmarks:)) ||
-        ([item action] == @selector(openAllBookmarksNewWindow:)) ||
-        ([item action] == @selector(openAllBookmarksIncognitoWindow:)) ||
         [item hasSubmenu] ||
         [item isSeparatorItem]) {
       // This will eventually [obj release] all its kids, if it has
@@ -243,7 +233,7 @@ void BookmarkMenuBridge::AddNodeAsSubmenu(NSMenu* menu,
                                           const BookmarkNode* node,
                                           NSImage* image,
                                           bool add_extra_items) {
-  NSString* title = SysUTF16ToNSString(node->GetTitle());
+  NSString* title = base::SysUTF16ToNSString(node->GetTitle());
   NSMenuItem* items = [[[NSMenuItem alloc]
                             initWithTitle:title
                                    action:nil
@@ -284,54 +274,6 @@ void BookmarkMenuBridge::AddNodeToMenu(const BookmarkNode* node, NSMenu* menu,
       ConfigureMenuItem(child, item, false);
     }
   }
-
-  if (add_extra_items) {
-    // Add menus for 'Open All Bookmarks'.
-    [menu addItem:[NSMenuItem separatorItem]];
-    bool enabled = child_count != 0;
-
-    IncognitoModePrefs::Availability incognito_availability =
-        IncognitoModePrefs::GetAvailability(profile_->GetPrefs());
-    bool incognito_enabled =
-        enabled && incognito_availability != IncognitoModePrefs::DISABLED;
-
-    AddItemToMenu(IDC_BOOKMARK_BAR_OPEN_ALL,
-                  IDS_BOOKMARK_BAR_OPEN_ALL,
-                  node, menu, enabled);
-    AddItemToMenu(IDC_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW,
-                  IDS_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW,
-                  node, menu, enabled);
-    AddItemToMenu(IDC_BOOKMARK_BAR_OPEN_ALL_INCOGNITO,
-                  IDS_BOOKMARK_BAR_OPEN_ALL_INCOGNITO,
-                  node, menu, incognito_enabled);
-  }
-}
-
-void BookmarkMenuBridge::AddItemToMenu(int command_id,
-                                       int message_id,
-                                       const BookmarkNode* node,
-                                       NSMenu* menu,
-                                       bool enabled) {
-  NSString* title = l10n_util::GetNSStringWithFixup(message_id);
-  SEL action;
-  if (!enabled) {
-    // A nil action makes a menu item appear disabled. NSMenuItem setEnabled
-    // will not reflect the disabled state until the item title is set again.
-    action = nil;
-  } else if (command_id == IDC_BOOKMARK_BAR_OPEN_ALL) {
-    action = @selector(openAllBookmarks:);
-  } else if (command_id == IDC_BOOKMARK_BAR_OPEN_ALL_NEW_WINDOW) {
-    action = @selector(openAllBookmarksNewWindow:);
-  } else {
-    action = @selector(openAllBookmarksIncognitoWindow:);
-  }
-  NSMenuItem* item = [[[NSMenuItem alloc] initWithTitle:title
-                                                 action:action
-                                          keyEquivalent:@""] autorelease];
-  [item setTarget:controller_];
-  [item setTag:node->id()];
-  [item setEnabled:enabled];
-  [menu addItem:item];
 }
 
 void BookmarkMenuBridge::ConfigureMenuItem(const BookmarkNode* node,
@@ -354,7 +296,7 @@ void BookmarkMenuBridge::ConfigureMenuItem(const BookmarkNode* node,
   }
   // If we do not have a loaded favicon, use the default site image instead.
   if (!favicon) {
-    ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     favicon = rb.GetNativeImageNamed(IDR_DEFAULT_FAVICON).ToNSImage();
     [favicon setTemplate:YES];
   }

@@ -17,7 +17,9 @@
 #include "base/gtest_prod_util.h"
 #include "base/strings/string16.h"
 #include "chrome/renderer/media/chrome_key_systems_provider.h"
+#include "components/nacl/common/features.h"
 #include "components/rappor/public/interfaces/rappor_recorder.mojom.h"
+#include "components/safe_browsing/common/safe_browsing.mojom.h"
 #include "components/spellcheck/spellcheck_build_features.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "extensions/features/features.h"
@@ -50,6 +52,10 @@ struct ChromeViewHostMsg_GetPluginInfo_Output;
 namespace content {
 class BrowserPluginDelegate;
 struct WebPluginInfo;
+}
+
+namespace error_page {
+class Error;
 }
 
 namespace network_hints {
@@ -111,13 +117,12 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
   SkBitmap* GetSadPluginBitmap() override;
   SkBitmap* GetSadWebViewBitmap() override;
   bool OverrideCreatePlugin(content::RenderFrame* render_frame,
-                            blink::WebLocalFrame* frame,
                             const blink::WebPluginParams& params,
                             blink::WebPlugin** plugin) override;
   blink::WebPlugin* CreatePluginReplacement(
       content::RenderFrame* render_frame,
       const base::FilePath& plugin_path) override;
-  bool HasErrorPage(int http_status_code, std::string* error_domain) override;
+  bool HasErrorPage(int http_status_code) override;
   bool ShouldSuppressErrorPage(content::RenderFrame* render_frame,
                                const GURL& url) override;
   void GetNavigationErrorStrings(content::RenderFrame* render_frame,
@@ -125,11 +130,19 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
                                  const blink::WebURLError& error,
                                  std::string* error_html,
                                  base::string16* error_description) override;
+  void GetNavigationErrorStringsForHttpStatusError(
+      content::RenderFrame* render_frame,
+      const blink::WebURLRequest& failed_request,
+      const GURL& unreachable_url,
+      int http_status,
+      std::string* error_html,
+      base::string16* error_description) override;
+
   void DeferMediaLoad(content::RenderFrame* render_frame,
                       bool has_played_media_before,
                       const base::Closure& closure) override;
   bool RunIdleHandlerWhenWidgetsHidden() override;
-  bool AllowTimerSuspensionWhenProcessBackgrounded() override;
+  bool AllowStoppingWhenProcessBackgrounded() override;
   bool AllowPopup() override;
   bool ShouldFork(blink::WebLocalFrame* frame,
                   const GURL& url,
@@ -137,10 +150,12 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
                   bool is_initial_navigation,
                   bool is_server_redirect,
                   bool* send_referrer) override;
-  bool WillSendRequest(blink::WebLocalFrame* frame,
-                       ui::PageTransition transition_type,
-                       const blink::WebURL& url,
-                       GURL* new_url) override;
+  bool WillSendRequest(
+      blink::WebLocalFrame* frame,
+      ui::PageTransition transition_type,
+      const blink::WebURL& url,
+      std::vector<std::unique_ptr<content::URLLoaderThrottle>>* throttles,
+      GURL* new_url) override;
   bool IsPrefetchOnly(content::RenderFrame* render_frame,
                       const blink::WebURLRequest& request) override;
   unsigned long long VisitedLinkHash(const char* canonical_url,
@@ -151,14 +166,16 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
       const content::RenderFrame* render_frame,
       blink::WebPageVisibilityState* override_state) override;
   bool IsExternalPepperPlugin(const std::string& module_name) override;
-  blink::WebSpeechSynthesizer* OverrideSpeechSynthesizer(
+  std::unique_ptr<blink::WebSocketHandshakeThrottle>
+  CreateWebSocketHandshakeThrottle() override;
+  std::unique_ptr<blink::WebSpeechSynthesizer> OverrideSpeechSynthesizer(
       blink::WebSpeechSynthesizerClient* client) override;
   bool ShouldReportDetailedMessageForSource(
       const base::string16& source) const override;
   bool ShouldGatherSiteIsolationStats() const override;
-  blink::WebWorkerContentSettingsClientProxy*
-  CreateWorkerContentSettingsClientProxy(content::RenderFrame* render_frame,
-                                         blink::WebFrame* frame) override;
+  std::unique_ptr<blink::WebContentSettingsClient>
+  CreateWorkerContentSettingsClient(
+      content::RenderFrame* render_frame) override;
   bool AllowPepperMediaStreamAPI(const GURL& url) override;
   void AddSupportedKeySystems(
       std::vector<std::unique_ptr<::media::KeySystemProperties>>* key_systems)
@@ -176,22 +193,30 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
   void RecordRapporURL(const std::string& metric, const GURL& url) override;
   void AddImageContextMenuProperties(
       const blink::WebURLResponse& response,
+      bool is_image_in_context_a_placeholder_image,
       std::map<std::string, std::string>* properties) override;
   void RunScriptsAtDocumentStart(content::RenderFrame* render_frame) override;
   void RunScriptsAtDocumentEnd(content::RenderFrame* render_frame) override;
   void RunScriptsAtDocumentIdle(content::RenderFrame* render_frame) override;
+  void SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() override;
   void DidInitializeServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> context,
       int64_t service_worker_version_id,
-      const GURL& url) override;
+      const GURL& service_worker_scope,
+      const GURL& script_url) override;
   void WillDestroyServiceWorkerContextOnWorkerThread(
       v8::Local<v8::Context> context,
       int64_t service_worker_version_id,
-      const GURL& url) override;
+      const GURL& service_worker_scope,
+      const GURL& script_url) override;
   bool ShouldEnforceWebRTCRoutingPreferences() override;
   GURL OverrideFlashEmbedWithHTML(const GURL& url) override;
   std::unique_ptr<base::TaskScheduler::InitParams> GetTaskSchedulerInitParams()
       override;
+  bool OverrideLegacySymantecCertConsoleMessage(
+      const GURL& url,
+      base::Time cert_validity_start,
+      std::string* console_messsage) override;
 
 #if BUILDFLAG(ENABLE_SPELLCHECK)
   // Sets a new |spellcheck|. Used for testing only.
@@ -202,7 +227,6 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
 #if BUILDFLAG(ENABLE_PLUGINS)
   static blink::WebPlugin* CreatePlugin(
       content::RenderFrame* render_frame,
-      blink::WebLocalFrame* frame,
       const blink::WebPluginParams& params,
       const ChromeViewHostMsg_GetPluginInfo_Output& output);
 #endif
@@ -220,11 +244,21 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
   static GURL GetNaClContentHandlerURL(const std::string& actual_mime_type,
                                        const content::WebPluginInfo& plugin);
 
+  // Initialises |safe_browsing_| if it is not already initialised.
+  void InitSafeBrowsingIfNecessary();
+
+  void GetNavigationErrorStringsInternal(
+      content::RenderFrame* render_frame,
+      const blink::WebURLRequest& failed_request,
+      const error_page::Error& error,
+      std::string* error_html,
+      base::string16* error_description);
+
   // Time at which this object was created. This is very close to the time at
   // which the RendererMain function was entered.
   base::TimeTicks main_entry_time_;
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   // Determines if a NaCl app is allowed, and modifies params to pass the app's
   // permissions to the trusted NaCl plugin.
   static bool IsNaClAllowed(const GURL& manifest_url,
@@ -243,6 +277,8 @@ class ChromeContentRendererClient : public content::ContentRendererClient {
       prescient_networking_dispatcher_;
 
   chrome::ChromeKeySystemsProvider key_systems_provider_;
+
+  safe_browsing::mojom::SafeBrowsingPtr safe_browsing_;
 
 #if BUILDFLAG(ENABLE_SPELLCHECK)
   std::unique_ptr<SpellCheck> spellcheck_;

@@ -127,7 +127,8 @@ void HttpUtil::ParseContentType(const std::string& content_type_str,
     charset_val = content_type_str.find_first_not_of(HTTP_LWS, charset_val);
     charset_val = std::min(charset_val, charset_end);
     char first_char = content_type_str[charset_val];
-    if (first_char == '"' || first_char == '\'') {
+    // RFC 7231 Section 3.1.1.1 allows double quotes around charset.
+    if (first_char == '"') {
       charset_end = FindStringEnd(content_type_str, charset_val, first_char);
       ++charset_val;
       DCHECK(charset_end >= charset_val);
@@ -343,6 +344,17 @@ const char* const kForbiddenHeaderFields[] = {
 };
 
 }  // namespace
+
+// static
+bool HttpUtil::IsMethodSafe(const std::string& method) {
+  return method == "GET" || method == "HEAD" || method == "OPTIONS" ||
+         method == "TRACE";
+}
+
+// static
+bool HttpUtil::IsMethodIdempotent(const std::string& method) {
+  return IsMethodSafe(method) || method == "PUT" || method == "DELETE";
+}
 
 // static
 bool HttpUtil::IsSafeHeader(const std::string& name) {
@@ -727,12 +739,8 @@ std::string HttpUtil::ConvertHeadersBackToHTTPResponse(const std::string& str) {
   return disassembled_headers;
 }
 
-// TODO(jungshik): 1. If the list is 'fr-CA,fr-FR,en,de', we have to add
-// 'fr' after 'fr-CA' with the same q-value as 'fr-CA' because
-// web servers, in general, do not fall back to 'fr' and may end up picking
-// 'en' which has a lower preference than 'fr-CA' and 'fr-FR'.
-// 2. This function assumes that the input is a comma separated list
-// without any whitespace. As long as it comes from the preference and
+// TODO(jungshik): This function assumes that the input is a comma separated
+// list without any whitespace. As long as it comes from the preference and
 // a user does not manually edit the preference file, it's the case. Still,
 // we may have to make it more robust.
 std::string HttpUtil::GenerateAcceptLanguageHeader(
@@ -740,7 +748,7 @@ std::string HttpUtil::GenerateAcceptLanguageHeader(
   // We use integers for qvalue and qvalue decrement that are 10 times
   // larger than actual values to avoid a problem with comparing
   // two floating point numbers.
-  const unsigned int kQvalueDecrement10 = 2;
+  const unsigned int kQvalueDecrement10 = 1;
   unsigned int qvalue10 = 10;
   base::StringTokenizer t(raw_language_list, ",");
   std::string lang_list_with_q;

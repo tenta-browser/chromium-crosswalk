@@ -4,6 +4,7 @@
 
 #include "content/browser/child_process_launcher_helper.h"
 
+#include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/public/common/content_switches.h"
@@ -81,7 +82,8 @@ void ChildProcessLauncherHelper::StartLaunchOnClientThread() {
 
   BrowserThread::PostTask(
       BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
-      base::Bind(&ChildProcessLauncherHelper::LaunchOnLauncherThread, this));
+      base::BindOnce(&ChildProcessLauncherHelper::LaunchOnLauncherThread,
+                     this));
 }
 
 void ChildProcessLauncherHelper::LaunchOnLauncherThread() {
@@ -104,30 +106,27 @@ void ChildProcessLauncherHelper::LaunchOnLauncherThread() {
   AfterLaunchOnLauncherThread(process, options);
 
   if (is_synchronous_launch) {
-    PostLaunchOnLauncherThread(std::move(process), launch_result, false);
+    PostLaunchOnLauncherThread(std::move(process), launch_result);
   }
 }
 
 void ChildProcessLauncherHelper::PostLaunchOnLauncherThread(
     ChildProcessLauncherHelper::Process process,
-    int launch_result,
-    bool post_launch_on_client_thread_called) {
+    int launch_result) {
   // Release the client handle now that the process has been started (the pipe
   // may not signal when the process dies otherwise and we would not detect the
   // child process died).
   mojo_client_handle_.reset();
 
   if (process.process.IsValid()) {
-    RecordHistogramsOnLauncherThread(
-        base::TimeTicks::Now() - begin_launch_time_);
+    RecordHistogramsOnLauncherThread(base::TimeTicks::Now() -
+                                     begin_launch_time_);
   }
 
-  if (!post_launch_on_client_thread_called) {
-    BrowserThread::PostTask(
-        client_thread_id_, FROM_HERE,
-        base::Bind(&ChildProcessLauncherHelper::PostLaunchOnClientThread,
-            this, base::Passed(&process), launch_result));
-  }
+  BrowserThread::PostTask(
+      client_thread_id_, FROM_HERE,
+      base::BindOnce(&ChildProcessLauncherHelper::PostLaunchOnClientThread,
+                     this, base::Passed(&process), launch_result));
 }
 
 void ChildProcessLauncherHelper::PostLaunchOnClientThread(
@@ -157,8 +156,9 @@ void ChildProcessLauncherHelper::ForceNormalProcessTerminationAsync(
   // So don't do this on the UI/IO threads.
   BrowserThread::PostTask(
       BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
-      base::Bind(&ChildProcessLauncherHelper::ForceNormalProcessTerminationSync,
-                 base::Passed(&process)));
+      base::BindOnce(
+          &ChildProcessLauncherHelper::ForceNormalProcessTerminationSync,
+          base::Passed(&process)));
 }
 
 }  // namespace internal

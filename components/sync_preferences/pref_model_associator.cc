@@ -4,6 +4,8 @@
 
 #include "components/sync_preferences/pref_model_associator.h"
 
+#include <algorithm>
+#include <iterator>
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -61,12 +63,12 @@ PrefModelAssociator::PrefModelAssociator(
       pref_service_(NULL),
       type_(type),
       client_(client) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(type_ == PREFERENCES || type_ == PRIORITY_PREFERENCES);
 }
 
 PrefModelAssociator::~PrefModelAssociator() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   pref_service_ = NULL;
 
   synced_pref_observers_.clear();
@@ -104,11 +106,11 @@ void PrefModelAssociator::InitPrefAndAssociate(
       if (new_value->IsType(base::Value::Type::NONE)) {
         LOG(WARNING) << "Sync has null value for pref " << pref_name.c_str();
         pref_service_->ClearPref(pref_name);
-      } else if (!new_value->IsType(user_pref_value->GetType())) {
+      } else if (!new_value->IsType(user_pref_value->type())) {
         LOG(WARNING) << "Synced value for " << preference.name()
-                     << " is of type " << new_value->GetType()
+                     << " is of type " << new_value->type()
                      << " which doesn't match pref type "
-                     << user_pref_value->GetType();
+                     << user_pref_value->type();
       } else if (!user_pref_value->Equals(new_value.get())) {
         pref_service_->Set(pref_name, *new_value);
       }
@@ -164,7 +166,7 @@ syncer::SyncMergeResult PrefModelAssociator::MergeDataAndStartSyncing(
     std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
     std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) {
   DCHECK_EQ(type_, type);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(pref_service_);
   DCHECK(!sync_processor_.get());
   DCHECK(sync_processor.get());
@@ -238,9 +240,11 @@ std::unique_ptr<base::Value> PrefModelAssociator::MergePreference(
   if (client_) {
     std::string new_pref_name;
     if (client_->IsMergeableListPreference(name))
-      return base::WrapUnique(MergeListValues(local_value, server_value));
-    if (client_->IsMergeableDictionaryPreference(name))
-      return base::WrapUnique(MergeDictionaryValues(local_value, server_value));
+      return MergeListValues(local_value, server_value);
+    if (client_->IsMergeableDictionaryPreference(name)) {
+      return base::MakeUnique<base::Value>(
+          MergeDictionaryValues(local_value, server_value));
+    }
   }
 
   // If this is not a specially handled preference, server wins.
@@ -275,58 +279,50 @@ bool PrefModelAssociator::CreatePrefSyncData(
   return true;
 }
 
-base::Value* PrefModelAssociator::MergeListValues(const base::Value& from_value,
-                                                  const base::Value& to_value) {
-  if (from_value.GetType() == base::Value::Type::NONE)
-    return to_value.DeepCopy();
-  if (to_value.GetType() == base::Value::Type::NONE)
-    return from_value.DeepCopy();
-
-  DCHECK(from_value.GetType() == base::Value::Type::LIST);
-  DCHECK(to_value.GetType() == base::Value::Type::LIST);
-  const base::ListValue& from_list_value =
-      static_cast<const base::ListValue&>(from_value);
-  const base::ListValue& to_list_value =
-      static_cast<const base::ListValue&>(to_value);
-  base::ListValue* result = to_list_value.DeepCopy();
-
-  for (const auto& value : from_list_value) {
-    result->AppendIfNotPresent(value.CreateDeepCopy());
-  }
-  return result;
-}
-
-base::Value* PrefModelAssociator::MergeDictionaryValues(
+std::unique_ptr<base::Value> PrefModelAssociator::MergeListValues(
     const base::Value& from_value,
     const base::Value& to_value) {
-  if (from_value.GetType() == base::Value::Type::NONE)
-    return to_value.DeepCopy();
-  if (to_value.GetType() == base::Value::Type::NONE)
-    return from_value.DeepCopy();
+  if (from_value.type() == base::Value::Type::NONE)
+    return base::MakeUnique<base::Value>(to_value.Clone());
+  if (to_value.type() == base::Value::Type::NONE)
+    return base::MakeUnique<base::Value>(from_value.Clone());
 
-  DCHECK_EQ(from_value.GetType(), base::Value::Type::DICTIONARY);
-  DCHECK_EQ(to_value.GetType(), base::Value::Type::DICTIONARY);
-  const base::DictionaryValue& from_dict_value =
-      static_cast<const base::DictionaryValue&>(from_value);
-  const base::DictionaryValue& to_dict_value =
-      static_cast<const base::DictionaryValue&>(to_value);
-  base::DictionaryValue* result = to_dict_value.DeepCopy();
+  DCHECK(from_value.type() == base::Value::Type::LIST);
+  DCHECK(to_value.type() == base::Value::Type::LIST);
 
-  for (base::DictionaryValue::Iterator it(from_dict_value); !it.IsAtEnd();
-       it.Advance()) {
-    const base::Value* from_key_value = &it.value();
-    base::Value* to_key_value;
-    if (result->GetWithoutPathExpansion(it.key(), &to_key_value)) {
-      if (from_key_value->GetType() == base::Value::Type::DICTIONARY &&
-          to_key_value->GetType() == base::Value::Type::DICTIONARY) {
-        base::Value* merged_value =
-            MergeDictionaryValues(*from_key_value, *to_key_value);
-        result->SetWithoutPathExpansion(it.key(), merged_value);
+  base::Value result = to_value.Clone();
+  base::Value::ListStorage& list = result.GetList();
+  for (const auto& value : from_value.GetList()) {
+    if (std::find(list.begin(), list.end(), value) == list.end())
+      list.emplace_back(value.Clone());
+  }
+
+  return base::MakeUnique<base::Value>(std::move(result));
+}
+
+base::Value PrefModelAssociator::MergeDictionaryValues(
+    const base::Value& from_value,
+    const base::Value& to_value) {
+  if (from_value.is_none())
+    return to_value.Clone();
+  if (to_value.is_none())
+    return from_value.Clone();
+
+  DCHECK(from_value.is_dict());
+  DCHECK(to_value.is_dict());
+  base::Value result = to_value.Clone();
+
+  for (const auto& it : from_value.DictItems()) {
+    const base::Value* from_key_value = &it.second;
+    base::Value* to_key_value = result.FindKey(it.first);
+    if (to_key_value) {
+      if (from_key_value->is_dict() && to_key_value->is_dict()) {
+        *to_key_value = MergeDictionaryValues(*from_key_value, *to_key_value);
       }
       // Note that for all other types we want to preserve the "to"
       // values so we do nothing here.
     } else {
-      result->SetWithoutPathExpansion(it.key(), from_key_value->DeepCopy());
+      result.SetKey(it.first, from_key_value->Clone());
     }
   }
   return result;
@@ -357,7 +353,7 @@ syncer::SyncDataList PrefModelAssociator::GetAllSyncData(
 }
 
 syncer::SyncError PrefModelAssociator::ProcessSyncChanges(
-    const tracked_objects::Location& from_here,
+    const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   if (!models_associated_) {
     syncer::SyncError error(FROM_HERE, syncer::SyncError::DATATYPE_ERROR,

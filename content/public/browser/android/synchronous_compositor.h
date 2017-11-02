@@ -12,25 +12,24 @@
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/time/time.h"
-#include "cc/resources/returned_resource.h"
+#include "components/viz/common/resources/returned_resource.h"
 #include "content/common/content_export.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
 class SkCanvas;
 
-namespace cc {
-class CompositorFrame;
-}
-
 namespace gfx {
 class Point;
 class ScrollOffset;
 class Transform;
-};
+}  // namespace gfx
+
+namespace viz {
+class CompositorFrame;
+}
 
 namespace content {
-
 class SynchronousCompositorClient;
 class WebContents;
 
@@ -52,8 +51,8 @@ class CONTENT_EXPORT SynchronousCompositor {
     Frame(Frame&& rhs);
     Frame& operator=(Frame&& rhs);
 
-    uint32_t compositor_frame_sink_id;
-    std::unique_ptr<cc::CompositorFrame> frame;
+    uint32_t layer_tree_frame_sink_id;
+    std::unique_ptr<viz::CompositorFrame> frame;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Frame);
@@ -93,8 +92,9 @@ class CONTENT_EXPORT SynchronousCompositor {
 
   // For delegated rendering, return resources from parent compositor to this.
   // Note that all resources must be returned before ReleaseHwDraw.
-  virtual void ReturnResources(uint32_t compositor_frame_sink_id,
-                               const cc::ReturnedResourceArray& resources) = 0;
+  virtual void ReturnResources(
+      uint32_t layer_tree_frame_sink_id,
+      const std::vector<viz::ReturnedResource>& resources) = 0;
 
   // "On demand" SW draw, into the supplied canvas (observing the transform
   // and clip set there-in).

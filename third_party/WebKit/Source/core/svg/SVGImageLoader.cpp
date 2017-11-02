@@ -20,7 +20,7 @@
 
 #include "core/svg/SVGImageLoader.h"
 
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/svg/SVGImageElement.h"
 
 namespace blink {
@@ -31,7 +31,7 @@ void SVGImageLoader::DispatchLoadEvent() {
   if (GetImage()->ErrorOccurred()) {
     GetElement()->DispatchEvent(Event::Create(EventTypeNames::error));
   } else {
-    SVGImageElement* image_element = toSVGImageElement(GetElement());
+    SVGImageElement* image_element = ToSVGImageElement(GetElement());
     image_element->SendSVGLoadEventToSelfAndAncestorChainIfPossible();
   }
 }

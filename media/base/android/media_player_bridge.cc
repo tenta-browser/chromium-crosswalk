@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/android/context_utils.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
@@ -40,7 +39,7 @@ enum UMAExitStatus {
 MediaPlayerBridge::MediaPlayerBridge(
     int player_id,
     const GURL& url,
-    const GURL& first_party_for_cookies,
+    const GURL& site_for_cookies,
     const std::string& user_agent,
     bool hide_url_log,
     MediaPlayerManager* manager,
@@ -55,7 +54,7 @@ MediaPlayerBridge::MediaPlayerBridge(
       pending_play_(false),
       should_seek_on_prepare_(false),
       url_(url),
-      first_party_for_cookies_(first_party_for_cookies),
+      site_for_cookies_(site_for_cookies),
       user_agent_(user_agent),
       hide_url_log_(hide_url_log),
       width_(0),
@@ -86,6 +85,11 @@ MediaPlayerBridge::~MediaPlayerBridge() {
 
 void MediaPlayerBridge::Initialize() {
   cookies_.clear();
+  if (url_.SchemeIsBlob()) {
+    NOTREACHED();
+    return;
+  }
+
   if (url_.SchemeIsFile() || url_.SchemeIs("data")) {
     ExtractMediaMetadata(url_.spec());
     return;
@@ -93,11 +97,10 @@ void MediaPlayerBridge::Initialize() {
 
   media::MediaResourceGetter* resource_getter =
       manager()->GetMediaResourceGetter();
-  if (url_.SchemeIsFileSystem() || url_.SchemeIsBlob()) {
+  if (url_.SchemeIsFileSystem()) {
     resource_getter->GetPlatformPathFromURL(
-        url_,
-        base::Bind(&MediaPlayerBridge::ExtractMediaMetadata,
-                   weak_factory_.GetWeakPtr()));
+        url_, base::BindOnce(&MediaPlayerBridge::ExtractMediaMetadata,
+                             weak_factory_.GetWeakPtr()));
     return;
   }
 
@@ -108,8 +111,7 @@ void MediaPlayerBridge::Initialize() {
     return;
   }
 
-  resource_getter->GetCookies(url_,
-                              first_party_for_cookies_,
+  resource_getter->GetCookies(url_, site_for_cookies_,
                               base::Bind(&MediaPlayerBridge::OnCookiesRetrieved,
                                          weak_factory_.GetWeakPtr()));
 }
@@ -145,12 +147,18 @@ void MediaPlayerBridge::SetVideoSurface(gl::ScopedJavaSurface surface) {
 
 void MediaPlayerBridge::Prepare() {
   DCHECK(j_media_player_bridge_.is_null());
+
+  if (url_.SchemeIsBlob()) {
+    NOTREACHED();
+    return;
+  }
+
   CreateJavaMediaPlayerBridge();
-  if (url_.SchemeIsFileSystem() || url_.SchemeIsBlob()) {
+
+  if (url_.SchemeIsFileSystem()) {
     manager()->GetMediaResourceGetter()->GetPlatformPathFromURL(
-        url_,
-        base::Bind(&MediaPlayerBridge::SetDataSource,
-                   weak_factory_.GetWeakPtr()));
+        url_, base::BindOnce(&MediaPlayerBridge::SetDataSource,
+                             weak_factory_.GetWeakPtr()));
     return;
   }
 
@@ -178,12 +186,10 @@ void MediaPlayerBridge::SetDataSource(const std::string& url) {
     ScopedJavaLocalRef<jstring> j_url_string =
         ConvertUTF8ToJavaString(env, url);
 
-    const JavaRef<jobject>& j_context = base::android::GetApplicationContext();
-
     const std::string data_uri_prefix("data:");
     if (base::StartsWith(url, data_uri_prefix, base::CompareCase::SENSITIVE)) {
       if (!Java_MediaPlayerBridge_setDataUriDataSource(
-              env, j_media_player_bridge_, j_context, j_url_string)) {
+              env, j_media_player_bridge_, j_url_string)) {
         OnMediaError(MEDIA_ERROR_FORMAT);
       }
       return;
@@ -194,9 +200,9 @@ void MediaPlayerBridge::SetDataSource(const std::string& url) {
     ScopedJavaLocalRef<jstring> j_user_agent = ConvertUTF8ToJavaString(
         env, user_agent_);
 
-    if (!Java_MediaPlayerBridge_setDataSource(
-            env, j_media_player_bridge_, j_context, j_url_string, j_cookies,
-            j_user_agent, hide_url_log_)) {
+    if (!Java_MediaPlayerBridge_setDataSource(env, j_media_player_bridge_,
+                                              j_url_string, j_cookies,
+                                              j_user_agent, hide_url_log_)) {
       OnMediaError(MEDIA_ERROR_FORMAT);
       return;
     }
@@ -573,10 +579,6 @@ void MediaPlayerBridge::OnTimeUpdateTimerFired() {
   last_time_update_timestamp_ = current_timestamp;
 }
 
-bool MediaPlayerBridge::RegisterMediaPlayerBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 bool MediaPlayerBridge::CanPause() {
   return can_pause_;
 }
@@ -597,8 +599,8 @@ GURL MediaPlayerBridge::GetUrl() {
   return url_;
 }
 
-GURL MediaPlayerBridge::GetFirstPartyForCookies() {
-  return first_party_for_cookies_;
+GURL MediaPlayerBridge::GetSiteForCookies() {
+  return site_for_cookies_;
 }
 
 }  // namespace media

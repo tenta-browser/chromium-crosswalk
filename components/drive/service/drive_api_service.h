@@ -14,6 +14,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/sequence_checker.h"
 #include "base/threading/thread_checker.h"
 #include "components/drive/service/drive_service_interface.h"
 #include "google_apis/drive/auth_service_interface.h"
@@ -44,8 +45,7 @@ class URLRequestContextGetter;
 namespace drive {
 
 // Builder for batch request returned by |DriveAPIService|.
-class BatchRequestConfigurator : public BatchRequestConfiguratorInterface,
-                                 public base::NonThreadSafe {
+class BatchRequestConfigurator : public BatchRequestConfiguratorInterface {
  public:
   BatchRequestConfigurator(
       const base::WeakPtr<google_apis::drive::BatchUploadRequest>&
@@ -81,6 +81,8 @@ class BatchRequestConfigurator : public BatchRequestConfiguratorInterface,
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   google_apis::DriveApiUrlGenerator url_generator_;
   google_apis::CancelCallback cancel_callback_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(BatchRequestConfigurator);
 };
@@ -122,6 +124,8 @@ class DriveAPIService : public DriveServiceInterface,
   void ClearAccessToken() override;
   void ClearRefreshToken() override;
   std::string GetRootResourceId() const override;
+  google_apis::CancelCallback GetAllTeamDriveList(
+      const google_apis::TeamDriveListCallback& callback) override;
   google_apis::CancelCallback GetAllFileList(
       const google_apis::FileListCallback& callback) override;
   google_apis::CancelCallback GetFileListInDirectory(
@@ -137,6 +141,9 @@ class DriveAPIService : public DriveServiceInterface,
   google_apis::CancelCallback GetChangeList(
       int64_t start_changestamp,
       const google_apis::ChangeListCallback& callback) override;
+  google_apis::CancelCallback GetRemainingTeamDriveList(
+      const std::string& page_token,
+      const google_apis::TeamDriveListCallback& callback) override;
   google_apis::CancelCallback GetRemainingChangeList(
       const GURL& next_link,
       const google_apis::ChangeListCallback& callback) override;

@@ -12,6 +12,7 @@
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/sys_info.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -66,11 +67,9 @@ void HandleShillCallFailure(
       shill_error_message);
 }
 
-void IPConfigRefreshCallback(const std::string& ipconfig_path,
-                             DBusMethodCallStatus call_status) {
-  if (call_status != DBUS_METHOD_CALL_SUCCESS) {
-    NET_LOG(ERROR) << "IPConfigs.Refresh Failed: " << call_status << ": "
-                   << ipconfig_path;
+void IPConfigRefreshCallback(const std::string& ipconfig_path, bool result) {
+  if (!result) {
+    NET_LOG(ERROR) << "IPConfigs.Refresh Failed: " << ipconfig_path;
   } else {
     NET_LOG(EVENT) << "IPConfigs.Refresh Succeeded: " << ipconfig_path;
   }
@@ -84,7 +83,6 @@ void RefreshIPConfigsCallback(
   const base::ListValue* ip_configs;
   if (!properties.GetListWithoutPathExpansion(
           shill::kIPConfigsProperty, &ip_configs)) {
-    NET_LOG(ERROR) << "RequestRefreshIPConfigs Failed: " << device_path;
     network_handler::ShillErrorCallbackFunction(
         "RequestRefreshIPConfigs Failed",
         device_path,
@@ -105,24 +103,6 @@ void RefreshIPConfigsCallback(
   // IPConfig.Refresh callbacks to complete because the Refresh DBus calls will
   // be executed in order and thus before any further DBus requests that
   // |callback| may issue.
-  if (!callback.is_null())
-    callback.Run();
-}
-
-void ProposeScanCallback(
-    const std::string& device_path,
-    const base::Closure& callback,
-    const network_handler::ErrorCallback& error_callback,
-    DBusMethodCallStatus call_status) {
-  if (call_status != DBUS_METHOD_CALL_SUCCESS) {
-    network_handler::ShillErrorCallbackFunction(
-        "Device.ProposeScan Failed",
-        device_path,
-        error_callback,
-        base::StringPrintf("DBus call failed: %d", call_status), "");
-    return;
-  }
-  NET_LOG(EVENT) << "Device.ProposeScan succeeded: " << device_path;
   if (!callback.is_null())
     callback.Run();
 }
@@ -331,15 +311,6 @@ void NetworkDeviceHandlerImpl::RequestRefreshIPConfigs(
                       error_callback);
 }
 
-void NetworkDeviceHandlerImpl::ProposeScan(
-    const std::string& device_path,
-    const base::Closure& callback,
-    const network_handler::ErrorCallback& error_callback) {
-  DBusThreadManager::Get()->GetShillDeviceClient()->ProposeScan(
-      dbus::ObjectPath(device_path),
-      base::Bind(&ProposeScanCallback, device_path, callback, error_callback));
-}
-
 void NetworkDeviceHandlerImpl::RegisterCellularNetwork(
     const std::string& device_path,
     const std::string& network_id,
@@ -530,11 +501,7 @@ void NetworkDeviceHandlerImpl::DeviceListChanged() {
 }
 
 NetworkDeviceHandlerImpl::NetworkDeviceHandlerImpl()
-    : network_state_handler_(NULL),
-      cellular_allow_roaming_(false),
-      mac_addr_randomization_supported_(true),
-      mac_addr_randomization_enabled_(false),
-      weak_ptr_factory_(this) {}
+    : weak_ptr_factory_(this) {}
 
 void NetworkDeviceHandlerImpl::Init(
     NetworkStateHandler* network_state_handler) {
@@ -574,28 +541,57 @@ void NetworkDeviceHandlerImpl::ApplyCellularAllowRoamingToShill() {
 }
 
 void NetworkDeviceHandlerImpl::ApplyMACAddressRandomizationToShill() {
-  if (!mac_addr_randomization_supported_)
-    return;
-
   const DeviceState* device_state =
       GetWifiDeviceState(network_handler::ErrorCallback());
-  if (!device_state)
+  if (!device_state) {
+    // We'll need to ask if this is supported when we find a Wi-Fi
+    // device.
+    mac_addr_randomization_supported_ =
+        MACAddressRandomizationSupport::NOT_REQUESTED;
     return;
+  }
 
-  SetDevicePropertyInternal(
-      device_state->path(), shill::kMACAddressRandomizationProperty,
-      base::Value(mac_addr_randomization_enabled_),
-      base::Bind(&base::DoNothing),
-      base::Bind(
-          &NetworkDeviceHandlerImpl::SetMACAddressRandomizationErrorCallback,
-          weak_ptr_factory_.GetWeakPtr()));
+  switch (mac_addr_randomization_supported_) {
+    case MACAddressRandomizationSupport::NOT_REQUESTED:
+      GetDeviceProperties(
+          device_state->path(),
+          base::Bind(&NetworkDeviceHandlerImpl::HandleMACAddressRandomization,
+                     weak_ptr_factory_.GetWeakPtr()),
+          network_handler::ErrorCallback());
+      return;
+    case MACAddressRandomizationSupport::SUPPORTED:
+      SetDevicePropertyInternal(
+          device_state->path(), shill::kMACAddressRandomizationEnabledProperty,
+          base::Value(mac_addr_randomization_enabled_),
+          base::Bind(&base::DoNothing), network_handler::ErrorCallback());
+      return;
+    case MACAddressRandomizationSupport::UNSUPPORTED:
+      return;
+  }
 }
 
-void NetworkDeviceHandlerImpl::SetMACAddressRandomizationErrorCallback(
-    const std::string& error_name,
-    std::unique_ptr<base::DictionaryValue> error_data) {
-  if (error_name == NetworkDeviceHandler::kErrorNotSupported)
-    mac_addr_randomization_supported_ = false;
+void NetworkDeviceHandlerImpl::HandleMACAddressRandomization(
+    const std::string& device_path,
+    const base::DictionaryValue& properties) {
+  bool supported;
+  if (!properties.GetBooleanWithoutPathExpansion(
+          shill::kMACAddressRandomizationSupportedProperty, &supported)) {
+    if (base::SysInfo::IsRunningOnChromeOS()) {
+      NET_LOG(ERROR) << "Failed to determine if device " << device_path
+                     << " supports MAC address randomization";
+    }
+    return;
+  }
+
+  // Try to set MAC address randomization if it's supported.
+  if (supported) {
+    mac_addr_randomization_supported_ =
+        MACAddressRandomizationSupport::SUPPORTED;
+    ApplyMACAddressRandomizationToShill();
+  } else {
+    mac_addr_randomization_supported_ =
+        MACAddressRandomizationSupport::UNSUPPORTED;
+  }
 }
 
 const DeviceState* NetworkDeviceHandlerImpl::GetWifiDeviceState(

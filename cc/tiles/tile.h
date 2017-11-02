@@ -10,6 +10,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "cc/paint/draw_image.h"
 #include "cc/raster/tile_task.h"
 #include "cc/tiles/tile_draw_info.h"
 #include "ui/gfx/geometry/axis_transform2d.h"
@@ -116,6 +117,16 @@ class CC_EXPORT Tile {
   bool is_solid_color_analysis_performed() const {
     return is_solid_color_analysis_performed_;
   }
+  bool can_use_lcd_text() const { return can_use_lcd_text_; }
+
+  bool set_raster_task_scheduled_with_checker_images(bool has_checker_images) {
+    bool previous_value = raster_task_scheduled_with_checker_images_;
+    raster_task_scheduled_with_checker_images_ = has_checker_images;
+    return previous_value;
+  }
+  bool raster_task_scheduled_with_checker_images() const {
+    return raster_task_scheduled_with_checker_images_;
+  }
 
   const PictureLayerTiling* tiling() const { return tiling_; }
   void set_tiling(const PictureLayerTiling* tiling) { tiling_ = tiling; }
@@ -130,7 +141,8 @@ class CC_EXPORT Tile {
        const CreateInfo& info,
        int layer_id,
        int source_frame_number,
-       int flags);
+       int flags,
+       bool can_use_lcd_text);
 
   TileManager* const tile_manager_;
   const PictureLayerTiling* tiling_;
@@ -148,6 +160,7 @@ class CC_EXPORT Tile {
   bool required_for_activation_ : 1;
   bool required_for_draw_ : 1;
   bool is_solid_color_analysis_performed_ : 1;
+  const bool can_use_lcd_text_ : 1;
 
   Id id_;
 
@@ -158,6 +171,10 @@ class CC_EXPORT Tile {
   Id invalidated_id_;
 
   unsigned scheduled_priority_;
+
+  // Set to true if there is a raster task scheduled for this tile that will
+  // rasterize a resource with checker images.
+  bool raster_task_scheduled_with_checker_images_ = false;
   scoped_refptr<TileTask> raster_task_;
 
   DISALLOW_COPY_AND_ASSIGN(Tile);

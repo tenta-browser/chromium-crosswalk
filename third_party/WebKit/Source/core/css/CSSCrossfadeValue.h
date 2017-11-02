@@ -36,10 +36,11 @@
 namespace blink {
 
 class CrossfadeSubimageObserverProxy;
-class LayoutObject;
+
+namespace cssvalue {
 
 class CORE_EXPORT CSSCrossfadeValue final : public CSSImageGeneratorValue {
-  friend class CrossfadeSubimageObserverProxy;
+  friend class blink::CrossfadeSubimageObserverProxy;
   USING_PRE_FINALIZER(CSSCrossfadeValue, Dispose);
 
  public:
@@ -53,12 +54,15 @@ class CORE_EXPORT CSSCrossfadeValue final : public CSSImageGeneratorValue {
 
   String CustomCSSText() const;
 
-  PassRefPtr<Image> GetImage(const LayoutObject&, const IntSize&);
+  RefPtr<Image> GetImage(const ImageResourceObserver&,
+                         const Document&,
+                         const ComputedStyle&,
+                         const IntSize& container_size);
   bool IsFixedSize() const { return true; }
-  IntSize FixedSize(const LayoutObject&, const FloatSize&);
+  IntSize FixedSize(const Document&, const FloatSize&);
 
   bool IsPending() const;
-  bool KnownToBeOpaque(const LayoutObject&) const;
+  bool KnownToBeOpaque(const Document&, const ComputedStyle&) const;
 
   void LoadSubimages(const Document&);
 
@@ -114,6 +118,7 @@ class CORE_EXPORT CSSCrossfadeValue final : public CSSImageGeneratorValue {
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSCrossfadeValue, IsCrossfadeValue());
 
+}  // namespace cssvalue
 }  // namespace blink
 
 #endif  // CSSCrossfadeValue_h

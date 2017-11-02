@@ -9,6 +9,7 @@
 #include "base/base_paths.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
@@ -361,7 +362,8 @@ class WindowHangMonitorTest : public testing::Test {
     AppendSwitchHandle(&command_line, kChildWritePipeSwitch, child_write_pipe);
 
     base::LaunchOptions options = {};
-    options.inherit_handles = true;
+    // TODO(brettw) bug 748258: Share only explicit handles.
+    options.inherit_mode = base::LaunchOptions::Inherit::kAll;
     monitored_process_ = base::LaunchProcess(command_line, options);
     if (!monitored_process_.IsValid())
       return false;

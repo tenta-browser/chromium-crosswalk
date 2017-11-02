@@ -29,10 +29,11 @@
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "platform/SharedBuffer.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/RawResource.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "platform/weborigin/SecurityOrigin.h"
 
 namespace blink {
@@ -44,7 +45,7 @@ TextTrackLoader::TextTrackLoader(TextTrackLoaderClient& client,
       cue_load_timer_(TaskRunnerHelper::Get(TaskType::kNetworking, &document),
                       this,
                       &TextTrackLoader::CueLoadTimerFired),
-      state_(kIdle),
+      state_(kLoading),
       new_cues_available_(false) {}
 
 TextTrackLoader::~TextTrackLoader() {}
@@ -69,7 +70,8 @@ bool TextTrackLoader::RedirectReceived(Resource* resource,
                                        const ResourceRequest& request,
                                        const ResourceResponse&) {
   DCHECK_EQ(this->GetResource(), resource);
-  if (resource->Options().cors_enabled == kIsCORSEnabled ||
+  if (resource->GetResourceRequest().GetFetchRequestMode() ==
+          WebURLRequest::kFetchRequestModeCORS ||
       GetDocument().GetSecurityOrigin()->CanRequestNoSuborigin(request.Url()))
     return true;
 
@@ -109,11 +111,15 @@ void TextTrackLoader::CorsPolicyPreventedLoad(SecurityOrigin* security_origin,
 
 void TextTrackLoader::NotifyFinished(Resource* resource) {
   DCHECK_EQ(this->GetResource(), resource);
-  if (state_ != kFailed)
-    state_ = resource->ErrorOccurred() ? kFailed : kFinished;
-
-  if (state_ == kFinished && cue_parser_)
+  if (cue_parser_)
     cue_parser_->Flush();
+
+  if (state_ != kFailed) {
+    if (resource->ErrorOccurred() || !cue_parser_)
+      state_ = kFailed;
+    else
+      state_ = kFinished;
+  }
 
   if (!cue_load_timer_.IsActive())
     cue_load_timer_.StartOneShot(0, BLINK_FROM_HERE);
@@ -125,8 +131,10 @@ bool TextTrackLoader::Load(const KURL& url,
                            CrossOriginAttributeValue cross_origin) {
   CancelLoad();
 
-  FetchParameters cue_fetch_params(ResourceRequest(url),
-                                   FetchInitiatorTypeNames::texttrack);
+  ResourceLoaderOptions options;
+  options.initiator_info.name = FetchInitiatorTypeNames::texttrack;
+
+  FetchParameters cue_fetch_params(ResourceRequest(url), options);
 
   if (cross_origin != kCrossOriginAttributeNotSet) {
     cue_fetch_params.SetCrossOriginAccessControl(

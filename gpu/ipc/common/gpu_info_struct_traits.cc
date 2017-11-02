@@ -114,6 +114,8 @@ EnumTraits<gpu::mojom::VideoCodecProfile, gpu::VideoCodecProfile>::ToMojom(
       return gpu::mojom::VideoCodecProfile::DOLBYVISION_PROFILE5;
     case gpu::VideoCodecProfile::DOLBYVISION_PROFILE7:
       return gpu::mojom::VideoCodecProfile::DOLBYVISION_PROFILE7;
+    case gpu::VideoCodecProfile::THEORAPROFILE_ANY:
+      return gpu::mojom::VideoCodecProfile::THEORAPROFILE_ANY;
   }
   NOTREACHED() << "Invalid VideoCodecProfile:" << video_codec_profile;
   return gpu::mojom::VideoCodecProfile::VIDEO_CODEC_PROFILE_UNKNOWN;
@@ -196,6 +198,9 @@ bool EnumTraits<gpu::mojom::VideoCodecProfile, gpu::VideoCodecProfile>::
     case gpu::mojom::VideoCodecProfile::DOLBYVISION_PROFILE7:
       *out = gpu::VideoCodecProfile::DOLBYVISION_PROFILE7;
       return true;
+    case gpu::mojom::VideoCodecProfile::THEORAPROFILE_ANY:
+      *out = gpu::VideoCodecProfile::THEORAPROFILE_ANY;
+      return true;
   }
   NOTREACHED() << "Invalid VideoCodecProfile: " << input;
   return false;
@@ -246,11 +251,14 @@ bool StructTraits<gpu::mojom::GpuInfoDataView, gpu::GPUInfo>::Read(
   out->in_process_gpu = data.in_process_gpu();
   out->passthrough_cmd_decoder = data.passthrough_cmd_decoder();
   out->supports_overlays = data.supports_overlays();
+  out->hdr = data.hdr();
+  out->can_support_threaded_texture_mailbox =
+      data.can_support_threaded_texture_mailbox();
   out->process_crash_count = data.process_crash_count();
   out->jpeg_decode_accelerator_supported =
       data.jpeg_decode_accelerator_supported();
 
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
   out->system_visual = data.system_visual();
   out->rgba_visual = data.rgba_visual();
 #endif

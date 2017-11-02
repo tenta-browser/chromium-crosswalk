@@ -3,28 +3,39 @@
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
-      "contentsOpaque": true
+      "contentsOpaque": true,
+      "drawsContent": false,
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow HTML",
       "bounds": [800, 69],
-      "isolate": true,
-      "drawsContent": true
+      "isolate": true
     },
     {
       "name": "LayoutBlockFlow DIV",
       "position": [8, 18],
       "bounds": [10, 10],
       "blendMode": "multiply",
-      "drawsContent": true,
       "backgroundColor": "#0000FF"
     },
     {
       "name": "LayoutBlockFlow DIV",
       "bounds": [10, 10],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#FFFF00"
+      "backgroundColor": "#FFFF00",
+      "transform": 1
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 18, 0, 1]
+      ]
     }
   ]
 }

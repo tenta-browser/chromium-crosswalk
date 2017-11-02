@@ -14,7 +14,7 @@
 #include "content/browser/compositor/gpu_vsync_begin_frame_source.h"
 #include "ui/gfx/swap_result.h"
 
-namespace display_compositor {
+namespace viz {
 class CompositorOverlayCandidateValidator;
 }
 
@@ -32,7 +32,7 @@ namespace content {
 class ReflectorTexture;
 
 // Adapts a WebGraphicsContext3DCommandBufferImpl into a
-// cc::OutputSurface that also handles vsync parameter updates
+// viz::OutputSurface that also handles vsync parameter updates
 // arriving from the GPU process.
 class GpuBrowserCompositorOutputSurface : public BrowserCompositorOutputSurface,
                                           public GpuVSyncControl {
@@ -40,7 +40,7 @@ class GpuBrowserCompositorOutputSurface : public BrowserCompositorOutputSurface,
   GpuBrowserCompositorOutputSurface(
       scoped_refptr<ui::ContextProviderCommandBuffer> context,
       const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-      std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
+      std::unique_ptr<viz::CompositorOverlayCandidateValidator>
           overlay_candidate_validator);
 
   ~GpuBrowserCompositorOutputSurface() override;
@@ -61,8 +61,8 @@ class GpuBrowserCompositorOutputSurface : public BrowserCompositorOutputSurface,
   void SetSurfaceSuspendedForRecycle(bool suspended) override;
 #endif
 
-  // cc::OutputSurface implementation.
-  void BindToClient(cc::OutputSurfaceClient* client) override;
+  // viz::OutputSurface implementation.
+  void BindToClient(viz::OutputSurfaceClient* client) override;
   void EnsureBackbuffer() override;
   void DiscardBackbuffer() override;
   void BindFramebuffer() override;
@@ -71,10 +71,12 @@ class GpuBrowserCompositorOutputSurface : public BrowserCompositorOutputSurface,
                const gfx::ColorSpace& color_space,
                bool has_alpha,
                bool use_stencil) override;
-  void SwapBuffers(cc::OutputSurfaceFrame frame) override;
+  void SwapBuffers(viz::OutputSurfaceFrame frame) override;
   uint32_t GetFramebufferCopyTextureFormat() override;
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
+  gfx::BufferFormat GetOverlayBufferFormat() const override;
+
   bool SurfaceIsSuspendForRecycle() const override;
   void SetDrawRectangle(const gfx::Rect& rect) override;
 
@@ -84,7 +86,7 @@ class GpuBrowserCompositorOutputSurface : public BrowserCompositorOutputSurface,
  protected:
   gpu::CommandBufferProxyImpl* GetCommandBufferProxy();
 
-  cc::OutputSurfaceClient* client_ = nullptr;
+  viz::OutputSurfaceClient* client_ = nullptr;
   std::unique_ptr<ReflectorTexture> reflector_texture_;
   bool reflector_texture_defined_ = false;
   bool set_draw_rectangle_for_frame_ = false;

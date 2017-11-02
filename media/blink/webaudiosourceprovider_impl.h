@@ -41,15 +41,15 @@ class MediaLog;
 //
 // All calls are protected by a lock.
 class MEDIA_BLINK_EXPORT WebAudioSourceProviderImpl
-    : NON_EXPORTED_BASE(public blink::WebAudioSourceProvider),
-      NON_EXPORTED_BASE(public SwitchableAudioRendererSink) {
+    : public blink::WebAudioSourceProvider,
+      public SwitchableAudioRendererSink {
  public:
   using CopyAudioCB = base::Callback<void(std::unique_ptr<AudioBus>,
                                           uint32_t frames_delayed,
                                           int sample_rate)>;
 
   WebAudioSourceProviderImpl(scoped_refptr<SwitchableAudioRendererSink> sink,
-                             scoped_refptr<MediaLog> media_log);
+                             MediaLog* media_log);
 
   // blink::WebAudioSourceProvider implementation.
   void SetClient(blink::WebAudioSourceProviderClient* client) override;
@@ -65,6 +65,7 @@ class MEDIA_BLINK_EXPORT WebAudioSourceProviderImpl
   void Pause() override;
   bool SetVolume(double volume) override;
   OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool IsOptimizedForHardwareParameters() override;
   bool CurrentThreadIsRenderingThread() override;
   void SwitchOutputDevice(const std::string& device_id,
                           const url::Origin& security_origin,
@@ -107,7 +108,7 @@ class MEDIA_BLINK_EXPORT WebAudioSourceProviderImpl
   class TeeFilter;
   const std::unique_ptr<TeeFilter> tee_filter_;
 
-  const scoped_refptr<MediaLog> media_log_;
+  MediaLog* const media_log_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<WebAudioSourceProviderImpl> weak_factory_;

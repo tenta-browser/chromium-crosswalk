@@ -13,6 +13,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/strings/string16.h"
 #include "components/metrics/client_info.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
@@ -35,7 +36,7 @@ class MetricsStateManagerTest : public testing::Test {
 
   std::unique_ptr<MetricsStateManager> CreateStateManager() {
     return MetricsStateManager::Create(
-        &prefs_, enabled_state_provider_.get(),
+        &prefs_, enabled_state_provider_.get(), base::string16(),
         base::Bind(&MetricsStateManagerTest::MockStoreClientInfoBackup,
                    base::Unretained(this)),
         base::Bind(&MetricsStateManagerTest::LoadFakeClientInfoBackup,
@@ -387,6 +388,28 @@ TEST_F(MetricsStateManagerTest, ResetBackup) {
     EXPECT_GE(prefs_.GetInt64(prefs::kMetricsReportingEnabledTimestamp),
               test_begin_time_);
   }
+}
+
+TEST_F(MetricsStateManagerTest, CheckProvider) {
+  int64_t kInstallDate = 1373051956;
+  int64_t kInstallDateExpected = 1373050800;  // Computed from kInstallDate.
+  int64_t kEnabledDate = 1373001211;
+  int64_t kEnabledDateExpected = 1373000400;  // Computed from kEnabledDate.
+
+  ClientInfo client_info;
+  client_info.client_id = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+  client_info.installation_date = kInstallDate;
+  client_info.reporting_enabled_date = kEnabledDate;
+
+  SetFakeClientInfoBackup(client_info);
+  SetClientInfoPrefs(client_info);
+
+  std::unique_ptr<MetricsStateManager> state_manager(CreateStateManager());
+  std::unique_ptr<MetricsProvider> provider = state_manager->GetProvider();
+  SystemProfileProto system_profile;
+  provider->ProvideSystemProfileMetrics(&system_profile);
+  EXPECT_EQ(system_profile.install_date(), kInstallDateExpected);
+  EXPECT_EQ(system_profile.uma_enabled_date(), kEnabledDateExpected);
 }
 
 }  // namespace metrics

@@ -30,7 +30,7 @@
 #include "ui/base/webui/web_ui_util.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/system/devicetype_utils.h"
+#include "ui/chromeos/devicetype_utils.h"
 #endif
 
 namespace extensions {
@@ -46,7 +46,7 @@ namespace OnEnabledChanged =
 
 static base::LazyInstance<
     BrowserContextKeyedAPIFactory<HotwordPrivateEventService>>::DestructorAtExit
-    g_factory = LAZY_INSTANCE_INITIALIZER;
+    g_hotword_private_api_factory = LAZY_INSTANCE_INITIALIZER;
 
 HotwordPrivateEventService::HotwordPrivateEventService(
     content::BrowserContext* context)
@@ -71,7 +71,7 @@ void HotwordPrivateEventService::Shutdown() {
 // static
 BrowserContextKeyedAPIFactory<HotwordPrivateEventService>*
 HotwordPrivateEventService::GetFactoryInstance() {
-  return g_factory.Pointer();
+  return g_hotword_private_api_factory.Pointer();
 }
 
 // static
@@ -348,7 +348,7 @@ ExtensionFunction::ResponseAction HotwordPrivateStopTrainingFunction::Run() {
 ExtensionFunction::ResponseAction
 HotwordPrivateGetLocalizedStringsFunction::Run() {
 #if defined(OS_CHROMEOS)
-  base::string16 device_type = ash::GetChromeOSDeviceName();
+  base::string16 device_type = ui::GetChromeOSDeviceName();
 #else
   base::string16 product_name =
       l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_NAME);

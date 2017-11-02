@@ -5,10 +5,10 @@
 #ifndef CSSStyleValue_h
 #define CSSStyleValue_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CSSPropertyNames.h"
 #include "core/CoreExport.h"
 #include "core/css/CSSValue.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
@@ -17,6 +17,8 @@ class ExceptionState;
 class ScriptState;
 class ScriptValue;
 
+// The base class for all CSS values returned by the Typed OM.
+// See CSSStyleValue.idl for additional documentation about this class.
 class CORE_EXPORT CSSStyleValue
     : public GarbageCollectedFinalized<CSSStyleValue>,
       public ScriptWrappable {
@@ -25,38 +27,49 @@ class CORE_EXPORT CSSStyleValue
 
  public:
   enum StyleValueType {
-    // This list corresponds to each non-abstract subclass.
-    kUnknown,
+    kUnknownType,
     kAngleType,
-    kCalcLengthType,
+    kFlexType,
+    kFrequencyType,
     kKeywordType,
+    kLengthType,
     kNumberType,
+    kPercentType,
     kPositionType,
-    kSimpleLengthType,
+    kResolutionType,
+    kTimeType,
     kTransformType,
-    kUnitType,
     kUnparsedType,
     kURLImageType,
+    kInvalidType,
   };
-
-  virtual ~CSSStyleValue() {}
-
-  virtual StyleValueType GetType() const = 0;
 
   static ScriptValue parse(ScriptState*,
                            const String& property_name,
                            const String& value,
                            ExceptionState&);
 
+  virtual ~CSSStyleValue() {}
+
+  virtual StyleValueType GetType() const = 0;
+  virtual bool ContainsPercent() const { return false; }
+
   virtual const CSSValue* ToCSSValue() const = 0;
   virtual const CSSValue* ToCSSValueWithProperty(CSSPropertyID) const {
     return ToCSSValue();
   }
-  virtual String cssText() const { return ToCSSValue()->CssText(); }
+  virtual String toString() const {
+    const CSSValue* result = ToCSSValue();
+    // TODO(meade): Remove this once all the number and length types are
+    // rewritten.
+    return result ? result->CssText() : "";
+  }
 
   DEFINE_INLINE_VIRTUAL_TRACE() {}
 
  protected:
+  static String StyleValueTypeToString(StyleValueType);
+
   CSSStyleValue() {}
 };
 

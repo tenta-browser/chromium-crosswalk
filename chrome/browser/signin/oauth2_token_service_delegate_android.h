@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_SIGNIN_OAUTH2_TOKEN_SERVICE_DELEGATE_ANDROID_H_
 #define CHROME_BROWSER_SIGNIN_OAUTH2_TOKEN_SERVICE_DELEGATE_ANDROID_H_
 
-#include <jni.h>
-
 #include <map>
 #include <memory>
 #include <string>
@@ -35,16 +33,13 @@ class OAuth2TokenServiceDelegateAndroid : public OAuth2TokenServiceDelegate {
       AccountTrackerService* account_tracker_service);
   ~OAuth2TokenServiceDelegateAndroid() override;
 
-  // Registers the OAuth2TokenServiceDelegateAndroid's native methods through
-  // JNI.
-  static bool Register(JNIEnv* env);
-
   // Creates a new instance of the OAuth2TokenServiceDelegateAndroid.
   static OAuth2TokenServiceDelegateAndroid* Create();
 
   // Returns a reference to the Java instance of this service.
-  static base::android::ScopedJavaLocalRef<jobject>
-  GetForProfile(JNIEnv* env, jclass clazz, jobject j_profile_android);
+  static base::android::ScopedJavaLocalRef<jobject> GetForProfile(
+      JNIEnv* env,
+      const base::android::JavaRef<jobject>& j_profile_android);
 
   // Called by the TestingProfile class to disable account validation in
   // tests.  This prevents the token service from trying to look up system

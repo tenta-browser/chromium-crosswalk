@@ -26,9 +26,22 @@ bool ContentId::operator<(const ContentId& content_id) const {
          std::tie(content_id.name_space, content_id.id);
 }
 
+OfflineItem::Progress::Progress()
+    : value(0), unit(OfflineItemProgressUnit::BYTES) {}
+
+OfflineItem::Progress::Progress(const OfflineItem::Progress& other) = default;
+
+OfflineItem::Progress::~Progress() = default;
+
+bool OfflineItem::Progress::operator==(
+    const OfflineItem::Progress& other) const {
+  return value == other.value && max == other.max && unit == other.unit;
+}
+
 OfflineItem::OfflineItem()
     : filter(OfflineItemFilter::FILTER_OTHER),
       is_transient(false),
+      is_suggested(false),
       total_size_bytes(0),
       externally_removed(false),
       is_openable(false),
@@ -37,7 +50,6 @@ OfflineItem::OfflineItem()
       is_resumable(false),
       allow_metered(false),
       received_bytes(0),
-      percent_completed(0),
       time_remaining_ms(0) {}
 
 OfflineItem::OfflineItem(const OfflineItem& other) = default;
@@ -53,11 +65,14 @@ bool OfflineItem::operator==(const OfflineItem& offline_item) const {
          description == offline_item.description &&
          filter == offline_item.filter &&
          is_transient == offline_item.is_transient &&
+         is_suggested == offline_item.is_suggested &&
          total_size_bytes == offline_item.total_size_bytes &&
          externally_removed == offline_item.externally_removed &&
          creation_time == offline_item.creation_time &&
          last_accessed_time == offline_item.last_accessed_time &&
          is_openable == offline_item.is_openable &&
+         file_path == offline_item.file_path &&
+         mime_type == offline_item.mime_type &&
          page_url == offline_item.page_url &&
          original_url == offline_item.original_url &&
          is_off_the_record == offline_item.is_off_the_record &&
@@ -65,8 +80,13 @@ bool OfflineItem::operator==(const OfflineItem& offline_item) const {
          is_resumable == offline_item.is_resumable &&
          allow_metered == offline_item.allow_metered &&
          received_bytes == offline_item.received_bytes &&
-         percent_completed == offline_item.percent_completed &&
+         progress == offline_item.progress &&
          time_remaining_ms == offline_item.time_remaining_ms;
 }
+
+OfflineItemVisuals::OfflineItemVisuals() = default;
+OfflineItemVisuals::OfflineItemVisuals(const OfflineItemVisuals& other) =
+    default;
+OfflineItemVisuals::~OfflineItemVisuals() = default;
 
 }  // namespace offline_items_collection

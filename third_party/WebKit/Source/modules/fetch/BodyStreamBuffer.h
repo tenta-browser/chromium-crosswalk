@@ -37,9 +37,8 @@ class MODULES_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   ScriptValue Stream();
 
   // Callable only when neither locked nor disturbed.
-  PassRefPtr<BlobDataHandle> DrainAsBlobDataHandle(
-      BytesConsumer::BlobSizePolicy);
-  PassRefPtr<EncodedFormData> DrainAsFormData();
+  RefPtr<BlobDataHandle> DrainAsBlobDataHandle(BytesConsumer::BlobSizePolicy);
+  RefPtr<EncodedFormData> DrainAsFormData();
   void StartLoading(FetchDataLoader*, FetchDataLoader::Client* /* client */);
   void Tee(BodyStreamBuffer**, BodyStreamBuffer**);
 
@@ -51,6 +50,7 @@ class MODULES_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
 
   // BytesConsumer::Client
   void OnStateChange() override;
+  String DebugName() const override { return "BodyStreamBuffer"; }
 
   bool IsStreamReadable();
   bool IsStreamClosed();
@@ -58,7 +58,7 @@ class MODULES_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   bool IsStreamLocked();
   bool IsStreamDisturbed();
   void CloseAndLockAndDisturb();
-  ScriptState* GetScriptState() { return script_state_.Get(); }
+  ScriptState* GetScriptState() { return script_state_.get(); }
 
   DEFINE_INLINE_TRACE() {
     visitor->Trace(consumer_);
@@ -83,6 +83,7 @@ class MODULES_EXPORT BodyStreamBuffer final : public UnderlyingSourceBase,
   Member<FetchDataLoader> loader_;
   bool stream_needs_more_ = false;
   bool made_from_readable_stream_;
+  bool in_process_data_ = false;
 };
 
 }  // namespace blink

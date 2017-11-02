@@ -5,26 +5,27 @@
 #ifndef CHROME_BROWSER_COMPONENT_UPDATER_SSL_ERROR_ASSISTANT_COMPONENT_INSTALLER_H_
 #define CHROME_BROWSER_COMPONENT_UPDATER_SSL_ERROR_ASSISTANT_COMPONENT_INSTALLER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/values.h"
-#include "components/component_updater/default_component_installer.h"
+#include "components/component_updater/component_installer.h"
 
 namespace base {
 class FilePath;
 }  // namespace base
 
 namespace component_updater {
-class SSLErrorAssistantComponentInstallerTraits
-    : public ComponentInstallerTraits {
+class SSLErrorAssistantComponentInstallerPolicy
+    : public ComponentInstallerPolicy {
  public:
-  SSLErrorAssistantComponentInstallerTraits() {}
-  ~SSLErrorAssistantComponentInstallerTraits() override {}
+  SSLErrorAssistantComponentInstallerPolicy() {}
+  ~SSLErrorAssistantComponentInstallerPolicy() override {}
 
  private:
-  // ComponentInstallerTraits methods:
+  // ComponentInstallerPolicy methods:
   bool SupportsGroupPolicyEnabledComponentUpdates() const override;
   bool RequiresNetworkEncryption() const override;
   update_client::CrxInstaller::Result OnCustomInstall(
@@ -43,7 +44,7 @@ class SSLErrorAssistantComponentInstallerTraits
 
   static base::FilePath GetInstalledPath(const base::FilePath& base);
 
-  DISALLOW_COPY_AND_ASSIGN(SSLErrorAssistantComponentInstallerTraits);
+  DISALLOW_COPY_AND_ASSIGN(SSLErrorAssistantComponentInstallerPolicy);
 };
 
 void RegisterSSLErrorAssistantComponent(ComponentUpdateService* cus,

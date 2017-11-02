@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkPixelRef.h"
@@ -104,8 +105,7 @@ class SnapshotAuraTest : public testing::Test {
     ui::InitializeContextFactoryForTests(enable_pixel_output, &context_factory,
                                          &context_factory_private);
 
-    helper_.reset(
-        new aura::test::AuraTestHelper(base::MessageLoopForUI::current()));
+    helper_.reset(new aura::test::AuraTestHelper());
     helper_->SetUp(context_factory, context_factory_private);
     new ::wm::DefaultActivationClient(helper_->root_window());
   }

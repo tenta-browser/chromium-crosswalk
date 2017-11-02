@@ -64,24 +64,22 @@ class SingleThreadIdleTaskRunner
   // literals). They may not include " chars.
   SingleThreadIdleTaskRunner(
       scoped_refptr<base::SingleThreadTaskRunner> idle_priority_task_runner,
-      Delegate* delegate,
-      const char* tracing_category);
+      Delegate* delegate);
 
-  virtual void PostIdleTask(const tracked_objects::Location& from_here,
+  virtual void PostIdleTask(const base::Location& from_here,
                             const IdleTask& idle_task);
 
   // |idle_task| is eligible to run after the next time an idle period starts
   // after |delay|.  Note this has after wake-up semantics, i.e. unless
   // something else wakes the CPU up, this won't run.
-  virtual void PostDelayedIdleTask(const tracked_objects::Location& from_here,
+  virtual void PostDelayedIdleTask(const base::Location& from_here,
                                    const base::TimeDelta delay,
                                    const IdleTask& idle_task);
 
-  virtual void PostNonNestableIdleTask(
-      const tracked_objects::Location& from_here,
-      const IdleTask& idle_task);
+  virtual void PostNonNestableIdleTask(const base::Location& from_here,
+                                       const IdleTask& idle_task);
 
-  bool RunsTasksOnCurrentThread() const;
+  bool RunsTasksInCurrentSequence() const;
 
   void SetBlameContext(base::trace_event::BlameContext* blame_context);
 
@@ -96,13 +94,11 @@ class SingleThreadIdleTaskRunner
 
   void EnqueueReadyDelayedIdleTasks();
 
-  using DelayedIdleTask =
-      std::pair<const tracked_objects::Location, base::Closure>;
+  using DelayedIdleTask = std::pair<const base::Location, base::Closure>;
 
   scoped_refptr<base::SingleThreadTaskRunner> idle_priority_task_runner_;
   std::multimap<base::TimeTicks, DelayedIdleTask> delayed_idle_tasks_;
   Delegate* delegate_;  // NOT OWNED
-  const char* tracing_category_;
   base::trace_event::BlameContext* blame_context_;  // Not owned.
   base::WeakPtr<SingleThreadIdleTaskRunner> weak_scheduler_ptr_;
   base::WeakPtrFactory<SingleThreadIdleTaskRunner> weak_factory_;

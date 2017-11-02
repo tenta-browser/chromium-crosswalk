@@ -7,8 +7,7 @@
 
 #include <stdint.h>
 
-#include "ash/accessibility_delegate.h"
-#include "ash/shell_observer.h"
+#include "ash/accessibility/accessibility_delegate.h"
 #include "ash/system/accessibility_observer.h"
 #include "ash/system/tray/tray_details_view.h"
 #include "ash/system/tray/tray_image_item.h"
@@ -21,14 +20,9 @@ namespace chromeos {
 class TrayAccessibilityTest;
 }
 
-namespace gfx {
-struct VectorIcon;
-}
-
 namespace views {
 class Button;
-class CustomButton;
-class Label;
+class Button;
 class View;
 }
 
@@ -38,35 +32,17 @@ class SystemTrayItem;
 
 namespace tray {
 
-// A view for closable notification views, laid out like:
-//  -------------------
-// | icon  contents  x |
-//  ----------------v--
-// The close button will call OnClose() when clicked.
-class AccessibilityPopupView : public views::View {
- public:
-  explicit AccessibilityPopupView(uint32_t enabled_state_bits);
-
-  const views::Label* label_for_test() const { return label_; }
-
-  void Init();
-
- private:
-  views::Label* CreateLabel(uint32_t enabled_state_bits);
-
-  views::Label* label_;
-
-  DISALLOW_COPY_AND_ASSIGN(AccessibilityPopupView);
-};
-
 // Create the detailed view of accessibility tray.
-class AccessibilityDetailedView : public TrayDetailsView,
-                                  public ShellObserver {
+class AccessibilityDetailedView : public TrayDetailsView {
  public:
-  AccessibilityDetailedView(SystemTrayItem* owner, LoginStatus login);
+  explicit AccessibilityDetailedView(SystemTrayItem* owner);
   ~AccessibilityDetailedView() override {}
 
+  void OnAccessibilityStatusChanged();
+
  private:
+  friend class chromeos::TrayAccessibilityTest;
+
   // TrayDetailsView:
   void HandleViewClicked(views::View* view) override;
   void HandleButtonPressed(views::Button* sender,
@@ -82,30 +58,22 @@ class AccessibilityDetailedView : public TrayDetailsView,
   // Add the accessibility feature list.
   void AppendAccessibilityList();
 
-  // Helper function to create entries in the detailed accessibility view.
-  HoverHighlightView* AddScrollListItem(const base::string16& text,
-                                        bool checked,
-                                        const gfx::VectorIcon& icon);
-  HoverHighlightView* AddScrollListItemWithoutIcon(const base::string16& text,
-                                                   bool checked);
+  HoverHighlightView* spoken_feedback_view_ = nullptr;
+  HoverHighlightView* high_contrast_view_ = nullptr;
+  HoverHighlightView* screen_magnifier_view_ = nullptr;
+  HoverHighlightView* large_cursor_view_ = nullptr;
+  HoverHighlightView* autoclick_view_ = nullptr;
+  HoverHighlightView* virtual_keyboard_view_ = nullptr;
+  HoverHighlightView* mono_audio_view_ = nullptr;
+  HoverHighlightView* caret_highlight_view_ = nullptr;
+  HoverHighlightView* highlight_mouse_cursor_view_ = nullptr;
+  HoverHighlightView* highlight_keyboard_focus_view_ = nullptr;
+  HoverHighlightView* sticky_keys_view_ = nullptr;
+  HoverHighlightView* tap_dragging_view_ = nullptr;
+  views::Button* help_view_ = nullptr;
+  views::Button* settings_view_ = nullptr;
 
-  void AddSubHeader(const base::string16& header_text);
-
-  views::View* spoken_feedback_view_ = nullptr;
-  views::View* high_contrast_view_ = nullptr;
-  views::View* screen_magnifier_view_ = nullptr;
-  views::View* large_cursor_view_ = nullptr;
-  views::CustomButton* help_view_ = nullptr;
-  views::CustomButton* settings_view_ = nullptr;
-  views::View* autoclick_view_ = nullptr;
-  views::View* virtual_keyboard_view_ = nullptr;
-  views::View* mono_audio_view_ = nullptr;
-  views::View* caret_highlight_view_ = nullptr;
-  views::View* highlight_mouse_cursor_view_ = nullptr;
-  views::View* highlight_keyboard_focus_view_ = nullptr;
-  views::View* sticky_keys_view_ = nullptr;
-  views::View* tap_dragging_view_ = nullptr;
-
+  // These exist for tests. The canonical state is stored in prefs.
   bool spoken_feedback_enabled_ = false;
   bool high_contrast_enabled_ = false;
   bool screen_magnifier_enabled_ = false;
@@ -118,9 +86,9 @@ class AccessibilityDetailedView : public TrayDetailsView,
   bool highlight_keyboard_focus_enabled_ = false;
   bool sticky_keys_enabled_ = false;
   bool tap_dragging_enabled_ = false;
+
   LoginStatus login_;
 
-  friend class chromeos::TrayAccessibilityTest;
   DISALLOW_COPY_AND_ASSIGN(AccessibilityDetailedView);
 };
 
@@ -132,6 +100,8 @@ class TrayAccessibility : public TrayImageItem, public AccessibilityObserver {
   ~TrayAccessibility() override;
 
  private:
+  friend class chromeos::TrayAccessibilityTest;
+
   void SetTrayIconVisible(bool visible);
   tray::AccessibilityDetailedView* CreateDetailedMenu();
 
@@ -139,21 +109,16 @@ class TrayAccessibility : public TrayImageItem, public AccessibilityObserver {
   bool GetInitialVisibility() override;
   views::View* CreateDefaultView(LoginStatus status) override;
   views::View* CreateDetailedView(LoginStatus status) override;
-  void DestroyDefaultView() override;
-  void DestroyDetailedView() override;
+  void OnDefaultViewDestroyed() override;
+  void OnDetailedViewDestroyed() override;
   void UpdateAfterLoginStatusChange(LoginStatus status) override;
 
   // Overridden from AccessibilityObserver.
-  void OnAccessibilityModeChanged(
+  void OnAccessibilityStatusChanged(
       AccessibilityNotificationVisibility notify) override;
 
   views::View* default_;
-  tray::AccessibilityPopupView* detailed_popup_;
   tray::AccessibilityDetailedView* detailed_menu_;
-
-  // Bitmap of fvalues from AccessibilityState.  Can contain any or
-  // both of A11Y_SPOKEN_FEEDBACK A11Y_BRAILLE_DISPLAY_CONNECTED.
-  uint32_t request_popup_view_state_;
 
   bool tray_icon_visible_;
   LoginStatus login_;
@@ -164,7 +129,6 @@ class TrayAccessibility : public TrayImageItem, public AccessibilityObserver {
   // A11y feature status on just entering the lock screen.
   bool show_a11y_menu_on_lock_screen_;
 
-  friend class chromeos::TrayAccessibilityTest;
   DISALLOW_COPY_AND_ASSIGN(TrayAccessibility);
 };
 

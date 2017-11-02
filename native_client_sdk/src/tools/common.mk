@@ -229,7 +229,7 @@ all:
 
 
 #
-# The install target is used to install built libraries to thier final destination.
+# The install target is used to install built libraries to their final destination.
 # By default this is the NaCl SDK 'lib' folder.
 #
 install:
@@ -274,7 +274,7 @@ clean:
 #
 # Output will be places in a directory name based on Toolchain and configuration
 # be default this will be "newlib/Debug".  We use a python wrapped MKDIR to
-# proivde a cross platform solution. The use of '|' checks for existance instead
+# proivde a cross platform solution. The use of '|' checks for existence instead
 # of timestamp, since the directory can update when files change.
 #
 %dir.stamp :

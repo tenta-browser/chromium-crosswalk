@@ -4,7 +4,6 @@
 
 package org.chromium.media;
 
-import android.content.Context;
 import android.media.MediaPlayer;
 import android.media.MediaPlayer.TrackInfo;
 import android.net.Uri;
@@ -16,6 +15,7 @@ import android.util.Base64;
 import android.util.Base64InputStream;
 import android.view.Surface;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.StreamUtil;
 import org.chromium.base.annotations.CalledByNative;
@@ -37,20 +37,7 @@ import java.util.HashMap;
 @JNINamespace("media")
 public class MediaPlayerBridge {
 
-    public static class ResourceLoadingFilter {
-        public boolean shouldOverrideResourceLoading(
-                MediaPlayer mediaPlayer, Context context, Uri uri) {
-            return false;
-        }
-    }
-
-    private static ResourceLoadingFilter sResourceLoadFilter = null;
-
-    public static void setResourceLoadingFilter(ResourceLoadingFilter filter) {
-        sResourceLoadFilter = filter;
-    }
-
-    private static final String TAG = "MediaPlayerBridge";
+    private static final String TAG = "cr.media";
 
     // Local player to forward this to. We don't initialize it here since the subclass might not
     // want it.
@@ -72,10 +59,7 @@ public class MediaPlayerBridge {
 
     @CalledByNative
     protected void destroy() {
-        if (mLoadDataUriTask != null) {
-            mLoadDataUriTask.cancel(true);
-            mLoadDataUriTask = null;
-        }
+        cancelLoadDataUriTask();
         mNativeMediaPlayerBridge = 0;
     }
 
@@ -165,6 +149,7 @@ public class MediaPlayerBridge {
 
     @CalledByNative
     protected void release() {
+        cancelLoadDataUriTask();
         getLocalPlayer().release();
     }
 
@@ -190,7 +175,7 @@ public class MediaPlayerBridge {
 
     @CalledByNative
     protected boolean setDataSource(
-            Context context, String url, String cookies, String userAgent, boolean hideUrlLog) {
+            String url, String cookies, String userAgent, boolean hideUrlLog) {
         Uri uri = Uri.parse(url);
         HashMap<String, String> headersMap = new HashMap<String, String>();
         if (hideUrlLog) headersMap.put("x-hide-urls-from-log", "true");
@@ -203,13 +188,7 @@ public class MediaPlayerBridge {
             headersMap.put("allow-cross-domain-redirect", "false");
         }
         try {
-            if (sResourceLoadFilter != null &&
-                    sResourceLoadFilter.shouldOverrideResourceLoading(
-                            getLocalPlayer(), context, uri)) {
-                return true;
-            }
-
-            getLocalPlayer().setDataSource(context, uri, headersMap);
+            getLocalPlayer().setDataSource(ContextUtils.getApplicationContext(), uri, headersMap);
             return true;
         } catch (Exception e) {
             return false;
@@ -230,11 +209,8 @@ public class MediaPlayerBridge {
     }
 
     @CalledByNative
-    protected boolean setDataUriDataSource(final Context context, final String url) {
-        if (mLoadDataUriTask != null) {
-            mLoadDataUriTask.cancel(true);
-            mLoadDataUriTask = null;
-        }
+    protected boolean setDataUriDataSource(final String url) {
+        cancelLoadDataUriTask();
 
         if (!url.startsWith("data:")) return false;
         int headerStop = url.indexOf(',');
@@ -247,19 +223,17 @@ public class MediaPlayerBridge {
         if (headerInfo.length != 2) return false;
         if (!"base64".equals(headerInfo[1])) return false;
 
-        mLoadDataUriTask = new LoadDataUriTask(context, data);
+        mLoadDataUriTask = new LoadDataUriTask(data);
         mLoadDataUriTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
         return true;
     }
 
     private class LoadDataUriTask extends AsyncTask<Void, Void, Boolean> {
         private final String mData;
-        private final Context mContext;
         private File mTempFile;
 
-        public LoadDataUriTask(Context context, String data) {
+        public LoadDataUriTask(String data) {
             mData = data;
-            mContext = context;
         }
 
         @Override
@@ -293,7 +267,8 @@ public class MediaPlayerBridge {
 
             if (result) {
                 try {
-                    getLocalPlayer().setDataSource(mContext, Uri.fromFile(mTempFile));
+                    getLocalPlayer().setDataSource(
+                            ContextUtils.getApplicationContext(), Uri.fromFile(mTempFile));
                 } catch (IOException e) {
                     result = false;
                 }
@@ -414,4 +389,11 @@ public class MediaPlayerBridge {
 
     private native void nativeOnDidSetDataUriDataSource(long nativeMediaPlayerBridge,
                                                         boolean success);
+
+    private void cancelLoadDataUriTask() {
+        if (mLoadDataUriTask != null) {
+            mLoadDataUriTask.cancel(true);
+            mLoadDataUriTask = null;
+        }
+    }
 }

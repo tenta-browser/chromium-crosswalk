@@ -17,7 +17,7 @@ class RenderWidgetHostViewAura;
 // DelegatedFrameHostClient implementation for aura, not used in mus.
 class CONTENT_EXPORT DelegatedFrameHostClientAura
     : public DelegatedFrameHostClient,
-      NON_EXPORTED_BASE(public CompositorResizeLockClient) {
+      public CompositorResizeLockClient {
  public:
   explicit DelegatedFrameHostClientAura(
       RenderWidgetHostViewAura* render_widget_host_view);
@@ -36,7 +36,8 @@ class CONTENT_EXPORT DelegatedFrameHostClientAura
   bool DelegatedFrameCanCreateResizeLock() const override;
   std::unique_ptr<CompositorResizeLock> DelegatedFrameHostCreateResizeLock()
       override;
-  void OnBeginFrame(const cc::BeginFrameArgs& args) override;
+  viz::LocalSurfaceId GetLocalSurfaceId() const override;
+  void OnBeginFrame() override;
   bool IsAutoResizeEnabled() const override;
 
   // CompositorResizeLockClient implementation.

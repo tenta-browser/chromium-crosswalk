@@ -56,8 +56,6 @@ class WinPort(base.Port):
     FALLBACK_PATHS = {'win10': ['win']}
     FALLBACK_PATHS['win7'] = ['win7'] + FALLBACK_PATHS['win10']
 
-    DEFAULT_BUILD_DIRECTORIES = ('build', 'out')
-
     BUILD_REQUIREMENTS_URL = 'https://chromium.googlesource.com/chromium/src/+/master/docs/windows_build_instructions.md'
 
     @classmethod
@@ -86,8 +84,8 @@ class WinPort(base.Port):
         self._crash_service = None
         self._crash_service_available = None
 
-    def additional_driver_flag(self):
-        flags = super(WinPort, self).additional_driver_flag()
+    def additional_driver_flags(self):
+        flags = super(WinPort, self).additional_driver_flags()
         flags += ['--enable-direct-write']
         if not self.get_option('disable_breakpad'):
             flags += ['--enable-crash-reporter', '--crash-dumps-dir=%s' % self._dump_reader.crash_dumps_directory()]
@@ -129,7 +127,8 @@ class WinPort(base.Port):
 
         # Note that we write to HKCU so that we don't need privileged access
         # to the registry, and that will get reflected in HKCR when it is read, above.
-        cmdline = self.path_from_chromium_base('third_party', 'perl', 'perl', 'bin', 'perl.exe') + ' -wT'
+        cmdline = self._path_from_chromium_base(
+            'third_party', 'perl', 'perl', 'bin', 'perl.exe') + ' -wT'
         hkey = _winreg.CreateKeyEx(_winreg.HKEY_CURRENT_USER, 'Software\\Classes\\' + sub_key, 0, _winreg.KEY_WRITE)
         _winreg.SetValue(hkey, '', _winreg.REG_SZ, cmdline)
         _winreg.CloseKey(hkey)
@@ -156,16 +155,12 @@ class WinPort(base.Port):
             self._crash_service = None
 
     def setup_environ_for_server(self):
+        # A few extra environment variables are required for Apache on Windows.
         env = super(WinPort, self).setup_environ_for_server()
-
-        # FIXME: This is a temporary hack to get the cr-win bot online until
-        # someone from the cr-win port can take a look.
-        # TODO(qyearsley): Remove this in a separate CL.
         apache_envvars = ['SYSTEMDRIVE', 'SYSTEMROOT', 'TEMP', 'TMP']
         for key, value in self.host.environ.copy().items():
             if key not in env and key in apache_envvars:
                 env[key] = value
-
         return env
 
     def check_build(self, needs_http, printer):
@@ -195,7 +190,8 @@ class WinPort(base.Port):
         return val
 
     def path_to_apache(self):
-        return self.path_from_chromium_base('third_party', 'apache-win32', 'bin', 'httpd.exe')
+        return self._path_from_chromium_base(
+            'third_party', 'apache-win32', 'bin', 'httpd.exe')
 
     def path_to_apache_config_file(self):
         return self._filesystem.join(self.apache_config_directory(), 'win-httpd.conf')

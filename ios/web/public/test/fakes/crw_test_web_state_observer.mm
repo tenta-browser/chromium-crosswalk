@@ -5,10 +5,14 @@
 #import "ios/web/public/test/fakes/crw_test_web_state_observer.h"
 
 #include "base/memory/ptr_util.h"
-#include "ios/web/public/web_state/navigation_context.h"
-#include "ios/web/web_state/navigation_context_impl.h"
+#import "ios/web/public/web_state/navigation_context.h"
+#import "ios/web/web_state/navigation_context_impl.h"
 #include "net/http/http_response_headers.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 TestFormActivityInfo::TestFormActivityInfo() {}
@@ -19,9 +23,15 @@ TestUpdateFaviconUrlCandidatesInfo::~TestUpdateFaviconUrlCandidatesInfo() =
 }
 
 @implementation CRWTestWebStateObserver {
-  // Arguments passed to |webState:didStartProvisionalNavigationForURL:|.
-  std::unique_ptr<web::TestStartProvisionalNavigationInfo>
-      _startProvisionalNavigationInfo;
+  // Arguments passed to |webStateWasShown:|.
+  std::unique_ptr<web::TestWasShownInfo> _wasShownInfo;
+  // Arguments passed to |webStateWasHidden:|.
+  std::unique_ptr<web::TestWasHiddenInfo> _wasHiddenInfo;
+  // Arguments passed to |webState:didPruneNavigationItemsWithCount:|.
+  std::unique_ptr<web::TestNavigationItemsPrunedInfo>
+      _navigationItemsPrunedInfo;
+  // Arguments passed to |webState:didStartNavigation:|.
+  std::unique_ptr<web::TestDidStartNavigationInfo> _didStartNavigationInfo;
   // Arguments passed to |webState:didFinishNavigationForURL:|.
   std::unique_ptr<web::TestDidFinishNavigationInfo> _didFinishNavigationInfo;
   // Arguments passed to |webState:didCommitNavigationWithDetails:|.
@@ -59,8 +69,20 @@ TestUpdateFaviconUrlCandidatesInfo::~TestUpdateFaviconUrlCandidatesInfo() =
   std::unique_ptr<web::TestStartLoadingInfo> _startLoadingInfo;
 }
 
-- (web::TestStartProvisionalNavigationInfo*)startProvisionalNavigationInfo {
-  return _startProvisionalNavigationInfo.get();
+- (web::TestWasShownInfo*)wasShownInfo {
+  return _wasShownInfo.get();
+}
+
+- (web::TestWasHiddenInfo*)wasHiddenInfo {
+  return _wasHiddenInfo.get();
+}
+
+- (web::TestNavigationItemsPrunedInfo*)navigationItemsPrunedInfo {
+  return _navigationItemsPrunedInfo.get();
+}
+
+- (web::TestDidStartNavigationInfo*)didStartNavigationInfo {
+  return _didStartNavigationInfo.get();
 }
 
 - (web::TestDidFinishNavigationInfo*)didFinishNavigationInfo {
@@ -126,12 +148,36 @@ TestUpdateFaviconUrlCandidatesInfo::~TestUpdateFaviconUrlCandidatesInfo() =
 
 #pragma mark CRWWebStateObserver methods -
 
+- (void)webStateWasShown:(web::WebState*)webState {
+  _wasShownInfo = std::make_unique<web::TestWasShownInfo>();
+  _wasShownInfo->web_state = webState;
+}
+
+- (void)webStateWasHidden:(web::WebState*)webState {
+  _wasHiddenInfo = std::make_unique<web::TestWasHiddenInfo>();
+  _wasHiddenInfo->web_state = webState;
+}
+
 - (void)webState:(web::WebState*)webState
-    didStartProvisionalNavigationForURL:(const GURL&)URL {
-  _startProvisionalNavigationInfo =
-      base::MakeUnique<web::TestStartProvisionalNavigationInfo>();
-  _startProvisionalNavigationInfo->web_state = webState;
-  _startProvisionalNavigationInfo->url = URL;
+    didPruneNavigationItemsWithCount:(size_t)pruned_item_count {
+  _navigationItemsPrunedInfo =
+      base::MakeUnique<web::TestNavigationItemsPrunedInfo>();
+  _navigationItemsPrunedInfo->web_state = webState;
+  _navigationItemsPrunedInfo->count = pruned_item_count;
+}
+
+- (void)webState:(web::WebState*)webState
+    didStartNavigation:(web::NavigationContext*)navigation {
+  ASSERT_TRUE(!navigation->GetError() || !navigation->IsSameDocument());
+  _didStartNavigationInfo = base::MakeUnique<web::TestDidStartNavigationInfo>();
+  _didStartNavigationInfo->web_state = webState;
+  std::unique_ptr<web::NavigationContextImpl> context =
+      web::NavigationContextImpl::CreateNavigationContext(
+          navigation->GetWebState(), navigation->GetUrl(),
+          navigation->GetPageTransition(), navigation->IsRendererInitiated());
+  context->SetIsSameDocument(navigation->IsSameDocument());
+  context->SetError(navigation->GetError());
+  _didStartNavigationInfo->context = std::move(context);
 }
 
 - (void)webState:(web::WebState*)webState
@@ -144,26 +190,17 @@ TestUpdateFaviconUrlCandidatesInfo::~TestUpdateFaviconUrlCandidatesInfo() =
 
 - (void)webState:(web::WebState*)webState
     didFinishNavigation:(web::NavigationContext*)navigation {
+  ASSERT_TRUE(!navigation->GetError() || !navigation->IsSameDocument());
   _didFinishNavigationInfo =
       base::MakeUnique<web::TestDidFinishNavigationInfo>();
   _didFinishNavigationInfo->web_state = webState;
-  if (navigation->IsSameDocument()) {
-    ASSERT_FALSE(navigation->IsErrorPage());
-    _didFinishNavigationInfo->context =
-        web::NavigationContextImpl::CreateSameDocumentNavigationContext(
-            navigation->GetWebState(), navigation->GetUrl());
-  } else if (navigation->IsErrorPage()) {
-    ASSERT_FALSE(navigation->IsSameDocument());
-    _didFinishNavigationInfo->context =
-        web::NavigationContextImpl::CreateErrorPageNavigationContext(
-            navigation->GetWebState(), navigation->GetUrl(),
-            navigation->GetResponseHeaders());
-  } else {
-    _didFinishNavigationInfo->context =
-        web::NavigationContextImpl::CreateNavigationContext(
-            navigation->GetWebState(), navigation->GetUrl(),
-            navigation->GetResponseHeaders());
-  }
+  std::unique_ptr<web::NavigationContextImpl> context =
+      web::NavigationContextImpl::CreateNavigationContext(
+          navigation->GetWebState(), navigation->GetUrl(),
+          navigation->GetPageTransition(), navigation->IsRendererInitiated());
+  context->SetIsSameDocument(navigation->IsSameDocument());
+  context->SetError(navigation->GetError());
+  _didFinishNavigationInfo->context = std::move(context);
 }
 
 - (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {

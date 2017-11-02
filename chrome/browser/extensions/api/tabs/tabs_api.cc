@@ -35,9 +35,9 @@
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/extensions/window_controller.h"
 #include "chrome/browser/extensions/window_controller_list.h"
-#include "chrome/browser/memory/tab_manager.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/resource_coordinator/tab_manager.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
@@ -94,11 +94,6 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/base/ui_base_types.h"
-
-#if defined(USE_ASH)
-#include "chrome/browser/extensions/api/tabs/ash_panel_contents.h"  // nogncheck
-#include "extensions/browser/app_window/app_window_registry.h"  // nogncheck
-#endif
 
 using content::BrowserThread;
 using content::NavigationController;
@@ -485,11 +480,6 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
 
   Browser::Type window_type = Browser::TYPE_TABBED;
 
-#if defined(USE_ASH)
-  bool create_ash_panel = false;
-  bool saw_focus_key = false;
-#endif  // defined(USE_ASH)
-
   gfx::Rect window_bounds;
   bool focused = true;
   std::string extension_id;
@@ -509,18 +499,6 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
 
       case windows::CREATE_TYPE_PANEL: {
         extension_id = extension()->id();
-#if defined(USE_ASH)
-      // Only ChromeOS' version of chrome.windows.create would create a panel
-      // window. It is whitelisted to Hangouts extension for limited time until
-      // it transitioned to other types of windows.
-        for (const char* id : extension_misc::kHangoutsExtensionIds) {
-          if (extension_id == id) {
-            create_ash_panel = true;
-            break;
-          }
-        }
-#endif  // defined(USE_ASH)
-        // Everything else gets POPUP instead of PANEL.
         // TODO(dimich): Eventually, remove the 'panel' values form valid
         // window.create parameters. However, this is a more breaking change, so
         // for now simply treat it as a POPUP.
@@ -565,38 +543,9 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
     if (create_data->height)
       window_bounds.set_height(*create_data->height);
 
-    if (create_data->focused) {
+    if (create_data->focused)
       focused = *create_data->focused;
-#if defined(USE_ASH)
-      saw_focus_key = true;
-#endif
-    }
   }
-
-#if defined(USE_ASH)
-  if (create_ash_panel) {
-    if (urls.empty())
-      urls.push_back(GURL(chrome::kChromeUINewTabURL));
-
-    AppWindow::CreateParams create_params;
-    create_params.window_type = AppWindow::WINDOW_TYPE_V1_PANEL;
-    create_params.window_key = extension_id;
-    create_params.window_spec.bounds = window_bounds;
-    create_params.focused = saw_focus_key && focused;
-    AppWindow* app_window =
-        new AppWindow(window_profile, new ChromeAppDelegate(true), extension());
-    AshPanelContents* ash_panel_contents = new AshPanelContents(app_window);
-    app_window->Init(urls[0], ash_panel_contents, render_frame_host(),
-                     create_params);
-    WindowController* window_controller =
-        WindowControllerList::GetInstance()->FindWindowById(
-            app_window->session_id().id());
-    if (!window_controller)
-      return RespondNow(Error(kUnknownErrorDoNotUse));
-    return RespondNow(
-        OneArgument(window_controller->CreateWindowValueWithTabs(extension())));
-  }
-#endif  // defined(USE_ASH)
 
   // Create a new BrowserWindow.
   Browser::CreateParams create_params(window_type, window_profile,
@@ -621,8 +570,17 @@ ExtensionFunction::ResponseAction WindowsCreateFunction::Run() {
     chrome::NavigateParams navigate_params(new_window, url,
                                            ui::PAGE_TRANSITION_LINK);
     navigate_params.disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+
+    // The next 2 statements put the new contents in the same BrowsingInstance
+    // as their opener.  Note that |force_new_process_for_new_contents = false|
+    // means that new contents might still end up in a new renderer
+    // (if they open a web URL and are transferred out of an extension
+    // renderer), but even in this case the flags below ensure findability via
+    // window.open.
+    navigate_params.force_new_process_for_new_contents = false;
     navigate_params.source_site_instance =
         render_frame_host()->GetSiteInstance();
+
     chrome::Navigate(&navigate_params);
   }
 
@@ -925,10 +883,15 @@ ExtensionFunction::ResponseAction TabsQueryFunction::Run() {
     TabStripModel* tab_strip = browser->tab_strip_model();
     for (int i = 0; i < tab_strip->count(); ++i) {
       WebContents* web_contents = tab_strip->GetWebContentsAt(i);
-      memory::TabManager* tab_manager = g_browser_process->GetTabManager();
+      resource_coordinator::TabManager* tab_manager =
+          g_browser_process->GetTabManager();
 
       if (index > -1 && i != index)
         continue;
+
+      if (!web_contents) {
+        continue;
+      }
 
       if (!MatchesBool(params->query_info.highlighted.get(),
                        tab_strip->IsTabSelected(i))) {
@@ -1211,9 +1174,17 @@ bool TabsUpdateFunction::RunAsync() {
 
   // Navigate the tab to a new location if the url is different.
   bool is_async = false;
-  if (params->update_properties.url.get() &&
-      !UpdateURL(*params->update_properties.url, tab_id, &is_async)) {
-    return false;
+  if (params->update_properties.url.get()) {
+    std::string updated_url = *params->update_properties.url;
+    if (browser->profile()->GetProfileType() == Profile::INCOGNITO_PROFILE &&
+        !chrome::IsURLAllowedInIncognito(GURL(updated_url),
+                                         browser->profile())) {
+      error_ = ErrorUtils::FormatErrorMessage(
+          keys::kURLsNotAllowedInIncognitoError, updated_url);
+      return false;
+    }
+    if (!UpdateURL(updated_url, tab_id, &is_async))
+      return false;
   }
 
   bool active = false;
@@ -1269,8 +1240,11 @@ bool TabsUpdateFunction::RunAsync() {
 
   if (params->update_properties.opener_tab_id.get()) {
     int opener_id = *params->update_properties.opener_tab_id;
-
     WebContents* opener_contents = NULL;
+    if (opener_id == tab_id) {
+      error_ = "Cannot set a tab's opener to itself.";
+      return false;
+    }
     if (!ExtensionTabUtil::GetTabById(opener_id, browser_context(),
                                       include_incognito(), nullptr, nullptr,
                                       &opener_contents, nullptr))
@@ -1765,7 +1739,7 @@ bool TabsDetectLanguageFunction::RunAsync() {
     // returned.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &TabsDetectLanguageFunction::GotLanguage, this,
             chrome_translate_client->GetLanguageState().original_language()));
     return true;

@@ -24,11 +24,12 @@
 #ifndef HTMLFrameElement_h
 #define HTMLFrameElement_h
 
+#include "core/CoreExport.h"
 #include "core/html/HTMLFrameElementBase.h"
 
 namespace blink {
 
-class HTMLFrameElement final : public HTMLFrameElementBase {
+class CORE_EXPORT HTMLFrameElement final : public HTMLFrameElementBase {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -38,10 +39,14 @@ class HTMLFrameElement final : public HTMLFrameElementBase {
 
   bool NoResize() const;
 
+  Vector<WebParsedFeaturePolicyDeclaration> ConstructContainerPolicy(
+      Vector<String>* /* messages */,
+      bool* /* old_syntax */) const override;
+
  private:
   explicit HTMLFrameElement(Document&);
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
 
   bool LayoutObjectIsNeeded(const ComputedStyle&) override;
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;

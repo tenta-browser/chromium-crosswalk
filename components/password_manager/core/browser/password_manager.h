@@ -101,14 +101,10 @@ class PasswordManager : public LoginModel {
   void GenerationAvailableForForm(const autofill::PasswordForm& form);
 
   // Presaves the form with generated password.
-  void OnPresaveGeneratedPassword(const autofill::PasswordForm& password_form);
+  void OnPresaveGeneratedPassword(const autofill::PasswordForm& form);
 
-  // Update the state of generation for this form.
-  // If |password_is_generated| == false, removes the presaved form.
-  void SetHasGeneratedPasswordForForm(
-      password_manager::PasswordManagerDriver* driver,
-      const autofill::PasswordForm& form,
-      bool password_is_generated);
+  // Stops treating a password as generated.
+  void OnPasswordNoLongerGenerated(const autofill::PasswordForm& form);
 
   // Update the generation element and whether generation was triggered
   // manually.
@@ -158,6 +154,15 @@ class PasswordManager : public LoginModel {
       password_manager::PasswordManagerDriver* driver,
       const autofill::PasswordForm& password_form);
 
+  // Handles a request to show manual fallback for password saving, i.e. the
+  // omnibox icon with the anchored hidden prompt.
+  void ShowManualFallbackForSaving(
+      password_manager::PasswordManagerDriver* driver,
+      const autofill::PasswordForm& password_form);
+
+  // Handles a request to hide manual fallback for password saving.
+  void HideManualFallbackForSaving();
+
   // Called if |password_form| was filled upon in-page navigation. This often
   // means history.pushState being called from JavaScript. If this causes false
   // positive in password saving, update http://crbug.com/357696.
@@ -195,28 +200,15 @@ class PasswordManager : public LoginModel {
       PasswordManagerTest,
       ShouldBlockPasswordForSameOriginButDifferentSchemeTest);
 
-  enum ProvisionalSaveFailure {
-    SAVING_DISABLED,
-    EMPTY_PASSWORD,
-    NO_MATCHING_FORM,
-    MATCHING_NOT_COMPLETE,
-    FORM_BLACKLISTED,
-    INVALID_FORM,
-    SYNC_CREDENTIAL,
-    MAX_FAILURE_VALUE
-  };
-
-  // Log failure for UMA. Logs additional metrics if the |form_origin|
-  // corresponds to one of the top, explicitly monitored websites. For some
-  // values of |failure| also sends logs to the internals page through |logger|,
-  // it |logger| is not NULL.
-  void RecordFailure(ProvisionalSaveFailure failure,
-                     const GURL& form_origin,
-                     BrowserSavePasswordProgressLogger* logger);
-
   // Returns true if we can show possible usernames to users in cases where
   // the username for the form is ambigious.
   bool OtherPossibleUsernamesEnabled() const;
+
+  // Clones |matched_manager| and keeps it as |provisional_save_manager_|.
+  // |form| is saved provisionally to |provisional_save_manager_|.
+  void ProvisionallySaveManager(const autofill::PasswordForm& form,
+                                PasswordFormManager* matched_manager,
+                                BrowserSavePasswordProgressLogger* logger);
 
   // Returns true if |provisional_save_manager_| is ready for saving and
   // non-blacklisted.

@@ -11,13 +11,11 @@
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "chrome/browser/profile_resetter/brandcoded_default_settings.h"
+#include "chrome/browser/safe_browsing/settings_reset_prompt/settings_reset_prompt_model.h"
 #include "ui/gfx/range/range.h"
 
-class Browser;
-
 namespace safe_browsing {
-
-class SettingsResetPromptModel;
 
 // The |SettingsResetPromptController| class is responsible for providing the
 // text that will be displayed in the settings reset dialog. The controller's
@@ -28,12 +26,9 @@ class SettingsResetPromptController {
  public:
   // A controller should be created only if |model->ShouldPromptforReset()|
   // is true.
-  explicit SettingsResetPromptController(
-      std::unique_ptr<SettingsResetPromptModel> model);
-
-  static void ShowSettingsResetPrompt(
-      Browser* browser,
-      SettingsResetPromptController* controller);
+  SettingsResetPromptController(
+      std::unique_ptr<SettingsResetPromptModel> model,
+      std::unique_ptr<BrandcodedDefaultSettings> default_settings);
 
   base::string16 GetWindowTitle() const;
   base::string16 GetButtonLabel() const;
@@ -65,6 +60,7 @@ class SettingsResetPromptController {
   void OnInteractionDone();
 
   std::unique_ptr<SettingsResetPromptModel> model_;
+  std::unique_ptr<BrandcodedDefaultSettings> default_settings_;
   base::string16 main_text_;
   gfx::Range main_text_url_range_;
 
@@ -73,12 +69,6 @@ class SettingsResetPromptController {
 
   DISALLOW_COPY_AND_ASSIGN(SettingsResetPromptController);
 };
-
-// Function to be called after startup in order to display the settings reset
-// prompt. The function will figure out if a prompt is needed, and if so, show
-// the dialog after a delay as determined by the |kSettingsResetPrompt|
-// feature parameters.
-void MaybeShowSettingsResetPromptWithDelay();
 
 }  // namespace safe_browsing
 

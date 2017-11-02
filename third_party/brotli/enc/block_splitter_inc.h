@@ -13,7 +13,7 @@ static void FN(InitialEntropyCodes)(const DataType* data, size_t length,
                                     size_t stride,
                                     size_t num_histograms,
                                     HistogramType* histograms) {
-  unsigned int seed = 7;
+  uint32_t seed = 7;
   size_t block_length = length / num_histograms;
   size_t i;
   FN(ClearHistograms)(histograms, num_histograms);
@@ -29,14 +29,13 @@ static void FN(InitialEntropyCodes)(const DataType* data, size_t length,
   }
 }
 
-static void FN(RandomSample)(unsigned int* seed,
+static void FN(RandomSample)(uint32_t* seed,
                              const DataType* data,
                              size_t length,
                              size_t stride,
                              HistogramType* sample) {
   size_t pos = 0;
   if (stride >= length) {
-    pos = 0;
     stride = length;
   } else {
     pos = MyRand(seed) % (length - stride + 1);
@@ -50,7 +49,7 @@ static void FN(RefineEntropyCodes)(const DataType* data, size_t length,
                                    HistogramType* histograms) {
   size_t iters =
       kIterMulForRefining * length / stride + kMinItersForRefining;
-  unsigned int seed = 7;
+  uint32_t seed = 7;
   size_t iter;
   iters = ((iters + num_histograms - 1) / num_histograms) * num_histograms;
   for (iter = 0; iter < iters; ++iter) {
@@ -214,7 +213,6 @@ static void FN(ClusterBlocks)(MemoryManager* m,
   size_t num_final_clusters;
   static const uint32_t kInvalidIndex = BROTLI_UINT32_MAX;
   uint32_t* new_index;
-  uint8_t max_type = 0;
   size_t i;
   uint32_t sizes[HISTOGRAMS_PER_BATCH] = { 0 };
   uint32_t new_clusters[HISTOGRAMS_PER_BATCH] = { 0 };
@@ -337,6 +335,7 @@ static void FN(ClusterBlocks)(MemoryManager* m,
   {
     uint32_t cur_length = 0;
     size_t block_idx = 0;
+    uint8_t max_type = 0;
     for (i = 0; i < num_blocks; ++i) {
       cur_length += block_lengths[i];
       if (i + 1 == num_blocks ||

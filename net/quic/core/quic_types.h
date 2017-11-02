@@ -140,7 +140,9 @@ enum QuicPacketNumberLength : int8_t {
   PACKET_1BYTE_PACKET_NUMBER = 1,
   PACKET_2BYTE_PACKET_NUMBER = 2,
   PACKET_4BYTE_PACKET_NUMBER = 4,
-  PACKET_6BYTE_PACKET_NUMBER = 6
+  // TODO(rch): Remove this when we remove QUIC_VERSION_39.
+  PACKET_6BYTE_PACKET_NUMBER = 6,
+  PACKET_8BYTE_PACKET_NUMBER = 8
 };
 
 // Used to indicate a QuicSequenceNumberLength using two flag bits.
@@ -148,7 +150,7 @@ enum QuicPacketNumberLengthFlags {
   PACKET_FLAGS_1BYTE_PACKET = 0,           // 00
   PACKET_FLAGS_2BYTE_PACKET = 1,           // 01
   PACKET_FLAGS_4BYTE_PACKET = 1 << 1,      // 10
-  PACKET_FLAGS_6BYTE_PACKET = 1 << 1 | 1,  // 11
+  PACKET_FLAGS_8BYTE_PACKET = 1 << 1 | 1,  // 11
 };
 
 // The public flags are specified in one byte.
@@ -180,26 +182,15 @@ enum QuicPacketPublicFlags {
   PACKET_PUBLIC_FLAGS_1BYTE_PACKET = PACKET_FLAGS_1BYTE_PACKET << 4,
   PACKET_PUBLIC_FLAGS_2BYTE_PACKET = PACKET_FLAGS_2BYTE_PACKET << 4,
   PACKET_PUBLIC_FLAGS_4BYTE_PACKET = PACKET_FLAGS_4BYTE_PACKET << 4,
-  PACKET_PUBLIC_FLAGS_6BYTE_PACKET = PACKET_FLAGS_6BYTE_PACKET << 4,
-
-  // TODO(fayang): Remove PACKET_PUBLIC_FLAGS_MULTIPATH when deprecating
-  // quic_reloadable_flag_quic_remove_multipath_bit.
-  // Bit 6: Does the packet header contain a path id?
-  PACKET_PUBLIC_FLAGS_MULTIPATH = 1 << 6,
+  PACKET_PUBLIC_FLAGS_6BYTE_PACKET = PACKET_FLAGS_8BYTE_PACKET << 4,
 
   // Reserved, unimplemented flags:
 
   // Bit 7: indicates the presence of a second flags byte.
   PACKET_PUBLIC_FLAGS_TWO_OR_MORE_BYTES = 1 << 7,
 
-  // TODO(fayang): Remove PACKET_PUBLIC_FLAGS_MAX and rename
-  // PACKET_PUBLIC_FLAGS_MAX_WITHOUT_MULTIPATH_FLAG when deprecating
-  // quic_reloadable_flag_quic_remove_multipath_bit.
-  // All bits set (bit 7 is not currently used): 01111111
-  PACKET_PUBLIC_FLAGS_MAX = (1 << 7) - 1,
-
   // All bits set (bits 6 and 7 are not currently used): 00111111
-  PACKET_PUBLIC_FLAGS_MAX_WITHOUT_MULTIPATH_FLAG = (1 << 6) - 1,
+  PACKET_PUBLIC_FLAGS_MAX = (1 << 6) - 1,
 };
 
 // The private flags are specified in one byte.
@@ -223,6 +214,7 @@ enum CongestionControlType {
   kReno,
   kRenoBytes,
   kBBR,
+  kPCC
 };
 
 enum LossDetectionType {
@@ -260,6 +252,50 @@ enum PeerAddressChangeType {
   // IP address change from an IPv6 to an IPv6 address (port may have changed.)
   IPV6_TO_IPV6_CHANGE,
 };
+
+enum StreamSendingState {
+  // Sender has more data to send on this stream.
+  NO_FIN,
+  // Sender is done sending on this stream.
+  FIN,
+  // Sender is done sending on this stream and random padding needs to be
+  // appended after all stream frames.
+  FIN_AND_PADDING,
+};
+
+// Information about a newly acknowledged packet.
+struct AckedPacket {
+  AckedPacket(QuicPacketNumber packet_number,
+              QuicPacketLength bytes_acked,
+              QuicTime receive_timestamp)
+      : packet_number(packet_number),
+        bytes_acked(bytes_acked),
+        receive_timestamp(receive_timestamp) {}
+
+  QuicPacketNumber packet_number;
+  // Number of bytes sent in the packet that was acknowledged.
+  QuicPacketLength bytes_acked;
+  // The time |packet_number| was received by the peer, according to the
+  // optional timestamp the peer included in the ACK frame which acknowledged
+  // |packet_number|. Zero if no timestamp was available for this packet.
+  QuicTime receive_timestamp;
+};
+
+// A vector of acked packets.
+typedef std::vector<AckedPacket> AckedPacketVector;
+
+// Information about a newly lost packet.
+struct LostPacket {
+  LostPacket(QuicPacketNumber packet_number, QuicPacketLength bytes_lost)
+      : packet_number(packet_number), bytes_lost(bytes_lost) {}
+
+  QuicPacketNumber packet_number;
+  // Number of bytes sent in the packet that was lost.
+  QuicPacketLength bytes_lost;
+};
+
+// A vector of lost packets.
+typedef std::vector<LostPacket> LostPacketVector;
 
 }  // namespace net
 

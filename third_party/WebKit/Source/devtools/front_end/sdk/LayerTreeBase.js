@@ -110,14 +110,19 @@ SDK.Layer.prototype = {
   scrollRects() {},
 
   /**
+   * @return {?SDK.Layer.StickyPositionConstraint}
+   */
+  stickyPositionConstraint() {},
+
+  /**
    * @return {number}
    */
   gpuMemoryUsage() {},
 
   /**
-   * @param {function(!Array.<string>)} callback
+   * @return {!Promise<!Array<string>>}
    */
-  requestCompositingReasons(callback) {},
+  requestCompositingReasons() {},
 
   /**
    * @return {boolean}
@@ -135,6 +140,57 @@ SDK.Layer.ScrollRectType = {
   TouchEventHandler: 'TouchEventHandler',
   WheelEventHandler: 'WheelEventHandler',
   RepaintsOnScroll: 'RepaintsOnScroll'
+};
+
+SDK.Layer.StickyPositionConstraint = class {
+  /**
+   * @param {?SDK.LayerTreeBase} layerTree
+   * @param {!Protocol.LayerTree.StickyPositionConstraint} constraint
+   * @struct
+   */
+  constructor(layerTree, constraint) {
+    /** @type {!Protocol.DOM.Rect} */
+    this._stickyBoxRect = constraint.stickyBoxRect;
+    /** @type {!Protocol.DOM.Rect} */
+    this._containingBlockRect = constraint.containingBlockRect;
+    /** @type {?SDK.Layer} */
+    this._nearestLayerShiftingStickyBox = null;
+    if (layerTree && constraint.nearestLayerShiftingStickyBox)
+      this._nearestLayerShiftingStickyBox = layerTree.layerById(constraint.nearestLayerShiftingStickyBox);
+
+    /** @type {?SDK.Layer} */
+    this._nearestLayerShiftingContainingBlock = null;
+    if (layerTree && constraint.nearestLayerShiftingContainingBlock)
+      this._nearestLayerShiftingContainingBlock = layerTree.layerById(constraint.nearestLayerShiftingContainingBlock);
+  }
+
+  /**
+   * @return {!Protocol.DOM.Rect}
+   */
+  stickyBoxRect() {
+    return this._stickyBoxRect;
+  }
+
+  /**
+   * @return {!Protocol.DOM.Rect}
+   */
+  containingBlockRect() {
+    return this._containingBlockRect;
+  }
+
+  /**
+   * @return {?SDK.Layer}
+   */
+  nearestLayerShiftingStickyBox() {
+    return this._nearestLayerShiftingStickyBox;
+  }
+
+  /**
+   * @return {?SDK.Layer}
+   */
+  nearestLayerShiftingContainingBlock() {
+    return this._nearestLayerShiftingContainingBlock;
+  }
 };
 
 /**
@@ -215,27 +271,18 @@ SDK.LayerTreeBase = class {
 
   /**
    * @param {!Set<number>} requestedNodeIds
-   * @param {function()} callback
+   * @return {!Promise}
    */
-  resolveBackendNodeIds(requestedNodeIds, callback) {
-    if (!requestedNodeIds.size || !this._domModel) {
-      callback();
+  async resolveBackendNodeIds(requestedNodeIds) {
+    if (!requestedNodeIds.size || !this._domModel)
       return;
-    }
-    if (this._domModel)
-      this._domModel.pushNodesByBackendIdsToFrontend(requestedNodeIds, populateBackendNodeMap.bind(this));
 
-    /**
-     * @this {SDK.LayerTreeBase}
-     * @param {?Map<number, ?SDK.DOMNode>} nodesMap
-     */
-    function populateBackendNodeMap(nodesMap) {
-      if (nodesMap) {
-        for (var nodeId of nodesMap.keysArray())
-          this._backendNodeIdToNode.set(nodeId, nodesMap.get(nodeId) || null);
-      }
-      callback();
-    }
+    var nodesMap = await this._domModel.pushNodesByBackendIdsToFrontend(requestedNodeIds);
+
+    if (!nodesMap)
+      return;
+    for (var nodeId of nodesMap.keysArray())
+      this._backendNodeIdToNode.set(nodeId, nodesMap.get(nodeId) || null);
   }
 
   /**

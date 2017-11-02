@@ -4,12 +4,12 @@
       "name": "LayoutView #document",
       "bounds": [600, 250],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
           "rect": [0, 0, 600, 500],
-          "reason": "bounds change"
+          "reason": "background"
         }
       ]
     }
@@ -17,7 +17,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutView #document",
-      "reason": "bounds change"
+      "reason": "background"
     }
   ]
 }
@@ -27,12 +27,12 @@
       "name": "LayoutView #document",
       "bounds": [400, 250],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
           "rect": [0, 0, 600, 250],
-          "reason": "bounds change"
+          "reason": "background"
         }
       ]
     }
@@ -40,7 +40,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutView #document",
-      "reason": "bounds change"
+      "reason": "background"
     }
   ]
 }
@@ -50,12 +50,12 @@
       "name": "LayoutView #document",
       "bounds": [400, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
           "rect": [0, 0, 400, 600],
-          "reason": "bounds change"
+          "reason": "background"
         }
       ]
     }
@@ -63,7 +63,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutView #document",
-      "reason": "bounds change"
+      "reason": "background"
     }
   ]
 }
@@ -73,12 +73,12 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
           "rect": [0, 0, 800, 600],
-          "reason": "bounds change"
+          "reason": "background"
         }
       ]
     }
@@ -86,7 +86,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutView #document",
-      "reason": "bounds change"
+      "reason": "background"
     }
   ]
 }

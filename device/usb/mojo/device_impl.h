@@ -27,16 +27,16 @@ class PermissionProvider;
 // Implementation of the public Device interface. Instances of this class are
 // constructed by DeviceManagerImpl and are strongly bound to their MessagePipe
 // lifetime.
-class DeviceImpl : public Device, public device::UsbDevice::Observer {
+class DeviceImpl : public mojom::UsbDevice, public device::UsbDevice::Observer {
  public:
-  static void Create(scoped_refptr<UsbDevice> device,
+  static void Create(scoped_refptr<device::UsbDevice> device,
                      base::WeakPtr<PermissionProvider> permission_provider,
-                     DeviceRequest request);
+                     mojom::UsbDeviceRequest request);
 
   ~DeviceImpl() override;
 
  private:
-  DeviceImpl(scoped_refptr<UsbDevice> device,
+  DeviceImpl(scoped_refptr<device::UsbDevice> device,
              base::WeakPtr<PermissionProvider> permission_provider);
 
   // Closes the device if it's open. This will always set |device_handle_| to
@@ -44,62 +44,61 @@ class DeviceImpl : public Device, public device::UsbDevice::Observer {
   void CloseHandle();
 
   // Checks interface permissions for control transfers.
-  bool HasControlTransferPermission(ControlTransferRecipient recipient,
-                                    uint16_t index);
+  bool HasControlTransferPermission(
+      mojom::UsbControlTransferRecipient recipient,
+      uint16_t index);
 
   // Handles completion of an open request.
   static void OnOpen(base::WeakPtr<DeviceImpl> device,
-                     const OpenCallback& callback,
+                     OpenCallback callback,
                      scoped_refptr<device::UsbDeviceHandle> handle);
-  void OnPermissionGrantedForOpen(const OpenCallback& callback, bool granted);
+  void OnPermissionGrantedForOpen(OpenCallback callback, bool granted);
 
   // Device implementation:
-  void Open(const OpenCallback& callback) override;
-  void Close(const CloseCallback& callback) override;
+  void Open(OpenCallback callback) override;
+  void Close(CloseCallback callback) override;
   void SetConfiguration(uint8_t value,
-                        const SetConfigurationCallback& callback) override;
+                        SetConfigurationCallback callback) override;
   void ClaimInterface(uint8_t interface_number,
-                      const ClaimInterfaceCallback& callback) override;
+                      ClaimInterfaceCallback callback) override;
   void ReleaseInterface(uint8_t interface_number,
-                        const ReleaseInterfaceCallback& callback) override;
+                        ReleaseInterfaceCallback callback) override;
   void SetInterfaceAlternateSetting(
       uint8_t interface_number,
       uint8_t alternate_setting,
-      const SetInterfaceAlternateSettingCallback& callback) override;
-  void Reset(const ResetCallback& callback) override;
-  void ClearHalt(uint8_t endpoint, const ClearHaltCallback& callback) override;
-  void ControlTransferIn(ControlTransferParamsPtr params,
+      SetInterfaceAlternateSettingCallback callback) override;
+  void Reset(ResetCallback callback) override;
+  void ClearHalt(uint8_t endpoint, ClearHaltCallback callback) override;
+  void ControlTransferIn(mojom::UsbControlTransferParamsPtr params,
                          uint32_t length,
                          uint32_t timeout,
-                         const ControlTransferInCallback& callback) override;
-  void ControlTransferOut(ControlTransferParamsPtr params,
+                         ControlTransferInCallback callback) override;
+  void ControlTransferOut(mojom::UsbControlTransferParamsPtr params,
                           const std::vector<uint8_t>& data,
                           uint32_t timeout,
-                          const ControlTransferOutCallback& callback) override;
+                          ControlTransferOutCallback callback) override;
   void GenericTransferIn(uint8_t endpoint_number,
                          uint32_t length,
                          uint32_t timeout,
-                         const GenericTransferInCallback& callback) override;
+                         GenericTransferInCallback callback) override;
   void GenericTransferOut(uint8_t endpoint_number,
                           const std::vector<uint8_t>& data,
                           uint32_t timeout,
-                          const GenericTransferOutCallback& callback) override;
-  void IsochronousTransferIn(
-      uint8_t endpoint_number,
-      const std::vector<uint32_t>& packet_lengths,
-      uint32_t timeout,
-      const IsochronousTransferInCallback& callback) override;
-  void IsochronousTransferOut(
-      uint8_t endpoint_number,
-      const std::vector<uint8_t>& data,
-      const std::vector<uint32_t>& packet_lengths,
-      uint32_t timeout,
-      const IsochronousTransferOutCallback& callback) override;
+                          GenericTransferOutCallback callback) override;
+  void IsochronousTransferIn(uint8_t endpoint_number,
+                             const std::vector<uint32_t>& packet_lengths,
+                             uint32_t timeout,
+                             IsochronousTransferInCallback callback) override;
+  void IsochronousTransferOut(uint8_t endpoint_number,
+                              const std::vector<uint8_t>& data,
+                              const std::vector<uint32_t>& packet_lengths,
+                              uint32_t timeout,
+                              IsochronousTransferOutCallback callback) override;
 
   // device::UsbDevice::Observer implementation:
   void OnDeviceRemoved(scoped_refptr<device::UsbDevice> device) override;
 
-  const scoped_refptr<UsbDevice> device_;
+  const scoped_refptr<device::UsbDevice> device_;
   base::WeakPtr<PermissionProvider> permission_provider_;
   ScopedObserver<device::UsbDevice, device::UsbDevice::Observer> observer_;
 
@@ -107,7 +106,7 @@ class DeviceImpl : public Device, public device::UsbDevice::Observer {
   // has been closed.
   scoped_refptr<UsbDeviceHandle> device_handle_;
 
-  mojo::StrongBindingPtr<Device> binding_;
+  mojo::StrongBindingPtr<mojom::UsbDevice> binding_;
   base::WeakPtrFactory<DeviceImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceImpl);

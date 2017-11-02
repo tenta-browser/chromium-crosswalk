@@ -16,7 +16,9 @@ void ResourceHandler::SetDelegate(Delegate* delegate) {
   delegate_ = delegate;
 }
 
-ResourceHandler::~ResourceHandler() {}
+ResourceHandler::~ResourceHandler() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
 
 ResourceHandler::ResourceHandler(net::URLRequest* request)
     : request_(request) {}
@@ -38,10 +40,6 @@ void ResourceHandler::Resume() {
 
 void ResourceHandler::Cancel() {
   ReleaseController()->Cancel();
-}
-
-void ResourceHandler::CancelAndIgnore() {
-  ReleaseController()->CancelAndIgnore();
 }
 
 void ResourceHandler::CancelWithError(int error_code) {

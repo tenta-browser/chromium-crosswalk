@@ -16,7 +16,6 @@ namespace ui {
 
 namespace ws {
 
-class FocusControllerDelegate;
 class FocusControllerObserver;
 class ServerWindow;
 class ServerWindowDrawnTracker;
@@ -31,7 +30,7 @@ enum class FocusControllerChangeSource {
 // state of the focused window changes.
 class FocusController : public ServerWindowDrawnTrackerObserver {
  public:
-  FocusController(FocusControllerDelegate* delegate, ServerWindow* root);
+  explicit FocusController(ServerWindow* root);
   ~FocusController() override;
 
   // Sets the focused window. Does nothing if |window| is currently focused.
@@ -40,16 +39,12 @@ class FocusController : public ServerWindowDrawnTrackerObserver {
   bool SetFocusedWindow(ServerWindow* window);
   ServerWindow* GetFocusedWindow();
 
-  // Moves activation to the next activatable window.
-  void ActivateNextWindow();
-
   void AddObserver(FocusControllerObserver* observer);
   void RemoveObserver(FocusControllerObserver* observer);
 
  private:
   enum class ActivationChangeReason {
-    UNKNONW,
-    CYCLE,  // Activation changed because of ActivateNextWindow().
+    UNKNOWN,
     FOCUS,  // Focus change required a different window to be activated.
     DRAWN_STATE_CHANGED,  // Active window was hidden or destroyed.
   };
@@ -67,6 +62,10 @@ class FocusController : public ServerWindowDrawnTrackerObserver {
   bool SetFocusedWindowImpl(FocusControllerChangeSource change_source,
                             ServerWindow* window);
 
+  // Called internally when the drawn state or root changes. |ancestor| is
+  // the |ancestor| argument from those two functions, see them for details.
+  void ProcessDrawnOrRootChange(ServerWindow* ancestor, ServerWindow* window);
+
   // ServerWindowDrawnTrackerObserver:
   void OnDrawnStateWillChange(ServerWindow* ancestor,
                               ServerWindow* window,
@@ -74,19 +73,13 @@ class FocusController : public ServerWindowDrawnTrackerObserver {
   void OnDrawnStateChanged(ServerWindow* ancestor,
                            ServerWindow* window,
                            bool is_drawn) override;
-
-  FocusControllerDelegate* delegate_;
+  void OnRootWillChange(ServerWindow* ancestor, ServerWindow* window) override;
 
   ServerWindow* root_;
   ServerWindow* focused_window_;
   ServerWindow* active_window_;
   // Tracks what caused |active_window_| to be activated.
   ActivationChangeReason activation_reason_;
-
-  // Keeps track of the list of windows that have already been visited during a
-  // window cycle. This is only active when |activation_reason_| is set to
-  // CYCLE.
-  std::unique_ptr<ServerWindowTracker> cycle_windows_;
 
   base::ObserverList<FocusControllerObserver> observers_;
 

@@ -11,13 +11,12 @@
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "components/web_restrictions/browser/web_restrictions_mojo_implementation.h"
-#include "content/public/browser/android/content_view_core.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 
 namespace android_webview {
 
@@ -31,11 +30,12 @@ AwRenderViewHostExt::AwRenderViewHostExt(
 }
 
 AwRenderViewHostExt::~AwRenderViewHostExt() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   ClearImageRequests();
 }
 
 void AwRenderViewHostExt::DocumentHasImages(DocumentHasImagesResult result) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!web_contents()->GetRenderViewHost()) {
     result.Run(false);
     return;
@@ -44,7 +44,7 @@ void AwRenderViewHostExt::DocumentHasImages(DocumentHasImagesResult result) {
   uint32_t this_id = next_id++;
   // Send the message to the main frame, instead of the whole frame tree,
   // because it only makes sense on the main frame.
-  if (Send(new AwViewMsg_DocumentHasImages(
+  if (web_contents()->GetMainFrame()->Send(new AwViewMsg_DocumentHasImages(
           web_contents()->GetMainFrame()->GetRoutingID(), this_id))) {
     image_requests_callback_map_[this_id] = result;
   } else {
@@ -55,13 +55,13 @@ void AwRenderViewHostExt::DocumentHasImages(DocumentHasImagesResult result) {
 }
 
 void AwRenderViewHostExt::ClearCache() {
-  DCHECK(CalledOnValidThread());
-  Send(new AwViewMsg_ClearCache);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  web_contents()->GetRenderViewHost()->Send(new AwViewMsg_ClearCache);
 }
 
 void AwRenderViewHostExt::KillRenderProcess() {
-  DCHECK(CalledOnValidThread());
-  Send(new AwViewMsg_KillProcess);
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  web_contents()->GetRenderViewHost()->Send(new AwViewMsg_KillProcess);
 }
 
 bool AwRenderViewHostExt::HasNewHitTestData() const {
@@ -75,33 +75,34 @@ void AwRenderViewHostExt::MarkHitTestDataRead() {
 void AwRenderViewHostExt::RequestNewHitTestDataAt(
     const gfx::PointF& touch_center,
     const gfx::SizeF& touch_area) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // We only need to get blink::WebView on the renderer side to invoke the
   // blink hit test API, so sending this IPC to main frame is enough.
-  Send(new AwViewMsg_DoHitTest(web_contents()->GetMainFrame()->GetRoutingID(),
-                               touch_center, touch_area));
+  web_contents()->GetMainFrame()->Send(
+      new AwViewMsg_DoHitTest(web_contents()->GetMainFrame()->GetRoutingID(),
+                              touch_center, touch_area));
 }
 
 const AwHitTestData& AwRenderViewHostExt::GetLastHitTestData() const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return last_hit_test_data_;
 }
 
 void AwRenderViewHostExt::SetTextZoomFactor(float factor) {
-  DCHECK(CalledOnValidThread());
-  Send(new AwViewMsg_SetTextZoomFactor(
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  web_contents()->GetMainFrame()->Send(new AwViewMsg_SetTextZoomFactor(
       web_contents()->GetMainFrame()->GetRoutingID(), factor));
 }
 
 void AwRenderViewHostExt::ResetScrollAndScaleState() {
-  DCHECK(CalledOnValidThread());
-  Send(new AwViewMsg_ResetScrollAndScaleState(
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  web_contents()->GetMainFrame()->Send(new AwViewMsg_ResetScrollAndScaleState(
       web_contents()->GetMainFrame()->GetRoutingID()));
 }
 
 void AwRenderViewHostExt::SetInitialPageScale(double page_scale_factor) {
-  DCHECK(CalledOnValidThread());
-  Send(new AwViewMsg_SetInitialPageScale(
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  web_contents()->GetMainFrame()->Send(new AwViewMsg_SetInitialPageScale(
       web_contents()->GetMainFrame()->GetRoutingID(), page_scale_factor));
 }
 
@@ -110,27 +111,27 @@ void AwRenderViewHostExt::SetBackgroundColor(SkColor c) {
     return;
   background_color_ = c;
   if (web_contents()->GetRenderViewHost()) {
-    Send(new AwViewMsg_SetBackgroundColor(
+    web_contents()->GetMainFrame()->Send(new AwViewMsg_SetBackgroundColor(
         web_contents()->GetMainFrame()->GetRoutingID(), background_color_));
   }
 }
 
 void AwRenderViewHostExt::SetJsOnlineProperty(bool network_up) {
-  Send(new AwViewMsg_SetJsOnlineProperty(network_up));
+  web_contents()->GetRenderViewHost()->Send(
+      new AwViewMsg_SetJsOnlineProperty(network_up));
 }
 
 void AwRenderViewHostExt::SmoothScroll(int target_x,
                                        int target_y,
                                        long duration_ms) {
-  Send(
-      new AwViewMsg_SmoothScroll(web_contents()->GetMainFrame()->GetRoutingID(),
-                                 target_x, target_y,
-                                 static_cast<int>(duration_ms)));
+  web_contents()->GetMainFrame()->Send(new AwViewMsg_SmoothScroll(
+      web_contents()->GetMainFrame()->GetRoutingID(), target_x, target_y,
+      static_cast<int>(duration_ms)));
 }
 
 void AwRenderViewHostExt::RenderViewCreated(
     content::RenderViewHost* render_view_host) {
-  Send(new AwViewMsg_SetBackgroundColor(
+  web_contents()->GetMainFrame()->Send(new AwViewMsg_SetBackgroundColor(
       web_contents()->GetMainFrame()->GetRoutingID(), background_color_));
 }
 
@@ -150,14 +151,14 @@ void AwRenderViewHostExt::ClearImageRequests() {
 
 void AwRenderViewHostExt::RenderFrameCreated(
     content::RenderFrameHost* frame_host) {
-  frame_host->GetInterfaceRegistry()->AddInterface(
+  registry_.AddInterface(
       base::Bind(&web_restrictions::WebRestrictionsMojoImplementation::Create,
                  AwBrowserContext::GetDefault()->GetWebRestrictionProvider()));
 }
 
 void AwRenderViewHostExt::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!navigation_handle->HasCommitted() ||
       (!navigation_handle->IsInMainFrame() &&
        !navigation_handle->HasSubframeNavigationEntryCommitted()))
@@ -189,6 +190,13 @@ bool AwRenderViewHostExt::OnMessageReceived(
   return handled ? true : WebContentsObserver::OnMessageReceived(message);
 }
 
+void AwRenderViewHostExt::OnInterfaceRequestFromFrame(
+    content::RenderFrameHost* render_frame_host,
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle* interface_pipe) {
+  registry_.TryBindInterface(interface_name, interface_pipe);
+}
+
 void AwRenderViewHostExt::OnDocumentHasImagesResponse(
     content::RenderFrameHost* render_frame_host,
     int msg_id,
@@ -200,7 +208,7 @@ void AwRenderViewHostExt::OnDocumentHasImagesResponse(
   if (render_frame_host != web_contents()->GetMainFrame())
     return;
 
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::map<int, DocumentHasImagesResult>::iterator pending_req =
       image_requests_callback_map_.find(msg_id);
   if (pending_req == image_requests_callback_map_.end()) {
@@ -223,7 +231,7 @@ void AwRenderViewHostExt::OnUpdateHitTestData(
   if (main_frame_host != web_contents()->GetMainFrame())
     return;
 
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   last_hit_test_data_ = hit_test_data;
   has_new_hit_test_data_ = true;
 }

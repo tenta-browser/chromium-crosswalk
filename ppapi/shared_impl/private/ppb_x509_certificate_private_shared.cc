@@ -40,7 +40,7 @@ PP_Var PPB_X509Certificate_Fields::GetFieldAsPPVar(
     return PP_MakeNull();
   }
 
-  switch (value->GetType()) {
+  switch (value->type()) {
     case base::Value::Type::NONE:
       return PP_MakeNull();
     case base::Value::Type::BOOLEAN: {
@@ -64,8 +64,8 @@ PP_Var PPB_X509Certificate_Fields::GetFieldAsPPVar(
       return StringVar::StringToPPVar(val);
     }
     case base::Value::Type::BINARY: {
-      uint32_t size = static_cast<uint32_t>(value->GetSize());
-      const char* buffer = value->GetBuffer();
+      uint32_t size = static_cast<uint32_t>(value->GetBlob().size());
+      const char* buffer = value->GetBlob().data();
       PP_Var array_buffer =
           PpapiGlobals::Get()->GetVarTracker()->MakeArrayBufferPPVar(size,
                                                                      buffer);

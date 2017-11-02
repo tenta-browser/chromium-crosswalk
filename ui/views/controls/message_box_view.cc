@@ -13,6 +13,8 @@
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
+#include "ui/gfx/geometry/insets.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
@@ -20,7 +22,7 @@
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/grid_layout.h"
-#include "ui/views/layout/layout_constants.h"
+#include "ui/views/layout/layout_provider.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/client_view.h"
 #include "ui/views/window/dialog_delegate.h"
@@ -75,7 +77,8 @@ MessageBoxView::InitParams::InitParams(const base::string16& message)
     : options(NO_OPTIONS),
       message(message),
       message_width(kDefaultMessageWidth),
-      inter_row_vertical_spacing(kRelatedControlVerticalSpacing) {}
+      inter_row_vertical_spacing(LayoutProvider::Get()->GetDistanceMetric(
+          DISTANCE_RELATED_CONTROL_VERTICAL)) {}
 
 MessageBoxView::InitParams::~InitParams() {
 }
@@ -121,10 +124,11 @@ void MessageBoxView::SetLink(const base::string16& text,
   } else {
     DCHECK(listener);
     if (!link_) {
-      link_ = new Link();
+      link_ = new Link(text);
       link_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+    } else {
+      link_->SetText(text);
     }
-    link_->SetText(text);
     link_->set_listener(listener);
   }
   ResetLayoutManager();
@@ -211,8 +215,7 @@ void MessageBoxView::Init(const InitParams& params) {
 
 void MessageBoxView::ResetLayoutManager() {
   // Initialize the Grid Layout Manager used for this dialog box.
-  GridLayout* layout = GridLayout::CreatePanel(this);
-  SetLayoutManager(layout);
+  GridLayout* layout = GridLayout::CreateAndInstall(this);
 
   // Add the column set for the message displayed at the top of the dialog box.
   const int message_column_view_set_id = 0;
@@ -231,7 +234,7 @@ void MessageBoxView::ResetLayoutManager() {
   const int kMaxScrollViewHeight = 400;
   views::View* message_contents = new views::View();
   message_contents->SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kVertical, 0, 0, 0));
+      new views::BoxLayout(views::BoxLayout::kVertical));
   for (size_t i = 0; i < message_labels_.size(); ++i)
     message_contents->AddChildView(message_labels_[i]);
   ScrollView* scroll_view = new views::ScrollView();
@@ -240,23 +243,31 @@ void MessageBoxView::ResetLayoutManager() {
   layout->StartRow(0, message_column_view_set_id);
   layout->AddView(scroll_view);
 
+  views::DialogContentType trailing_content_type = views::TEXT;
   if (prompt_field_) {
     layout->AddPaddingRow(0, inter_row_vertical_spacing_);
     layout->StartRow(0, extra_column_view_set_id);
     layout->AddView(prompt_field_);
+    trailing_content_type = views::CONTROL;
   }
 
   if (checkbox_) {
     layout->AddPaddingRow(0, inter_row_vertical_spacing_);
     layout->StartRow(0, extra_column_view_set_id);
     layout->AddView(checkbox_);
+    trailing_content_type = views::CONTROL;
   }
 
   if (link_) {
     layout->AddPaddingRow(0, inter_row_vertical_spacing_);
     layout->StartRow(0, extra_column_view_set_id);
     layout->AddView(link_);
+    trailing_content_type = views::TEXT;
   }
+
+  SetBorder(
+      CreateEmptyBorder(LayoutProvider::Get()->GetDialogInsetsForContentType(
+          views::TEXT, trailing_content_type)));
 }
 
 }  // namespace views

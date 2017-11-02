@@ -9,9 +9,8 @@
 // <include src="tab_switcher_view.js">
 // <include src="import_view.js">
 // <include src="capture_view.js">
-// <include src="export_view.js">
 // <include src="http_cache_view.js">
-// <include src="hsts_view.js">
+// <include src="domain_security_policy_view.js">
 // <include src="browser_bridge.js">
 // <include src="events_tracker.js">
 // <include src="source_tracker.js">
@@ -46,7 +45,6 @@
 // <include src="prerender_view.js">
 // <include src="chromeos_view.js">
 // <include src="bandwidth_view.js">
-// <include src="sdch_view.js">
 
 document.addEventListener('DOMContentLoaded', function() {
   MainView.getInstance();  // from main.js

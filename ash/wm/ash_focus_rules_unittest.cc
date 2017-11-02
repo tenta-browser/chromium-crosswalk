@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/session/session_controller.h"
+#include "ash/session/test_session_controller_client.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
-#include "ash/test/test_session_controller_client.h"
 #include "ash/wm/lock_state_controller.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
-#include "base/memory/ptr_util.h"
 #include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/window_parenting_client.h"
@@ -21,7 +21,6 @@
 #include "ui/views/widget/widget.h"
 
 namespace ash {
-namespace test {
 
 namespace {
 
@@ -92,7 +91,7 @@ class LockScreenAshFocusRulesTest : public AshTestBase {
   void SetUp() override {
     AshTestBase::SetUp();
     ash_test_helper()->set_test_session_controller_client(
-        base::MakeUnique<LockScreenSessionControllerClient>(
+        std::make_unique<LockScreenSessionControllerClient>(
             Shell::Get()->session_controller()));
   }
 
@@ -115,7 +114,7 @@ class LockScreenAshFocusRulesTest : public AshTestBase {
     aura::Window* container = Shell::GetContainer(root_window, container_id);
     aura::Window* window = new aura::Window(nullptr);
     window->set_id(0);
-    window->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window->Init(ui::LAYER_TEXTURED);
     window->Show();
 
@@ -199,5 +198,4 @@ TEST_F(LockScreenAshFocusRulesTest, PreventFocusChangeWithLockScreenPresent) {
   EXPECT_TRUE(delegate.view()->HasFocus());
 }
 
-}  // namespace test
 }  // namespace ash

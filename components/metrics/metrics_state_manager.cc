@@ -8,6 +8,7 @@
 
 #include "base/command_line.h"
 #include "base/guid.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/rand_util.h"
@@ -19,7 +20,9 @@
 #include "components/metrics/enabled_state_provider.h"
 #include "components/metrics/machine_id_provider.h"
 #include "components/metrics/metrics_pref_names.h"
+#include "components/metrics/metrics_provider.h"
 #include "components/metrics/metrics_switches.h"
+#include "components/metrics/proto/system_profile.pb.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/caching_permuted_entropy_provider.h"
@@ -49,6 +52,46 @@ void LogLowEntropyValue(int low_entropy_source_value) {
                               low_entropy_source_value);
 }
 
+int64_t ReadEnabledDate(PrefService* local_state) {
+  return local_state->GetInt64(prefs::kMetricsReportingEnabledTimestamp);
+}
+
+int64_t ReadInstallDate(PrefService* local_state) {
+  return local_state->GetInt64(prefs::kInstallDate);
+}
+
+// Round a timestamp measured in seconds since epoch to one with a granularity
+// of an hour. This can be used before uploaded potentially sensitive
+// timestamps.
+int64_t RoundSecondsToHour(int64_t time_in_seconds) {
+  return 3600 * (time_in_seconds / 3600);
+}
+
+class MetricsStateMetricsProvider : public MetricsProvider {
+ public:
+  MetricsStateMetricsProvider(PrefService* local_state)
+      : local_state_(local_state) {}
+
+  // MetricsProvider:
+  void ProvideSystemProfileMetrics(
+      SystemProfileProto* system_profile) override {
+    system_profile->set_uma_enabled_date(
+        RoundSecondsToHour(ReadEnabledDate(local_state_)));
+    system_profile->set_install_date(
+        RoundSecondsToHour(ReadInstallDate(local_state_)));
+  }
+
+  void ProvideCurrentSessionData(
+      ChromeUserMetricsExtension* uma_proto) override {
+    if (local_state_->GetBoolean(prefs::kMetricsResetIds))
+      UMA_HISTOGRAM_BOOLEAN("UMA.IsClonedInstall", true);
+  }
+
+ private:
+  PrefService* local_state_;
+  DISALLOW_COPY_AND_ASSIGN(MetricsStateMetricsProvider);
+};
+
 }  // namespace
 
 // static
@@ -57,17 +100,24 @@ bool MetricsStateManager::instance_exists_ = false;
 MetricsStateManager::MetricsStateManager(
     PrefService* local_state,
     EnabledStateProvider* enabled_state_provider,
+    const base::string16& backup_registry_key,
     const StoreClientInfoCallback& store_client_info,
     const LoadClientInfoCallback& retrieve_client_info)
     : local_state_(local_state),
       enabled_state_provider_(enabled_state_provider),
       store_client_info_(store_client_info),
       load_client_info_(retrieve_client_info),
+      clean_exit_beacon_(backup_registry_key, local_state),
       low_entropy_source_(kLowEntropySourceNotSet),
       entropy_source_returned_(ENTROPY_SOURCE_NONE) {
   ResetMetricsIDsIfNecessary();
   if (enabled_state_provider_->IsConsentGiven())
     ForceClientIdCreation();
+
+  // Set the install date if this is our first run.
+  int64_t install_date = local_state_->GetInt64(prefs::kInstallDate);
+  if (install_date == 0)
+    local_state_->SetInt64(prefs::kInstallDate, base::Time::Now().ToTimeT());
 
   DCHECK(!instance_exists_);
   instance_exists_ = true;
@@ -78,8 +128,16 @@ MetricsStateManager::~MetricsStateManager() {
   instance_exists_ = false;
 }
 
+std::unique_ptr<MetricsProvider> MetricsStateManager::GetProvider() {
+  return base::MakeUnique<MetricsStateMetricsProvider>(local_state_);
+}
+
 bool MetricsStateManager::IsMetricsReportingEnabled() {
   return enabled_state_provider_->IsReportingEnabled();
+}
+
+int64_t MetricsStateManager::GetInstallDate() const {
+  return ReadInstallDate(local_state_);
 }
 
 void MetricsStateManager::ForceClientIdCreation() {
@@ -140,16 +198,14 @@ void MetricsStateManager::ForceClientIdCreation() {
   BackUpCurrentClientInfo();
 }
 
-void MetricsStateManager::CheckForClonedInstall(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+void MetricsStateManager::CheckForClonedInstall() {
   DCHECK(!cloned_install_detector_);
 
-  MachineIdProvider* provider = MachineIdProvider::CreateInstance();
-  if (!provider)
+  if (!MachineIdProvider::HasId())
     return;
 
-  cloned_install_detector_.reset(new ClonedInstallDetector(provider));
-  cloned_install_detector_->CheckForClonedInstall(local_state_, task_runner);
+  cloned_install_detector_ = base::MakeUnique<ClonedInstallDetector>();
+  cloned_install_detector_->CheckForClonedInstall(local_state_);
 }
 
 std::unique_ptr<const base::FieldTrial::EntropyProvider>
@@ -194,13 +250,14 @@ MetricsStateManager::CreateLowEntropyProvider() {
 std::unique_ptr<MetricsStateManager> MetricsStateManager::Create(
     PrefService* local_state,
     EnabledStateProvider* enabled_state_provider,
+    const base::string16& backup_registry_key,
     const StoreClientInfoCallback& store_client_info,
     const LoadClientInfoCallback& retrieve_client_info) {
   std::unique_ptr<MetricsStateManager> result;
   // Note: |instance_exists_| is updated in the constructor and destructor.
   if (!instance_exists_) {
     result.reset(new MetricsStateManager(local_state, enabled_state_provider,
-                                         store_client_info,
+                                         backup_registry_key, store_client_info,
                                          retrieve_client_info));
   }
   return result;
@@ -213,6 +270,7 @@ void MetricsStateManager::RegisterPrefs(PrefRegistrySimple* registry) {
   registry->RegisterInt64Pref(prefs::kMetricsReportingEnabledTimestamp, 0);
   registry->RegisterIntegerPref(prefs::kMetricsLowEntropySource,
                                 kLowEntropySourceNotSet);
+  registry->RegisterInt64Pref(prefs::kInstallDate, 0);
 
   ClonedInstallDetector::RegisterPrefs(registry);
   CachingPermutedEntropyProvider::RegisterPrefs(registry);
@@ -221,9 +279,8 @@ void MetricsStateManager::RegisterPrefs(PrefRegistrySimple* registry) {
 void MetricsStateManager::BackUpCurrentClientInfo() {
   ClientInfo client_info;
   client_info.client_id = client_id_;
-  client_info.installation_date = local_state_->GetInt64(prefs::kInstallDate);
-  client_info.reporting_enabled_date =
-      local_state_->GetInt64(prefs::kMetricsReportingEnabledTimestamp);
+  client_info.installation_date = ReadInstallDate(local_state_);
+  client_info.reporting_enabled_date = ReadEnabledDate(local_state_);
   store_client_info_.Run(client_info);
 }
 

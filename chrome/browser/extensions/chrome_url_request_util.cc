@@ -60,7 +60,7 @@ class URLRequestResourceBundleJob : public net::URLRequestSimpleJob {
       std::string* charset,
       scoped_refptr<base::RefCountedMemory>* data,
       const net::CompletionCallback& callback) const override {
-    const ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+    const ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
     *data = rb.LoadDataResourceBytes(resource_id_);
 
     // Add the Content-Length header now that we know the resource length.
@@ -70,7 +70,7 @@ class URLRequestResourceBundleJob : public net::URLRequestSimpleJob {
 
     std::string* read_mime_type = new std::string;
     base::PostTaskWithTraitsAndReplyWithResult(
-        FROM_HERE, base::TaskTraits().MayBlock(),
+        FROM_HERE, {base::MayBlock()},
         base::Bind(&net::GetMimeTypeFromFile, filename_,
                    base::Unretained(read_mime_type)),
         base::Bind(&URLRequestResourceBundleJob::OnMimeTypeRead,

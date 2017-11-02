@@ -9,8 +9,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
@@ -103,7 +105,7 @@ class Buffer : public PacketPipe {
     }
   }
 
-  std::deque<linked_ptr<Packet> > buffer_;
+  base::circular_deque<linked_ptr<Packet>> buffer_;
   base::TimeTicks last_schedule_;
   size_t buffer_size_;
   size_t max_buffer_size_;
@@ -281,7 +283,7 @@ class RandomSortedDelay : public PacketPipe {
   }
 
   base::TimeTicks block_until_;
-  std::deque<linked_ptr<Packet> > buffer_;
+  base::circular_deque<linked_ptr<Packet>> buffer_;
   double random_delay_;
   double extra_delay_;
   double seconds_between_extra_delay_;
@@ -401,8 +403,8 @@ class InterruptedPoissonProcess::InternalBuffer : public PacketPipe {
   const base::WeakPtr<InterruptedPoissonProcess> ipp_;
   size_t stored_size_;
   const size_t stored_limit_;
-  std::deque<linked_ptr<Packet> > buffer_;
-  std::deque<base::TimeTicks> buffer_time_;
+  base::circular_deque<linked_ptr<Packet>> buffer_;
+  base::circular_deque<base::TimeTicks> buffer_time_;
   base::TickClock* clock_;
   base::WeakPtrFactory<InternalBuffer> weak_factory_;
 
@@ -587,6 +589,23 @@ std::unique_ptr<PacketPipe> WifiNetwork() {
   BuildPipe(&pipe, new Buffer(256 << 10, 20));
   BuildPipe(&pipe, new ConstantDelay(1E-3));
   BuildPipe(&pipe, new RandomSortedDelay(1E-3, 20E-3, 3));
+  BuildPipe(&pipe, new RandomDrop(0.005));
+  // This represents the buffer on the receiving device.
+  BuildPipe(&pipe, new Buffer(256 << 10, 20));
+  return pipe;
+}
+
+std::unique_ptr<PacketPipe> SlowNetwork() {
+  // This represents the buffer on the sender.
+  std::unique_ptr<PacketPipe> pipe;
+  BuildPipe(&pipe, new Buffer(256 << 10, 1.5));
+  BuildPipe(&pipe, new RandomDrop(0.005));
+  // This represents the buffer on the router.
+  BuildPipe(&pipe, new ConstantDelay(10E-3));
+  BuildPipe(&pipe, new RandomSortedDelay(10E-3, 20E-3, 3));
+  BuildPipe(&pipe, new Buffer(256 << 10, 20));
+  BuildPipe(&pipe, new ConstantDelay(10E-3));
+  BuildPipe(&pipe, new RandomSortedDelay(10E-3, 20E-3, 3));
   BuildPipe(&pipe, new RandomDrop(0.005));
   // This represents the buffer on the receiving device.
   BuildPipe(&pipe, new Buffer(256 << 10, 20));

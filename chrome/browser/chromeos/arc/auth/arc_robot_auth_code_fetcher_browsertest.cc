@@ -8,11 +8,10 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chromeos/arc/arc_auth_service.h"
 #include "chrome/browser/chromeos/arc/arc_session_manager.h"
+#include "chrome/browser/chromeos/arc/auth/arc_auth_service.h"
 #include "chrome/browser/chromeos/arc/auth/arc_robot_auth_code_fetcher.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
@@ -73,19 +72,18 @@ class ArcRobotAuthCodeFetcherBrowserTest : public InProcessBrowserTest {
   ~ArcRobotAuthCodeFetcherBrowserTest() override = default;
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
     command_line->AppendSwitchASCII(policy::switches::kDeviceManagementUrl,
                                     "http://localhost");
     arc::SetArcAvailableCommandLineForTesting(command_line);
   }
 
   void SetUpOnMainThread() override {
-    interceptor_ = base::MakeUnique<policy::TestRequestInterceptor>(
+    interceptor_ = std::make_unique<policy::TestRequestInterceptor>(
         "localhost", content::BrowserThread::GetTaskRunnerForThread(
                          content::BrowserThread::IO));
 
     user_manager_enabler_ =
-        base::MakeUnique<chromeos::ScopedUserManagerEnabler>(
+        std::make_unique<chromeos::ScopedUserManagerEnabler>(
             new chromeos::FakeChromeUserManager());
 
     const AccountId account_id(AccountId::FromUserEmail(kFakeUserName));
@@ -98,7 +96,7 @@ class ArcRobotAuthCodeFetcherBrowserTest : public InProcessBrowserTest {
         connector->GetDeviceCloudPolicyManager();
 
     cloud_policy_manager->StartConnection(
-        base::MakeUnique<policy::MockCloudPolicyClient>(),
+        std::make_unique<policy::MockCloudPolicyClient>(),
         connector->GetInstallAttributes());
 
     policy::MockCloudPolicyClient* const cloud_policy_client =
@@ -123,21 +121,19 @@ class ArcRobotAuthCodeFetcherBrowserTest : public InProcessBrowserTest {
 
   policy::TestRequestInterceptor* interceptor() { return interceptor_.get(); }
 
-  static void FetchAuthCode(
-      ArcRobotAuthCodeFetcher* fetcher,
-      arc::ArcAuthInfoFetcher::Status* output_fetch_status,
-      std::string* output_auth_code) {
+  static void FetchAuthCode(ArcRobotAuthCodeFetcher* fetcher,
+                            bool* output_fetch_success,
+                            std::string* output_auth_code) {
     base::RunLoop run_loop;
     fetcher->Fetch(base::Bind(
-        [](arc::ArcAuthInfoFetcher::Status* output_fetch_status,
-           std::string* output_auth_code, base::RunLoop* run_loop,
-           arc::ArcAuthInfoFetcher::Status fetch_status,
+        [](bool* output_fetch_success, std::string* output_auth_code,
+           base::RunLoop* run_loop, bool fetch_success,
            const std::string& auth_code) {
-          *output_fetch_status = fetch_status;
+          *output_fetch_success = fetch_success;
           *output_auth_code = auth_code;
           run_loop->Quit();
         },
-        output_fetch_status, output_auth_code, &run_loop));
+        output_fetch_success, output_auth_code, &run_loop));
     // Because the Fetch() operation needs to interact with other threads,
     // RunUntilIdle() won't work here. Instead, use Run() and Quit() explicitly
     // in the callback.
@@ -156,13 +152,12 @@ IN_PROC_BROWSER_TEST_F(ArcRobotAuthCodeFetcherBrowserTest,
   interceptor()->PushJobCallback(base::Bind(&ResponseJob));
 
   std::string auth_code;
-  arc::ArcAuthInfoFetcher::Status fetch_status =
-      arc::ArcAuthInfoFetcher::Status::FAILURE;
+  bool fetch_success = false;
 
-  auto robot_fetcher = base::MakeUnique<ArcRobotAuthCodeFetcher>();
-  FetchAuthCode(robot_fetcher.get(), &fetch_status, &auth_code);
+  auto robot_fetcher = std::make_unique<ArcRobotAuthCodeFetcher>();
+  FetchAuthCode(robot_fetcher.get(), &fetch_success, &auth_code);
 
-  EXPECT_EQ(arc::ArcAuthInfoFetcher::Status::SUCCESS, fetch_status);
+  EXPECT_TRUE(fetch_success);
   EXPECT_EQ(kFakeAuthCode, auth_code);
 }
 
@@ -174,13 +169,12 @@ IN_PROC_BROWSER_TEST_F(ArcRobotAuthCodeFetcherBrowserTest,
   // We expect auth_code is empty in this case. So initialize with non-empty
   // value.
   std::string auth_code = "NOT-YET-FETCHED";
-  arc::ArcAuthInfoFetcher::Status fetch_status =
-      arc::ArcAuthInfoFetcher::Status::SUCCESS;
+  bool fetch_success = true;
 
-  auto robot_fetcher = base::MakeUnique<ArcRobotAuthCodeFetcher>();
-  FetchAuthCode(robot_fetcher.get(), &fetch_status, &auth_code);
+  auto robot_fetcher = std::make_unique<ArcRobotAuthCodeFetcher>();
+  FetchAuthCode(robot_fetcher.get(), &fetch_success, &auth_code);
 
-  EXPECT_EQ(arc::ArcAuthInfoFetcher::Status::FAILURE, fetch_status);
+  EXPECT_FALSE(fetch_success);
   // Use EXPECT_EQ for better logging in case of failure.
   EXPECT_EQ(std::string(), auth_code);
 }

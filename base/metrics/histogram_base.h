@@ -179,7 +179,7 @@ class BASE_EXPORT HistogramBase {
   // Serialize the histogram info into |pickle|.
   // Note: This only serializes the construction arguments of the histogram, but
   // does not serialize the samples.
-  bool SerializeInfo(base::Pickle* pickle) const;
+  void SerializeInfo(base::Pickle* pickle) const;
 
   // Try to find out data corruption from histogram and the samples.
   // The returned value is a combination of Inconsistency enum.
@@ -187,6 +187,9 @@ class BASE_EXPORT HistogramBase {
 
   // Snapshot the current complete set of sample data.
   // Override with atomic/locked snapshot if needed.
+  // NOTE: this data can overflow for long-running sessions. It should be
+  // handled with care and this method is recommended to be used only
+  // in about:histograms and test code.
   virtual std::unique_ptr<HistogramSamples> SnapshotSamples() const = 0;
 
   // Calculate the change (delta) in histogram counts since the previous call
@@ -207,6 +210,10 @@ class BASE_EXPORT HistogramBase {
   virtual void WriteHTMLGraph(std::string* output) const = 0;
   virtual void WriteAscii(std::string* output) const = 0;
 
+  // TODO(bcwhite): Remove this after crbug/736675.
+  virtual bool ValidateHistogramContents(bool crash_if_invalid,
+                                         int corrupted_count) const;
+
   // Produce a JSON representation of the histogram. This is implemented with
   // the help of GetParameters and GetCountAndBucketData; overwrite them to
   // customize the output.
@@ -224,7 +231,7 @@ class BASE_EXPORT HistogramBase {
   enum ReportActivity { HISTOGRAM_CREATED, HISTOGRAM_LOOKUP };
 
   // Subclasses should implement this function to make SerializeInfo work.
-  virtual bool SerializeInfoImpl(base::Pickle* pickle) const = 0;
+  virtual void SerializeInfoImpl(base::Pickle* pickle) const = 0;
 
   // Writes information about the construction parameters in |params|.
   virtual void GetParameters(DictionaryValue* params) const = 0;

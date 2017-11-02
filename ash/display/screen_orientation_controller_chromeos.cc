@@ -4,19 +4,17 @@
 
 #include "ash/display/screen_orientation_controller_chromeos.h"
 
-#include "ash/ash_switches.h"
-#include "ash/display/display_configuration_controller.h"
-#include "ash/shared/app_types.h"
+#include "ash/public/cpp/app_types.h"
+#include "ash/public/cpp/ash_switches.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
 #include "ash/wm/mru_window_tracker.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm_window.h"
 #include "base/auto_reset.h"
 #include "base/command_line.h"
 #include "chromeos/accelerometer/accelerometer_reader.h"
 #include "chromeos/accelerometer/accelerometer_types.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/chromeos/accelerometer/accelerometer_util.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
@@ -44,7 +42,8 @@ blink::WebScreenOrientationLockType GetDisplayNaturalOrientation() {
     return blink::kWebScreenOrientationLockLandscape;
 
   display::ManagedDisplayInfo info =
-      ShellPort::Get()->GetDisplayInfo(display::Display::InternalDisplayId());
+      Shell::Get()->display_manager()->GetDisplayInfo(
+          display::Display::InternalDisplayId());
   gfx::Size size = info.size_in_pixel();
   switch (info.GetActiveRotation()) {
     case display::Display::ROTATE_0:
@@ -160,16 +159,16 @@ ScreenOrientationController::ScreenOrientationController()
       rotation_locked_orientation_(blink::kWebScreenOrientationLockAny),
       user_rotation_(display::Display::ROTATE_0),
       current_rotation_(display::Display::ROTATE_0) {
-  Shell::Get()->AddShellObserver(this);
+  Shell::Get()->tablet_mode_controller()->AddObserver(this);
 }
 
 ScreenOrientationController::~ScreenOrientationController() {
-  Shell::Get()->RemoveShellObserver(this);
+  Shell::Get()->tablet_mode_controller()->RemoveObserver(this);
   chromeos::AccelerometerReader::GetInstance()->RemoveObserver(this);
-  ShellPort::Get()->RemoveDisplayObserver(this);
+  Shell::Get()->window_tree_host_manager()->RemoveObserver(this);
   Shell::Get()->activation_client()->RemoveObserver(this);
   for (auto& windows : lock_info_map_)
-    windows.first->aura_window()->RemoveObserver(this);
+    windows.first->RemoveObserver(this);
 }
 
 void ScreenOrientationController::AddObserver(Observer* observer) {
@@ -181,44 +180,57 @@ void ScreenOrientationController::RemoveObserver(Observer* observer) {
 }
 
 void ScreenOrientationController::LockOrientationForWindow(
-    WmWindow* requesting_window,
+    aura::Window* requesting_window,
     blink::WebScreenOrientationLockType lock_orientation,
     LockCompletionBehavior lock_completion_behavior) {
   if (lock_info_map_.empty())
     Shell::Get()->activation_client()->AddObserver(this);
 
-  if (!requesting_window->aura_window()->HasObserver(this))
-    requesting_window->aura_window()->AddObserver(this);
+  if (!requesting_window->HasObserver(this))
+    requesting_window->AddObserver(this);
   lock_info_map_[requesting_window] =
       LockInfo(lock_orientation, lock_completion_behavior);
 
   ApplyLockForActiveWindow();
 }
 
-void ScreenOrientationController::UnlockOrientationForWindow(WmWindow* window) {
+void ScreenOrientationController::UnlockOrientationForWindow(
+    aura::Window* window) {
   lock_info_map_.erase(window);
   if (lock_info_map_.empty())
     Shell::Get()->activation_client()->RemoveObserver(this);
-  window->aura_window()->RemoveObserver(this);
+  window->RemoveObserver(this);
   ApplyLockForActiveWindow();
 }
 
 void ScreenOrientationController::UnlockAll() {
   for (auto pair : lock_info_map_)
-    pair.first->aura_window()->RemoveObserver(this);
+    pair.first->RemoveObserver(this);
   lock_info_map_.clear();
   Shell::Get()->activation_client()->RemoveObserver(this);
   SetRotationLockedInternal(false);
-  if (user_rotation_ != current_rotation_)
-    SetDisplayRotation(user_rotation_, display::Display::ROTATION_SOURCE_USER);
+  if (user_rotation_ != current_rotation_) {
+    SetDisplayRotation(user_rotation_,
+                       display::Display::ROTATION_SOURCE_ACCELEROMETER,
+                       DisplayConfigurationController::ANIMATION_SYNC);
+  }
 }
 
 bool ScreenOrientationController::ScreenOrientationProviderSupported() const {
   return Shell::Get()
-             ->maximize_mode_controller()
-             ->IsMaximizeModeWindowManagerEnabled() &&
-         !base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kAshDisableScreenOrientationLock);
+      ->tablet_mode_controller()
+      ->IsTabletModeWindowManagerEnabled();
+}
+
+bool ScreenOrientationController::IsUserLockedOrientationPortrait() {
+  switch (user_locked_orientation_) {
+    case blink::kWebScreenOrientationLockPortraitPrimary:
+    case blink::kWebScreenOrientationLockPortraitSecondary:
+    case blink::kWebScreenOrientationLockPortrait:
+      return true;
+    default:
+      return false;
+  }
 }
 
 void ScreenOrientationController::ToggleUserRotationLock() {
@@ -229,7 +241,8 @@ void ScreenOrientationController::ToggleUserRotationLock() {
     SetLockToOrientation(blink::kWebScreenOrientationLockAny);
   } else {
     display::Display::Rotation current_rotation =
-        ShellPort::Get()
+        Shell::Get()
+            ->display_manager()
             ->GetDisplayInfo(display::Display::InternalDisplayId())
             .GetActiveRotation();
     SetLockToRotation(current_rotation);
@@ -244,14 +257,20 @@ void ScreenOrientationController::SetLockToRotation(
   SetLockToOrientation(RotationToOrientation(rotation));
 }
 
-void ScreenOrientationController::OnWindowActivated(ActivationReason reason,
-                                                    aura::Window* gained_active,
-                                                    aura::Window* lost_active) {
+blink::WebScreenOrientationLockType
+ScreenOrientationController::GetCurrentOrientation() const {
+  return RotationToOrientation(current_rotation_);
+}
+
+void ScreenOrientationController::OnWindowActivated(
+    ::wm::ActivationChangeObserver::ActivationReason reason,
+    aura::Window* gained_active,
+    aura::Window* lost_active) {
   ApplyLockForActiveWindow();
 }
 
 void ScreenOrientationController::OnWindowDestroying(aura::Window* window) {
-  UnlockOrientationForWindow(WmWindow::Get(window));
+  UnlockOrientationForWindow(window);
 }
 
 // Currently contents::WebContents will only be able to lock rotation while
@@ -264,7 +283,7 @@ void ScreenOrientationController::OnWindowDestroying(aura::Window* window) {
 void ScreenOrientationController::OnWindowVisibilityChanged(
     aura::Window* window,
     bool visible) {
-  if (lock_info_map_.find(WmWindow::Get(window)) == lock_info_map_.end())
+  if (lock_info_map_.find(window) == lock_info_map_.end())
     return;
   ApplyLockForActiveWindow();
 }
@@ -292,29 +311,26 @@ void ScreenOrientationController::OnDisplayConfigurationChanged() {
           display::Display::InternalDisplayId())) {
     return;
   }
-
-  // TODO(oshima): We should disable the orientation change in settings
-  // because application may not work correctly.
+  // TODO(oshima): remove current_rotation_ and always use the target rotation.
   current_rotation_ =
-      ShellPort::Get()
-          ->GetDisplayInfo(display::Display::InternalDisplayId())
-          .GetActiveRotation();
+      Shell::Get()->display_configuration_controller()->GetTargetRotation(
+          display::Display::InternalDisplayId());
 }
 
-void ScreenOrientationController::OnMaximizeModeStarted() {
+void ScreenOrientationController::OnTabletModeStarted() {
+  Shell* shell = Shell::Get();
   // Do not exit early, as the internal display can be determined after Maximize
   // Mode has started. (chrome-os-partner:38796)
   // Always start observing.
   if (display::Display::HasInternalDisplay()) {
     current_rotation_ = user_rotation_ =
-        ShellPort::Get()
-            ->GetDisplayInfo(display::Display::InternalDisplayId())
-            .GetActiveRotation();
+        shell->display_configuration_controller()->GetTargetRotation(
+            display::Display::InternalDisplayId());
   }
   if (!rotation_locked_)
     LoadDisplayRotationProperties();
   chromeos::AccelerometerReader::GetInstance()->AddObserver(this);
-  ShellPort::Get()->AddDisplayObserver(this);
+  shell->window_tree_host_manager()->AddObserver(this);
 
   if (!display::Display::HasInternalDisplay())
     return;
@@ -323,20 +339,26 @@ void ScreenOrientationController::OnMaximizeModeStarted() {
     observer.OnUserRotationLockChanged();
 }
 
-void ScreenOrientationController::OnMaximizeModeEnding() {
+void ScreenOrientationController::OnTabletModeEnding() {
   chromeos::AccelerometerReader::GetInstance()->RemoveObserver(this);
-  ShellPort::Get()->RemoveDisplayObserver(this);
+  Shell::Get()->window_tree_host_manager()->RemoveObserver(this);
   if (!display::Display::HasInternalDisplay())
     return;
-  if (current_rotation_ != user_rotation_)
-    SetDisplayRotation(user_rotation_, display::Display::ROTATION_SOURCE_USER);
+
+  // TODO(oshima): Remove if when current_rotation_ is removed.
+  if (current_rotation_ != user_rotation_) {
+    SetDisplayRotation(user_rotation_,
+                       display::Display::ROTATION_SOURCE_ACCELEROMETER,
+                       DisplayConfigurationController::ANIMATION_SYNC);
+  }
   for (auto& observer : observers_)
     observer.OnUserRotationLockChanged();
 }
 
 void ScreenOrientationController::SetDisplayRotation(
     display::Display::Rotation rotation,
-    display::Display::RotationSource source) {
+    display::Display::RotationSource source,
+    DisplayConfigurationController::RotationAnimation mode) {
   if (!display::Display::HasInternalDisplay())
     return;
   current_rotation_ = rotation;
@@ -344,7 +366,7 @@ void ScreenOrientationController::SetDisplayRotation(
       &ignore_display_configuration_updates_, true);
 
   Shell::Get()->display_configuration_controller()->SetDisplayRotation(
-      display::Display::InternalDisplayId(), rotation, source);
+      display::Display::InternalDisplayId(), rotation, source, mode);
 }
 
 void ScreenOrientationController::SetRotationLockedInternal(
@@ -438,7 +460,8 @@ void ScreenOrientationController::LockToRotationMatchingOrientation(
     return;
 
   display::Display::Rotation rotation =
-      ShellPort::Get()
+      Shell::Get()
+          ->display_manager()
           ->GetDisplayInfo(display::Display::InternalDisplayId())
           .GetActiveRotation();
   if (natural_orientation_ == lock_orientation) {
@@ -524,11 +547,11 @@ void ScreenOrientationController::ApplyLockForActiveWindow() {
   MruWindowTracker::WindowList mru_windows(
       Shell::Get()->mru_window_tracker()->BuildMruWindowList());
 
-  for (WmWindow* window : mru_windows) {
-    if (!window->GetTargetVisibility())
+  for (auto* window : mru_windows) {
+    if (!window->TargetVisibility())
       continue;
     for (auto& pair : lock_info_map_) {
-      if (pair.first->GetTargetVisibility() && window->Contains(pair.first)) {
+      if (pair.first->TargetVisibility() && window->Contains(pair.first)) {
         LockRotationToOrientation(ResolveOrientationLock(
             pair.second.orientation, user_locked_orientation_));
         if (pair.second.lock_completion_behavior ==
@@ -542,8 +565,9 @@ void ScreenOrientationController::ApplyLockForActiveWindow() {
     }
     // The default orientation for all chrome browser/apps windows is
     // ANY, so use the user_locked_orientation_;
-    if (window->GetTargetVisibility() &&
-        static_cast<AppType>(window->GetAppType()) != AppType::OTHERS) {
+    if (window->TargetVisibility() &&
+        static_cast<AppType>(window->GetProperty(aura::client::kAppType)) !=
+            AppType::OTHERS) {
       LockRotationToOrientation(user_locked_orientation_);
       return;
     }
@@ -567,11 +591,6 @@ bool ScreenOrientationController::IsRotationAllowedInLockedState(
            rotation == display::Display::ROTATE_270;
   }
   return false;
-}
-
-blink::WebScreenOrientationLockType
-ScreenOrientationController::GetCurrentOrientationForTest() const {
-  return RotationToOrientation(current_rotation_);
 }
 
 bool ScreenOrientationController::CanRotateInLockedState() {

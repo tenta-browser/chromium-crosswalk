@@ -6,11 +6,11 @@
 
 #include <utility>
 
-#include "cc/output/output_surface_client.h"
-#include "cc/output/output_surface_frame.h"
-#include "components/display_compositor/buffer_queue.h"
-#include "components/display_compositor/compositor_overlay_candidate_validator.h"
-#include "components/display_compositor/gl_helper.h"
+#include "components/viz/common/gl_helper.h"
+#include "components/viz/service/display/output_surface_client.h"
+#include "components/viz/service/display/output_surface_frame.h"
+#include "components/viz/service/display_embedder/buffer_queue.h"
+#include "components/viz/service/display_embedder/compositor_overlay_candidate_validator.h"
 #include "content/browser/compositor/reflector_impl.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
@@ -23,7 +23,7 @@ GpuSurfacelessBrowserCompositorOutputSurface::
         scoped_refptr<ui::ContextProviderCommandBuffer> context,
         gpu::SurfaceHandle surface_handle,
         const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-        std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
+        std::unique_ptr<viz::CompositorOverlayCandidateValidator>
             overlay_candidate_validator,
         unsigned int target,
         unsigned int internalformat,
@@ -44,9 +44,9 @@ GpuSurfacelessBrowserCompositorOutputSurface::
   // implementation.
   capabilities_.max_frames_pending = 2;
 
-  gl_helper_.reset(new display_compositor::GLHelper(
-      context_provider_->ContextGL(), context_provider_->ContextSupport()));
-  buffer_queue_.reset(new display_compositor::BufferQueue(
+  gl_helper_.reset(new viz::GLHelper(context_provider_->ContextGL(),
+                                     context_provider_->ContextSupport()));
+  buffer_queue_.reset(new viz::BufferQueue(
       context_provider_->ContextGL(), target, internalformat, format,
       gl_helper_.get(), gpu_memory_buffer_manager_, surface_handle));
   buffer_queue_->Initialize();
@@ -66,8 +66,14 @@ unsigned GpuSurfacelessBrowserCompositorOutputSurface::GetOverlayTextureId()
   return buffer_queue_->GetCurrentTextureId();
 }
 
+gfx::BufferFormat
+GpuSurfacelessBrowserCompositorOutputSurface::GetOverlayBufferFormat() const {
+  DCHECK(buffer_queue_);
+  return buffer_queue_->buffer_format();
+}
+
 void GpuSurfacelessBrowserCompositorOutputSurface::SwapBuffers(
-    cc::OutputSurfaceFrame frame) {
+    viz::OutputSurfaceFrame frame) {
   DCHECK(buffer_queue_);
   DCHECK(reshape_size_ == frame.size);
   // TODO(ccameron): What if a swap comes again before OnGpuSwapBuffersCompleted
@@ -76,11 +82,7 @@ void GpuSurfacelessBrowserCompositorOutputSurface::SwapBuffers(
 
   gfx::Rect damage_rect =
       frame.sub_buffer_rect ? *frame.sub_buffer_rect : gfx::Rect(swap_size_);
-  // Use previous buffer when damage rect is empty. This avoids unnecessary
-  // partial swap work and makes it possible to support empty swaps on devices
-  // where partial swaps are disabled.
-  if (!damage_rect.IsEmpty())
-    buffer_queue_->SwapBuffers(damage_rect);
+  buffer_queue_->SwapBuffers(damage_rect);
 
   GpuBrowserCompositorOutputSurface::SwapBuffers(std::move(frame));
 }

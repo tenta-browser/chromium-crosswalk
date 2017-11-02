@@ -37,7 +37,7 @@ void ProcessReadyCallbackAdapater(const base::Closure& callback,
 }
 
 class ServiceProcessLauncherDelegateImpl
-    : public ServiceProcessLauncher::Delegate {
+    : public ServiceProcessLauncherDelegate {
  public:
   ServiceProcessLauncherDelegateImpl() {}
   ~ServiceProcessLauncherDelegateImpl() override {}
@@ -49,7 +49,7 @@ class ServiceProcessLauncherDelegateImpl
   }
 
  private:
-  // ServiceProcessLauncher::Delegate:
+  // ServiceProcessLauncherDelegate:
   void AdjustCommandLineArgumentsForTarget(
       const Identity& target,
       base::CommandLine* command_line) override {
@@ -86,8 +86,7 @@ TEST(ServiceProcessLauncherTest, MAYBE_StartJoin) {
                                   test_service_path);
   base::RunLoop run_loop;
   launcher.Start(
-      Identity(),
-      false,
+      Identity(), SANDBOX_TYPE_NO_SANDBOX,
       base::Bind(&ProcessReadyCallbackAdapater, run_loop.QuitClosure()));
   run_loop.Run();
 

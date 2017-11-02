@@ -55,9 +55,6 @@ class FakePort(object):
     def bot_expectations(self):
         return {}
 
-    def skipped_layout_tests(self, _):
-        return set([])
-
     def all_test_configurations(self):
         return []
 
@@ -69,6 +66,12 @@ class FakePort(object):
 
     def path_to_generic_test_expectations_file(self):
         return ''
+
+    def extra_expectations_files(self):
+        return ['/fake-port-base-directory/LayoutTests/ExtraExpectations']
+
+    def layout_tests_dir(self):
+        return '/fake-port-base-directory/LayoutTests'
 
 
 class FakeFactory(object):
@@ -119,7 +122,7 @@ class LintTest(unittest.TestCase):
         finally:
             lint_test_expectations.tear_down_logging(logger, handler)
 
-    def test_lint_test_files__errors(self):
+    def test_lint_test_files_errors(self):
         options = optparse.Values({'platform': 'test', 'debug_rwt_logging': False})
         host = MockHost()
 
@@ -139,6 +142,27 @@ class LintTest(unittest.TestCase):
         self.assertTrue(res)
         self.assertIn('foo:1', logging_stream.getvalue())
         self.assertIn('bar:1', logging_stream.getvalue())
+
+    def test_extra_files_errors(self):
+        options = optparse.Values({'platform': 'test', 'debug_rwt_logging': False})
+        host = MockHost()
+
+        port = host.port_factory.get(options.platform, options=options)
+        port.expectations_dict = lambda: {}
+
+        host.port_factory.get = lambda platform, options=None: port
+        host.port_factory.all_port_names = lambda platform=None: [port.name()]
+        host.filesystem.write_text_file('/test.checkout/LayoutTests/LeakExpectations', '-- syntax error')
+
+        logging_stream = StringIO.StringIO()
+        logger, handler = lint_test_expectations.set_up_logging(logging_stream)
+        try:
+            res = lint_test_expectations.lint(host, options)
+        finally:
+            lint_test_expectations.tear_down_logging(logger, handler)
+
+        self.assertTrue(res)
+        self.assertIn('LeakExpectations:1', logging_stream.getvalue())
 
     def test_lint_flag_specific_expectation_errors(self):
         options = optparse.Values({'platform': 'test', 'debug_rwt_logging': False})
@@ -185,14 +209,11 @@ class CheckVirtualSuiteTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    # pylint: disable=unused-argument
 
     def setUp(self):
         self.orig_lint_fn = lint_test_expectations.lint
         self.orig_check_fn = lint_test_expectations.check_virtual_test_suites
         lint_test_expectations.check_virtual_test_suites = lambda host, options: []
-
-        self.stdout = StringIO.StringIO()
         self.stderr = StringIO.StringIO()
 
     def tearDown(self):
@@ -201,27 +222,28 @@ class MainTest(unittest.TestCase):
 
     def test_success(self):
         lint_test_expectations.lint = lambda host, options: []
-        res = lint_test_expectations.main(['--platform', 'test'], self.stdout, self.stderr)
+        res = lint_test_expectations.main(['--platform', 'test'], self.stderr)
         self.assertTrue('Lint succeeded' in self.stderr.getvalue())
         self.assertEqual(res, 0)
 
     def test_failure(self):
         lint_test_expectations.lint = lambda host, options: ['test failure']
-        res = lint_test_expectations.main(['--platform', 'test'], self.stdout, self.stderr)
+        res = lint_test_expectations.main(['--platform', 'test'], self.stderr)
         self.assertTrue('Lint failed' in self.stderr.getvalue())
         self.assertEqual(res, 1)
 
     def test_interrupt(self):
-        def interrupting_lint(host, options):
+        def interrupting_lint(host, options):  # pylint: disable=unused-argument
             raise KeyboardInterrupt
 
         lint_test_expectations.lint = interrupting_lint
-        res = lint_test_expectations.main([], self.stdout, self.stderr)
+        res = lint_test_expectations.main([], self.stderr, host=MockHost())
         self.assertEqual(res, exit_codes.INTERRUPTED_EXIT_STATUS)
 
     def test_exception(self):
-        def exception_raising_lint(host, options):
+        def exception_raising_lint(host, options):  # pylint: disable=unused-argument
             assert False
+
         lint_test_expectations.lint = exception_raising_lint
-        res = lint_test_expectations.main([], self.stdout, self.stderr)
+        res = lint_test_expectations.main([], self.stderr, host=MockHost())
         self.assertEqual(res, exit_codes.EXCEPTIONAL_EXIT_STATUS)

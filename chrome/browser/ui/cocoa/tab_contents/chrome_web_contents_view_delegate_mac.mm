@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/profiler/scoped_tracker.h"
 #import "chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -16,6 +15,7 @@
 #include "chrome/browser/ui/tab_contents/chrome_web_contents_view_delegate.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "ui/base/ui_features.h"
 
 ChromeWebContentsViewDelegateMac::ChromeWebContentsViewDelegateMac(
     content::WebContents* web_contents)
@@ -34,7 +34,12 @@ gfx::NativeWindow ChromeWebContentsViewDelegateMac::GetNativeWindow() {
 
 NSObject<RenderWidgetHostViewMacDelegate>*
 ChromeWebContentsViewDelegateMac::CreateRenderWidgetHostViewDelegate(
-    content::RenderWidgetHost* render_widget_host) {
+    content::RenderWidgetHost* render_widget_host,
+    bool is_popup) {
+  // We don't need a delegate for popups since they don't have
+  // overscroll.
+  if (is_popup)
+    return nil;
   return [[ChromeRenderWidgetHostViewMacDelegate alloc]
       initWithRenderWidgetHost:render_widget_host];
 }
@@ -47,10 +52,6 @@ content::WebDragDestDelegate*
 void ChromeWebContentsViewDelegateMac::ShowContextMenu(
     content::RenderFrameHost* render_frame_host,
     const content::ContextMenuParams& params) {
-  // TODO(erikchen): Remove ScopedTracker below once crbug.com/458401 is fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "458401 ChromeWebContentsViewDelegateMac::ShowContextMenu"));
   ShowMenu(
       BuildMenu(content::WebContents::FromRenderFrameHost(render_frame_host),
                 params));
@@ -58,11 +59,6 @@ void ChromeWebContentsViewDelegateMac::ShowContextMenu(
 
 void ChromeWebContentsViewDelegateMac::ShowMenu(
     std::unique_ptr<RenderViewContextMenuBase> menu) {
-  // TODO(erikchen): Remove ScopedTracker below once crbug.com/458401 is fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "458401 ChromeWebContentsViewDelegateMac::ShowMenu"));
-
   context_menu_ = std::move(menu);
   if (!context_menu_.get())
     return;
@@ -74,8 +70,7 @@ void ChromeWebContentsViewDelegateMac::ShowMenu(
   // the second mouse event arrives. In this case, |ShowContextMenu()| will
   // get called multiple times - if so, don't create another context menu.
   // TODO(asvitkine): Fix the renderer so that it doesn't do this.
-  content::RenderWidgetHostView* widget_view = GetActiveRenderWidgetHostView();
-  if (widget_view && widget_view->IsShowingContextMenu())
+  if (web_contents_->IsShowingContextMenu())
     return;
 
   context_menu_->Show();
@@ -85,10 +80,6 @@ std::unique_ptr<RenderViewContextMenuBase>
 ChromeWebContentsViewDelegateMac::BuildMenu(
     content::WebContents* web_contents,
     const content::ContextMenuParams& params) {
-  // TODO(erikchen): Remove ScopedTracker below once crbug.com/458401 is fixed.
-  tracked_objects::ScopedTracker tracking_profile1(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "458401 ChromeWebContentsViewDelegateMac::BuildMenu"));
   std::unique_ptr<RenderViewContextMenuBase> menu;
   content::RenderFrameHost* focused_frame = web_contents->GetFocusedFrame();
   // If the frame tree does not have a focused frame at this point, do not
@@ -98,20 +89,8 @@ ChromeWebContentsViewDelegateMac::BuildMenu(
   if (focused_frame) {
     content::RenderWidgetHostView* widget_view =
         GetActiveRenderWidgetHostView();
-
-    // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/458401
-    // is fixed.
-    tracked_objects::ScopedTracker tracking_profile2(
-        FROM_HERE_WITH_EXPLICIT_FUNCTION(
-            "458401 ChromeWebContentsViewDelegateMac::BuildMenu::MakeMenu"));
     menu.reset(new RenderViewContextMenuMac(
         focused_frame, params, widget_view->GetNativeView()));
-
-    // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/458401
-    // is fixed.
-    tracked_objects::ScopedTracker tracking_profile3(
-        FROM_HERE_WITH_EXPLICIT_FUNCTION(
-            "458401 ChromeWebContentsViewDelegateMac::BuildMenu::InitMenu"));
     menu->Init();
   }
 
@@ -125,6 +104,7 @@ ChromeWebContentsViewDelegateMac::GetActiveRenderWidgetHostView() {
       web_contents_->GetTopLevelRenderWidgetHostView();
 }
 
+#if !BUILDFLAG(MAC_VIEWS_BROWSER)
 namespace chrome {
 
 content::WebContentsViewDelegate* CreateWebContentsViewDelegate(
@@ -133,3 +113,4 @@ content::WebContentsViewDelegate* CreateWebContentsViewDelegate(
 }
 
 }  // namespace chrome
+#endif  // MAC_VIEWS_BROWSER

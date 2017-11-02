@@ -117,8 +117,13 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
           new GLSurfaceOSMesa(format, size), format);
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
-      return InitializeGLSurfaceWithFormat(
-          new PbufferGLSurfaceEGL(size), format);
+      if (GLSurfaceEGL::IsEGLSurfacelessContextSupported() &&
+          size.width() == 0 && size.height() == 0) {
+        return InitializeGLSurfaceWithFormat(new SurfacelessEGL(size), format);
+      } else {
+        return InitializeGLSurfaceWithFormat(new PbufferGLSurfaceEGL(size),
+                                             format);
+      }
     case kGLImplementationDesktopGL:
       return InitializeGLSurfaceWithFormat(
           new PbufferGLSurfaceWGL(size), format);
@@ -128,6 +133,45 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
     default:
       NOTREACHED();
       return nullptr;
+  }
+}
+
+void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
+  GLImplementation implementation = GetGLImplementation();
+  DCHECK_NE(kGLImplementationNone, implementation);
+  switch (implementation) {
+    case kGLImplementationDesktopGL:
+      SetDisabledExtensionsWGL(disabled_extensions);
+      break;
+    case kGLImplementationEGLGLES2:
+      SetDisabledExtensionsEGL(disabled_extensions);
+      break;
+    case kGLImplementationSwiftShaderGL:
+    case kGLImplementationOSMesaGL:
+    case kGLImplementationMockGL:
+    case kGLImplementationStubGL:
+      break;
+    default:
+      NOTREACHED();
+  }
+}
+
+bool InitializeExtensionSettingsOneOffPlatform() {
+  GLImplementation implementation = GetGLImplementation();
+  DCHECK_NE(kGLImplementationNone, implementation);
+  switch (implementation) {
+    case kGLImplementationDesktopGL:
+      return InitializeExtensionSettingsOneOffWGL();
+    case kGLImplementationEGLGLES2:
+      return InitializeExtensionSettingsOneOffEGL();
+    case kGLImplementationSwiftShaderGL:
+    case kGLImplementationOSMesaGL:
+    case kGLImplementationMockGL:
+    case kGLImplementationStubGL:
+      return true;
+    default:
+      NOTREACHED();
+      return false;
   }
 }
 

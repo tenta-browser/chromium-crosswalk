@@ -34,11 +34,11 @@ class QuicPacket;
 struct QuicPacketHeader;
 
 // Size in bytes of the data packet header.
-QUIC_EXPORT_PRIVATE size_t GetPacketHeaderSize(QuicVersion version,
+QUIC_EXPORT_PRIVATE size_t GetPacketHeaderSize(QuicTransportVersion version,
                                                const QuicPacketHeader& header);
 
 QUIC_EXPORT_PRIVATE size_t
-GetPacketHeaderSize(QuicVersion version,
+GetPacketHeaderSize(QuicTransportVersion version,
                     QuicConnectionIdLength connection_id_length,
                     bool include_version,
                     bool include_diversification_nonce,
@@ -46,10 +46,11 @@ GetPacketHeaderSize(QuicVersion version,
 
 // Index of the first byte in a QUIC packet of encrypted data.
 QUIC_EXPORT_PRIVATE size_t
-GetStartOfEncryptedData(QuicVersion version, const QuicPacketHeader& header);
+GetStartOfEncryptedData(QuicTransportVersion version,
+                        const QuicPacketHeader& header);
 
 QUIC_EXPORT_PRIVATE size_t
-GetStartOfEncryptedData(QuicVersion version,
+GetStartOfEncryptedData(QuicTransportVersion version,
                         QuicConnectionIdLength connection_id_length,
                         bool include_version,
                         bool include_diversification_nonce,
@@ -64,13 +65,10 @@ struct QUIC_EXPORT_PRIVATE QuicPacketPublicHeader {
   // public flags.
   QuicConnectionId connection_id;
   QuicConnectionIdLength connection_id_length;
-  // TODO(fayang): Remove multipath_flag when deprecating
-  // quic_reloadable_flag_quic_remove_multipath_bit.
-  bool multipath_flag;
   bool reset_flag;
   bool version_flag;
   QuicPacketNumberLength packet_number_length;
-  QuicVersionVector versions;
+  QuicTransportVersionVector versions;
   // nonce contains an optional, 32-byte nonce value. If not included in the
   // packet, |nonce| will be empty.
   DiversificationNonce* nonce;
@@ -96,9 +94,6 @@ struct QUIC_EXPORT_PRIVATE QuicPublicResetPacket {
 
   QuicPacketPublicHeader public_header;
   QuicPublicResetNonceProof nonce_proof;
-  // TODO(fayang): remove rejected_packet_number when deprecating
-  // FLAGS_quic_reloadable_flag_quic_remove_packet_number_from_public_reset.
-  QuicPacketNumber rejected_packet_number;
   QuicSocketAddress client_address;
 };
 
@@ -138,8 +133,8 @@ class QUIC_EXPORT_PRIVATE QuicPacket : public QuicData {
              bool includes_diversification_nonce,
              QuicPacketNumberLength packet_number_length);
 
-  QuicStringPiece AssociatedData(QuicVersion version) const;
-  QuicStringPiece Plaintext(QuicVersion version) const;
+  QuicStringPiece AssociatedData(QuicTransportVersion version) const;
+  QuicStringPiece Plaintext(QuicTransportVersion version) const;
 
   char* mutable_data() { return buffer_; }
 
@@ -220,6 +215,8 @@ struct QUIC_EXPORT_PRIVATE SerializedPacket {
                    bool has_ack,
                    bool has_stop_waiting);
   SerializedPacket(const SerializedPacket& other);
+  SerializedPacket& operator=(const SerializedPacket& other);
+  SerializedPacket(SerializedPacket&& other);
   ~SerializedPacket();
 
   // Not owned.

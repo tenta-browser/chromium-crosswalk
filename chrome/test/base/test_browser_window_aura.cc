@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/memory/ptr_util.h"
+#include "ui/wm/public/activation_client.h"
 
 namespace chrome {
 
@@ -16,7 +17,7 @@ std::unique_ptr<Browser> CreateBrowserWithAuraTestWindowForParams(
   if (window.get() == nullptr) {
     window.reset(new aura::Window(nullptr));
     window->set_id(0);
-    window->SetType(ui::wm::WINDOW_TYPE_NORMAL);
+    window->SetType(aura::client::WINDOW_TYPE_NORMAL);
     window->Init(ui::LAYER_TEXTURED);
     window->Show();
   }
@@ -45,6 +46,16 @@ void TestBrowserWindowAura::Show() {
 
 void TestBrowserWindowAura::Hide() {
   native_window_->Hide();
+}
+
+void TestBrowserWindowAura::Activate() {
+  ::wm::GetActivationClient(native_window_->GetRootWindow())
+      ->ActivateWindow(native_window_.get());
+}
+
+bool TestBrowserWindowAura::IsActive() const {
+  return ::wm::GetActivationClient(native_window_->GetRootWindow())
+             ->GetActiveWindow() == native_window_.get();
 }
 
 gfx::Rect TestBrowserWindowAura::GetBounds() const {

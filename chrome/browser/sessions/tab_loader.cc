@@ -110,6 +110,7 @@ TabLoader::~TabLoader() {
   DCHECK(shared_tab_loader_ == this);
   shared_tab_loader_ = nullptr;
   base::MemoryCoordinatorClientRegistry::GetInstance()->Unregister(this);
+  SessionRestore::OnTabLoaderFinishedLoadingTabs();
 }
 
 void TabLoader::StartLoading(const std::vector<RestoredTab>& tabs) {
@@ -127,8 +128,10 @@ void TabLoader::StartLoading(const std::vector<RestoredTab>& tabs) {
           favicon::ContentFaviconDriver::FromWebContents(
               restored_tab.contents());
       // |favicon_driver| might be null when testing.
-      if (favicon_driver)
-        favicon_driver->FetchFavicon(favicon_driver->GetActiveURL());
+      if (favicon_driver) {
+        favicon_driver->FetchFavicon(favicon_driver->GetActiveURL(),
+                                     /*is_same_document=*/false);
+      }
     } else {
       ++started_to_load_count_;
       tabs_loading_.insert(&restored_tab.contents()->GetController());

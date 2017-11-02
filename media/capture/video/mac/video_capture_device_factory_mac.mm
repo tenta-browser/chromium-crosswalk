@@ -12,7 +12,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/profiler/scoped_tracker.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/task_runner_util.h"
 #import "media/capture/video/mac/video_capture_device_avfoundation_mac.h"
@@ -69,11 +69,6 @@ std::unique_ptr<VideoCaptureDevice> VideoCaptureDeviceFactoryMac::CreateDevice(
 
 void VideoCaptureDeviceFactoryMac::GetDeviceDescriptors(
     VideoCaptureDeviceDescriptors* device_descriptors) {
-  // TODO(erikchen): Remove ScopedTracker below once http://crbug.com/458397 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "458397 VideoCaptureDeviceFactoryMac::GetDeviceDescriptors"));
   DCHECK(thread_checker_.CalledOnValidThread());
   // Loop through all available devices and add to |device_descriptors|.
   NSDictionary* capture_devices;
@@ -128,7 +123,8 @@ void VideoCaptureDeviceFactoryMac::GetSupportedFormats(
 // static
 VideoCaptureDeviceFactory*
 VideoCaptureDeviceFactory::CreateVideoCaptureDeviceFactory(
-    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
+    scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+    gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager) {
   return new VideoCaptureDeviceFactoryMac();
 }
 

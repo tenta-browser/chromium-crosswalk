@@ -4,73 +4,67 @@
 
 /** @fileoverview Suite of tests for extension-sidebar. */
 cr.define('extension_sidebar_tests', function() {
-  /**
-   * A mock delegate for the sidebar.
-   * @constructor
-   * @implements {extensions.SidebarListDelegate}
-   * @extends {extension_test_util.ClickMock}
-   */
-  function MockDelegate() {}
-
-  MockDelegate.prototype = {
-    __proto__: extension_test_util.ClickMock.prototype,
-
-    /** @override */
-    showType: function() {},
-
-    /** @override */
-    showKeyboardShortcuts: function() {},
-  };
-
   /** @enum {string} */
   var TestNames = {
     LayoutAndClickHandlers: 'layout and click handlers',
+    UpdateSelected: 'update selected',
   };
 
-  function registerTests() {
-    suite('ExtensionSidebarTest', function() {
-      /** @type {MockDelegate} */
-      var mockDelegate;
+  suite('ExtensionSidebarTest', function() {
+    /** @type {extensions.Sidebar} */
+    var sidebar;
 
-      /** @type {extensions.Sidebar} */
-      var sidebar;
-
-      // Import cr_settings_checkbox.html before running suite.
-      suiteSetup(function() {
-        return PolymerTest.importHtml('chrome://extensions/sidebar.html');
-      });
-
-      setup(function() {
-        var manager = document.querySelector('extensions-manager');
-        manager.$.drawer.openDrawer();
-        sidebar = manager.sidebar;
-        mockDelegate = new MockDelegate();
-        sidebar.setListDelegate(mockDelegate);
-      });
-
-      test(assert(TestNames.LayoutAndClickHandlers), function() {
-        extension_test_util.testIronIcons(sidebar);
-
-        var testVisible = extension_test_util.testVisible.bind(null, sidebar);
-        testVisible('#sections-extensions', true);
-        testVisible('#sections-apps', true);
-        testVisible('#sections-shortcuts', true);
-        testVisible('#more-extensions', true);
-
-        mockDelegate.testClickingCalls(
-            sidebar.$$('#sections-extensions'), 'showType',
-            [extensions.ShowingType.EXTENSIONS]);
-        mockDelegate.testClickingCalls(
-            sidebar.$$('#sections-apps'), 'showType',
-            [extensions.ShowingType.APPS]);
-        mockDelegate.testClickingCalls(
-            sidebar.$$('#sections-shortcuts'), 'showKeyboardShortcuts', []);
-      });
+    setup(function() {
+      PolymerTest.clearBody();
+      sidebar = new extensions.Sidebar();
+      document.body.appendChild(sidebar);
     });
-  }
+
+    test(assert(TestNames.UpdateSelected), function() {
+      const selector = 'paper-item.iron-selected';
+      expectFalse(!!sidebar.$$(selector));
+
+      sidebar.updateSelected({page: Page.SHORTCUTS});
+      expectEquals(sidebar.$$(selector).id, 'sections-shortcuts');
+
+      sidebar.updateSelected(
+          {page: Page.LIST, type: extensions.ShowingType.APPS});
+      expectEquals(sidebar.$$(selector).id, 'sections-apps');
+
+      sidebar.updateSelected(
+          {page: Page.LIST, type: extensions.ShowingType.EXTENSIONS});
+      expectEquals(sidebar.$$(selector).id, 'sections-extensions');
+    });
+
+    test(assert(TestNames.LayoutAndClickHandlers), function() {
+      extension_test_util.testIcons(sidebar);
+
+      var testVisible = extension_test_util.testVisible.bind(null, sidebar);
+      testVisible('#sections-extensions', true);
+      testVisible('#sections-apps', true);
+      testVisible('#sections-shortcuts', true);
+      testVisible('#more-extensions', true);
+
+      var currentPage;
+      extensions.navigation.addListener(newPage => {
+        currentPage = newPage;
+      });
+
+      MockInteractions.tap(sidebar.$$('#sections-apps'));
+      expectDeepEquals(
+          currentPage, {page: Page.LIST, type: extensions.ShowingType.APPS});
+
+      MockInteractions.tap(sidebar.$$('#sections-extensions'));
+      expectDeepEquals(
+          currentPage,
+          {page: Page.LIST, type: extensions.ShowingType.EXTENSIONS});
+
+      MockInteractions.tap(sidebar.$$('#sections-shortcuts'));
+      expectDeepEquals(currentPage, {page: Page.SHORTCUTS});
+    });
+  });
 
   return {
-    registerTests: registerTests,
     TestNames: TestNames,
   };
 });

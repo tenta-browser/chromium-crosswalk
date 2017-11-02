@@ -26,13 +26,13 @@
 #include "core/layout/LayoutScrollbar.h"
 
 #include "core/css/PseudoStyleRequest.h"
-#include "core/frame/FrameView.h"
-#include "core/layout/LayoutPart.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/LayoutScrollbarPart.h"
 #include "core/layout/LayoutScrollbarTheme.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/api/LayoutAPIShim.h"
-#include "core/layout/api/LayoutPartItem.h"
+#include "core/layout/api/LayoutEmbeddedContentItem.h"
 #include "core/paint/ObjectPaintInvalidator.h"
 #include "platform/graphics/GraphicsContext.h"
 
@@ -99,12 +99,9 @@ LayoutBox* LayoutScrollbar::StyleSource() const {
              : 0;
 }
 
-void LayoutScrollbar::SetParent(FrameViewBase* parent) {
-  Scrollbar::SetParent(parent);
-  if (!parent) {
-    // Destroy all of the scrollbar's LayoutBoxes.
-    UpdateScrollbarParts(true);
-  }
+void LayoutScrollbar::DisconnectFromScrollableArea() {
+  UpdateScrollbarParts(true);
+  Scrollbar::DisconnectFromScrollableArea();
 }
 
 void LayoutScrollbar::SetEnabled(bool e) {
@@ -143,7 +140,7 @@ void LayoutScrollbar::SetPressedPart(ScrollbarPart part) {
   UpdateScrollbarPart(kTrackBGPart);
 }
 
-PassRefPtr<ComputedStyle> LayoutScrollbar::GetScrollbarPseudoStyle(
+RefPtr<ComputedStyle> LayoutScrollbar::GetScrollbarPseudoStyle(
     ScrollbarPart part_type,
     PseudoId pseudo_id) {
   if (!StyleSource())
@@ -225,7 +222,7 @@ void LayoutScrollbar::UpdateScrollbarPart(ScrollbarPart part_type,
   RefPtr<ComputedStyle> part_style =
       !destroy ? GetScrollbarPseudoStyle(part_type,
                                          PseudoForScrollbarPart(part_type))
-               : PassRefPtr<ComputedStyle>(nullptr);
+               : RefPtr<ComputedStyle>(nullptr);
 
   bool need_layout_object =
       !destroy && part_style && part_style->Display() != EDisplay::kNone;
@@ -387,7 +384,7 @@ void LayoutScrollbar::InvalidateDisplayItemClientsOfScrollbarParts() {
   for (auto& part : parts_) {
     ObjectPaintInvalidator(*part.value)
         .InvalidateDisplayItemClientsIncludingNonCompositingDescendants(
-            kPaintInvalidationScroll);
+            PaintInvalidationReason::kScrollControl);
   }
 }
 

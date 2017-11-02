@@ -93,7 +93,9 @@ class CORE_EXPORT StyleSheetContents
   // if there are none.
   Document* AnyOwnerDocument() const;
 
-  const String& Charset() const { return parser_context_->Charset(); }
+  const WTF::TextEncoding& Charset() const {
+    return parser_context_->Charset();
+  }
 
   bool LoadCompleted() const;
   bool HasFailedOrCanceledSubresources() const;
@@ -177,6 +179,8 @@ class CORE_EXPORT StyleSheetContents
     DCHECK(rule_set_);
     return *rule_set_.Get();
   }
+
+  bool HasRuleSet() { return rule_set_.Get(); }
   RuleSet& EnsureRuleSet(const MediaQueryEvaluator&, AddRuleFlags);
   void ClearRuleSet();
 

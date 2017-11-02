@@ -11,24 +11,26 @@
 #include "base/macros.h"
 #include "ui/views/view.h"
 
+namespace aura {
+class Window;
+}
+
 namespace ui {
 class LayerTreeOwner;
 }
 
 namespace ash {
 
-class WmWindow;
-
 namespace wm {
 
 // A view that mirrors the client area of a single window.
 class WindowMirrorView : public views::View {
  public:
-  explicit WindowMirrorView(WmWindow* window);
+  WindowMirrorView(aura::Window* window, bool trilinear_filtering);
   ~WindowMirrorView() override;
 
   // views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool GetNeedsNotificationWhenVisibleBoundsChange() const override;
   void OnVisibleBoundsChanged() override;
@@ -45,11 +47,15 @@ class WindowMirrorView : public views::View {
   gfx::Rect GetClientAreaBounds() const;
 
   // The original window that is being represented by |this|.
-  WmWindow* target_;
+  aura::Window* target_;
 
   // Retains ownership of the mirror layer tree. This is lazily initialized
   // the first time the view becomes visible.
   std::unique_ptr<ui::LayerTreeOwner> layer_owner_;
+
+  // True if trilinear filtering should be performed on the layer in
+  // InitLayerOwner().
+  bool trilinear_filtering_on_init_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowMirrorView);
 };

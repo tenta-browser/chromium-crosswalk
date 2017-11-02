@@ -9,16 +9,13 @@
 #include "ash/public/cpp/config.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_state_delegate.h"
 #include "ash/shell.h"
 #include "ash/shell_port.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/wm/container_finder.h"
 #include "ash/wm/window_util.h"
-#include "ash/wm_window.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/test/test_window_delegate.h"
@@ -31,15 +28,14 @@
 #include "ui/events/test/event_generator.h"
 #include "ui/keyboard/keyboard_controller.h"
 #include "ui/keyboard/keyboard_switches.h"
+#include "ui/keyboard/keyboard_test_util.h"
 #include "ui/keyboard/keyboard_ui.h"
-#include "ui/keyboard/keyboard_util.h"
 #include "ui/views/test/capture_tracking_view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/wm/core/window_util.h"
 
 namespace ash {
-namespace test {
 
 namespace {
 
@@ -54,7 +50,7 @@ bool AllRootWindowsHaveModalBackgroundsForContainer(int container_id) {
   bool has_modal_screen = !containers.empty();
   for (aura::Window* container : containers) {
     has_modal_screen &= static_cast<SystemModalContainerLayoutManager*>(
-                            WmWindow::Get(container)->GetLayoutManager())
+                            container->layout_manager())
                             ->has_window_dimmer();
   }
   return has_modal_screen;
@@ -82,7 +78,9 @@ class TestWindow : public views::WidgetDelegateView {
   }
 
   // Overridden from views::View:
-  gfx::Size GetPreferredSize() const override { return gfx::Size(50, 50); }
+  gfx::Size CalculatePreferredSize() const override {
+    return gfx::Size(50, 50);
+  }
 
   // Overridden from views::WidgetDelegate:
   ui::ModalType GetModalType() const override {
@@ -193,9 +191,9 @@ class SystemModalContainerLayoutManagerTest : public AshTestBase {
 
     if (show) {
       keyboard->ShowKeyboard(true);
-      if (keyboard->ui()->GetKeyboardWindow()->bounds().height() == 0) {
-        keyboard->ui()->GetKeyboardWindow()->SetBounds(
-            keyboard::FullWidthKeyboardBoundsFromRootBounds(
+      if (keyboard->ui()->GetContentsWindow()->bounds().height() == 0) {
+        keyboard->ui()->GetContentsWindow()->SetBounds(
+            keyboard::KeyboardBoundsFromRootBounds(
                 Shell::GetPrimaryRootWindow()->bounds(), 100));
       }
     } else {
@@ -426,7 +424,7 @@ TEST_F(SystemModalContainerLayoutManagerTest, ModalTransientChildEvents) {
   aura::test::EventCountDelegate control_delegate;
   control_delegate.set_window_component(HTCLIENT);
   std::unique_ptr<aura::Window> child(new aura::Window(&control_delegate));
-  child->SetType(ui::wm::WINDOW_TYPE_CONTROL);
+  child->SetType(aura::client::WINDOW_TYPE_CONTROL);
   child->Init(ui::LAYER_TEXTURED);
   modal1_transient->AddChild(child.get());
   child->SetBounds(gfx::Rect(100, 100));
@@ -802,9 +800,8 @@ TEST_F(SystemModalContainerLayoutManagerTest, VisibilityChange) {
                                              CurrentContext())
           ->GetNativeWindow());
   SystemModalContainerLayoutManager* layout_manager =
-      ShellPort::Get()
-          ->GetPrimaryRootWindowController()
-          ->GetSystemModalLayoutManager(WmWindow::Get(modal_window.get()));
+      Shell::GetPrimaryRootWindowController()->GetSystemModalLayoutManager(
+          modal_window.get());
 
   EXPECT_FALSE(ShellPort::Get()->IsSystemModalWindowOpen());
   EXPECT_FALSE(layout_manager->has_window_dimmer());
@@ -815,8 +812,8 @@ TEST_F(SystemModalContainerLayoutManagerTest, VisibilityChange) {
 
   // Make sure that a child visibility change should not cause
   // inconsistent state.
-  std::unique_ptr<aura::Window> child = base::MakeUnique<aura::Window>(nullptr);
-  child->SetType(ui::wm::WINDOW_TYPE_CONTROL);
+  std::unique_ptr<aura::Window> child = std::make_unique<aura::Window>(nullptr);
+  child->SetType(aura::client::WINDOW_TYPE_CONTROL);
   child->Init(ui::LAYER_TEXTURED);
   modal_window->AddChild(child.get());
   child->Show();
@@ -839,7 +836,7 @@ class InputTestDelegate : public aura::test::TestWindowDelegate {
   InputTestDelegate() {}
   ~InputTestDelegate() override {}
 
-  void RunTest(test::AshTestBase* test_base) {
+  void RunTest(AshTestBase* test_base) {
     std::unique_ptr<aura::Window> window(
         test_base->CreateTestWindowInShellWithDelegate(
             this, 0, gfx::Rect(0, 0, 100, 100)));
@@ -928,5 +925,4 @@ TEST_F(SystemModalContainerLayoutManagerTest, BlockEventsInMultiDisplays) {
   delegate.RunTest(this);
 }
 
-}  // namespace test
 }  // namespace ash

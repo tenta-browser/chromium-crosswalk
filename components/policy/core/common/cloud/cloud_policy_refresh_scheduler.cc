@@ -190,7 +190,7 @@ void CloudPolicyRefreshScheduler::OnIPAddressChanged() {
   // according to delay based on system time. If we have no information about
   // the last refresh based on system time, there's nothing we can do in
   // applying the above logic.
-  if (last_refresh_.is_null())
+  if (last_refresh_.is_null() || !client_->is_registered())
     return;
 
   const base::TimeDelta refresh_delay =
@@ -202,6 +202,11 @@ void CloudPolicyRefreshScheduler::OnIPAddressChanged() {
       last_refresh_ticks_ + refresh_delay - base::TimeTicks::Now();
   if (ticks_delta > system_delta)
     RefreshAfter(system_delta.InMilliseconds());
+}
+
+void CloudPolicyRefreshScheduler::set_last_refresh_for_testing(
+    base::Time last_refresh) {
+  last_refresh_ = last_refresh;
 }
 
 void CloudPolicyRefreshScheduler::UpdateLastRefreshFromPolicy() {
@@ -239,9 +244,7 @@ void CloudPolicyRefreshScheduler::UpdateLastRefreshFromPolicy() {
   // fetching again on startup; the Android logic differs from the desktop in
   // this aspect.
   if (store_->has_policy() && store_->policy()->has_timestamp()) {
-    last_refresh_ =
-        base::Time::UnixEpoch() +
-        base::TimeDelta::FromMilliseconds(store_->policy()->timestamp());
+    last_refresh_ = base::Time::FromJavaTime(store_->policy()->timestamp());
     last_refresh_ticks_ = base::TimeTicks::Now() +
                           (last_refresh_ - base::Time::NowFromSystemTime());
   }
@@ -251,9 +254,7 @@ void CloudPolicyRefreshScheduler::UpdateLastRefreshFromPolicy() {
   // immediate refresh is intentional.
   if (store_->has_policy() && store_->policy()->has_timestamp() &&
       !store_->is_managed()) {
-    last_refresh_ =
-        base::Time::UnixEpoch() +
-        base::TimeDelta::FromMilliseconds(store_->policy()->timestamp());
+    last_refresh_ = base::Time::FromJavaTime(store_->policy()->timestamp());
     last_refresh_ticks_ = base::TimeTicks::Now() +
                           (last_refresh_ - base::Time::NowFromSystemTime());
   }

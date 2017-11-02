@@ -11,18 +11,19 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/task_runner.h"
+#include "ui/events/event_modifiers.h"
 #include "ui/events/ozone/device/device_event_observer.h"
 #include "ui/events/ozone/evdev/device_event_dispatcher_evdev.h"
-#include "ui/events/ozone/evdev/event_modifiers_evdev.h"
 #include "ui/events/ozone/evdev/event_thread_evdev.h"
 #include "ui/events/ozone/evdev/events_ozone_evdev_export.h"
 #include "ui/events/ozone/evdev/input_controller_evdev.h"
 #include "ui/events/ozone/evdev/keyboard_evdev.h"
 #include "ui/events/ozone/evdev/mouse_button_map_evdev.h"
+#include "ui/events/ozone/gamepad/gamepad_event.h"
 #include "ui/events/platform/platform_event_source.h"
+#include "ui/events/system_input_injector.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/gfx/sequential_id_generator.h"
-#include "ui/ozone/public/system_input_injector.h"
 
 namespace gfx {
 class PointF;
@@ -35,6 +36,7 @@ class DeviceManager;
 class InputDeviceFactoryEvdev;
 class InputDeviceFactoryEvdevProxy;
 class SystemInputInjector;
+class GamepadProviderOzone;
 enum class DomCode;
 enum class StylusState;
 
@@ -82,6 +84,11 @@ class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
   void DispatchDeviceListsComplete();
   void DispatchStylusStateChanged(StylusState stylus_state);
 
+  // Gamepad event and gamepad device event. These events are dispatched to
+  // GamepadObserver through GamepadProviderOzone.
+  void DispatchGamepadEvent(const GamepadEvent& event);
+  void DispatchGamepadDevicesUpdated(const std::vector<InputDevice>& devices);
+
  protected:
   // DeviceEventObserver overrides:
   //
@@ -108,12 +115,15 @@ class EVENTS_OZONE_EVDEV_EXPORT EventFactoryEvdev : public DeviceEventObserver,
   // Interface for scanning & monitoring input devices.
   DeviceManager* device_manager_;  // Not owned.
 
+  // Gamepad provider to dispatch gamepad events.
+  GamepadProviderOzone* gamepad_provider_;
+
   // Proxy for input device factory (manages device I/O objects).
   // The real object lives on a different thread.
   std::unique_ptr<InputDeviceFactoryEvdevProxy> input_device_factory_proxy_;
 
   // Modifier key state (shift, ctrl, etc).
-  EventModifiersEvdev modifiers_;
+  EventModifiers modifiers_;
 
   // Mouse button map.
   MouseButtonMapEvdev button_map_;

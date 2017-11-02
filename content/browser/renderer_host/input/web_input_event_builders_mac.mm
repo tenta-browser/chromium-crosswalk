@@ -195,6 +195,18 @@ ui::DomKey DomKeyFromEvent(NSEvent* event) {
   return ui::DomKey::UNIDENTIFIED;
 }
 
+blink::WebMouseEvent::Button ButtonFromPressedMouseButtons() {
+  NSUInteger pressed_buttons = [NSEvent pressedMouseButtons];
+
+  if (pressed_buttons & (1 << 0))
+    return blink::WebMouseEvent::Button::kLeft;
+  if (pressed_buttons & (1 << 1))
+    return blink::WebMouseEvent::Button::kRight;
+  if (pressed_buttons & (1 << 2))
+    return blink::WebMouseEvent::Button::kMiddle;
+  return blink::WebMouseEvent::Button::kNoButton;
+}
+
 }  // namespace
 
 blink::WebKeyboardEvent WebKeyboardEventBuilder::Build(NSEvent* event) {
@@ -296,6 +308,7 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
     case NSMouseMoved:
     case NSMouseEntered:
       event_type = blink::WebInputEvent::kMouseMove;
+      button = ButtonFromPressedMouseButtons();
       break;
     case NSLeftMouseDragged:
       event_type = blink::WebInputEvent::kMouseMove;
@@ -313,8 +326,11 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
       NOTIMPLEMENTED();
   }
 
+  // Set id = 0 for all mouse events, disable multi-pen on mac for now.
+  // NSMouseExited and NSMouseEntered events don't have deviceID.
+  // Therefore pen exit and enter events can't get correct id.
   blink::WebMouseEvent result(event_type, ModifiersFromEvent(event),
-                              [event timestamp]);
+                              [event timestamp], 0);
   result.click_count = click_count;
   result.button = button;
   SetWebEventLocationFromEventInView(&result, event, view);
@@ -329,7 +345,6 @@ blink::WebMouseEvent WebMouseEventBuilder::Build(
   // Set stylus properties for events with a subtype of
   // NSTabletPointEventSubtype.
   NSEventSubtype subtype = [event subtype];
-  result.id = [event deviceID];
   if (subtype == NSTabletPointEventSubtype) {
     result.force = [event pressure];
     NSPoint tilt = [event tilt];

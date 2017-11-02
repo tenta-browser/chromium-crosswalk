@@ -387,6 +387,52 @@ TEST(GURLTest, GetWithEmptyPath) {
   }
 }
 
+TEST(GURLTest, GetWithoutFilename) {
+  struct TestCase {
+    const char* input;
+    const char* expected;
+  } cases[] = {
+    // Common Standard URLs.
+    {"https://www.google.com",                    "https://www.google.com/"},
+    {"https://www.google.com/",                   "https://www.google.com/"},
+    {"https://www.google.com/maps.htm",           "https://www.google.com/"},
+    {"https://www.google.com/maps/",              "https://www.google.com/maps/"},
+    {"https://www.google.com/index.html",         "https://www.google.com/"},
+    {"https://www.google.com/index.html?q=maps",  "https://www.google.com/"},
+    {"https://www.google.com/index.html#maps/",   "https://www.google.com/"},
+    {"https://foo:bar@www.google.com/maps.htm",   "https://foo:bar@www.google.com/"},
+    {"https://www.google.com/maps/au/index.html", "https://www.google.com/maps/au/"},
+    {"https://www.google.com/maps/au/north",      "https://www.google.com/maps/au/"},
+    {"https://www.google.com/maps/au/north/",     "https://www.google.com/maps/au/north/"},
+    {"https://www.google.com/maps/au/index.html?q=maps#fragment/",     "https://www.google.com/maps/au/"},
+    {"http://www.google.com:8000/maps/au/index.html?q=maps#fragment/", "http://www.google.com:8000/maps/au/"},
+    {"https://www.google.com/maps/au/north/?q=maps#fragment",          "https://www.google.com/maps/au/north/"},
+    {"https://www.google.com/maps/au/north?q=maps#fragment",           "https://www.google.com/maps/au/"},
+    // Less common standard URLs.
+    {"filesystem:http://www.google.com/temporary/bar.html?baz=22", "filesystem:http://www.google.com/temporary/"},
+    {"file:///temporary/bar.html?baz=22","file:///temporary/"},
+    {"ftp://foo/test/index.html",        "ftp://foo/test/"},
+    {"gopher://foo/test/index.html",     "gopher://foo/test/"},
+    {"ws://foo/test/index.html",         "ws://foo/test/"},
+    // Non-standard, hierarchical URLs.
+    {"chrome://foo/bar.html", "chrome://foo/"},
+    {"httpa://foo/test/index.html", "httpa://foo/test/"},
+    // Non-standard, non-hierarchical URLs.
+    {"blob:https://foo.bar/test/index.html", ""},
+    {"about:blank", ""},
+    {"data:foobar", ""},
+    {"scheme:opaque_data", ""},
+    // Invalid URLs.
+    {"foobar", ""},
+  };
+
+  for (size_t i = 0; i < arraysize(cases); i++) {
+    GURL url(cases[i].input);
+    GURL without_filename = url.GetWithoutFilename();
+    EXPECT_EQ(cases[i].expected, without_filename.spec()) << i;
+  }
+}
+
 TEST(GURLTest, Replacements) {
   // The URL canonicalizer replacement test will handle most of these case.
   // The most important thing to do here is to check that the proper
@@ -584,6 +630,7 @@ TEST(GURLTest, HostNoBrackets) {
     GURL url(cases[i].input);
     EXPECT_EQ(cases[i].expected_host, url.host());
     EXPECT_EQ(cases[i].expected_plainhost, url.HostNoBrackets());
+    EXPECT_EQ(cases[i].expected_plainhost, url.HostNoBracketsPiece());
   }
 }
 
@@ -611,6 +658,11 @@ TEST(GURLTest, DomainIs) {
   GURL invalid_url("google.com");
   EXPECT_FALSE(invalid_url.is_valid());
   EXPECT_FALSE(invalid_url.DomainIs("google.com"));
+
+  GURL url_with_escape_chars("https://www.,.test");
+  EXPECT_TRUE(url_with_escape_chars.is_valid());
+  EXPECT_EQ(url_with_escape_chars.host(), "www.%2C.test");
+  EXPECT_TRUE(url_with_escape_chars.DomainIs("%2C.test"));
 }
 
 TEST(GURLTest, DomainIsTerminatingDotBehavior) {
@@ -645,12 +697,26 @@ TEST(GURLTest, Newlines) {
   // Constructor.
   GURL url_1(" \t ht\ntp://\twww.goo\rgle.com/as\ndf \n ");
   EXPECT_EQ("http://www.google.com/asdf", url_1.spec());
-  EXPECT_TRUE(url_1.parsed_for_possibly_invalid_spec().whitespace_removed);
+  EXPECT_FALSE(
+      url_1.parsed_for_possibly_invalid_spec().potentially_dangling_markup);
 
   // Relative path resolver.
   GURL url_2 = url_1.Resolve(" \n /fo\to\r ");
   EXPECT_EQ("http://www.google.com/foo", url_2.spec());
-  EXPECT_TRUE(url_2.parsed_for_possibly_invalid_spec().whitespace_removed);
+  EXPECT_FALSE(
+      url_2.parsed_for_possibly_invalid_spec().potentially_dangling_markup);
+
+  // Constructor.
+  GURL url_3(" \t ht\ntp://\twww.goo\rgle.com/as\ndf< \n ");
+  EXPECT_EQ("http://www.google.com/asdf%3C", url_3.spec());
+  EXPECT_TRUE(
+      url_3.parsed_for_possibly_invalid_spec().potentially_dangling_markup);
+
+  // Relative path resolver.
+  GURL url_4 = url_1.Resolve(" \n /fo\to<\r ");
+  EXPECT_EQ("http://www.google.com/foo%3C", url_4.spec());
+  EXPECT_TRUE(
+      url_4.parsed_for_possibly_invalid_spec().potentially_dangling_markup);
 
   // Note that newlines are NOT stripped from ReplaceComponents.
 }

@@ -18,7 +18,8 @@ namespace {
 constexpr int kHorizOffset = 210;
 constexpr int kVertOffset = 320;
 
-class TestBubbleDialogDelegateView : public views::BubbleDialogDelegateView {
+class TestBubbleDialogDelegateView final
+    : public views::BubbleDialogDelegateView {
  public:
   explicit TestBubbleDialogDelegateView(views::BubbleBorder::Arrow arrow)
       : BubbleDialogDelegateView(nullptr, arrow) {
@@ -31,7 +32,9 @@ class TestBubbleDialogDelegateView : public views::BubbleDialogDelegateView {
   ~TestBubbleDialogDelegateView() override {}
 
   // BubbleDialogDelegateView overrides:
-  gfx::Size GetPreferredSize() const override { return gfx::Size(200, 150); }
+  gfx::Size CalculatePreferredSize() const override {
+    return gfx::Size(200, 150);
+  }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestBubbleDialogDelegateView);

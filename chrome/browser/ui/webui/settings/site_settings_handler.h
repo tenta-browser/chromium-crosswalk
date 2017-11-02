@@ -20,6 +20,10 @@
 class HostContentSettingsMap;
 class Profile;
 
+#if defined(OS_CHROMEOS)
+class PrefChangeRegistrar;
+#endif
+
 namespace base {
 class ListValue;
 }
@@ -43,6 +47,11 @@ class SiteSettingsHandler : public SettingsPageUIHandler,
   void OnGetUsageInfo(const storage::UsageInfoEntries& entries);
   void OnUsageInfoCleared(storage::QuotaStatusCode code);
 
+#if defined(OS_CHROMEOS)
+  // Alert the Javascript that the |kEnableDRM| pref has changed.
+  void OnPrefEnableDrmChanged();
+#endif
+
   // content_settings::Observer:
   void OnContentSettingChanged(const ContentSettingsPattern& primary_pattern,
                                const ContentSettingsPattern& secondary_pattern,
@@ -59,12 +68,20 @@ class SiteSettingsHandler : public SettingsPageUIHandler,
 
  private:
   friend class SiteSettingsHandlerTest;
-  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, GetAndSetDefault);
-  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, Origins);
+  friend class SiteSettingsHandlerInfobarTest;
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, DefaultSettingSource);
   FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, ExceptionHelpers);
-  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, Patterns);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, ExtensionDisplayName);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, GetAndSetDefault);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, GetAndSetOriginPermissions);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, GetAndSetForInvalidURLs);
   FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, Incognito);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, Origins);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, Patterns);
   FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, ZoomLevels);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerInfobarTest,
+                           SettingPermissionsTriggersInfobar);
+  FRIEND_TEST_ALL_PREFIXES(SiteSettingsHandlerTest, SessionOnlyException);
 
   // Asynchronously fetches the usage for a given origin. Replies back with
   // OnGetUsageInfo above.
@@ -86,12 +103,18 @@ class SiteSettingsHandler : public SettingsPageUIHandler,
   // Returns the list of site exceptions for a given content settings type.
   void HandleGetExceptionList(const base::ListValue* args);
 
-  // Handles setting and resetting of an origin permission.
-  void HandleResetCategoryPermissionForOrigin(const base::ListValue* args);
-  void HandleSetCategoryPermissionForOrigin(const base::ListValue* args);
+  // Gets and sets a list of ContentSettingTypes for an origin.
+  // TODO(https://crbug.com/739241): Investigate replacing the
+  // '*CategoryPermissionForPattern' equivalents below with these methods.
+  void HandleGetOriginPermissions(const base::ListValue* args);
+  void HandleSetOriginPermissions(const base::ListValue* args);
 
-  // Return site exceptions for a single site.
-  void HandleGetSiteDetails(const base::ListValue* args);
+  // Handles setting and resetting an origin permission.
+  void HandleResetCategoryPermissionForPattern(const base::ListValue* args);
+  void HandleSetCategoryPermissionForPattern(const base::ListValue* args);
+
+  // Returns whether a given string is a valid origin.
+  void HandleIsOriginValid(const base::ListValue* args);
 
   // Returns whether a given pattern is valid.
   void HandleIsPatternValid(const base::ListValue* args);
@@ -127,6 +150,11 @@ class SiteSettingsHandler : public SettingsPageUIHandler,
 
   // Change observer for content settings.
   ScopedObserver<HostContentSettingsMap, content_settings::Observer> observer_;
+
+#if defined(OS_CHROMEOS)
+  // Change observer for prefs.
+  std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(SiteSettingsHandler);
 };

@@ -15,7 +15,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
-#include "components/arc/arc_service.h"
 #include "components/arc/common/intent_helper.mojom.h"
 #include "ui/base/layout.h"
 #include "ui/gfx/image/image.h"
@@ -110,7 +109,7 @@ class ActivityIconLoader {
   // A map which holds icons in a scale-factor independent form (gfx::Image).
   ActivityToIconsMap cached_icons_;
 
-  base::ThreadChecker thread_checker_;
+  THREAD_CHECKER(thread_checker_);
 
   // This must come last to make sure weak pointers are invalidated first.
   base::WeakPtrFactory<ActivityIconLoader> weak_ptr_factory_;

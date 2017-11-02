@@ -107,10 +107,11 @@ class BookmarkAppHelper : public content::NotificationObserver {
 
   // Begins the asynchronous bookmark app creation from an app banner.
   void CreateFromAppBanner(const CreateBookmarkAppCallback& callback,
+                           const GURL& manifest_url,
                            const content::Manifest& manifest);
 
- private:
-  friend class TestBookmarkAppHelper;
+ protected:
+  // Protected methods for testing.
 
   // Called by the WebContents when the manifest has been downloaded. If there
   // is no manifest, or the WebContents is destroyed before the manifest could
@@ -119,9 +120,11 @@ class BookmarkAppHelper : public content::NotificationObserver {
                         const content::Manifest& manifest);
 
   // Performs post icon download tasks including installing the bookmark app.
-  void OnIconsDownloaded(bool success,
-                         const std::map<GURL, std::vector<SkBitmap> >& bitmaps);
+  virtual void OnIconsDownloaded(
+      bool success,
+      const std::map<GURL, std::vector<SkBitmap>>& bitmaps);
 
+ private:
   // Called after the bubble has been shown, and the user has either accepted or
   // the dialog was dismissed.
   void OnBubbleCompleted(bool user_accepted,
@@ -167,15 +170,6 @@ class BookmarkAppHelper : public content::NotificationObserver {
 // be downloaded from the icon URLs provided in |web_app_info|.
 void CreateOrUpdateBookmarkApp(ExtensionService* service,
                                WebApplicationInfo* web_app_info);
-
-// Retrieves the WebApplicationInfo that represents a given bookmark app.
-// |callback| will be called with a WebApplicationInfo which is populated with
-// the extension's details and icons on success and an unpopulated
-// WebApplicationInfo on failure.
-void GetWebApplicationInfoFromApp(
-    content::BrowserContext* browser_context,
-    const extensions::Extension* extension,
-    const base::Callback<void(const WebApplicationInfo&)> callback);
 
 // Returns whether the given |url| is a valid bookmark app url.
 bool IsValidBookmarkAppUrl(const GURL& url);

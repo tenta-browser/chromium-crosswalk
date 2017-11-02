@@ -4,19 +4,25 @@
 
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 TestNavigationManager::TestNavigationManager()
     : items_index_(-1),
       pending_item_(nullptr),
       last_committed_item_(nullptr),
-      visible_item_(nullptr) {}
+      visible_item_(nullptr),
+      browser_state_(nullptr),
+      load_url_with_params_was_called_(false),
+      load_if_necessary_was_called_(false) {}
 
 TestNavigationManager::~TestNavigationManager() {}
 
 BrowserState* TestNavigationManager::GetBrowserState() const {
-  NOTREACHED();
-  return nullptr;
+  return browser_state_;
 }
 
 WebState* TestNavigationManager::GetWebState() const {
@@ -59,7 +65,11 @@ void TestNavigationManager::DiscardNonCommittedItems() {
 
 void TestNavigationManager::LoadURLWithParams(
     const NavigationManager::WebLoadParams& params) {
-  NOTREACHED();
+  load_url_with_params_was_called_ = true;
+}
+
+void TestNavigationManager::LoadIfNecessary() {
+  load_if_necessary_was_called_ = true;
 }
 
 void TestNavigationManager::AddTransientURLRewriter(
@@ -73,6 +83,15 @@ int TestNavigationManager::GetItemCount() const {
 
 web::NavigationItem* TestNavigationManager::GetItemAtIndex(size_t index) const {
   return items_[index].get();
+}
+
+int TestNavigationManager::GetIndexOfItem(
+    const web::NavigationItem* item) const {
+  for (size_t index = 0; index < items_.size(); ++index) {
+    if (items_[index].get() == item)
+      return index;
+  }
+  return -1;
 }
 
 void TestNavigationManager::SetLastCommittedItemIndex(const int index) {
@@ -100,12 +119,10 @@ bool TestNavigationManager::RemoveItemAtIndex(int index) {
 }
 
 bool TestNavigationManager::CanGoBack() const {
-  NOTREACHED();
   return false;
 }
 
 bool TestNavigationManager::CanGoForward() const {
-  NOTREACHED();
   return false;
 }
 
@@ -141,6 +158,12 @@ NavigationItemList TestNavigationManager::GetForwardItems() const {
   return NavigationItemList();
 }
 
+void TestNavigationManager::Restore(
+    int last_committed_item_index,
+    std::vector<std::unique_ptr<NavigationItem>> items) {
+  NOTREACHED();
+}
+
 void TestNavigationManager::CopyStateFromAndPrune(
     const NavigationManager* source) {
   NOTREACHED();
@@ -159,6 +182,18 @@ void TestNavigationManager::AddItem(const GURL& url,
   items_.back()->SetTransitionType(transition);
   items_.back()->SetURL(url);
   SetLastCommittedItemIndex(GetItemCount() - 1);
+}
+
+void TestNavigationManager::SetBrowserState(web::BrowserState* browser_state) {
+  browser_state_ = browser_state;
+}
+
+bool TestNavigationManager::LoadURLWithParamsWasCalled() {
+  return load_url_with_params_was_called_;
+}
+
+bool TestNavigationManager::LoadIfNecessaryWasCalled() {
+  return load_if_necessary_was_called_;
 }
 
 }  // namespace web

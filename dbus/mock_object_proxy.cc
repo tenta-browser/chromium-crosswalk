@@ -15,4 +15,28 @@ MockObjectProxy::MockObjectProxy(Bus* bus,
 MockObjectProxy::~MockObjectProxy() {
 }
 
+void MockObjectProxy::CallMethod(MethodCall* method_call,
+                                 int timeout_ms,
+                                 ResponseCallback callback) {
+  DoCallMethod(method_call, timeout_ms, &callback);
+}
+
+void MockObjectProxy::CallMethodWithErrorCallback(
+    MethodCall* method_call,
+    int timeout_ms,
+    ResponseCallback callback,
+    ErrorCallback error_callback) {
+  DoCallMethodWithErrorCallback(method_call, timeout_ms, &callback,
+                                &error_callback);
+}
+
+void MockObjectProxy::ConnectToSignal(
+    const std::string& interface_name,
+    const std::string& signal_name,
+    SignalCallback signal_callback,
+    OnConnectedCallback on_connected_callback) {
+  DoConnectToSignal(interface_name, signal_name, signal_callback,
+                    &on_connected_callback);
+}
+
 }  // namespace dbus

@@ -13,8 +13,10 @@
 #include "platform/heap/Handle.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/instrumentation/tracing/TracedValue.h"
-#include "wtf/Forward.h"
-#include "wtf/Functional.h"
+#include "platform/loader/fetch/Resource.h"
+#include "platform/loader/fetch/ResourceLoadPriority.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/Functional.h"
 
 namespace v8 {
 class Function;
@@ -35,7 +37,7 @@ class Element;
 class Event;
 class ExecutionContext;
 struct FetchInitiatorInfo;
-class FrameView;
+class FloatRect;
 class GraphicsLayer;
 class HitTestLocation;
 class HitTestRequest;
@@ -46,6 +48,7 @@ class LayoutImage;
 class LayoutObject;
 class LayoutRect;
 class LocalFrame;
+class LocalFrameView;
 class Node;
 class PaintLayer;
 class QualifiedName;
@@ -64,8 +67,6 @@ class ExecuteScript;
 class ParseHTML;
 }
 
-enum ResourceLoadPriority : int;
-
 class CORE_EXPORT InspectorTraceEvents : public InspectorAgent {
   WTF_MAKE_NONCOPYABLE(InspectorTraceEvents);
 
@@ -76,28 +77,29 @@ class CORE_EXPORT InspectorTraceEvents : public InspectorAgent {
             protocol::UberDispatcher*,
             protocol::DictionaryValue*) override;
   void Dispose() override;
-
-  void WillSendRequest(LocalFrame*,
+  void WillSendRequest(ExecutionContext*,
                        unsigned long identifier,
                        DocumentLoader*,
                        ResourceRequest&,
                        const ResourceResponse& redirect_response,
-                       const FetchInitiatorInfo&);
-  void DidReceiveResourceResponse(LocalFrame*,
-                                  unsigned long identifier,
+                       const FetchInitiatorInfo&,
+                       Resource::Type);
+  void DidReceiveResourceResponse(unsigned long identifier,
                                   DocumentLoader*,
                                   const ResourceResponse&,
                                   Resource*);
-  void DidReceiveData(LocalFrame*,
-                      unsigned long identifier,
+  void DidReceiveData(unsigned long identifier,
+                      DocumentLoader*,
                       const char* data,
                       int data_length);
-  void DidFinishLoading(LocalFrame*,
-                        unsigned long identifier,
+  void DidFinishLoading(unsigned long identifier,
+                        DocumentLoader*,
                         double monotonic_finish_time,
                         int64_t encoded_data_length,
                         int64_t decoded_body_length);
-  void DidFailLoading(unsigned long identifier, const ResourceError&);
+  void DidFailLoading(unsigned long identifier,
+                      DocumentLoader*,
+                      const ResourceError&);
 
   void Will(const probe::ExecuteScript&);
   void Did(const probe::ExecuteScript&);
@@ -108,6 +110,8 @@ class CORE_EXPORT InspectorTraceEvents : public InspectorAgent {
   void Will(const probe::CallFunction&);
   void Did(const probe::CallFunction&);
 
+  void PaintTiming(Document*, const char* name, double timestamp);
+
   DECLARE_VIRTUAL_TRACE();
 
  private:
@@ -115,7 +119,7 @@ class CORE_EXPORT InspectorTraceEvents : public InspectorAgent {
 };
 
 namespace InspectorLayoutEvent {
-std::unique_ptr<TracedValue> BeginData(FrameView*);
+std::unique_ptr<TracedValue> BeginData(LocalFrameView*);
 std::unique_ptr<TracedValue> EndData(LayoutObject* root_for_this_layout);
 }
 
@@ -163,7 +167,6 @@ extern const char kInvalidationSetMatchedAttribute[];
 extern const char kInvalidationSetMatchedClass[];
 extern const char kInvalidationSetMatchedId[];
 extern const char kInvalidationSetMatchedTagName[];
-extern const char kPreventStyleSharingForParent[];
 
 std::unique_ptr<TracedValue> Data(Element&, const char* reason);
 std::unique_ptr<TracedValue> SelectorPart(Element&,
@@ -350,8 +353,14 @@ std::unique_ptr<TracedValue> Data(LayoutObject*,
 }
 
 namespace InspectorPaintImageEvent {
-std::unique_ptr<TracedValue> Data(const LayoutImage&);
+std::unique_ptr<TracedValue> Data(const LayoutImage&,
+                                  const FloatRect& src_rect,
+                                  const FloatRect& dest_rect);
 std::unique_ptr<TracedValue> Data(const LayoutObject&, const StyleImage&);
+std::unique_ptr<TracedValue> Data(Node*,
+                                  const StyleImage&,
+                                  const FloatRect& src_rect,
+                                  const FloatRect& dest_rect);
 std::unique_ptr<TracedValue> Data(const LayoutObject*,
                                   const ImageResourceContent&);
 }

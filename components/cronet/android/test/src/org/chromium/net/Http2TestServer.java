@@ -38,7 +38,6 @@ import io.netty.handler.ssl.SupportedCipherSuiteFilter;
  * Wrapper class to start a HTTP/2 test server.
  */
 public final class Http2TestServer {
-    private static final ConditionVariable sBlock = new ConditionVariable();
     private static Channel sServerChannel;
     private static final String TAG = Http2TestServer.class.getSimpleName();
 
@@ -93,19 +92,27 @@ public final class Http2TestServer {
         return getServerUrl() + Http2TestHandler.ECHO_TRAILERS_PATH;
     }
 
+    /**
+     * @return url of a brotli-encoded server resource.
+     */
+    public static String getServeSimpleBrotliResponse() {
+        return getServerUrl() + Http2TestHandler.SERVE_SIMPLE_BROTLI_RESPONSE;
+    }
+
     public static boolean startHttp2TestServer(
             Context context, String certFileName, String keyFileName) throws Exception {
-        new Thread(
+        Http2TestServerRunnable http2TestServerRunnable =
                 new Http2TestServerRunnable(new File(CertTestUtil.CERTS_DIRECTORY + certFileName),
-                        new File(CertTestUtil.CERTS_DIRECTORY + keyFileName)))
-                .start();
-        sBlock.block();
+                        new File(CertTestUtil.CERTS_DIRECTORY + keyFileName));
+        new Thread(http2TestServerRunnable).start();
+        http2TestServerRunnable.blockUntilStarted();
         return true;
     }
 
     private Http2TestServer() {}
 
     private static class Http2TestServerRunnable implements Runnable {
+        private final ConditionVariable mBlock = new ConditionVariable();
         private final SslContext mSslCtx;
 
         Http2TestServerRunnable(File certFile, File keyFile) throws Exception {
@@ -113,10 +120,19 @@ public final class Http2TestServer {
                     Protocol.ALPN, SelectorFailureBehavior.NO_ADVERTISE,
                     SelectedListenerFailureBehavior.ACCEPT, ApplicationProtocolNames.HTTP_2);
 
+            // Don't make netty use java.security.KeyStore.getInstance("JKS") as it doesn't
+            // exist.  Just avoid a KeyManagerFactory as it's unnecessary for our testing.
+            System.setProperty("io.netty.handler.ssl.openssl.useKeyManagerFactory", "false");
+
             mSslCtx = new OpenSslServerContext(certFile, keyFile, null, null,
                     Http2SecurityUtil.CIPHERS, SupportedCipherSuiteFilter.INSTANCE,
                     applicationProtocolConfig, 0, 0);
         }
+
+        public void blockUntilStarted() {
+            mBlock.block();
+        }
+
 
         public void run() {
             try {
@@ -132,7 +148,7 @@ public final class Http2TestServer {
 
                     sServerChannel = b.bind(PORT).sync().channel();
                     Log.i(TAG, "Netty HTTP/2 server started on " + getServerUrl());
-                    sBlock.open();
+                    mBlock.open();
                     sServerChannel.closeFuture().sync();
                 } finally {
                     group.shutdownGracefully();

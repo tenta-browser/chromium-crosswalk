@@ -13,7 +13,7 @@
 #include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
-#include "cc/output/context_provider.h"
+#include "components/viz/common/gpu/context_provider.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "ui/gfx/native_widget_types.h"
@@ -30,7 +30,7 @@ class GrContextForGLES2Interface;
 
 namespace ui {
 
-class InProcessContextProvider : public cc::ContextProvider {
+class InProcessContextProvider : public viz::ContextProvider {
  public:
   static scoped_refptr<InProcessContextProvider> Create(
       const gpu::gles2::ContextCreationAttribHelper& attribs,
@@ -49,11 +49,12 @@ class InProcessContextProvider : public cc::ContextProvider {
   // cc::ContextProvider implementation.
   bool BindToCurrentThread() override;
   void DetachFromThread() override;
-  gpu::Capabilities ContextCapabilities() override;
+  const gpu::Capabilities& ContextCapabilities() const override;
+  const gpu::GpuFeatureInfo& GetGpuFeatureInfo() const override;
   gpu::gles2::GLES2Interface* ContextGL() override;
   gpu::ContextSupport* ContextSupport() override;
   class GrContext* GrContext() override;
-  cc::ContextCacheController* CacheController() override;
+  viz::ContextCacheController* CacheController() override;
   void InvalidateGrContext(uint32_t state) override;
   base::Lock* GetLock() override;
   void SetLostContextCallback(
@@ -78,7 +79,7 @@ class InProcessContextProvider : public cc::ContextProvider {
 
   std::unique_ptr<gpu::GLInProcessContext> context_;
   std::unique_ptr<skia_bindings::GrContextForGLES2Interface> gr_context_;
-  std::unique_ptr<cc::ContextCacheController> cache_controller_;
+  std::unique_ptr<viz::ContextCacheController> cache_controller_;
 
   gpu::gles2::ContextCreationAttribHelper attribs_;
   InProcessContextProvider* shared_context_;

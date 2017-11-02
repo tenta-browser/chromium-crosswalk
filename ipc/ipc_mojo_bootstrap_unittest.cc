@@ -42,8 +42,8 @@ class PeerPidReceiver : public IPC::mojom::Channel {
     on_peer_pid_set_.Run();
   }
 
-  void Receive(const std::vector<uint8_t>& data,
-               base::Optional<std::vector<IPC::mojom::SerializedHandlePtr>>
+  void Receive(base::span<const uint8_t> data,
+               base::Optional<std::vector<mojo::native::SerializedHandlePtr>>
                    handles) override {}
 
   void GetAssociatedInterface(

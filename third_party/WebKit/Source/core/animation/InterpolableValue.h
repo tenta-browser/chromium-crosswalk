@@ -135,12 +135,12 @@ class CORE_EXPORT InterpolableList : public InterpolableValue {
 class InterpolableAnimatableValue : public InterpolableValue {
  public:
   static std::unique_ptr<InterpolableAnimatableValue> Create(
-      PassRefPtr<AnimatableValue> value) {
+      RefPtr<AnimatableValue> value) {
     return WTF::WrapUnique(new InterpolableAnimatableValue(std::move(value)));
   }
 
   bool IsAnimatableValue() const final { return true; }
-  AnimatableValue* Value() const { return value_.Get(); }
+  AnimatableValue* Value() const { return value_.get(); }
   bool Equals(const InterpolableValue&) const final {
     NOTREACHED();
     return false;
@@ -163,7 +163,7 @@ class InterpolableAnimatableValue : public InterpolableValue {
                    InterpolableValue& result) const final;
   RefPtr<AnimatableValue> value_;
 
-  InterpolableAnimatableValue(PassRefPtr<AnimatableValue> value)
+  InterpolableAnimatableValue(RefPtr<AnimatableValue> value)
       : value_(std::move(value)) {}
 };
 

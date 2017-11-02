@@ -40,6 +40,7 @@ ExtensionThrottleManager::ExtensionThrottleManager()
 }
 
 ExtensionThrottleManager::~ExtensionThrottleManager() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
   net::NetworkChangeNotifier::RemoveConnectionTypeObserver(this);
 
@@ -59,17 +60,18 @@ ExtensionThrottleManager::~ExtensionThrottleManager() {
 
 std::unique_ptr<content::ResourceThrottle>
 ExtensionThrottleManager::MaybeCreateThrottle(const net::URLRequest* request) {
-  if (request->first_party_for_cookies().scheme() !=
-      extensions::kExtensionScheme) {
+  if (request->site_for_cookies().scheme() != extensions::kExtensionScheme) {
     return nullptr;
   }
-  return base::MakeUnique<extensions::ExtensionRequestLimitingThrottle>(request,
+  return std::make_unique<extensions::ExtensionRequestLimitingThrottle>(request,
                                                                         this);
 }
 
 scoped_refptr<ExtensionThrottleEntryInterface>
 ExtensionThrottleManager::RegisterRequestUrl(const GURL& url) {
-  DCHECK(!enable_thread_checks_ || CalledOnValidThread());
+#if DCHECK_IS_ON()
+  DCHECK(!enable_thread_checks_ || sequence_checker_.CalledOnValidSequence());
+#endif  // DCHECK_IS_ON()
 
   // Normalize the url.
   std::string url_id = GetIdFromUrl(url);

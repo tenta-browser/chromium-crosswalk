@@ -6,10 +6,14 @@
       "provides": {
         "browser": [
           "content::mojom::Child",
+          "content::mojom::ChildHistogramFetcher",
+          "content::mojom::ChildHistogramFetcherFactory",
           "content::mojom::EmbeddedWorkerInstanceClient",
           "content::mojom::EmbeddedWorkerSetup",
           "content::mojom::FrameFactory",
           "content::mojom::RenderWidgetWindowTreeClientFactory",
+          "content::mojom::SharedWorkerFactory",
+          "content::mojom::WebDatabase",
           "IPC::mojom::ChannelBootstrap",
           "visitedlink::mojom::VisitedLinkNotificationSink",
           "web_cache::mojom::WebCache"
@@ -19,17 +23,14 @@
         ]
       },
       "requires": {
+        "*": [ "app" ],
         "content_browser": [ "renderer" ],
         "device": [
-          "device:battery_monitor",
-          "device:generic_sensor",
           "device:power_monitor",
           "device:screen_orientation",
           "device:sensors",
-          "device:time_zone_monitor",
-          "device:vibration"
+          "device:time_zone_monitor"
         ],
-        "network": [ "url_loader" ],
         "ui": [
           "discardable_memory",
           "gpu_client"
@@ -42,7 +43,12 @@
           "blink::mojom::AppBannerController",
           "blink::mojom::EngagementClient",
           "blink::mojom::InstallationService",
+          "blink::mojom::ManifestManager",
+          "blink::mojom::TextSuggestionBackend",
           "content::mojom::ImageDownloader",
+          "content::mojom::FrameInputHandler",
+          "content::mojom::MediaStreamDispatcher",
+          "content::mojom::Widget",
           "mojom::MediaDevicesListener"
         ]
       },
@@ -73,6 +79,12 @@
     "v8_snapshot_64_data" : [{
       "path": "assets/snapshot_blob_64.bin",
       "platform": "android"
-    }]
+    }],
+    "v8_context_snapshot_data" : [
+      {
+        "path": "v8_context_snapshot.bin",
+        "platform": "linux"
+      }
+    ]
   }
 }

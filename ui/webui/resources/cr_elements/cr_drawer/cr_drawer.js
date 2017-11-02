@@ -7,16 +7,18 @@ Polymer({
   extends: 'dialog',
 
   properties: {
+    heading: String,
+
     /** Enables notifications for |Dialog.open|. */
     open: {
       type: Boolean,
       notify: true,
     },
 
-    /** The alignment of the drawer on the screen ('left' or 'right'). */
+    /** The alignment of the drawer on the screen ('ltr' or 'rtl'). */
     align: {
       type: String,
-      value: 'left',
+      value: 'ltr',
       reflectToAttribute: true,
     },
   },

@@ -30,10 +30,10 @@
 
 #include "core/dom/NodeRareData.h"
 
-#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "core/dom/Element.h"
 #include "core/dom/ElementRareData.h"
 #include "core/page/Page.h"
+#include "platform/bindings/ScriptWrappableVisitor.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -72,8 +72,8 @@ DEFINE_TRACE_WRAPPERS(NodeRareData) {
 }
 
 DEFINE_TRACE_WRAPPERS_AFTER_DISPATCH(NodeRareData) {
-  visitor->TraceWrappersWithManualWriteBarrier(node_lists_);
-  visitor->TraceWrappersWithManualWriteBarrier(mutation_observer_data_);
+  visitor->TraceWrappers(node_lists_);
+  visitor->TraceWrappers(mutation_observer_data_);
 }
 
 void NodeRareData::FinalizeGarbageCollectedObject() {

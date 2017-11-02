@@ -12,8 +12,7 @@ import android.content.Intent;
 import android.os.Build;
 import android.os.PowerManager;
 
-import junit.framework.Assert;
-import junit.framework.AssertionFailedError;
+import org.junit.Assert;
 
 import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationState;
@@ -39,8 +38,7 @@ public class ApplicationTestUtils {
 
     // TODO(jbudorick): fix deprecation warning crbug.com/537347
     @SuppressWarnings("deprecation")
-    public static void setUp(Context context, boolean clearAppData)
-            throws Exception {
+    public static void setUp(Context context, boolean clearAppData) {
         if (clearAppData) {
             // Clear data and remove any tasks listed in Android's Overview menu between test runs.
             clearAppData(context);
@@ -66,7 +64,7 @@ public class ApplicationTestUtils {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             try {
                 finishAllChromeTasks(context);
-            } catch (AssertionFailedError exception) {
+            } catch (AssertionError exception) {
             }
         }
     }
@@ -158,7 +156,7 @@ public class ApplicationTestUtils {
 
     /** Finishes all tasks Chrome has listed in Android's Overview. */
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-    public static void finishAllChromeTasks(final Context context) throws Exception {
+    public static void finishAllChromeTasks(final Context context) {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
@@ -193,33 +191,24 @@ public class ApplicationTestUtils {
     }
 
     /**
-     * See {@link #assertWaitForPageScaleFactorMatch(ChromeActivity,float,long)}.
-     */
-    public static void assertWaitForPageScaleFactorMatch(
-            final ChromeActivity activity, final float expectedScale) {
-        assertWaitForPageScaleFactorMatch(activity, expectedScale, false);
-    }
-
-    /**
      * Waits till the ContentViewCore receives the expected page scale factor
      * from the compositor and asserts that this happens.
      *
      * Proper use of this function requires waiting for a page scale factor that isn't 1.0f because
      * the default seems to be 1.0f.
      */
-    public static void assertWaitForPageScaleFactorMatch(final ChromeActivity activity,
-            final float expectedScale, boolean waitLongerForLoad) {
-        long waitTimeInMs = waitLongerForLoad ? 10000 : CriteriaHelper.DEFAULT_MAX_TIME_TO_POLL;
+    public static void assertWaitForPageScaleFactorMatch(
+            final ChromeActivity activity, final float expectedScale) {
         CriteriaHelper.pollInstrumentationThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 if (activity.getCurrentContentViewCore() == null) return false;
 
-                updateFailureReason("Expecting scale factor of: " + expectedScale + ", got: "
-                        + activity.getCurrentContentViewCore().getScale());
-                return Math.abs(activity.getCurrentContentViewCore().getScale() - expectedScale)
-                        < FLOAT_EPSILON;
+                float scale = activity.getCurrentContentViewCore().getPageScaleFactor();
+                updateFailureReason(
+                        "Expecting scale factor of: " + expectedScale + ", got: " + scale);
+                return Math.abs(scale - expectedScale) < FLOAT_EPSILON;
             }
-        }, waitTimeInMs, CriteriaHelper.DEFAULT_POLLING_INTERVAL);
+        });
     }
 }

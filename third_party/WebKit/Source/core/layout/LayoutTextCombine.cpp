@@ -26,7 +26,7 @@ namespace blink {
 
 const float kTextCombineMargin = 1.1f;  // Allow em + 10% margin
 
-LayoutTextCombine::LayoutTextCombine(Node* node, PassRefPtr<StringImpl> string)
+LayoutTextCombine::LayoutTextCombine(Node* node, RefPtr<StringImpl> string)
     : LayoutText(node, std::move(string)),
       combined_text_width_(0),
       scale_x_(1.0f),
@@ -41,7 +41,7 @@ void LayoutTextCombine::StyleDidChange(StyleDifference diff,
   UpdateIsCombined();
 }
 
-void LayoutTextCombine::SetTextInternal(PassRefPtr<StringImpl> text) {
+void LayoutTextCombine::SetTextInternal(RefPtr<StringImpl> text) {
   LayoutText::SetTextInternal(std::move(text));
 
   UpdateIsCombined();
@@ -53,7 +53,8 @@ float LayoutTextCombine::Width(unsigned from,
                                LayoutUnit x_position,
                                TextDirection direction,
                                HashSet<const SimpleFontData*>* fallback_fonts,
-                               FloatRect* glyph_bounds) const {
+                               FloatRect* glyph_bounds,
+                               float) const {
   if (!length)
     return 0;
 
@@ -143,8 +144,8 @@ void LayoutTextCombine::UpdateFont() {
                                  StyleRef(), Style()->Direction());
   FontDescription description = OriginalFont().GetFontDescription();
   float em_width = description.ComputedSize();
-  if (!(Style()->TextDecorationsInEffect() &
-        (kTextDecorationUnderline | kTextDecorationOverline)))
+  if (!EnumHasFlags(Style()->TextDecorationsInEffect(),
+                    TextDecoration::kUnderline | TextDecoration::kOverline))
     em_width *= kTextCombineMargin;
 
   // We are going to draw combined text horizontally.

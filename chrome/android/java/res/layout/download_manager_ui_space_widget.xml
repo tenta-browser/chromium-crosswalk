@@ -3,56 +3,52 @@
      Use of this source code is governed by a BSD-style license that can be
      found in the LICENSE file. -->
 
-<merge xmlns:android="http://schemas.android.com/apk/res/android"
-        xmlns:chrome="http://schemas.android.com/apk/res-auto" >
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:chrome="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingTop="11dp"
+    android:paddingBottom="6dp"
+    android:orientation="vertical" >
 
-    <!-- Widget style adapted from the UX spec:
-         https://bugs.chromium.org/p/chromium/issues/detail?id=658246&desc=2#c18
-    -->
     <LinearLayout
+        android:id="@+id/space_widget_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginStart="@dimen/list_item_default_margin"
+        android:layout_marginEnd="@dimen/list_item_default_margin" >
+
+        <TextView
+            android:id="@+id/size_downloaded"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="@dimen/drawer_margin_large"
-            android:layout_marginEnd="@dimen/drawer_margin_large"
-            android:paddingTop="26dp"
-            android:paddingBottom="24dp"
-            android:orientation="vertical" >
+            android:singleLine="true"
+            android:textAppearance="@style/BlueLink3" />
 
-        <TextView
-                android:id="@+id/size_downloaded"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:singleLine="true"
-                android:textColor="@color/light_active_color"
-                android:textSize="20sp" />
-
-        <!-- The progress bar uses 32dp of space, vertically, including spacing. -->
+        <!-- The progress bar uses 20dp of space, vertically, including spacing. -->
         <org.chromium.chrome.browser.widget.MaterialProgressBar
-                android:id="@+id/space_bar"
-                android:layout_width="match_parent"
-                android:layout_height="4dp"
-                android:layout_marginTop="14dp"
-                android:layout_marginBottom="14dp"
-                chrome:colorBackground="@color/google_grey_400"
-                chrome:colorProgress="@color/light_active_color"
-                chrome:colorSecondaryProgress="@color/google_grey_600" />
+            android:id="@+id/space_bar"
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp"
+            chrome:colorBackground="@color/google_grey_300"
+            chrome:colorProgress="@color/google_blue_500_alpha_38_opaque"
+            chrome:colorSecondaryProgress="@color/google_blue_500" />
 
         <TextView
-                android:id="@+id/size_other_apps"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:singleLine="true"
-                android:textColor="@color/google_grey_600"
-                android:textSize="12sp" />
-
-        <TextView
-                android:id="@+id/size_free"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:singleLine="true"
-                android:textColor="@color/google_grey_400"
-                android:textSize="12sp" />
+            android:id="@+id/size_free_and_other_apps"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:textAppearance="@style/BlackDisabledText2" />
 
     </LinearLayout>
 
-</merge>
+    <View
+        style="@style/Divider"
+        android:layout_marginTop="@dimen/list_item_default_margin" />
+
+</LinearLayout>

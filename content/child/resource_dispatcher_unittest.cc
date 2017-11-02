@@ -24,18 +24,20 @@
 #include "content/child/test_request_peer.h"
 #include "content/common/appcache_interfaces.h"
 #include "content/common/resource_messages.h"
-#include "content/common/resource_request.h"
-#include "content/common/resource_request_completion_status.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/child/fixed_received_data.h"
 #include "content/public/child/request_peer.h"
 #include "content/public/child/resource_dispatcher_delegate.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/request_context_frame_type.h"
+#include "content/public/common/resource_request.h"
+#include "content/public/common/resource_request_body.h"
+#include "content/public/common/resource_request_completion_status.h"
 #include "content/public/common/resource_response.h"
+#include "content/public/common/service_worker_modes.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
 #include "url/gurl.h"
@@ -145,7 +147,7 @@ class ResourceDispatcherTest : public testing::Test, public IPC::Sender {
     redirect_info.status_code = 302;
     redirect_info.new_method = "GET";
     redirect_info.new_url = GURL(kTestPageUrl);
-    redirect_info.new_first_party_for_cookies = GURL(kTestPageUrl);
+    redirect_info.new_site_for_cookies = GURL(kTestPageUrl);
     EXPECT_EQ(true, dispatcher_->OnMessageReceived(ResourceMsg_ReceivedRedirect(
                         request_id, redirect_info, head)));
   }
@@ -167,9 +169,9 @@ class ResourceDispatcherTest : public testing::Test, public IPC::Sender {
     shared_memory_map_[request_id] = base::WrapUnique(shared_memory);
     EXPECT_TRUE(shared_memory->CreateAndMapAnonymous(buffer_size));
 
-    base::SharedMemoryHandle duplicate_handle;
-    EXPECT_TRUE(shared_memory->ShareToProcess(base::GetCurrentProcessHandle(),
-                                              &duplicate_handle));
+    base::SharedMemoryHandle duplicate_handle =
+        shared_memory->handle().Duplicate();
+    EXPECT_TRUE(duplicate_handle.IsValid());
     EXPECT_TRUE(dispatcher_->OnMessageReceived(ResourceMsg_SetDataBuffer(
         request_id, duplicate_handle, shared_memory->requested_size(), 0)));
   }
@@ -193,7 +195,6 @@ class ResourceDispatcherTest : public testing::Test, public IPC::Sender {
   void NotifyRequestComplete(int request_id, size_t total_size) {
     ResourceRequestCompletionStatus request_complete_data;
     request_complete_data.error_code = net::OK;
-    request_complete_data.was_ignored_by_handler = false;
     request_complete_data.exists_in_cache = false;
     request_complete_data.encoded_data_length = total_size;
     EXPECT_TRUE(dispatcher_->OnMessageReceived(
@@ -206,7 +207,7 @@ class ResourceDispatcherTest : public testing::Test, public IPC::Sender {
 
     request->method = "GET";
     request->url = GURL(kTestPageUrl);
-    request->first_party_for_cookies = GURL(kTestPageUrl);
+    request->site_for_cookies = GURL(kTestPageUrl);
     request->referrer_policy = blink::kWebReferrerPolicyDefault;
     request->resource_type = RESOURCE_TYPE_SUB_RESOURCE;
     request->priority = net::LOW;
@@ -223,13 +224,15 @@ class ResourceDispatcherTest : public testing::Test, public IPC::Sender {
   ResourceDispatcher* dispatcher() { return dispatcher_.get(); }
 
   int StartAsync(std::unique_ptr<ResourceRequest> request,
-                 ResourceRequestBodyImpl* request_body,
+                 ResourceRequestBody* request_body,
                  TestRequestPeer::Context* peer_context) {
     std::unique_ptr<TestRequestPeer> peer(
         new TestRequestPeer(dispatcher(), peer_context));
     int request_id = dispatcher()->StartAsync(
-        std::move(request), 0, nullptr, url::Origin(), std::move(peer),
+        std::move(request), 0, nullptr, url::Origin(),
+        TRAFFIC_ANNOTATION_FOR_TESTS, false, std::move(peer),
         blink::WebURLRequest::LoadingIPCType::kChromeIPC, nullptr,
+        std::vector<std::unique_ptr<URLLoaderThrottle>>(),
         mojo::ScopedDataPipeConsumerHandle());
     peer_context->request_id = request_id;
     return request_id;
@@ -243,6 +246,16 @@ class ResourceDispatcherTest : public testing::Test, public IPC::Sender {
   base::MessageLoop message_loop_;
   std::unique_ptr<ResourceDispatcher> dispatcher_;
 };
+
+// Tests the generation of unique request ids.
+TEST_F(ResourceDispatcherTest, MakeRequestID) {
+  int first_id = ResourceDispatcher::MakeRequestID();
+  int second_id = ResourceDispatcher::MakeRequestID();
+
+  // Child process ids are unique (per process) and counting from 0 upwards:
+  EXPECT_GT(second_id, first_id);
+  EXPECT_GE(first_id, 0);
+}
 
 // Does a simple request and tests that the correct data is received.  Simulates
 // two reads.
@@ -414,19 +427,19 @@ class TestResourceDispatcherDelegate : public ResourceDispatcherDelegate {
     void OnTransferSizeUpdated(int transfer_size_diff) override {}
 
     void OnCompletedRequest(int error_code,
-                            bool was_ignored_by_handler,
                             bool stale_copy_in_cache,
                             const base::TimeTicks& completion_time,
                             int64_t total_transfer_size,
-                            int64_t encoded_body_size) override {
+                            int64_t encoded_body_size,
+                            int64_t decoded_body_size) override {
       original_peer_->OnReceivedResponse(response_info_);
       if (!data_.empty()) {
         original_peer_->OnReceivedData(
             base::MakeUnique<FixedReceivedData>(data_.data(), data_.size()));
       }
-      original_peer_->OnCompletedRequest(
-          error_code, was_ignored_by_handler, stale_copy_in_cache,
-          completion_time, total_transfer_size, encoded_body_size);
+      original_peer_->OnCompletedRequest(error_code, stale_copy_in_cache,
+                                         completion_time, total_transfer_size,
+                                         encoded_body_size, decoded_body_size);
     }
 
    private:

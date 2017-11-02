@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "build/build_config.h"
 #include "net/base/net_export.h"
 #include "url/gurl.h"
 
@@ -23,9 +24,13 @@ class URLSecurityManager;
 class NET_EXPORT HttpAuthPreferences {
  public:
   HttpAuthPreferences(const std::vector<std::string>& auth_schemes
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
                       ,
                       const std::string& gssapi_library_name
+#endif
+#if defined(OS_CHROMEOS)
+                      ,
+                      bool allow_gssapi_library_load
 #endif
                       );
   virtual ~HttpAuthPreferences();
@@ -36,8 +41,11 @@ class NET_EXPORT HttpAuthPreferences {
 #if defined(OS_ANDROID)
   virtual std::string AuthAndroidNegotiateAccountType() const;
 #endif
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   virtual std::string GssapiLibraryName() const;
+#endif
+#if defined(OS_CHROMEOS)
+  virtual bool AllowGssapiLibraryLoad() const;
 #endif
   virtual bool CanUseDefaultCredentials(const GURL& auth_origin) const;
   virtual bool CanDelegate(const GURL& auth_origin) const;
@@ -71,11 +79,14 @@ class NET_EXPORT HttpAuthPreferences {
 #if defined(OS_ANDROID)
   std::string auth_android_negotiate_account_type_;
 #endif
-#if defined(OS_POSIX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
   // GSSAPI library name cannot change after startup, since changing it
   // requires unloading the existing GSSAPI library, which could cause all
   // sorts of problems for, for example, active Negotiate transactions.
   const std::string gssapi_library_name_;
+#endif
+#if defined(OS_CHROMEOS)
+  bool allow_gssapi_library_load_;
 #endif
   std::unique_ptr<URLSecurityManager> security_manager_;
   DISALLOW_COPY_AND_ASSIGN(HttpAuthPreferences);

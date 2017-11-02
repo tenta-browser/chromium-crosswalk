@@ -7,11 +7,11 @@
 
 #include <stdint.h>
 
-#include <queue>
 #include <utility>
 
+#include "base/containers/queue.h"
 #include "base/macros.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
@@ -21,7 +21,7 @@ namespace remoting {
 // Measures average rate per second of a sequence of point rate samples
 // over a specified time window. This can be used to measure bandwidth, frame
 // rates, etc.
-class RateCounter : public base::NonThreadSafe {
+class RateCounter {
  public:
   // Constructs a rate counter over the specified |time_window|.
   explicit RateCounter(base::TimeDelta time_window);
@@ -49,13 +49,15 @@ class RateCounter : public base::NonThreadSafe {
   const base::TimeDelta time_window_;
 
   // Queue containing data points in the order in which they were recorded.
-  std::queue<DataPoint> data_points_;
+  base::queue<DataPoint> data_points_;
 
   // Sum of values in |data_points_|.
   int64_t sum_;
 
   base::DefaultTickClock default_tick_clock_;
   base::TickClock* tick_clock_ = &default_tick_clock_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(RateCounter);
 };

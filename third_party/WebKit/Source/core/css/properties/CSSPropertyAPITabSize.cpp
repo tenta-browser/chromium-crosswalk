@@ -9,10 +9,10 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPITabSize::parseSingleValue(
+const CSSValue* CSSPropertyAPITabSize::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   CSSPrimitiveValue* parsed_value =
       CSSPropertyParserHelpers::ConsumeInteger(range, 0);
   if (parsed_value)

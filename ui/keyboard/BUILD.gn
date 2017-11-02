@@ -25,8 +25,6 @@ component("keyboard") {
     "keyboard_ui.h",
     "keyboard_util.cc",
     "keyboard_util.h",
-    "scoped_keyboard_disabler.cc",
-    "scoped_keyboard_disabler.h",
   ]
 
   defines = [ "KEYBOARD_IMPLEMENTATION" ]
@@ -45,6 +43,7 @@ component("keyboard") {
     "//ui/events:events_base",
     "//ui/gfx",
     "//ui/gfx/geometry",
+    "//ui/wm",
   ]
 
   if (use_ozone) {
@@ -60,8 +59,6 @@ component("keyboard_with_content") {
     "content/keyboard_constants.h",
     "content/keyboard_content_util.cc",
     "content/keyboard_content_util.h",
-    "content/keyboard_ui_content.cc",
-    "content/keyboard_ui_content.h",
   ]
 
   defines = [ "KEYBOARD_IMPLEMENTATION" ]
@@ -104,6 +101,7 @@ static_library("test_support") {
     "//base",
     "//skia",
     "//ui/aura",
+    "//ui/base:test_support",
   ]
 }
 
@@ -169,8 +167,12 @@ test("keyboard_unittests") {
 
   deps = [
     ":keyboard",
+    ":keyboard_with_content",
+    ":test_support",
     "//base",
     "//base/test:test_support",
+    "//content/test:test_support",
+    "//mojo/edk/system",
     "//skia",
     "//testing/gtest",
     "//ui/aura:test_support",
@@ -184,5 +186,9 @@ test("keyboard_unittests") {
     "//ui/gl:test_support",
     "//ui/resources:ui_test_pak",
     "//ui/wm",
+  ]
+
+  data_deps = [
+    "//ui/resources:ui_test_pak_data",
   ]
 }

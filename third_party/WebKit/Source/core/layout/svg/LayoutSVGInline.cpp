@@ -35,9 +35,9 @@ bool LayoutSVGInline::IsChildAllowed(LayoutObject* child,
   if (child->IsText())
     return SVGLayoutSupport::IsLayoutableTextNode(child);
 
-  if (isSVGAElement(*GetNode())) {
+  if (IsSVGAElement(*GetNode())) {
     // Disallow direct descendant 'a'.
-    if (isSVGAElement(*child->GetNode()))
+    if (IsSVGAElement(*child->GetNode()))
       return false;
   }
 
@@ -147,14 +147,6 @@ void LayoutSVGInline::RemoveChild(LayoutObject* child) {
           LayoutSVGText::LocateLayoutSVGTextAncestor(this))
     text_layout_object->SubtreeChildWillBeRemoved();
   LayoutInline::RemoveChild(child);
-}
-
-void LayoutSVGInline::InvalidateTreeIfNeeded(
-    const PaintInvalidationState& paint_invalidation_state) {
-  // TODO(wangxianzhu): Verify if the inherited
-  // LayoutBoxModelObject::invalidateTreeIfNeeded() is applicable here.
-  // If yes, remove this overriding method.
-  LayoutObject::InvalidateTreeIfNeeded(paint_invalidation_state);
 }
 
 }  // namespace blink

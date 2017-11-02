@@ -14,17 +14,15 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/browser/ui/chrome_select_file_policy.h"
-#include "chrome/common/net/x509_certificate_model.h"
+#include "chrome/common/net/x509_certificate_model_nss.h"
 #include "chrome/grit/generated_resources.h"
-#include "content/public/browser/browser_thread.h"
 #include "net/base/filename_util.h"
+#include "net/cert/x509_util_nss.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
 #include "url/gurl.h"
-
-using content::BrowserThread;
-using content::WebContents;
 
 namespace {
 
@@ -36,12 +34,6 @@ void WriterCallback(const base::FilePath& path, const std::string& data) {
   }
 }
 
-void WriteFileOnFileThread(const base::FilePath& path,
-                           const std::string& data) {
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE, base::Bind(&WriterCallback, path, data));
-}
-
 std::string WrapAt64(const std::string &str) {
   std::string result;
   for (size_t i = 0; i < str.size(); i += 64) {
@@ -51,9 +43,9 @@ std::string WrapAt64(const std::string &str) {
   return result;
 }
 
-std::string GetBase64String(net::X509Certificate::OSCertHandle cert) {
+std::string GetBase64String(CERTCertificate* cert) {
   std::string der_cert;
-  if (!net::X509Certificate::GetDEREncoded(cert, &der_cert))
+  if (!net::x509_util::GetDEREncoded(cert, &der_cert))
     return std::string();
   std::string base64;
   base::Base64Encode(der_cert, &base64);
@@ -67,10 +59,9 @@ std::string GetBase64String(net::X509Certificate::OSCertHandle cert) {
 
 class Exporter : public ui::SelectFileDialog::Listener {
  public:
-  Exporter(WebContents* web_contents,
+  Exporter(content::WebContents* web_contents,
            gfx::NativeWindow parent,
-           net::X509Certificate::OSCertHandles::iterator certs_begin,
-           net::X509Certificate::OSCertHandles::iterator certs_end);
+           net::ScopedCERTCertificateList cert_chain);
   ~Exporter() override;
 
   // SelectFileDialog::Listener implemenation.
@@ -83,26 +74,20 @@ class Exporter : public ui::SelectFileDialog::Listener {
   scoped_refptr<ui::SelectFileDialog> select_file_dialog_;
 
   // The certificate hierarchy (leaf cert first).
-  net::X509Certificate::OSCertHandles cert_chain_list_;
+  net::ScopedCERTCertificateList cert_chain_list_;
 };
 
-Exporter::Exporter(WebContents* web_contents,
+Exporter::Exporter(content::WebContents* web_contents,
                    gfx::NativeWindow parent,
-                   net::X509Certificate::OSCertHandles::iterator certs_begin,
-                   net::X509Certificate::OSCertHandles::iterator certs_end)
+                   net::ScopedCERTCertificateList cert_chain)
     : select_file_dialog_(ui::SelectFileDialog::Create(
           this,
-          new ChromeSelectFilePolicy(web_contents))) {
-  DCHECK(certs_begin != certs_end);
-  for (net::X509Certificate::OSCertHandles::iterator i = certs_begin;
-       i != certs_end;
-       ++i) {
-    cert_chain_list_.push_back(net::X509Certificate::DupOSCertHandle(*i));
-  }
-
+          std::make_unique<ChromeSelectFilePolicy>(web_contents))),
+      cert_chain_list_(std::move(cert_chain)) {
   // TODO(mattm): should this default to some directory?
   // Maybe SavePackage::GetSaveDirPreference? (Except that it's private.)
-  std::string cert_title = x509_certificate_model::GetTitle(*certs_begin);
+  std::string cert_title =
+      x509_certificate_model::GetTitle(cert_chain_list_.begin()->get());
   base::FilePath suggested_path =
       net::GenerateFileName(GURL::EmptyGURL(),  // url
                             std::string(),      // content_disposition
@@ -123,10 +108,6 @@ Exporter::~Exporter() {
   // away so they don't try and call back to us.
   if (select_file_dialog_.get())
     select_file_dialog_->ListenerDestroyed();
-
-  std::for_each(cert_chain_list_.begin(),
-                cert_chain_list_.end(),
-                &net::X509Certificate::FreeOSCertHandle);
 }
 
 void Exporter::FileSelected(const base::FilePath& path, int index,
@@ -135,10 +116,10 @@ void Exporter::FileSelected(const base::FilePath& path, int index,
   switch (index) {
     case 2:
       for (size_t i = 0; i < cert_chain_list_.size(); ++i)
-        data += GetBase64String(cert_chain_list_[i]);
+        data += GetBase64String(cert_chain_list_[i].get());
       break;
     case 3:
-      net::X509Certificate::GetDEREncoded(cert_chain_list_[0], &data);
+      net::x509_util::GetDEREncoded(cert_chain_list_[0].get(), &data);
       break;
     case 4:
       data = x509_certificate_model::GetCMSString(cert_chain_list_, 0, 1);
@@ -149,12 +130,14 @@ void Exporter::FileSelected(const base::FilePath& path, int index,
       break;
     case 1:
     default:
-      data = GetBase64String(cert_chain_list_[0]);
+      data = GetBase64String(cert_chain_list_[0].get());
       break;
   }
 
-  if (!data.empty())
-    WriteFileOnFileThread(path, data);
+  if (!data.empty()) {
+    base::PostTaskWithTraits(FROM_HERE, {base::MayBlock()},
+                             base::BindOnce(&WriterCallback, path, data));
+  }
 
   delete this;
 }
@@ -198,21 +181,22 @@ void ShowCertSelectFileDialog(ui::SelectFileDialog* select_file_dialog,
       parent, params);
 }
 
-void ShowCertExportDialog(WebContents* web_contents,
+void ShowCertExportDialog(content::WebContents* web_contents,
                           gfx::NativeWindow parent,
                           const scoped_refptr<net::X509Certificate>& cert) {
-  net::X509Certificate::OSCertHandles cert_chain;
-  cert_chain.push_back(cert->os_cert_handle());
-  const net::X509Certificate::OSCertHandles& certs =
-      cert->GetIntermediateCertificates();
-  cert_chain.insert(cert_chain.end(), certs.begin(), certs.end());
-  new Exporter(web_contents, parent, cert_chain.begin(), cert_chain.end());
+  net::ScopedCERTCertificateList cert_chain =
+      net::x509_util::CreateCERTCertificateListFromX509Certificate(cert.get());
+  if (!cert_chain.empty())
+    new Exporter(web_contents, parent, std::move(cert_chain));
 }
 
-void ShowCertExportDialog(
-    content::WebContents* web_contents,
-    gfx::NativeWindow parent,
-    net::X509Certificate::OSCertHandles::iterator certs_begin,
-    net::X509Certificate::OSCertHandles::iterator certs_end) {
-  new Exporter(web_contents, parent, certs_begin, certs_end);
+void ShowCertExportDialog(content::WebContents* web_contents,
+                          gfx::NativeWindow parent,
+                          net::ScopedCERTCertificateList::iterator certs_begin,
+                          net::ScopedCERTCertificateList::iterator certs_end) {
+  DCHECK(certs_begin != certs_end);
+  net::ScopedCERTCertificateList cert_chain;
+  for (auto i = certs_begin; i != certs_end; ++i)
+    cert_chain.push_back(net::x509_util::DupCERTCertificate(i->get()));
+  new Exporter(web_contents, parent, std::move(cert_chain));
 }

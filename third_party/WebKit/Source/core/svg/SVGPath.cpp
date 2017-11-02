@@ -23,7 +23,6 @@
 
 #include "core/svg/SVGPath.h"
 
-#include "core/SVGNames.h"
 #include "core/svg/SVGAnimationElement.h"
 #include "core/svg/SVGPathBlender.h"
 #include "core/svg/SVGPathByteStream.h"
@@ -34,6 +33,8 @@
 #include <memory>
 
 namespace blink {
+
+using cssvalue::CSSPathValue;
 
 namespace {
 

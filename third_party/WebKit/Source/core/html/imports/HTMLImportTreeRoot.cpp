@@ -4,8 +4,8 @@
 
 #include "core/html/imports/HTMLImportTreeRoot.h"
 
+#include "core/css/StyleEngine.h"
 #include "core/dom/Document.h"
-#include "core/dom/StyleEngine.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/imports/HTMLImportChild.h"
 
@@ -30,7 +30,7 @@ HTMLImportTreeRoot::~HTMLImportTreeRoot() {}
 void HTMLImportTreeRoot::Dispose() {
   for (const auto& import_child : imports_)
     import_child->Dispose();
-  imports_.Clear();
+  imports_.clear();
   document_ = nullptr;
   recalc_timer_.Stop();
 }
@@ -51,10 +51,8 @@ void HTMLImportTreeRoot::StateWillChange() {
 void HTMLImportTreeRoot::StateDidChange() {
   HTMLImport::StateDidChange();
 
-  if (!GetState().IsReady())
-    return;
-  if (LocalFrame* frame = document_->GetFrame())
-    frame->Loader().CheckCompleted();
+  if (GetState().IsReady())
+    document_->CheckCompleted();
 }
 
 void HTMLImportTreeRoot::ScheduleRecalcState() {
@@ -87,6 +85,10 @@ DEFINE_TRACE(HTMLImportTreeRoot) {
   visitor->Trace(document_);
   visitor->Trace(imports_);
   HTMLImport::Trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(HTMLImportTreeRoot) {
+  visitor->TraceWrappers(document_);
 }
 
 }  // namespace blink

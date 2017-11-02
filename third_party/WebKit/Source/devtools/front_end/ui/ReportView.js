@@ -14,9 +14,19 @@ UI.ReportView = class extends UI.VBox {
 
     var contentBox = this.contentElement.createChild('div', 'report-content-box');
     this._headerElement = contentBox.createChild('div', 'report-header vbox');
-    this._headerElement.createChild('div', 'report-title').textContent = title;
+    this._titleElement = this._headerElement.createChild('div', 'report-title');
+    this._titleElement.textContent = title;
 
     this._sectionList = contentBox.createChild('div', 'vbox');
+  }
+
+  /**
+   * @param {string} title
+   */
+  setTitle(title) {
+    if (this._titleElement.textContent === title)
+      return;
+    this._titleElement.textContent = title;
   }
 
   /**
@@ -61,8 +71,19 @@ UI.ReportView = class extends UI.VBox {
     return section;
   }
 
-  removeAllSection() {
-    this._sectionList.removeChildren();
+  /**
+   * @param {function(!UI.ReportView.Section, !UI.ReportView.Section): number} comparator
+   */
+  sortSections(comparator) {
+    var sections = /** @type {!Array<!UI.ReportView.Section>} */ (this.children().slice());
+    var sorted = sections.every((e, i, a) => !i || comparator(a[i - 1], a[i]) <= 0);
+    if (sorted)
+      return;
+
+    this.detachChildWidgets();
+    sections.sort(comparator);
+    for (var section of sections)
+      section.show(this._sectionList);
   }
 };
 
@@ -85,6 +106,13 @@ UI.ReportView.Section = class extends UI.VBox {
     this._fieldList = this.element.createChild('div', 'vbox');
     /** @type {!Map.<string, !Element>} */
     this._fieldMap = new Map();
+  }
+
+  /**
+   * @return {string}
+   */
+  title() {
+    return this._titleElement.textContent;
   }
 
   /**
@@ -120,10 +148,6 @@ UI.ReportView.Section = class extends UI.VBox {
     if (textValue)
       row.lastElementChild.textContent = textValue;
     return /** @type {!Element} */ (row.lastElementChild);
-  }
-
-  remove() {
-    this.element.remove();
   }
 
   /**

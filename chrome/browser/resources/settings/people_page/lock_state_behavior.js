@@ -22,11 +22,8 @@ var LockStateBehavior = {
      * The currently selected unlock type.
      * @type {!LockScreenUnlockType}
      */
-    selectedUnlockType: {
-      type: String,
-      notify: true,
-      value: LockScreenUnlockType.VALUE_PENDING
-    },
+    selectedUnlockType:
+        {type: String, notify: true, value: LockScreenUnlockType.VALUE_PENDING},
 
     /**
      * True/false if there is a PIN set; undefined if the computation is still
@@ -34,28 +31,22 @@ var LockStateBehavior = {
      * can change the selectedUnlockType before setting up a PIN.
      * @type {boolean|undefined}
      */
-    hasPin: {
-      type: Boolean,
-      notify: true
-    },
+    hasPin: {type: Boolean, notify: true},
 
     /**
      * Interface for chrome.quickUnlockPrivate calls. May be overriden by tests.
      * @private
      */
-    quickUnlockPrivate_: {
-      type: Object,
-      value: chrome.quickUnlockPrivate
-    },
+    quickUnlockPrivate_: {type: Object, value: chrome.quickUnlockPrivate},
   },
 
   /** @override */
   attached: function() {
-    this.boundOnActiveModesChanged_ = this.updateUnlockType_.bind(this);
+    this.boundOnActiveModesChanged_ = this.updateUnlockType.bind(this);
     this.quickUnlockPrivate_.onActiveModesChanged.addListener(
         this.boundOnActiveModesChanged_);
 
-    this.updateUnlockType_();
+    this.updateUnlockType();
   },
 
   /** @override */
@@ -68,11 +59,9 @@ var LockStateBehavior = {
    * Updates the selected unlock type radio group. This function will get called
    * after preferences are initialized, after the quick unlock mode has been
    * changed, and after the lockscreen preference has changed.
-   *
-   * @private
    */
-  updateUnlockType_: function() {
-    this.quickUnlockPrivate_.getActiveModes(function(modes) {
+  updateUnlockType: function() {
+    this.quickUnlockPrivate_.getActiveModes(modes => {
       if (modes.includes(chrome.quickUnlockPrivate.QuickUnlockMode.PIN)) {
         this.hasPin = true;
         this.selectedUnlockType = LockScreenUnlockType.PIN_PASSWORD;
@@ -80,6 +69,6 @@ var LockStateBehavior = {
         this.hasPin = false;
         this.selectedUnlockType = LockScreenUnlockType.PASSWORD;
       }
-    }.bind(this));
+    });
   },
 };

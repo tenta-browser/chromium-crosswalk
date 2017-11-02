@@ -11,7 +11,6 @@
 #include "core/frame/LocalFrameClient.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "platform/Histogram.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/fonts/FontCache.h"
 #include "platform/fonts/FontCustomPlatformData.h"
 #include "platform/fonts/FontDescription.h"
@@ -23,41 +22,6 @@
 #include "public/platform/WebEffectiveConnectionType.h"
 
 namespace blink {
-
-namespace {
-
-bool IsEffectiveConnectionTypeSlowFor(Document* document) {
-  WebEffectiveConnectionType type =
-      document->GetFrame()->Loader().Client()->GetEffectiveConnectionType();
-
-  WebEffectiveConnectionType threshold_type =
-      WebEffectiveConnectionType::kTypeUnknown;
-  if (RuntimeEnabledFeatures::webFontsInterventionV2With2GEnabled()) {
-    threshold_type = WebEffectiveConnectionType::kType2G;
-  } else if (RuntimeEnabledFeatures::webFontsInterventionV2With3GEnabled()) {
-    threshold_type = WebEffectiveConnectionType::kType3G;
-  } else if (RuntimeEnabledFeatures::
-                 webFontsInterventionV2WithSlow2GEnabled()) {
-    threshold_type = WebEffectiveConnectionType::kTypeSlow2G;
-  }
-  DCHECK_NE(WebEffectiveConnectionType::kTypeUnknown, threshold_type);
-
-  return WebEffectiveConnectionType::kTypeOffline <= type &&
-         type <= threshold_type;
-}
-
-bool IsConnectionTypeSlow() {
-  return GetNetworkStateNotifier().ConnectionType() ==
-         kWebConnectionTypeCellular2G;
-}
-
-bool IsInterventionV2Enabled() {
-  return RuntimeEnabledFeatures::webFontsInterventionV2With2GEnabled() ||
-         RuntimeEnabledFeatures::webFontsInterventionV2With3GEnabled() ||
-         RuntimeEnabledFeatures::webFontsInterventionV2WithSlow2GEnabled();
-}
-
-}  // namespace
 
 RemoteFontFaceSource::RemoteFontFaceSource(FontResource* font,
                                            CSSFontSelector* font_selector,
@@ -75,10 +39,6 @@ RemoteFontFaceSource::RemoteFontFaceSource(FontResource* font,
   if (ShouldTriggerWebFontsIntervention()) {
     is_intervention_triggered_ = true;
     period_ = kSwapPeriod;
-    font_selector_->GetDocument()->AddConsoleMessage(ConsoleMessage::Create(
-        kOtherMessageSource, kInfoMessageLevel,
-        "Slow network is detected. Fallback font will be used while loading: " +
-            font_->Url().ElidedString()));
   }
 
   // Note: this may call notifyFinished() and clear font_.
@@ -100,11 +60,11 @@ void RemoteFontFaceSource::PruneTable() {
     return;
 
   for (const auto& item : font_data_table_) {
-    SimpleFontData* font_data = item.value.Get();
+    SimpleFontData* font_data = item.value.get();
     if (font_data && font_data->GetCustomFontData())
       font_data->GetCustomFontData()->ClearFontFaceSource();
   }
-  font_data_table_.Clear();
+  font_data_table_.clear();
 }
 
 bool RemoteFontFaceSource::IsLoading() const {
@@ -125,7 +85,7 @@ void RemoteFontFaceSource::NotifyFinished(Resource* unused_resource) {
                                    ? FontLoadHistograms::kFromDiskCache
                                    : FontLoadHistograms::kFromNetwork);
   histograms_.RecordRemoteFont(font_.Get(), is_intervention_triggered_);
-  histograms_.FontLoaded(font_->IsCORSFailed(),
+  histograms_.FontLoaded(!font_->IsSameOriginOrCORSSuccessful(),
                          font_->GetStatus() == ResourceStatus::kLoadError,
                          is_intervention_triggered_);
 
@@ -144,13 +104,17 @@ void RemoteFontFaceSource::NotifyFinished(Resource* unused_resource) {
           "OTS parsing error: " + font_->OtsParsingMessage()));
   }
 
+  CSSFontFace::LoadFinishReason load_finish_reason =
+      font_->GetResourceError().IsCancellation()
+          ? CSSFontFace::LoadFinishReason::WasCancelled
+          : CSSFontFace::LoadFinishReason::NormalFinish;
   font_->RemoveClient(this);
   font_ = nullptr;
 
   PruneTable();
   if (face_) {
     font_selector_->FontFaceInvalidated();
-    face_->FontLoaded(this);
+    face_->FontLoaded(this, load_finish_reason);
   }
 }
 
@@ -198,26 +162,30 @@ void RemoteFontFaceSource::SwitchToFailurePeriod() {
 }
 
 bool RemoteFontFaceSource::ShouldTriggerWebFontsIntervention() {
-  if (RuntimeEnabledFeatures::webFontsInterventionTriggerEnabled())
-    return true;
   if (histograms_.GetDataSource() == FontLoadHistograms::kFromMemoryCache ||
       histograms_.GetDataSource() == FontLoadHistograms::kFromDataURL)
     return false;
 
+  WebEffectiveConnectionType connection_type =
+      font_selector_->GetDocument()
+          ->GetFrame()
+          ->Client()
+          ->GetEffectiveConnectionType();
+
   bool network_is_slow =
-      IsInterventionV2Enabled()
-          ? IsEffectiveConnectionTypeSlowFor(font_selector_->GetDocument())
-          : IsConnectionTypeSlow();
+      WebEffectiveConnectionType::kTypeOffline <= connection_type &&
+      connection_type <= WebEffectiveConnectionType::kType3G;
 
   return network_is_slow && display_ == kFontDisplayAuto;
 }
 
 bool RemoteFontFaceSource::IsLowPriorityLoadingAllowedForRemoteFont() const {
-  return is_intervention_triggered_ && IsInterventionV2Enabled();
+  return is_intervention_triggered_;
 }
 
-PassRefPtr<SimpleFontData> RemoteFontFaceSource::CreateFontData(
-    const FontDescription& font_description) {
+RefPtr<SimpleFontData> RemoteFontFaceSource::CreateFontData(
+    const FontDescription& font_description,
+    const FontSelectionCapabilities& font_selection_capabilities) {
   if (period_ == kFailurePeriod || !IsValid())
     return nullptr;
   if (!IsLoaded())
@@ -230,12 +198,14 @@ PassRefPtr<SimpleFontData> RemoteFontFaceSource::CreateFontData(
       custom_font_data_->GetFontPlatformData(
           font_description.EffectiveFontSize(),
           font_description.IsSyntheticBold(),
-          font_description.IsSyntheticItalic(), font_description.Orientation(),
+          font_description.IsSyntheticItalic(),
+          font_description.GetFontSelectionRequest(),
+          font_selection_capabilities, font_description.Orientation(),
           font_description.VariationSettings()),
       CustomFontData::Create());
 }
 
-PassRefPtr<SimpleFontData> RemoteFontFaceSource::CreateLoadingFallbackFontData(
+RefPtr<SimpleFontData> RemoteFontFaceSource::CreateLoadingFallbackFontData(
     const FontDescription& font_description) {
   // This temporary font is not retained and should not be returned.
   FontCachePurgePreventer font_cache_purge_preventer;
@@ -270,6 +240,13 @@ void RemoteFontFaceSource::BeginLoadIfNeeded() {
       if (!font_->IsLoaded())
         font_->StartLoadLimitTimers();
       histograms_.LoadStarted();
+    }
+    if (is_intervention_triggered_) {
+      font_selector_->GetDocument()->AddConsoleMessage(
+          ConsoleMessage::Create(kOtherMessageSource, kInfoMessageLevel,
+                                 "Slow network is detected. Fallback font will "
+                                 "be used while loading: " +
+                                     font_->Url().ElidedString()));
     }
   }
 
@@ -336,7 +313,8 @@ void RemoteFontFaceSource::FontLoadHistograms::RecordRemoteFont(
     RecordLoadTimeHistogram(font, duration, is_intervention_triggered);
 
     enum { kCORSFail, kCORSSuccess, kCORSEnumMax };
-    int cors_value = font->IsCORSFailed() ? kCORSFail : kCORSSuccess;
+    int cors_value =
+        font->IsSameOriginOrCORSSuccessful() ? kCORSSuccess : kCORSFail;
     DEFINE_STATIC_LOCAL(EnumerationHistogram, cors_histogram,
                         ("WebFont.CORSSuccess", kCORSEnumMax));
     cors_histogram.Count(cors_value);

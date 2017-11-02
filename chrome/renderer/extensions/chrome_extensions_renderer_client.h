@@ -10,9 +10,9 @@
 
 #include "base/macros.h"
 #include "extensions/renderer/extensions_renderer_client.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "ui/base/page_transition_types.h"
 
-class ChromeExtensionsDispatcherDelegate;
 class GURL;
 
 namespace blink {
@@ -46,10 +46,15 @@ class ChromeExtensionsRendererClient
   // extensions::ExtensionsRendererClient implementation.
   bool IsIncognitoProcess() const override;
   int GetLowestIsolatedWorldId() const override;
+  extensions::Dispatcher* GetDispatcher() override;
+  void OnExtensionLoaded(const extensions::Extension& extension) override;
+  void OnExtensionUnloaded(
+      const extensions::ExtensionId& extension_id) override;
 
   // See ChromeContentRendererClient methods with the same names.
   void RenderThreadStarted();
-  void RenderFrameCreated(content::RenderFrame* render_frame);
+  void RenderFrameCreated(content::RenderFrame* render_frame,
+                          service_manager::BinderRegistry* registry);
   void RenderViewCreated(content::RenderView* render_view);
   bool OverrideCreatePlugin(content::RenderFrame* render_frame,
                             const blink::WebPluginParams& params);
@@ -81,8 +86,6 @@ class ChromeExtensionsRendererClient
   }
 
  private:
-  std::unique_ptr<ChromeExtensionsDispatcherDelegate>
-      extension_dispatcher_delegate_;
   std::unique_ptr<extensions::Dispatcher> extension_dispatcher_;
   std::unique_ptr<extensions::RendererPermissionsPolicyDelegate>
       permissions_policy_delegate_;

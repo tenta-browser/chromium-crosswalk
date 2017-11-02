@@ -45,9 +45,6 @@
 #include <utrie2.h>
 #endif
 
-using namespace WTF;
-using namespace Unicode;
-
 namespace blink {
 
 #if defined(USING_SYSTEM_ICU)
@@ -131,7 +128,7 @@ unsigned Character::ExpansionOpportunityCount(const LChar* characters,
                                               bool& is_after_expansion,
                                               const TextJustify text_justify) {
   unsigned count = 0;
-  if (text_justify == kTextJustifyDistribute) {
+  if (text_justify == TextJustify::kDistribute) {
     is_after_expansion = true;
     return length;
   }
@@ -178,7 +175,7 @@ unsigned Character::ExpansionOpportunityCount(const UChar* characters,
         character = U16_GET_SUPPLEMENTARY(character, characters[i + 1]);
         i++;
       }
-      if (text_justify == TextJustify::kTextJustifyAuto &&
+      if (text_justify == TextJustify::kAuto &&
           IsCJKIdeographOrSymbol(character)) {
         if (!is_after_expansion)
           count++;
@@ -200,7 +197,7 @@ unsigned Character::ExpansionOpportunityCount(const UChar* characters,
         character = U16_GET_SUPPLEMENTARY(characters[i - 2], character);
         i--;
       }
-      if (text_justify == TextJustify::kTextJustifyAuto &&
+      if (text_justify == TextJustify::kAuto &&
           IsCJKIdeographOrSymbol(character)) {
         if (!is_after_expansion)
           count++;
@@ -215,9 +212,11 @@ unsigned Character::ExpansionOpportunityCount(const UChar* characters,
 }
 
 bool Character::CanReceiveTextEmphasis(UChar32 c) {
-  CharCategory category = Unicode::Category(c);
-  if (category & (kSeparator_Space | kSeparator_Line | kSeparator_Paragraph |
-                  kOther_NotAssigned | kOther_Control | kOther_Format))
+  WTF::Unicode::CharCategory category = WTF::Unicode::Category(c);
+  if (category &
+      (WTF::Unicode::kSeparator_Space | WTF::Unicode::kSeparator_Line |
+       WTF::Unicode::kSeparator_Paragraph | WTF::Unicode::kOther_NotAssigned |
+       WTF::Unicode::kOther_Control | WTF::Unicode::kOther_Format))
     return false;
 
   // Additional word-separator characters listed in CSS Text Level 3 Editor's

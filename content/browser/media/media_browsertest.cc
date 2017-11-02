@@ -34,10 +34,13 @@ const char MediaBrowserTest::kErrorEvent[] = "ERROR";
 // Lower case event name as set by Utils.failTest().
 const char MediaBrowserTest::kError[] = "error";
 
+#if defined(OS_ANDROID)
+// Title set by android cleaner page after short timeout.
+const char kClean[] = "CLEAN";
+#endif
+
 void MediaBrowserTest::SetUpCommandLine(base::CommandLine* command_line) {
-  command_line->AppendSwitch(
-      switches::kDisableGestureRequirementForMediaPlayback);
-  command_line->AppendSwitch(switches::kEnableVp9InMp4);
+  command_line->AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
 }
 
 void MediaBrowserTest::RunMediaTestPage(const std::string& html_page,
@@ -68,6 +71,19 @@ std::string MediaBrowserTest::RunTest(const GURL& gurl,
   AddTitlesToAwait(&title_watcher);
   NavigateToURL(shell(), gurl);
   base::string16 result = title_watcher.WaitAndGetTitle();
+
+#if defined(OS_ANDROID)
+  // We only do this cleanup on Android, as a workaround for a test-only OOM
+  // bug. See http://crbug.com/727542
+  const base::string16 cleaner_title = base::ASCIIToUTF16(kClean);
+  TitleWatcher clean_title_watcher(shell()->web_contents(), cleaner_title);
+  GURL cleaner_url = content::GetFileUrlWithQuery(
+      media::GetTestDataFilePath("cleaner.html"), "");
+  NavigateToURL(shell(), cleaner_url);
+  base::string16 cleaner_result = clean_title_watcher.WaitAndGetTitle();
+  EXPECT_EQ(cleaner_result, cleaner_title);
+#endif
+
   return base::UTF16ToASCII(result);
 }
 
@@ -107,7 +123,7 @@ class MediaTest : public testing::WithParamInterface<bool>,
                  const std::string& media_file,
                  bool http) {
     base::StringPairs query_params;
-    query_params.push_back(std::make_pair(tag, media_file));
+    query_params.emplace_back(tag, media_file);
     RunMediaTestPage("player.html", query_params, kEnded, http);
   }
 
@@ -116,9 +132,9 @@ class MediaTest : public testing::WithParamInterface<bool>,
                            const std::string& expected_error_substring,
                            bool http) {
     base::StringPairs query_params;
-    query_params.push_back(std::make_pair(tag, media_file));
-    query_params.push_back(std::make_pair(
-        "error_substr", EncodeErrorMessage(expected_error_substring)));
+    query_params.emplace_back(tag, media_file);
+    query_params.emplace_back("error_substr",
+                              EncodeErrorMessage(expected_error_substring));
     RunMediaTestPage("player.html", query_params, kErrorEvent, http);
   }
 
@@ -128,7 +144,7 @@ class MediaTest : public testing::WithParamInterface<bool>,
     expected += " ";
     expected += base::IntToString(height);
     base::StringPairs query_params;
-    query_params.push_back(std::make_pair("video", media_file));
+    query_params.emplace_back("video", media_file);
     RunMediaTestPage("player.html", query_params, expected, false);
   }
 };
@@ -180,6 +196,14 @@ IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearMp4Vp9) {
   PlayVideo("bear-320x240-v_frag-vp9.mp4", GetParam());
 }
 
+IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearFlacMp4) {
+  PlayAudio("bear-flac.mp4", GetParam());
+}
+
+IN_PROC_BROWSER_TEST_P(MediaTest, AudioBearFlac192kHzMp4) {
+  PlayAudio("bear-flac-192kHz.mp4", GetParam());
+}
+
 // Android devices usually only support baseline, main and high.
 #if !defined(OS_ANDROID)
 IN_PROC_BROWSER_TEST_P(MediaTest, VideoBearHighBitDepthMp4) {
@@ -217,6 +241,15 @@ IN_PROC_BROWSER_TEST_F(MediaTest, VideoBearRotated180) {
 IN_PROC_BROWSER_TEST_F(MediaTest, VideoBearRotated270) {
   RunVideoSizeTest("bear_rotate_270.mp4", 720, 1280);
 }
+
+// Android can't reliably load lots of videos on a page.
+// See http://crbug.com/749265
+#if !defined(OS_ANDROID)
+IN_PROC_BROWSER_TEST_F(MediaTest, LoadManyVideos) {
+  base::StringPairs query_params;
+  RunMediaTestPage("load_many_videos.html", query_params, kEnded, true);
+}
+#endif  // !defined(OS_ANDROID)
 #endif  // BUILDFLAG(USE_PROPRIETARY_CODECS)
 
 #if defined(OS_CHROMEOS)

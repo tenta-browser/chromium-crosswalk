@@ -5,24 +5,24 @@
 #ifndef SERVICES_SHAPE_DETECTION_BARCODE_DETECTION_IMPL_MAC_H_
 #define SERVICES_SHAPE_DETECTION_BARCODE_DETECTION_IMPL_MAC_H_
 
+#include "base/mac/availability.h"
 #include "base/mac/scoped_nsobject.h"
 #include "services/shape_detection/public/interfaces/barcodedetection.mojom.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 @class CIDetector;
 
 namespace shape_detection {
 
-class BarcodeDetectionImplMac
+class API_AVAILABLE(macosx(10.10)) BarcodeDetectionImplMac
     : public shape_detection::mojom::BarcodeDetection {
  public:
   BarcodeDetectionImplMac();
   ~BarcodeDetectionImplMac() override;
 
-  void Detect(mojo::ScopedSharedBufferHandle frame_data,
-              uint32_t width,
-              uint32_t height,
-              const shape_detection::mojom::BarcodeDetection::DetectCallback&
-                  callback) override;
+  void Detect(const SkBitmap& bitmap,
+              shape_detection::mojom::BarcodeDetection::DetectCallback callback)
+      override;
 
  private:
   base::scoped_nsobject<CIDetector> detector_;

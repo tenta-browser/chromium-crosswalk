@@ -5,7 +5,6 @@
 #include "core/animation/AnimationInputHelpers.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/SVGNames.h"
 #include "core/css/CSSValueList.h"
 #include "core/css/parser/CSSParser.h"
 #include "core/css/parser/CSSVariableParser.h"
@@ -13,6 +12,7 @@
 #include "core/frame/Deprecation.h"
 #include "core/svg/SVGElement.h"
 #include "core/svg/animation/SVGSMILElement.h"
+#include "core/svg_names.h"
 #include "platform/wtf/text/StringBuilder.h"
 
 namespace blink {
@@ -60,7 +60,7 @@ CSSPropertyID AnimationInputHelpers::KeyframeAttributeToCSSProperty(
 CSSPropertyID AnimationInputHelpers::KeyframeAttributeToPresentationAttribute(
     const String& property,
     const Element& element) {
-  if (!RuntimeEnabledFeatures::webAnimationsSVGEnabled() ||
+  if (!RuntimeEnabledFeatures::WebAnimationsSVGEnabled() ||
       !element.IsSVGElement() || !IsSVGPrefixed(property))
     return CSSPropertyInvalid;
 
@@ -192,7 +192,7 @@ QualifiedName SvgAttributeName(const String& property) {
 const QualifiedName* AnimationInputHelpers::KeyframeAttributeToSVGAttribute(
     const String& property,
     Element& element) {
-  if (!RuntimeEnabledFeatures::webAnimationsSVGEnabled() ||
+  if (!RuntimeEnabledFeatures::WebAnimationsSVGEnabled() ||
       !element.IsSVGElement() || !IsSVGPrefixed(property))
     return nullptr;
 
@@ -203,7 +203,7 @@ const QualifiedName* AnimationInputHelpers::KeyframeAttributeToSVGAttribute(
   String unprefixed_property = RemoveSVGPrefix(property);
   QualifiedName attribute_name = SvgAttributeName(unprefixed_property);
   const AttributeNameMap& supported_attributes = GetSupportedAttributes();
-  auto iter = supported_attributes.Find(attribute_name);
+  auto iter = supported_attributes.find(attribute_name);
   if (iter == supported_attributes.end() ||
       !svg_element.PropertyFromAttribute(*iter->value))
     return nullptr;
@@ -211,7 +211,7 @@ const QualifiedName* AnimationInputHelpers::KeyframeAttributeToSVGAttribute(
   return iter->value;
 }
 
-PassRefPtr<TimingFunction> AnimationInputHelpers::ParseTimingFunction(
+RefPtr<TimingFunction> AnimationInputHelpers::ParseTimingFunction(
     const String& string,
     Document* document,
     ExceptionState& exception_state) {
@@ -238,10 +238,10 @@ PassRefPtr<TimingFunction> AnimationInputHelpers::ParseTimingFunction(
         // for easing. See http://crbug.com/601672
         if (string == "function (a){return a}") {
           UseCounter::Count(*document,
-                            UseCounter::kWebAnimationsEasingAsFunctionLinear);
+                            WebFeature::kWebAnimationsEasingAsFunctionLinear);
         } else {
           UseCounter::Count(*document,
-                            UseCounter::kWebAnimationsEasingAsFunctionOther);
+                            WebFeature::kWebAnimationsEasingAsFunctionOther);
         }
       }
     }
@@ -254,7 +254,8 @@ PassRefPtr<TimingFunction> AnimationInputHelpers::ParseTimingFunction(
     exception_state.ThrowTypeError("Easing may not be set to a list of values");
     return nullptr;
   }
-  return CSSToStyleMap::MapAnimationTimingFunction(value_list->Item(0), true);
+  return CSSToStyleMap::MapAnimationTimingFunction(value_list->Item(0), true,
+                                                   document);
 }
 
 }  // namespace blink

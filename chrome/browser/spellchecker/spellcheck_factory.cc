@@ -72,13 +72,13 @@ void SpellcheckServiceFactory::RegisterProfilePrefs(
   user_prefs->RegisterListPref(spellcheck::prefs::kSpellCheckDictionaries,
                                base::MakeUnique<base::ListValue>());
   // Continue registering kSpellCheckDictionary for preference migration.
-  // TODO(estade): IDS_SPELLCHECK_DICTIONARY should be an ASCII string.
+  // TODO(estade): remove: crbug.com/751275
   user_prefs->RegisterStringPref(
       spellcheck::prefs::kSpellCheckDictionary,
       l10n_util::GetStringUTF8(IDS_SPELLCHECK_DICTIONARY));
   user_prefs->RegisterBooleanPref(
       spellcheck::prefs::kSpellCheckUseSpellingService, false);
-#if defined(OS_IOS) || defined(OS_ANDROID)
+#if defined(OS_ANDROID)
   uint32_t flags = PrefRegistry::NO_REGISTRATION_FLAGS;
 #else
   uint32_t flags = user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;

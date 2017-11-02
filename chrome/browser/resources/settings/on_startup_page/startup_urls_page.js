@@ -43,22 +43,22 @@ Polymer({
   /** @override */
   attached: function() {
     this.browserProxy_ = settings.StartupUrlsPageBrowserProxyImpl.getInstance();
-    this.addWebUIListener('update-startup-pages', function(startupPages) {
+    this.addWebUIListener('update-startup-pages', startupPages => {
       // If an "edit" URL dialog was open, close it, because the underlying page
       // might have just been removed (and model indices have changed anyway).
       if (this.startupUrlDialogModel_)
         this.destroyUrlDialog_();
       this.startupPages_ = startupPages;
       this.updateScrollableContents();
-    }.bind(this));
+    });
     this.browserProxy_.loadStartupPages();
 
-    this.addEventListener(settings.EDIT_STARTUP_URL_EVENT, function(event) {
+    this.addEventListener(settings.EDIT_STARTUP_URL_EVENT, event => {
       this.startupUrlDialogModel_ = event.detail.model;
       this.startupUrlDialogAnchor_ = event.detail.anchor;
       this.showStartupUrlDialog_ = true;
       event.stopPropagation();
-    }.bind(this));
+    });
   },
 
   /**
@@ -68,8 +68,8 @@ Polymer({
   onAddPageTap_: function(e) {
     e.preventDefault();
     this.showStartupUrlDialog_ = true;
-    this.startupUrlDialogAnchor_ = /** @type {!HTMLElement} */ (
-        this.$$('#addPage a[is=action-link]'));
+    this.startupUrlDialogAnchor_ =
+        /** @type {!HTMLElement} */ (this.$$('#addPage a[is=action-link]'));
   },
 
   /** @private */
@@ -77,7 +77,7 @@ Polymer({
     this.showStartupUrlDialog_ = false;
     this.startupUrlDialogModel_ = null;
     if (this.startupUrlDialogAnchor_) {
-      this.startupUrlDialogAnchor_.focus();
+      cr.ui.focusWithoutInk(assert(this.startupUrlDialogAnchor_));
       this.startupUrlDialogAnchor_ = null;
     }
   },
@@ -85,5 +85,15 @@ Polymer({
   /** @private */
   onUseCurrentPagesTap_: function() {
     this.browserProxy_.useCurrentPages();
+  },
+
+  /**
+   * @return {boolean} Whether "Add new page" and "Use current pages" are
+   *     allowed.
+   * @private
+   */
+  shouldAllowUrlsEdit_: function() {
+    return this.get('prefs.session.startup_urls.enforcement') !=
+        chrome.settingsPrivate.Enforcement.ENFORCED;
   },
 });

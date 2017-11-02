@@ -10,12 +10,12 @@
 #include <limits>
 
 #include "base/pickle.h"
-#include "base/strings/nullable_string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "content/common/resource_request_body_impl.h"
+#include "content/common/unique_name_helper.h"
+#include "content/public/common/resource_request_body.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 
@@ -29,26 +29,27 @@ float g_device_scale_factor_for_testing = 0.0;
 //-----------------------------------------------------------------------------
 
 void AppendDataToRequestBody(
-    const scoped_refptr<ResourceRequestBodyImpl>& request_body,
+    const scoped_refptr<ResourceRequestBody>& request_body,
     const char* data,
     int data_length) {
   request_body->AppendBytes(data, data_length);
 }
 
 void AppendFileRangeToRequestBody(
-    const scoped_refptr<ResourceRequestBodyImpl>& request_body,
-    const base::NullableString16& file_path,
+    const scoped_refptr<ResourceRequestBody>& request_body,
+    const base::Optional<base::string16>& file_path,
     int file_start,
     int file_length,
     double file_modification_time) {
   request_body->AppendFileRange(
-      base::FilePath::FromUTF16Unsafe(file_path.string()),
+      file_path ? base::FilePath::FromUTF16Unsafe(*file_path)
+                : base::FilePath(),
       static_cast<uint64_t>(file_start), static_cast<uint64_t>(file_length),
       base::Time::FromDoubleT(file_modification_time));
 }
 
 void AppendURLRangeToRequestBody(
-    const scoped_refptr<ResourceRequestBodyImpl>& request_body,
+    const scoped_refptr<ResourceRequestBody>& request_body,
     const GURL& url,
     int file_start,
     int file_length,
@@ -60,7 +61,7 @@ void AppendURLRangeToRequestBody(
 }
 
 void AppendBlobToRequestBody(
-    const scoped_refptr<ResourceRequestBodyImpl>& request_body,
+    const scoped_refptr<ResourceRequestBody>& request_body,
     const std::string& uuid) {
   request_body->AppendBlob(uuid);
 }
@@ -68,18 +69,17 @@ void AppendBlobToRequestBody(
 //----------------------------------------------------------------------------
 
 void AppendReferencedFilesFromHttpBody(
-    const std::vector<ResourceRequestBodyImpl::Element>& elements,
-    std::vector<base::NullableString16>* referenced_files) {
+    const std::vector<ResourceRequestBody::Element>& elements,
+    std::vector<base::Optional<base::string16>>* referenced_files) {
   for (size_t i = 0; i < elements.size(); ++i) {
-    if (elements[i].type() == ResourceRequestBodyImpl::Element::TYPE_FILE)
-      referenced_files->push_back(
-          base::NullableString16(elements[i].path().AsUTF16Unsafe(), false));
+    if (elements[i].type() == ResourceRequestBody::Element::TYPE_FILE)
+      referenced_files->emplace_back(elements[i].path().AsUTF16Unsafe());
   }
 }
 
 bool AppendReferencedFilesFromDocumentState(
-    const std::vector<base::NullableString16>& document_state,
-    std::vector<base::NullableString16>* referenced_files) {
+    const std::vector<base::Optional<base::string16>>& document_state,
+    std::vector<base::Optional<base::string16>>* referenced_files) {
   if (document_state.empty())
     return true;
 
@@ -99,7 +99,8 @@ bool AppendReferencedFilesFromDocumentState(
   index++;  // Skip over form key.
 
   size_t item_count;
-  if (!base::StringToSizeT(document_state[index++].string(), &item_count))
+  if (!document_state[index] ||
+      !base::StringToSizeT(*document_state[index++], &item_count))
     return false;
 
   while (item_count--) {
@@ -107,24 +108,25 @@ bool AppendReferencedFilesFromDocumentState(
       return false;
 
     index++;  // Skip over name.
-    const base::NullableString16& type = document_state[index++];
+    const base::Optional<base::string16>& type = document_state[index++];
 
     if (index >= document_state.size())
       return false;
 
     size_t value_size;
-    if (!base::StringToSizeT(document_state[index++].string(), &value_size))
+    if (!document_state[index] ||
+        !base::StringToSizeT(*document_state[index++], &value_size))
       return false;
 
     if (index + value_size > document_state.size() ||
         index + value_size < index)  // Check for overflow.
       return false;
 
-    if (base::EqualsASCII(type.string(), "file")) {
+    if (type && base::EqualsASCII(*type, "file")) {
       if (value_size != 2)
         return false;
 
-      referenced_files->push_back(document_state[index++]);
+      referenced_files->emplace_back(document_state[index++]);
       index++;  // Skip over display name.
     } else {
       index += value_size;
@@ -136,7 +138,7 @@ bool AppendReferencedFilesFromDocumentState(
 
 bool RecursivelyAppendReferencedFiles(
     const ExplodedFrameState& frame_state,
-    std::vector<base::NullableString16>* referenced_files) {
+    std::vector<base::Optional<base::string16>>* referenced_files) {
   if (frame_state.http_body.request_body != nullptr) {
     AppendReferencedFilesFromHttpBody(
         *frame_state.http_body.request_body->elements(), referenced_files);
@@ -197,12 +199,16 @@ struct SerializeObject {
 // 22: Add scroll restoration type.
 // 23: Remove frame sequence number, there are easier ways.
 // 24: Add did save scroll or scale state.
+// 25: Limit the length of unique names: https://crbug.com/626202
 //
 // NOTE: If the version is -1, then the pickle contains only a URL string.
 // See ReadPageState.
 //
 const int kMinVersion = 11;
-const int kCurrentVersion = 24;
+// NOTE: When changing the version, please add a backwards compatibility test.
+// See PageStateSerializationTest.DumpExpectedPageStateForBackwardsCompat for
+// instructions on how to generate the new test case.
+const int kCurrentVersion = 25;
 
 // A bunch of convenience functions to read/write to SerializeObjects.  The
 // de-serializers assume the input data will be in the correct format and fall
@@ -301,25 +307,30 @@ std::string ReadStdString(SerializeObject* obj) {
   return std::string();
 }
 
-// WriteString pickles the NullableString16 as <int length><char16* data>.
-// If length == -1, then the NullableString16 itself is null.  Otherwise the
-// length is the number of char16 (not bytes) in the NullableString16.
-void WriteString(const base::NullableString16& str, SerializeObject* obj) {
-  if (str.is_null()) {
+// Pickles a base::string16 as <int length>:<char*16 data> tuple>.
+void WriteString(const base::string16& str, SerializeObject* obj) {
+  const base::char16* data = str.data();
+  size_t length_in_bytes = str.length() * sizeof(base::char16);
+
+  CHECK_LT(length_in_bytes,
+           static_cast<size_t>(std::numeric_limits<int>::max()));
+  obj->pickle.WriteInt(length_in_bytes);
+  obj->pickle.WriteBytes(data, length_in_bytes);
+}
+
+// If str is a null optional, this simply pickles a length of -1. Otherwise,
+// delegates to the base::string16 overload.
+void WriteString(const base::Optional<base::string16>& str,
+                 SerializeObject* obj) {
+  if (!str) {
     obj->pickle.WriteInt(-1);
   } else {
-    const base::char16* data = str.string().data();
-    size_t length_in_bytes = str.string().length() * sizeof(base::char16);
-
-    CHECK_LT(length_in_bytes,
-             static_cast<size_t>(std::numeric_limits<int>::max()));
-    obj->pickle.WriteInt(length_in_bytes);
-    obj->pickle.WriteBytes(data, length_in_bytes);
+    WriteString(*str, obj);
   }
 }
 
-// This reads a serialized NullableString16 from obj. If a string can't be
-// read, NULL is returned.
+// This reads a serialized base::Optional<base::string16> from obj. If a string
+// can't be read, NULL is returned.
 const base::char16* ReadStringNoCopy(SerializeObject* obj, int* num_chars) {
   int length_in_bytes;
   if (!obj->iter.ReadInt(&length_in_bytes)) {
@@ -341,12 +352,13 @@ const base::char16* ReadStringNoCopy(SerializeObject* obj, int* num_chars) {
   return reinterpret_cast<const base::char16*>(data);
 }
 
-base::NullableString16 ReadString(SerializeObject* obj) {
+base::Optional<base::string16> ReadString(SerializeObject* obj) {
   int num_chars;
   const base::char16* chars = ReadStringNoCopy(obj, &num_chars);
-  return chars ?
-      base::NullableString16(base::string16(chars, num_chars), false) :
-      base::NullableString16();
+  base::Optional<base::string16> result;
+  if (chars)
+    result.emplace(chars, num_chars);
+  return result;
 }
 
 template <typename T>
@@ -375,8 +387,8 @@ size_t ReadAndValidateVectorSize(SerializeObject* obj, size_t element_size) {
 }
 
 // Writes a Vector of strings into a SerializeObject for serialization.
-void WriteStringVector(
-    const std::vector<base::NullableString16>& data, SerializeObject* obj) {
+void WriteStringVector(const std::vector<base::Optional<base::string16>>& data,
+                       SerializeObject* obj) {
   WriteAndValidateVectorSize(data, obj);
   for (size_t i = 0; i < data.size(); ++i) {
     WriteString(data[i], obj);
@@ -384,45 +396,44 @@ void WriteStringVector(
 }
 
 void ReadStringVector(SerializeObject* obj,
-                      std::vector<base::NullableString16>* result) {
+                      std::vector<base::Optional<base::string16>>* result) {
   size_t num_elements =
-      ReadAndValidateVectorSize(obj, sizeof(base::NullableString16));
+      ReadAndValidateVectorSize(obj, sizeof(base::Optional<base::string16>));
 
   result->resize(num_elements);
   for (size_t i = 0; i < num_elements; ++i)
     (*result)[i] = ReadString(obj);
 }
 
-void WriteResourceRequestBody(const ResourceRequestBodyImpl& request_body,
+void WriteResourceRequestBody(const ResourceRequestBody& request_body,
                               SerializeObject* obj) {
   WriteAndValidateVectorSize(*request_body.elements(), obj);
   for (const auto& element : *request_body.elements()) {
     switch (element.type()) {
-      case ResourceRequestBodyImpl::Element::TYPE_BYTES:
+      case ResourceRequestBody::Element::TYPE_BYTES:
         WriteInteger(blink::WebHTTPBody::Element::kTypeData, obj);
         WriteData(element.bytes(), static_cast<int>(element.length()), obj);
         break;
-      case ResourceRequestBodyImpl::Element::TYPE_FILE:
+      case ResourceRequestBody::Element::TYPE_FILE:
         WriteInteger(blink::WebHTTPBody::Element::kTypeFile, obj);
-        WriteString(
-            base::NullableString16(element.path().AsUTF16Unsafe(), false), obj);
+        WriteString(element.path().AsUTF16Unsafe(), obj);
         WriteInteger64(static_cast<int64_t>(element.offset()), obj);
         WriteInteger64(static_cast<int64_t>(element.length()), obj);
         WriteReal(element.expected_modification_time().ToDoubleT(), obj);
         break;
-      case ResourceRequestBodyImpl::Element::TYPE_FILE_FILESYSTEM:
+      case ResourceRequestBody::Element::TYPE_FILE_FILESYSTEM:
         WriteInteger(blink::WebHTTPBody::Element::kTypeFileSystemURL, obj);
         WriteGURL(element.filesystem_url(), obj);
         WriteInteger64(static_cast<int64_t>(element.offset()), obj);
         WriteInteger64(static_cast<int64_t>(element.length()), obj);
         WriteReal(element.expected_modification_time().ToDoubleT(), obj);
         break;
-      case ResourceRequestBodyImpl::Element::TYPE_BLOB:
+      case ResourceRequestBody::Element::TYPE_BLOB:
         WriteInteger(blink::WebHTTPBody::Element::kTypeBlob, obj);
         WriteStdString(element.blob_uuid(), obj);
         break;
-      case ResourceRequestBodyImpl::Element::TYPE_BYTES_DESCRIPTION:
-      case ResourceRequestBodyImpl::Element::TYPE_DISK_CACHE_ENTRY:
+      case ResourceRequestBody::Element::TYPE_BYTES_DESCRIPTION:
+      case ResourceRequestBody::Element::TYPE_DISK_CACHE_ENTRY:
       default:
         NOTREACHED();
         continue;
@@ -433,7 +444,7 @@ void WriteResourceRequestBody(const ResourceRequestBodyImpl& request_body,
 
 void ReadResourceRequestBody(
     SerializeObject* obj,
-    const scoped_refptr<ResourceRequestBodyImpl>& request_body) {
+    const scoped_refptr<ResourceRequestBody>& request_body) {
   int num_elements = ReadInteger(obj);
   for (int i = 0; i < num_elements; ++i) {
     int type = ReadInteger(obj);
@@ -446,7 +457,7 @@ void ReadResourceRequestBody(
                                 length);
       }
     } else if (type == blink::WebHTTPBody::Element::kTypeFile) {
-      base::NullableString16 file_path = ReadString(obj);
+      base::Optional<base::string16> file_path = ReadString(obj);
       int64_t file_start = ReadInteger64(obj);
       int64_t file_length = ReadInteger64(obj);
       double file_modification_time = ReadReal(obj);
@@ -487,7 +498,7 @@ void ReadHttpBody(SerializeObject* obj, ExplodedHttpBody* http_body) {
   if (!ReadBoolean(obj))
     return;
 
-  http_body->request_body = new ResourceRequestBodyImpl();
+  http_body->request_body = new ResourceRequestBody();
   ReadResourceRequestBody(obj, http_body->request_body);
 
   if (obj->version >= 12)
@@ -531,10 +542,10 @@ void WriteFrameState(
 
   WriteInteger(state.scroll_restoration_type, obj);
 
-  bool has_state_object = !state.state_object.is_null();
+  bool has_state_object = state.state_object.has_value();
   WriteBoolean(has_state_object, obj);
   if (has_state_object)
-    WriteString(state.state_object, obj);
+    WriteString(*state.state_object, obj);
 
   WriteHttpBody(state.http_body, obj);
 
@@ -550,8 +561,11 @@ void WriteFrameState(
     WriteFrameState(children[i], obj, false);
 }
 
-void ReadFrameState(SerializeObject* obj, bool is_top,
-                    ExplodedFrameState* state) {
+void ReadFrameState(
+    SerializeObject* obj,
+    bool is_top,
+    std::vector<UniqueNameHelper::Replacement>* unique_name_replacements,
+    ExplodedFrameState* state) {
   if (obj->version < 14 && !is_top)
     ReadInteger(obj);  // Skip over redundant version field.
 
@@ -561,6 +575,10 @@ void ReadFrameState(SerializeObject* obj, bool is_top,
     ReadString(obj);  // Skip obsolete original url string field.
 
   state->target = ReadString(obj);
+  if (obj->version < 25 && state->target) {
+    state->target = base::UTF8ToUTF16(UniqueNameHelper::UpdateLegacyNameFromV24(
+        base::UTF16ToUTF8(*state->target), unique_name_replacements));
+  }
   if (obj->version < 15) {
     ReadString(obj);  // Skip obsolete parent field.
     ReadString(obj);  // Skip obsolete title field.
@@ -660,7 +678,7 @@ void ReadFrameState(SerializeObject* obj, bool is_top,
       ReadAndValidateVectorSize(obj, sizeof(ExplodedFrameState));
   state->children.resize(num_children);
   for (size_t i = 0; i < num_children; ++i)
-    ReadFrameState(obj, false, &state->children[i]);
+    ReadFrameState(obj, false, unique_name_replacements, &state->children[i]);
 }
 
 void WritePageState(const ExplodedPageState& state, SerializeObject* obj) {
@@ -675,9 +693,7 @@ void ReadPageState(SerializeObject* obj, ExplodedPageState* state) {
   if (obj->version == -1) {
     GURL url = ReadGURL(obj);
     // NOTE: GURL::possibly_invalid_spec() always returns valid UTF-8.
-    state->top.url_string =
-        base::NullableString16(
-            base::UTF8ToUTF16(url.possibly_invalid_spec()), false);
+    state->top.url_string = base::UTF8ToUTF16(url.possibly_invalid_spec());
     return;
   }
 
@@ -689,7 +705,8 @@ void ReadPageState(SerializeObject* obj, ExplodedPageState* state) {
   if (obj->version >= 14)
     ReadStringVector(obj, &state->referenced_files);
 
-  ReadFrameState(obj, true, &state->top);
+  std::vector<UniqueNameHelper::Replacement> unique_name_replacements;
+  ReadFrameState(obj, true, &unique_name_replacements, &state->top);
 
   if (obj->version < 14)
     RecursivelyAppendReferencedFiles(state->top, &state->referenced_files);
@@ -752,7 +769,8 @@ ExplodedPageState::ExplodedPageState() {
 ExplodedPageState::~ExplodedPageState() {
 }
 
-bool DecodePageState(const std::string& encoded, ExplodedPageState* exploded) {
+int DecodePageStateInternal(const std::string& encoded,
+                            ExplodedPageState* exploded) {
   *exploded = ExplodedPageState();
 
   if (encoded.empty())
@@ -760,14 +778,35 @@ bool DecodePageState(const std::string& encoded, ExplodedPageState* exploded) {
 
   SerializeObject obj(encoded.data(), static_cast<int>(encoded.size()));
   ReadPageState(&obj, exploded);
-  return !obj.parse_error;
+  return obj.parse_error ? -1 : obj.version;
+}
+
+bool DecodePageState(const std::string& encoded, ExplodedPageState* exploded) {
+  return DecodePageStateInternal(encoded, exploded) != -1;
+}
+
+int DecodePageStateForTesting(const std::string& encoded,
+                              ExplodedPageState* exploded) {
+  return DecodePageStateInternal(encoded, exploded);
+}
+
+static void EncodePageStateInternal(const ExplodedPageState& exploded,
+                                    int version,
+                                    std::string* encoded) {
+  SerializeObject obj;
+  obj.version = version;
+  WritePageState(exploded, &obj);
+  *encoded = obj.GetAsString();
 }
 
 void EncodePageState(const ExplodedPageState& exploded, std::string* encoded) {
-  SerializeObject obj;
-  obj.version = kCurrentVersion;
-  WritePageState(exploded, &obj);
-  *encoded = obj.GetAsString();
+  EncodePageStateInternal(exploded, kCurrentVersion, encoded);
+}
+
+void EncodePageStateForTesting(const ExplodedPageState& exploded,
+                               int version,
+                               std::string* encoded) {
+  EncodePageStateInternal(exploded, version, encoded);
 }
 
 #if defined(OS_ANDROID)
@@ -781,10 +820,9 @@ bool DecodePageStateWithDeviceScaleFactorForTesting(
   return rv;
 }
 
-scoped_refptr<ResourceRequestBodyImpl> DecodeResourceRequestBody(
-    const char* data,
-    size_t size) {
-  scoped_refptr<ResourceRequestBodyImpl> result = new ResourceRequestBodyImpl();
+scoped_refptr<ResourceRequestBody> DecodeResourceRequestBody(const char* data,
+                                                             size_t size) {
+  scoped_refptr<ResourceRequestBody> result = new ResourceRequestBody();
   SerializeObject obj(data, static_cast<int>(size));
   ReadResourceRequestBody(&obj, result);
   // Please see the EncodeResourceRequestBody() function below for information
@@ -795,7 +833,7 @@ scoped_refptr<ResourceRequestBodyImpl> DecodeResourceRequestBody(
 }
 
 std::string EncodeResourceRequestBody(
-    const ResourceRequestBodyImpl& resource_request_body) {
+    const ResourceRequestBody& resource_request_body) {
   SerializeObject obj;
   obj.version = kCurrentVersion;
   WriteResourceRequestBody(resource_request_body, &obj);

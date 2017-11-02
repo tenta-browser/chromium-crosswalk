@@ -8,6 +8,8 @@
 
 #include <memory>
 
+#import <OCMock/OCMock.h>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/logging.h"
@@ -22,11 +24,11 @@
 #include "ios/web/public/test/web_test.h"
 #import "ios/web/public/web_state/context_menu_params.h"
 #include "ios/web/public/web_state/global_web_state_observer.h"
-#include "ios/web/public/web_state/navigation_context.h"
 #import "ios/web/public/web_state/web_state_delegate.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/public/web_state/web_state_policy_decider.h"
 #include "ios/web/web_state/global_web_state_event_tracker.h"
+#import "ios/web/web_state/navigation_context_impl.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
@@ -34,6 +36,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using testing::_;
 using testing::Assign;
@@ -124,8 +130,10 @@ class MockWebStatePolicyDecider : public WebStatePolicyDecider {
       : WebStatePolicyDecider(web_state) {}
   virtual ~MockWebStatePolicyDecider() {}
 
-  MOCK_METHOD1(ShouldAllowRequest, bool(NSURLRequest* request));
-  MOCK_METHOD1(ShouldAllowResponse, bool(NSURLResponse* response));
+  MOCK_METHOD2(ShouldAllowRequest,
+               bool(NSURLRequest* request, ui::PageTransition transition));
+  MOCK_METHOD2(ShouldAllowResponse,
+               bool(NSURLResponse* response, bool for_main_frame));
   MOCK_METHOD0(WebStateDestroyed, void());
 };
 
@@ -202,13 +210,11 @@ TEST_F(WebStateImplTest, ResponseHeaders) {
   scoped_refptr<net::HttpResponseHeaders> real_headers(HeadersFromString(
       "HTTP/1.1 200 OK\r\n"
       "Content-Type: text/html\r\n"
-      "Content-Language: en\r\n"
       "X-Should-Be-Here: yep\r\n"
       "\r\n"));
   scoped_refptr<net::HttpResponseHeaders> frame_headers(HeadersFromString(
       "HTTP/1.1 200 OK\r\n"
       "Content-Type: application/pdf\r\n"
-      "Content-Language: fr\r\n"
       "X-Should-Not-Be-Here: oops\r\n"
       "\r\n"));
   // Simulate a load of a page with a frame.
@@ -227,7 +233,6 @@ TEST_F(WebStateImplTest, ResponseHeaders) {
 
   // And that it was parsed correctly.
   EXPECT_EQ("text/html", web_state_->GetContentsMimeType());
-  EXPECT_EQ("en", web_state_->GetContentLanguageHeader());
 }
 
 TEST_F(WebStateImplTest, ResponseHeaderClearing) {
@@ -235,7 +240,6 @@ TEST_F(WebStateImplTest, ResponseHeaderClearing) {
   scoped_refptr<net::HttpResponseHeaders> headers(HeadersFromString(
       "HTTP/1.1 200 OK\r\n"
       "Content-Type: text/html\r\n"
-      "Content-Language: en\r\n"
       "\r\n"));
   web_state_->OnHttpResponseHeadersReceived(headers.get(), url);
 
@@ -247,14 +251,12 @@ TEST_F(WebStateImplTest, ResponseHeaderClearing) {
   ASSERT_TRUE(web_state_->GetHttpResponseHeaders());
   EXPECT_TRUE(web_state_->GetHttpResponseHeaders()->HasHeader("Content-Type"));
   EXPECT_NE("", web_state_->GetContentsMimeType());
-  EXPECT_NE("", web_state_->GetContentLanguageHeader());
 
   // ... but not after loading another page, nor should there be specific
   // parsed values.
   web_state_->UpdateHttpResponseHeaders(GURL("http://elsewhere.com/"));
   EXPECT_EQ(NULL, web_state_->GetHttpResponseHeaders());
   EXPECT_EQ("", web_state_->GetContentsMimeType());
-  EXPECT_EQ("", web_state_->GetContentLanguageHeader());
 }
 
 // Tests forwarding to WebStateObserver callbacks.
@@ -262,6 +264,22 @@ TEST_F(WebStateImplTest, ObserverTest) {
   std::unique_ptr<TestWebStateObserver> observer(
       new TestWebStateObserver(web_state_.get()));
   EXPECT_EQ(web_state_.get(), observer->web_state());
+
+  // Test that WasShown() is called.
+  ASSERT_FALSE(web_state_->IsVisible());
+  ASSERT_FALSE(observer->was_shown_info());
+  web_state_->WasShown();
+  ASSERT_TRUE(observer->was_shown_info());
+  EXPECT_EQ(web_state_.get(), observer->was_shown_info()->web_state);
+  EXPECT_TRUE(web_state_->IsVisible());
+
+  // Test that WasHidden() is called.
+  ASSERT_TRUE(web_state_->IsVisible());
+  ASSERT_FALSE(observer->was_hidden_info());
+  web_state_->WasHidden();
+  ASSERT_TRUE(observer->was_hidden_info());
+  EXPECT_EQ(web_state_.get(), observer->was_hidden_info()->web_state);
+  EXPECT_FALSE(web_state_->IsVisible());
 
   // Test that LoadProgressChanged() is called.
   ASSERT_FALSE(observer->change_loading_progress_info());
@@ -346,14 +364,40 @@ TEST_F(WebStateImplTest, ObserverTest) {
   ASSERT_TRUE(observer->render_process_gone_info());
   EXPECT_EQ(web_state_.get(), observer->render_process_gone_info()->web_state);
 
-  // Test that ProvisionalNavigationStarted() is called.
-  ASSERT_FALSE(observer->start_provisional_navigation_info());
+  // Test that DidFinishNavigation() is called.
+  ASSERT_FALSE(observer->did_finish_navigation_info());
   const GURL url("http://test");
-  web_state_->OnProvisionalNavigationStarted(url);
-  ASSERT_TRUE(observer->start_provisional_navigation_info());
+  std::unique_ptr<web::NavigationContext> context =
+      NavigationContextImpl::CreateNavigationContext(
+          web_state_.get(), url,
+          ui::PageTransition::PAGE_TRANSITION_AUTO_BOOKMARK, true);
+  web_state_->OnNavigationFinished(context.get());
+  ASSERT_TRUE(observer->did_finish_navigation_info());
   EXPECT_EQ(web_state_.get(),
-            observer->start_provisional_navigation_info()->web_state);
-  EXPECT_EQ(url, observer->start_provisional_navigation_info()->url);
+            observer->did_finish_navigation_info()->web_state);
+  NavigationContext* actual_context =
+      observer->did_finish_navigation_info()->context.get();
+  EXPECT_EQ(context->GetUrl(), actual_context->GetUrl());
+  EXPECT_TRUE(PageTransitionTypeIncludingQualifiersIs(
+      context->GetPageTransition(), actual_context->GetPageTransition()));
+  EXPECT_FALSE(actual_context->IsSameDocument());
+  EXPECT_FALSE(actual_context->IsPost());
+  EXPECT_FALSE(actual_context->GetError());
+  EXPECT_FALSE(actual_context->GetResponseHeaders());
+
+  // Test that DidStartNavigation() is called.
+  ASSERT_FALSE(observer->did_start_navigation_info());
+  web_state_->OnNavigationStarted(context.get());
+  ASSERT_TRUE(observer->did_start_navigation_info());
+  EXPECT_EQ(web_state_.get(), observer->did_start_navigation_info()->web_state);
+  actual_context = observer->did_start_navigation_info()->context.get();
+  EXPECT_EQ(context->GetUrl(), actual_context->GetUrl());
+  EXPECT_TRUE(PageTransitionTypeIncludingQualifiersIs(
+      context->GetPageTransition(), actual_context->GetPageTransition()));
+  EXPECT_FALSE(actual_context->IsSameDocument());
+  EXPECT_FALSE(actual_context->IsPost());
+  EXPECT_FALSE(actual_context->GetError());
+  EXPECT_FALSE(actual_context->GetResponseHeaders());
 
   // Test that NavigationItemsPruned() is called.
   ASSERT_FALSE(observer->navigation_items_pruned_info());
@@ -393,36 +437,8 @@ TEST_F(WebStateImplTest, ObserverTest) {
   EXPECT_EQ(web_state_.get(), observer->load_page_info()->web_state);
   EXPECT_TRUE(observer->load_page_info()->success);
 
-  // Test that DidFinishNavigation() is called for same document navigations.
-  ASSERT_FALSE(observer->did_finish_navigation_info());
-  web_state_->OnSameDocumentNavigation(url);
-  ASSERT_TRUE(observer->did_finish_navigation_info());
-  EXPECT_EQ(web_state_.get(),
-            observer->did_finish_navigation_info()->web_state);
-  NavigationContext* context =
-      observer->did_finish_navigation_info()->context.get();
-  ASSERT_TRUE(context);
-  EXPECT_EQ(url, context->GetUrl());
-  EXPECT_TRUE(context->IsSameDocument());
-  EXPECT_FALSE(context->IsErrorPage());
-  EXPECT_FALSE(context->GetResponseHeaders());
-
-  // Reset the observer and test that DidFinishNavigation() is called
-  // for error navigations.
-  observer = base::MakeUnique<TestWebStateObserver>(web_state_.get());
-  ASSERT_FALSE(observer->did_finish_navigation_info());
-  web_state_->OnErrorPageNavigation(url);
-  ASSERT_TRUE(observer->did_finish_navigation_info());
-  EXPECT_EQ(web_state_.get(),
-            observer->did_finish_navigation_info()->web_state);
-  context = observer->did_finish_navigation_info()->context.get();
-  ASSERT_TRUE(context);
-  EXPECT_EQ(url, context->GetUrl());
-  EXPECT_FALSE(context->IsSameDocument());
-  EXPECT_TRUE(context->IsErrorPage());
-  EXPECT_FALSE(context->GetResponseHeaders());
-
   // Test that OnTitleChanged() is called.
+  observer = base::MakeUnique<TestWebStateObserver>(web_state_.get());
   ASSERT_FALSE(observer->title_was_set_info());
   web_state_->OnTitleChanged();
   ASSERT_TRUE(observer->title_was_set_info());
@@ -501,7 +517,7 @@ TEST_F(WebStateImplTest, DelegateTest) {
 
   __block bool callback_called = false;
   web_state_->RunJavaScriptDialog(GURL(), JAVASCRIPT_DIALOG_TYPE_ALERT, @"",
-                                  nil, base::BindBlock(^(bool, NSString*) {
+                                  nil, base::BindBlockArc(^(bool, NSString*) {
                                     callback_called = true;
                                   }));
 
@@ -515,20 +531,42 @@ TEST_F(WebStateImplTest, DelegateTest) {
 
   // Test that OnAuthRequired() is called.
   EXPECT_FALSE(delegate.last_authentication_request());
-  base::scoped_nsobject<NSURLProtectionSpace> protection_space(
-      [[NSURLProtectionSpace alloc] init]);
-  base::scoped_nsobject<NSURLCredential> credential(
-      [[NSURLCredential alloc] init]);
+  NSURLProtectionSpace* protection_space = [[NSURLProtectionSpace alloc] init];
+  NSURLCredential* credential = [[NSURLCredential alloc] init];
   WebStateDelegate::AuthCallback callback;
-  web_state_->OnAuthRequired(protection_space.get(), credential.get(),
-                             callback);
+  web_state_->OnAuthRequired(protection_space, credential, callback);
   ASSERT_TRUE(delegate.last_authentication_request());
   EXPECT_EQ(delegate.last_authentication_request()->web_state,
             web_state_.get());
   EXPECT_EQ(delegate.last_authentication_request()->protection_space,
-            protection_space.get());
-  EXPECT_EQ(delegate.last_authentication_request()->credential,
-            credential.get());
+            protection_space);
+  EXPECT_EQ(delegate.last_authentication_request()->credential, credential);
+
+  // Test that ShouldPreviewLink() is delegated correctly.
+  GURL link_url("http://link.test/");
+  delegate.SetShouldPreviewLink(false);
+  delegate.ClearLastLinkURL();
+  EXPECT_FALSE(web_state_->ShouldPreviewLink(link_url));
+  EXPECT_EQ(link_url, delegate.last_link_url());
+  delegate.SetShouldPreviewLink(true);
+  delegate.ClearLastLinkURL();
+  EXPECT_TRUE(web_state_->ShouldPreviewLink(link_url));
+  EXPECT_EQ(link_url, delegate.last_link_url());
+
+  // Test that GetPreviewingViewController() is delegated correctly.
+  UIViewController* previewing_view_controller =
+      OCMClassMock([UIViewController class]);
+  delegate.SetPreviewingViewController(previewing_view_controller);
+  delegate.ClearLastLinkURL();
+  EXPECT_EQ(previewing_view_controller,
+            web_state_->GetPreviewingViewController(link_url));
+  EXPECT_EQ(link_url, delegate.last_link_url());
+
+  // Test that CommitPreviewingViewController() is called.
+  delegate.ClearLastPreviewingViewController();
+  web_state_->CommitPreviewingViewController(previewing_view_controller);
+  EXPECT_EQ(previewing_view_controller,
+            delegate.last_previewing_view_controller());
 }
 
 // Verifies that GlobalWebStateObservers are called when expected.
@@ -575,49 +613,73 @@ TEST_F(WebStateImplTest, GlobalObserverTest) {
   EXPECT_TRUE(observer->web_state_destroyed_called());
 }
 
+// A Google Mock matcher which matches ui::PAGE_TRANSITION_LINK.
+// This is needed because ui::PageTransition doesn't support operator==.
+MATCHER(IsPageTransitionLink, /* argument_name = */ "") {
+  return ui::PageTransitionTypeIncludingQualifiersIs(arg,
+                                                     ui::PAGE_TRANSITION_LINK);
+}
+
 // Verifies that policy deciders are correctly called by the web state.
 TEST_F(WebStateImplTest, PolicyDeciderTest) {
   MockWebStatePolicyDecider decider(web_state_.get());
   MockWebStatePolicyDecider decider2(web_state_.get());
   EXPECT_EQ(web_state_.get(), decider.web_state());
 
+  NSURL* url = [NSURL URLWithString:@"http://example.com"];
+  NSURLRequest* request = [NSURLRequest requestWithURL:url];
+  NSURLResponse* response = [[NSURLResponse alloc] initWithURL:url
+                                                      MIMEType:@"text/html"
+                                         expectedContentLength:0
+                                              textEncodingName:nil];
+
   // Test that ShouldAllowRequest() is called.
-  EXPECT_CALL(decider, ShouldAllowRequest(_)).Times(1).WillOnce(Return(true));
-  EXPECT_CALL(decider2, ShouldAllowRequest(_)).Times(1).WillOnce(Return(true));
-  EXPECT_TRUE(web_state_->ShouldAllowRequest(nil));
+  EXPECT_CALL(decider, ShouldAllowRequest(request, IsPageTransitionLink()))
+      .Times(1)
+      .WillOnce(Return(true));
+  EXPECT_CALL(decider2, ShouldAllowRequest(request, IsPageTransitionLink()))
+      .Times(1)
+      .WillOnce(Return(true));
+  EXPECT_TRUE(
+      web_state_->ShouldAllowRequest(request, ui::PAGE_TRANSITION_LINK));
 
   // Test that ShouldAllowRequest() is stopping on negative answer. Only one
   // one the decider should be called.
   {
     bool decider_called = false;
     bool decider2_called = false;
-    EXPECT_CALL(decider, ShouldAllowRequest(_))
+    EXPECT_CALL(decider, ShouldAllowRequest(request, IsPageTransitionLink()))
         .Times(AtMost(1))
         .WillOnce(DoAll(Assign(&decider_called, true), Return(false)));
-    EXPECT_CALL(decider2, ShouldAllowRequest(_))
+    EXPECT_CALL(decider2, ShouldAllowRequest(request, IsPageTransitionLink()))
         .Times(AtMost(1))
         .WillOnce(DoAll(Assign(&decider2_called, true), Return(false)));
-    EXPECT_FALSE(web_state_->ShouldAllowRequest(nil));
+    EXPECT_FALSE(
+        web_state_->ShouldAllowRequest(request, ui::PAGE_TRANSITION_LINK));
     EXPECT_FALSE(decider_called && decider2_called);
   }
 
   // Test that ShouldAllowResponse() is called.
-  EXPECT_CALL(decider, ShouldAllowResponse(_)).Times(1).WillOnce(Return(true));
-  EXPECT_CALL(decider2, ShouldAllowResponse(_)).Times(1).WillOnce(Return(true));
-  EXPECT_TRUE(web_state_->ShouldAllowResponse(nil));
+  EXPECT_CALL(decider, ShouldAllowResponse(response, true))
+      .Times(1)
+      .WillOnce(Return(true));
+  EXPECT_CALL(decider2, ShouldAllowResponse(response, true))
+      .Times(1)
+      .WillOnce(Return(true));
+  EXPECT_TRUE(web_state_->ShouldAllowResponse(response, true));
 
   // Test that ShouldAllowResponse() is stopping on negative answer. Only one
   // one the decider should be called.
   {
     bool decider_called = false;
     bool decider2_called = false;
-    EXPECT_CALL(decider, ShouldAllowResponse(_))
+    EXPECT_CALL(decider, ShouldAllowResponse(response, false))
         .Times(AtMost(1))
         .WillOnce(DoAll(Assign(&decider_called, true), Return(false)));
-    EXPECT_CALL(decider2, ShouldAllowResponse(_))
+    EXPECT_CALL(decider2, ShouldAllowResponse(response, false))
         .Times(AtMost(1))
         .WillOnce(DoAll(Assign(&decider2_called, true), Return(false)));
-    EXPECT_FALSE(web_state_->ShouldAllowResponse(nil));
+    EXPECT_FALSE(web_state_->ShouldAllowResponse(response, false));
     EXPECT_FALSE(decider_called && decider2_called);
   }
 

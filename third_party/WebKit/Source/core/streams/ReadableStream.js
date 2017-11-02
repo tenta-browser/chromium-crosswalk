@@ -30,8 +30,6 @@
   const _underlyingSource = v8.createPrivateSymbol('[[underlyingSource]]');
   const _controlledReadableStream =
       v8.createPrivateSymbol('[[controlledReadableStream]]');
-  const _queue = v8.createPrivateSymbol('[[queue]]');
-  const _totalQueuedSize = v8.createPrivateSymbol('[[totalQueuedSize]]');
   const _strategySize = v8.createPrivateSymbol('[[strategySize]]');
   const _strategyHWM = v8.createPrivateSymbol('[[strategyHWM]]');
 
@@ -44,24 +42,27 @@
   const EXTERNALLY_CONTROLLED = 0b10000;
 
   const undefined = global.undefined;
-  const Infinity = global.Infinity;
 
   const defineProperty = global.Object.defineProperty;
-  const hasOwnProperty = v8.uncurryThis(global.Object.hasOwnProperty);
   const callFunction = v8.uncurryThis(global.Function.prototype.call);
   const applyFunction = v8.uncurryThis(global.Function.prototype.apply);
 
   const TypeError = global.TypeError;
   const RangeError = global.RangeError;
 
-  const Number = global.Number;
-  const Number_isNaN = Number.isNaN;
-  const Number_isFinite = Number.isFinite;
+  const Boolean = global.Boolean;
+  const String = global.String;
 
   const Promise = global.Promise;
   const thenPromise = v8.uncurryThis(Promise.prototype.then);
   const Promise_resolve = v8.simpleBind(Promise.resolve, Promise);
   const Promise_reject = v8.simpleBind(Promise.reject, Promise);
+
+  // From CommonOperations.js
+  const { _queue, _queueTotalSize, hasOwnPropertyNoThrow, rejectPromise,
+          resolvePromise, markPromiseAsHandled, DequeueValue,
+          EnqueueValueWithSize,
+          ValidateAndNormalizeQueuingStrategy } = binding.streamOperations;
 
   const streamErrors = binding.streamErrors;
   const errCancelLockedStream =
@@ -97,6 +98,12 @@
   const errCannotPipeLockedStream = 'Cannot pipe a locked stream';
   const errCannotPipeToALockedStream = 'Cannot pipe to a locked stream';
   const errDestinationStreamClosed = 'Destination stream closed';
+  const errPipeThroughUndefinedWritable =
+        'Failed to execute \'pipeThrough\' on \'ReadableStream\': parameter ' +
+        '1\'s \'writable\' property is undefined.';
+  const errPipeThroughUndefinedReadable =
+        'Failed to execute \'pipeThrough\' on \'ReadableStream\': parameter ' +
+        '1\'s \'readable\' property is undefined.';
 
   class ReadableStream {
     constructor() {
@@ -177,9 +184,15 @@
     }
 
     pipeThrough({writable, readable}, options) {
+      if (writable === undefined) {
+        throw new TypeError(errPipeThroughUndefinedWritable);
+      }
+      if (readable === undefined) {
+        throw new TypeError(errPipeThroughUndefinedReadable);
+      }
       const promise = this.pipeTo(writable, options);
       if (v8.isPromise(promise)) {
-        v8.markPromiseAsHandled(promise);
+        markPromiseAsHandled(promise);
       }
       return readable;
     }
@@ -395,9 +408,9 @@
       binding.WritableStreamDefaultWriterRelease(writer);
       ReadableStreamReaderGenericRelease(reader);
       if (errorGiven) {
-        v8.rejectPromise(promise, error);
+        rejectPromise(promise, error);
       } else {
-        v8.resolvePromise(promise, undefined);
+        resolvePromise(promise, undefined);
       }
     }
 
@@ -419,7 +432,7 @@
       this[_underlyingSource] = underlyingSource;
 
       this[_queue] = new binding.SimpleQueue();
-      this[_totalQueuedSize] = 0;
+      this[_queueTotalSize] = 0;
 
       this[_readableStreamDefaultControllerBits] = 0b0;
       if (isExternallyControlled === true) {
@@ -660,7 +673,7 @@
     const reader = stream[_reader];
 
     const readRequest = stream[_reader][_readRequests].shift();
-    v8.resolvePromise(readRequest, CreateIterResultObject(chunk, done));
+    resolvePromise(readRequest, CreateIterResultObject(chunk, done));
   }
 
   function ReadableStreamDefaultControllerEnqueue(controller, chunk) {
@@ -721,12 +734,12 @@
     }
 
     if (IsReadableStreamDefaultReader(reader) === true) {
-      reader[_readRequests].forEach(request => v8.rejectPromise(request, e));
+      reader[_readRequests].forEach(request => rejectPromise(request, e));
       reader[_readRequests] = new binding.SimpleQueue();
     }
 
-    v8.rejectPromise(reader[_closedPromise], e);
-    v8.markPromiseAsHandled(reader[_closedPromise]);
+    rejectPromise(reader[_closedPromise], e);
+    markPromiseAsHandled(reader[_closedPromise]);
   }
 
   function ReadableStreamClose(stream) {
@@ -739,20 +752,19 @@
 
     if (IsReadableStreamDefaultReader(reader) === true) {
       reader[_readRequests].forEach(request =>
-          v8.resolvePromise(request, CreateIterResultObject(undefined, true)));
+          resolvePromise(request, CreateIterResultObject(undefined, true)));
       reader[_readRequests] = new binding.SimpleQueue();
     }
 
-    v8.resolvePromise(reader[_closedPromise], undefined);
+    resolvePromise(reader[_closedPromise], undefined);
   }
 
   function ReadableStreamDefaultControllerGetDesiredSize(controller) {
-    const queueSize = GetTotalQueueSize(controller);
-    return controller[_strategyHWM] - queueSize;
+    return controller[_strategyHWM] - controller[_queueTotalSize];
   }
 
   function IsReadableStream(x) {
-    return hasOwnProperty(x, _controller);
+    return hasOwnPropertyNoThrow(x, _controller);
   }
 
   function IsReadableStreamDisturbed(stream) {
@@ -764,11 +776,11 @@
   }
 
   function IsReadableStreamDefaultController(x) {
-    return hasOwnProperty(x, _controlledReadableStream);
+    return hasOwnPropertyNoThrow(x, _controlledReadableStream);
   }
 
   function IsReadableStreamDefaultReader(x) {
-    return hasOwnProperty(x, _readRequests);
+    return hasOwnPropertyNoThrow(x, _readRequests);
   }
 
   function IsReadableStreamReadable(stream) {
@@ -806,7 +818,7 @@
         break;
       case STATE_ERRORED:
         reader[_closedPromise] = Promise_reject(stream[_storedError]);
-        v8.markPromiseAsHandled(reader[_closedPromise]);
+        markPromiseAsHandled(reader[_closedPromise]);
         break;
     }
   }
@@ -823,11 +835,11 @@
     }
 
     if (ReadableStreamGetState(reader[_ownerReadableStream]) === STATE_READABLE) {
-      v8.rejectPromise(reader[_closedPromise], new TypeError(errReleasedReaderClosedPromise));
+      rejectPromise(reader[_closedPromise], new TypeError(errReleasedReaderClosedPromise));
     } else {
       reader[_closedPromise] = Promise_reject(new TypeError(errReleasedReaderClosedPromise));
     }
-    v8.markPromiseAsHandled(reader[_closedPromise]);
+    markPromiseAsHandled(reader[_closedPromise]);
 
     reader[_ownerReadableStream][_reader] = undefined;
     reader[_ownerReadableStream] = undefined;
@@ -987,7 +999,7 @@
       if (canceled2 === true) {
         const compositeReason = [reason1, reason2];
         const cancelResult = ReadableStreamCancel(stream, compositeReason);
-        v8.resolvePromise(promise, cancelResult);
+        resolvePromise(promise, cancelResult);
       }
 
       return promise;
@@ -1000,7 +1012,7 @@
       if (canceled1 === true) {
         const compositeReason = [reason1, reason2];
         const cancelResult = ReadableStreamCancel(stream, compositeReason);
-        v8.resolvePromise(promise, cancelResult);
+        resolvePromise(promise, cancelResult);
       }
 
       return promise;
@@ -1008,46 +1020,8 @@
   }
 
   //
-  // Queue-with-sizes
-  //
-
-  function DequeueValue(controller) {
-    const result = controller[_queue].shift();
-    controller[_totalQueuedSize] -= result.size;
-    return result.value;
-  }
-
-  function EnqueueValueWithSize(controller, value, size) {
-    size = Number(size);
-    if (Number_isNaN(size) || size === +Infinity || size < 0) {
-      throw new RangeError(streamErrors.invalidSize);
-    }
-
-    controller[_totalQueuedSize] += size;
-    controller[_queue].push({value, size});
-  }
-
-  function GetTotalQueueSize(controller) { return controller[_totalQueuedSize]; }
-
-  //
   // Other helpers
   //
-
-  function ValidateAndNormalizeQueuingStrategy(size, highWaterMark) {
-    if (size !== undefined && typeof size !== 'function') {
-      throw new TypeError(streamErrors.sizeNotAFunction);
-    }
-
-    highWaterMark = Number(highWaterMark);
-    if (Number_isNaN(highWaterMark)) {
-      throw new RangeError(streamErrors.errInvalidHWM);
-    }
-    if (highWaterMark < 0) {
-      throw new RangeError(streamErrors.invalidHWM);
-    }
-
-    return {size, highWaterMark};
-  }
 
   // Modified from InvokeOrNoop in spec
   function CallOrNoop(O, P, arg, nameForError) {
@@ -1061,7 +1035,6 @@
 
     return callFunction(method, O, arg);
   }
-
 
   // Modified from PromiseInvokeOrNoop in spec
   function PromiseCallOrNoop(O, P, arg, nameForError) {

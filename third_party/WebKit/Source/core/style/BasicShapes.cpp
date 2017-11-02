@@ -30,7 +30,6 @@
 #include "core/style/BasicShapes.h"
 
 #include "core/css/BasicShapeFunctions.h"
-#include "core/style/ComputedStyle.h"
 #include "platform/CalculationValue.h"
 #include "platform/LengthFunctions.h"
 #include "platform/geometry/FloatRect.h"
@@ -106,8 +105,8 @@ void BasicShapeCircle::GetPath(Path& path, const FloatRect& bounding_box) {
                             radius * 2));
 }
 
-PassRefPtr<BasicShape> BasicShapeCircle::Blend(const BasicShape* other,
-                                               double progress) const {
+RefPtr<BasicShape> BasicShapeCircle::Blend(const BasicShape* other,
+                                           double progress) const {
   DCHECK_EQ(GetType(), other->GetType());
   const BasicShapeCircle* o = ToBasicShapeCircle(other);
   RefPtr<BasicShapeCircle> result = BasicShapeCircle::Create();
@@ -115,7 +114,7 @@ PassRefPtr<BasicShape> BasicShapeCircle::Blend(const BasicShape* other,
   result->SetCenterX(center_x_.Blend(o->CenterX(), progress));
   result->SetCenterY(center_y_.Blend(o->CenterY(), progress));
   result->SetRadius(radius_.Blend(o->Radius(), progress));
-  return result.Release();
+  return result;
 }
 
 bool BasicShapeEllipse::operator==(const BasicShape& o) const {
@@ -154,8 +153,8 @@ void BasicShapeEllipse::GetPath(Path& path, const FloatRect& bounding_box) {
                             radius_x * 2, radius_y * 2));
 }
 
-PassRefPtr<BasicShape> BasicShapeEllipse::Blend(const BasicShape* other,
-                                                double progress) const {
+RefPtr<BasicShape> BasicShapeEllipse::Blend(const BasicShape* other,
+                                            double progress) const {
   DCHECK_EQ(GetType(), other->GetType());
   const BasicShapeEllipse* o = ToBasicShapeEllipse(other);
   RefPtr<BasicShapeEllipse> result = BasicShapeEllipse::Create();
@@ -175,7 +174,7 @@ PassRefPtr<BasicShape> BasicShapeEllipse::Blend(const BasicShape* other,
   result->SetCenterY(center_y_.Blend(o->CenterY(), progress));
   result->SetRadiusX(radius_x_.Blend(o->RadiusX(), progress));
   result->SetRadiusY(radius_y_.Blend(o->RadiusY(), progress));
-  return result.Release();
+  return result;
 }
 
 void BasicShapePolygon::GetPath(Path& path, const FloatRect& bounding_box) {
@@ -201,8 +200,8 @@ void BasicShapePolygon::GetPath(Path& path, const FloatRect& bounding_box) {
   path.CloseSubpath();
 }
 
-PassRefPtr<BasicShape> BasicShapePolygon::Blend(const BasicShape* other,
-                                                double progress) const {
+RefPtr<BasicShape> BasicShapePolygon::Blend(const BasicShape* other,
+                                            double progress) const {
   DCHECK(other);
   DCHECK(IsSameType(*other));
 
@@ -213,7 +212,7 @@ PassRefPtr<BasicShape> BasicShapePolygon::Blend(const BasicShape* other,
   size_t length = values_.size();
   RefPtr<BasicShapePolygon> result = BasicShapePolygon::Create();
   if (!length)
-    return result.Release();
+    return result;
 
   result->SetWindRule(o->GetWindRule());
 
@@ -224,7 +223,7 @@ PassRefPtr<BasicShape> BasicShapePolygon::Blend(const BasicShape* other,
                                 kValueRangeAll));
   }
 
-  return result.Release();
+  return result;
 }
 
 bool BasicShapePolygon::operator==(const BasicShape& o) const {
@@ -272,8 +271,8 @@ static inline LengthSize BlendLengthSize(const LengthSize& to,
       to.Height().Blend(from.Height(), progress, kValueRangeNonNegative));
 }
 
-PassRefPtr<BasicShape> BasicShapeInset::Blend(const BasicShape* other,
-                                              double progress) const {
+RefPtr<BasicShape> BasicShapeInset::Blend(const BasicShape* other,
+                                          double progress) const {
   DCHECK(other);
   DCHECK(IsSameType(*other));
 
@@ -294,7 +293,7 @@ PassRefPtr<BasicShape> BasicShapeInset::Blend(const BasicShape* other,
   result->SetBottomLeftRadius(BlendLengthSize(
       bottom_left_radius_, other_inset.BottomLeftRadius(), progress));
 
-  return result.Release();
+  return result;
 }
 
 bool BasicShapeInset::operator==(const BasicShape& o) const {

@@ -4,10 +4,10 @@
 <script src="../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
 'use strict';
-promise_test(() => {
-  return setBluetoothFakeAdapter('GlucoseHeartRateAdapter')
+bluetooth_test(() => {
+  return setUpHealthThermometerAndHeartRateDevices()
     .then(() => requestDeviceWithKeyDown({
-      filters: [{services: ['glucose']}]}))
-    .then(device => assert_equals(device.name, 'Glucose Device'));
+      filters: [{services: ['health_thermometer']}]}))
+    .then(device => assert_equals(device.name, 'Health Thermometer'));
 }, 'Simple filter selects matching device.');
 </script>

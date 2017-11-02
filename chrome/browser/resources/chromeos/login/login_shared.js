@@ -21,7 +21,8 @@
 // <include src="../../../../../ui/login/display_manager.js">
 // <include src="header_bar.js">
 
-// <include src="../../../../../ui/login/account_picker/screen_account_picker.js">
+// <include
+// src="../../../../../ui/login/account_picker/screen_account_picker.js">
 
 // <include src="../../../../../ui/login/login_ui_tools.js">
 // <include src="../../../../../ui/login/account_picker/user_pod_row.js">
@@ -31,13 +32,12 @@ cr.define('cr.ui', function() {
   var DisplayManager = cr.ui.login.DisplayManager;
 
   /**
-  * Constructs an Out of box controller. It manages initialization of screens,
-  * transitions, error messages display.
-  * @extends {DisplayManager}
-  * @constructor
-  */
-  function Oobe() {
-  }
+   * Constructs an Out of box controller. It manages initialization of screens,
+   * transitions, error messages display.
+   * @extends {DisplayManager}
+   * @constructor
+   */
+  function Oobe() {}
 
   /**
    * Delay in milliseconds between start of OOBE animation and start of
@@ -198,7 +198,7 @@ cr.define('cr.ui', function() {
    * Show user-pods.
    */
   Oobe.showUserPods = function() {
-    $('pod-row').loadLastWallpaper();
+    $('pod-row').maybePreselectPod();
     Oobe.showScreen({id: SCREEN_ACCOUNT_PICKER});
     Oobe.resetSigninUI(true);
   };
@@ -248,6 +248,14 @@ cr.define('cr.ui', function() {
    */
   Oobe.setEnterpriseInfo = function(messageText, assetId) {
     DisplayManager.setEnterpriseInfo(messageText, assetId);
+  };
+
+  /**
+   * Sets the text content of the Bluetooth device info message.
+   * @param {string} bluetoothName The Bluetooth device name text.
+   */
+  Oobe.setBluetoothDeviceInfo = function(bluetoothName) {
+    DisplayManager.setBluetoothDeviceInfo(bluetoothName);
   };
 
   /**
@@ -303,8 +311,8 @@ cr.define('cr.ui', function() {
    * @param {string} password Login password.
    * @param {boolean} enterpriseEnroll Login as an enterprise enrollment?
    */
-  Oobe.loginForTesting = function(username, password, gaia_id,
-                                  enterpriseEnroll = false) {
+  Oobe.loginForTesting = function(
+      username, password, gaia_id, enterpriseEnroll = false) {
     // Helper method that runs |fn| after |screenName| is visible.
     function waitForOobeScreen(screenName, fn) {
       if (Oobe.getInstance().currentScreen &&
@@ -333,7 +341,6 @@ cr.define('cr.ui', function() {
 
       waitForOobeScreen('oauth-enrollment', function() {
         chrome.send('oauthEnrollCompleteLogin', [username, 'authcode']);
-        chrome.send('completeLogin', [gaia_id, username, password, false]);
       });
     }
   };
@@ -400,8 +407,8 @@ cr.define('cr.ui', function() {
     if (document.querySelector('.oauth-enroll-state-attribute-prompt'))
       chrome.send('oauthEnrollAttributes', ['', '']);
 
-    return $('oauth-enrollment').classList.contains(
-      'oauth-enroll-state-success');
+    return $('oauth-enrollment')
+        .classList.contains('oauth-enroll-state-success');
   };
 
   /**
@@ -412,10 +419,11 @@ cr.define('cr.ui', function() {
   };
 
   /**
-   * Shows/hides pin keyboard on the lock screen.
+   * Changes some UI which depends on the virtual keyboard being shown/hidden.
    */
-  Oobe.showPinKeyboard = function(show) {
-    Oobe.getInstance().pinHidden = !show;
+  Oobe.setVirtualKeyboardShown = function(shown) {
+    Oobe.getInstance().virtualKeyboardShown = shown;
+    $('pod-row').setFocusedPodPinVisibility(!shown);
   };
 
   /**
@@ -428,9 +436,7 @@ cr.define('cr.ui', function() {
   };
 
   // Export
-  return {
-    Oobe: Oobe
-  };
+  return {Oobe: Oobe};
 });
 
 var Oobe = cr.ui.Oobe;
@@ -440,30 +446,29 @@ var Oobe = cr.ui.Oobe;
 disableTextSelectAndDrag(function(e) {
   var src = e.target;
   return src instanceof HTMLTextAreaElement ||
-         src instanceof HTMLInputElement &&
-         /text|password|search/.test(src.type);
+      src instanceof HTMLInputElement && /text|password|search/.test(src.type);
 });
 
 
 (function() {
-  'use strict';
+'use strict';
 
-  document.addEventListener('DOMContentLoaded', function() {
-    try {
-      Oobe.initialize();
-    } finally {
-      // TODO(crbug.com/712078): Do not set readyForTesting in case of that
-      // initialize() is failed. Currently, in some situation, initialize()
-      // raises an exception unexpectedly. It means testing APIs should not
-      // be called then. However, checking it here now causes bots failures
-      // unfortunately. So, as a short term workaround, here set
-      // readyForTesting even on failures, just to make test bots happy.
-      Oobe.readyForTesting = true;
-    }
-  });
-
-  // Install a global error handler so stack traces are included in logs.
-  window.onerror = function(message, file, line, column, error) {
-    console.error(error.stack);
+document.addEventListener('DOMContentLoaded', function() {
+  try {
+    Oobe.initialize();
+  } finally {
+    // TODO(crbug.com/712078): Do not set readyForTesting in case of that
+    // initialize() is failed. Currently, in some situation, initialize()
+    // raises an exception unexpectedly. It means testing APIs should not
+    // be called then. However, checking it here now causes bots failures
+    // unfortunately. So, as a short term workaround, here set
+    // readyForTesting even on failures, just to make test bots happy.
+    Oobe.readyForTesting = true;
   }
+});
+
+// Install a global error handler so stack traces are included in logs.
+window.onerror = function(message, file, line, column, error) {
+  console.error(error.stack);
+};
 })();

@@ -20,9 +20,9 @@
 #include "base/memory/weak_ptr.h"
 #include "base/stl_util.h"
 #include "base/synchronization/lock.h"
-#include "cc/output/context_provider.h"
 #include "cc/test/ordered_texture_map.h"
 #include "cc/test/test_texture.h"
+#include "components/viz/common/gpu/context_provider.h"
 #include "gpu/command_buffer/common/sync_token.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/geometry/rect.h"
@@ -344,14 +344,23 @@ class TestWebGraphicsContext3D {
   void set_support_texture_half_float_linear(bool support) {
     test_capabilities_.texture_half_float_linear = support;
   }
+  void set_support_texture_norm16(bool support) {
+    test_capabilities_.texture_norm16 = support;
+  }
   void set_msaa_is_slow(bool msaa_is_slow) {
     test_capabilities_.msaa_is_slow = msaa_is_slow;
   }
   void set_gpu_rasterization(bool gpu_rasterization) {
     test_capabilities_.gpu_rasterization = gpu_rasterization;
   }
+  void set_avoid_stencil_buffers(bool avoid_stencil_buffers) {
+    test_capabilities_.avoid_stencil_buffers = avoid_stencil_buffers;
+  }
   void set_enable_dc_layers(bool support) {
     test_capabilities_.dc_layers = support;
+  }
+  void set_support_multisample_compatibility(bool support) {
+    test_capabilities_.multisample_compatibility = support;
   }
 
   // When this context is lost, all contexts in its share group are also lost.

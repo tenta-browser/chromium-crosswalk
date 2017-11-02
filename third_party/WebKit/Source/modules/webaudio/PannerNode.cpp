@@ -61,12 +61,12 @@ PannerHandler::PannerHandler(AudioNode& node,
       cached_azimuth_(0),
       cached_elevation_(0),
       cached_distance_cone_gain_(1.0f),
-      position_x_(position_x),
-      position_y_(position_y),
-      position_z_(position_z),
-      orientation_x_(orientation_x),
-      orientation_y_(orientation_y),
-      orientation_z_(orientation_z) {
+      position_x_(&position_x),
+      position_y_(&position_y),
+      position_z_(&position_z),
+      orientation_x_(&orientation_x),
+      orientation_y_(&orientation_y),
+      orientation_z_(&orientation_z) {
   AddInput();
   AddOutput(2);
 
@@ -82,18 +82,17 @@ PannerHandler::PannerHandler(AudioNode& node,
   Initialize();
 }
 
-PassRefPtr<PannerHandler> PannerHandler::Create(
-    AudioNode& node,
-    float sample_rate,
-    AudioParamHandler& position_x,
-    AudioParamHandler& position_y,
-    AudioParamHandler& position_z,
-    AudioParamHandler& orientation_x,
-    AudioParamHandler& orientation_y,
-    AudioParamHandler& orientation_z) {
-  return AdoptRef(new PannerHandler(node, sample_rate, position_x, position_y,
-                                    position_z, orientation_x, orientation_y,
-                                    orientation_z));
+RefPtr<PannerHandler> PannerHandler::Create(AudioNode& node,
+                                            float sample_rate,
+                                            AudioParamHandler& position_x,
+                                            AudioParamHandler& position_y,
+                                            AudioParamHandler& position_z,
+                                            AudioParamHandler& orientation_x,
+                                            AudioParamHandler& orientation_y,
+                                            AudioParamHandler& orientation_z) {
+  return WTF::AdoptRef(new PannerHandler(node, sample_rate, position_x,
+                                         position_y, position_z, orientation_x,
+                                         orientation_y, orientation_z));
 }
 
 PannerHandler::~PannerHandler() {
@@ -166,7 +165,7 @@ void PannerHandler::Process(size_t frames_to_process) {
 void PannerHandler::ProcessSampleAccurateValues(AudioBus* destination,
                                                 const AudioBus* source,
                                                 size_t frames_to_process) {
-  RELEASE_ASSERT(frames_to_process <= AudioUtilities::kRenderQuantumFrames);
+  CHECK_LE(frames_to_process, AudioUtilities::kRenderQuantumFrames);
 
   // Get the sample accurate values from all of the AudioParams, including the
   // values from the AudioListener.
@@ -463,10 +462,15 @@ void PannerHandler::CalculateAzimuthElevation(
     const FloatPoint3D& listener_position,
     const FloatPoint3D& listener_forward,
     const FloatPoint3D& listener_up) {
-  double azimuth = 0.0;
-
   // Calculate the source-listener vector
   FloatPoint3D source_listener = position - listener_position;
+
+  // Quick default return if the source and listener are at the same position.
+  if (source_listener.IsZero()) {
+    *out_azimuth = 0;
+    *out_elevation = 0;
+    return;
+  }
 
   // normalize() does nothing if the length of |sourceListener| is zero.
   source_listener.Normalize();
@@ -484,7 +488,7 @@ void PannerHandler::CalculateAzimuthElevation(
 
   FloatPoint3D projected_source = source_listener - up_projection * up;
 
-  azimuth = rad2deg(projected_source.AngleBetween(listener_right));
+  double azimuth = rad2deg(projected_source.AngleBetween(listener_right));
   FixNANs(azimuth);  // avoid illegal values
 
   // Source  in front or behind the listener
@@ -568,7 +572,7 @@ void PannerHandler::MarkPannerAsDirty(unsigned dirty) {
 void PannerHandler::SetChannelCount(unsigned long channel_count,
                                     ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(Context());
+  BaseAudioContext::GraphAutoLocker locker(Context());
 
   // A PannerNode only supports 1 or 2 channels
   if (channel_count > 0 && channel_count <= 2) {
@@ -589,7 +593,7 @@ void PannerHandler::SetChannelCount(unsigned long channel_count,
 void PannerHandler::SetChannelCountMode(const String& mode,
                                         ExceptionState& exception_state) {
   DCHECK(IsMainThread());
-  BaseAudioContext::AutoLocker locker(Context());
+  BaseAudioContext::GraphAutoLocker locker(Context());
 
   ChannelCountMode old_mode = InternalChannelCountMode();
 

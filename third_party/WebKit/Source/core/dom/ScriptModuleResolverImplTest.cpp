@@ -9,6 +9,8 @@
 #include "core/dom/Modulator.h"
 #include "core/dom/ModuleScript.h"
 #include "core/testing/DummyModulator.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8ThrowException.h"
 #include "platform/heap/Handle.h"
 #include "platform/testing/TestingPlatformSupport.h"
 #include "public/platform/Platform.h"
@@ -26,6 +28,10 @@ class ScriptModuleResolverImplTestModulator final : public DummyModulator {
 
   DECLARE_TRACE();
 
+  void SetScriptState(ScriptState* script_state) {
+    script_state_ = script_state;
+  }
+
   int GetFetchedModuleScriptCalled() const {
     return get_fetched_module_script_called_;
   }
@@ -36,8 +42,20 @@ class ScriptModuleResolverImplTestModulator final : public DummyModulator {
 
  private:
   // Implements Modulator:
+  ScriptState* GetScriptState() override { return script_state_.get(); }
+
   ModuleScript* GetFetchedModuleScript(const KURL&) override;
 
+  ScriptModuleState GetRecordStatus(ScriptModule) override {
+    return ScriptModuleState::kInstantiated;
+  }
+  ScriptValue GetError(const ModuleScript* module_script) override {
+    ScriptState::Scope scope(script_state_.get());
+    return ScriptValue(script_state_.get(),
+                       module_script->CreateError(script_state_->GetIsolate()));
+  }
+
+  RefPtr<ScriptState> script_state_;
   int get_fetched_module_script_called_ = 0;
   KURL fetched_url_;
   Member<ModuleScript> module_script_;
@@ -55,35 +73,45 @@ ModuleScript* ScriptModuleResolverImplTestModulator::GetFetchedModuleScript(
   return module_script_.Get();
 }
 
-ModuleScript* CreateReferrerModuleScript(V8TestingScope& scope) {
+ModuleScript* CreateReferrerModuleScript(Modulator* modulator,
+                                         V8TestingScope& scope) {
   ScriptModule referrer_record = ScriptModule::Compile(
       scope.GetIsolate(), "import './target.js'; export const a = 42;",
-      "referrer.js", kSharableCrossOrigin);
+      "referrer.js", kSharableCrossOrigin,
+      WebURLRequest::kFetchCredentialsModeOmit, "", kParserInserted,
+      TextPosition::MinimumPosition(), ASSERT_NO_EXCEPTION);
   KURL referrer_url(kParsedURLString, "https://example.com/referrer.js");
-  ModuleScript* referrer_module_script =
-      ModuleScript::Create(referrer_record, referrer_url, "", kParserInserted,
-                           WebURLRequest::kFetchCredentialsModeOmit);
-  // TODO(kouhei): moduleScript->setInstantiateSuccess(); once
-  // https://codereview.chromium.org/2782403002/ landed.
+  ModuleScript* referrer_module_script = ModuleScript::CreateForTest(
+      modulator, referrer_record, referrer_url, "", kParserInserted,
+      WebURLRequest::kFetchCredentialsModeOmit);
   return referrer_module_script;
 }
 
-ModuleScript* CreateTargetModuleScript(V8TestingScope& scope) {
-  ScriptModule record =
-      ScriptModule::Compile(scope.GetIsolate(), "export const pi = 3.14;",
-                            "target.js", kSharableCrossOrigin);
+ModuleScript* CreateTargetModuleScript(
+    Modulator* modulator,
+    V8TestingScope& scope,
+    ScriptModuleState state = ScriptModuleState::kInstantiated) {
+  ScriptModule record = ScriptModule::Compile(
+      scope.GetIsolate(), "export const pi = 3.14;", "target.js",
+      kSharableCrossOrigin, WebURLRequest::kFetchCredentialsModeOmit, "",
+      kParserInserted, TextPosition::MinimumPosition(), ASSERT_NO_EXCEPTION);
   KURL url(kParsedURLString, "https://example.com/target.js");
   ModuleScript* module_script =
-      ModuleScript::Create(record, url, "", kParserInserted,
-                           WebURLRequest::kFetchCredentialsModeOmit);
-  // TODO(kouhei): moduleScript->setInstantiateSuccess(); once
-  // https://codereview.chromium.org/2782403002/ landed.
+      ModuleScript::CreateForTest(modulator, record, url, "", kParserInserted,
+                                  WebURLRequest::kFetchCredentialsModeOmit);
+  if (state != ScriptModuleState::kInstantiated) {
+    EXPECT_EQ(ScriptModuleState::kErrored, state);
+    v8::Local<v8::Value> error =
+        V8ThrowException::CreateError(scope.GetIsolate(), "hoge");
+    module_script->SetErrorAndClearRecord(
+        ScriptValue(scope.GetScriptState(), error));
+  }
   return module_script;
 }
 
 }  // namespace
 
-class ScriptModuleResolverImplTest : public testing::Test {
+class ScriptModuleResolverImplTest : public ::testing::Test {
  public:
   void SetUp() override;
 
@@ -102,15 +130,18 @@ void ScriptModuleResolverImplTest::SetUp() {
   modulator_ = new ScriptModuleResolverImplTestModulator();
 }
 
-TEST_F(ScriptModuleResolverImplTest, registerResolveSuccess) {
-  ScriptModuleResolverImpl* resolver =
-      ScriptModuleResolverImpl::Create(Modulator());
+TEST_F(ScriptModuleResolverImplTest, RegisterResolveSuccess) {
   V8TestingScope scope;
+  ScriptModuleResolver* resolver = ScriptModuleResolverImpl::Create(
+      Modulator(), scope.GetExecutionContext());
+  Modulator()->SetScriptState(scope.GetScriptState());
 
-  ModuleScript* referrer_module_script = CreateReferrerModuleScript(scope);
+  ModuleScript* referrer_module_script =
+      CreateReferrerModuleScript(modulator_, scope);
   resolver->RegisterModuleScript(referrer_module_script);
 
-  ModuleScript* target_module_script = CreateTargetModuleScript(scope);
+  ModuleScript* target_module_script =
+      CreateTargetModuleScript(modulator_, scope);
   Modulator()->SetModuleScript(target_module_script);
 
   ScriptModule resolved =
@@ -118,49 +149,6 @@ TEST_F(ScriptModuleResolverImplTest, registerResolveSuccess) {
                         scope.GetExceptionState());
   EXPECT_FALSE(scope.GetExceptionState().HadException());
   EXPECT_EQ(resolved, target_module_script->Record());
-  EXPECT_EQ(1, modulator_->GetFetchedModuleScriptCalled());
-  EXPECT_EQ(modulator_->FetchedUrl(), target_module_script->BaseURL())
-      << "Unexpectedly fetched URL: " << modulator_->FetchedUrl().GetString();
-}
-
-TEST_F(ScriptModuleResolverImplTest, resolveInvalidModuleSpecifier) {
-  ScriptModuleResolverImpl* resolver =
-      ScriptModuleResolverImpl::Create(Modulator());
-  V8TestingScope scope;
-
-  ModuleScript* referrer_module_script = CreateReferrerModuleScript(scope);
-  resolver->RegisterModuleScript(referrer_module_script);
-
-  ModuleScript* target_module_script = CreateTargetModuleScript(scope);
-  Modulator()->SetModuleScript(target_module_script);
-
-  ScriptModule resolved = resolver->Resolve(
-      "invalid", referrer_module_script->Record(), scope.GetExceptionState());
-  EXPECT_TRUE(scope.GetExceptionState().HadException());
-  EXPECT_EQ(kV8TypeError, scope.GetExceptionState().Code());
-  EXPECT_TRUE(resolved.IsNull());
-  EXPECT_EQ(0, modulator_->GetFetchedModuleScriptCalled());
-}
-
-TEST_F(ScriptModuleResolverImplTest, resolveLoadFailedModule) {
-  ScriptModuleResolverImpl* resolver =
-      ScriptModuleResolverImpl::Create(Modulator());
-  V8TestingScope scope;
-
-  ModuleScript* referrer_module_script = CreateReferrerModuleScript(scope);
-  resolver->RegisterModuleScript(referrer_module_script);
-
-  ModuleScript* target_module_script = CreateTargetModuleScript(scope);
-  // Set Modulator::getFetchedModuleScript to return nullptr, which represents
-  // that the target module failed to load.
-  Modulator()->SetModuleScript(nullptr);
-
-  ScriptModule resolved =
-      resolver->Resolve("./target.js", referrer_module_script->Record(),
-                        scope.GetExceptionState());
-  EXPECT_TRUE(scope.GetExceptionState().HadException());
-  EXPECT_EQ(kV8TypeError, scope.GetExceptionState().Code());
-  EXPECT_TRUE(resolved.IsNull());
   EXPECT_EQ(1, modulator_->GetFetchedModuleScriptCalled());
   EXPECT_EQ(modulator_->FetchedUrl(), target_module_script->BaseURL())
       << "Unexpectedly fetched URL: " << modulator_->FetchedUrl().GetString();

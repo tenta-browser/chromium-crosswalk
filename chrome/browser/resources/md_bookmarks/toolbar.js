@@ -20,12 +20,67 @@ Polymer({
       type: String,
       observer: 'onSidebarWidthChanged_',
     },
+
+    showSelectionOverlay: {
+      type: Boolean,
+      computed: 'shouldShowSelectionOverlay_(selectedItems_, globalCanEdit_)',
+      readOnly: true,
+      reflectToAttribute: true,
+    },
+
+    /** @private */
+    narrow_: {
+      type: Boolean,
+      reflectToAttribute: true,
+    },
+
+    /** @private {!Set<string>} */
+    selectedItems_: Object,
+
+    /** @private */
+    globalCanEdit_: Boolean,
+
+    /** @private */
+    selectedFolder_: String,
+
+    /** @private */
+    selectedFolderChildren_: Number,
+
+    /** @private */
+    canSortFolder_: {
+      type: Boolean,
+      computed: `computeCanSortFolder_(
+          canChangeList_, selectedFolder_, selectedFolderChildren_)`,
+    },
+
+    /** @private */
+    canChangeList_: {
+      type: Boolean,
+      computed:
+          'computeCanChangeList_(selectedFolder_, searchTerm_, globalCanEdit_)',
+    }
   },
 
   attached: function() {
     this.watch('searchTerm_', function(state) {
       return state.search.term;
     });
+    this.watch('selectedItems_', function(state) {
+      return state.selection.items;
+    });
+    this.watch('globalCanEdit_', function(state) {
+      return state.prefs.canEdit;
+    });
+    this.watch('selectedFolder_', function(state) {
+      return state.selectedFolder;
+    });
+    this.watch('selectedFolderChildren_', (state) => {
+      if (!state.selectedFolder)
+        return 0;
+
+      return state.nodes[state.selectedFolder].children.length;
+    });
+    this.updateFromStore();
   },
 
   /** @return {CrToolbarSearchFieldElement} */
@@ -39,29 +94,31 @@ Polymer({
    * @private
    */
   onMenuButtonOpenTap_: function(e) {
-    var menu = /** @type {!CrActionMenuElement} */ (this.$.dropdown);
+    const menu = /** @type {!CrActionMenuElement} */ (this.$.dropdown.get());
     menu.showAt(/** @type {!Element} */ (e.target));
   },
 
   /** @private */
   onSortTap_: function() {
-    chrome.bookmarkManagerPrivate.sortChildren(
-        assert(this.getState().selectedFolder));
+    chrome.bookmarkManagerPrivate.sortChildren(assert(this.selectedFolder_));
+    bookmarks.ToastManager.getInstance().show(
+        loadTimeData.getString('toastFolderSorted'), true);
     this.closeDropdownMenu_();
   },
 
   /** @private */
   onAddBookmarkTap_: function() {
-    var dialog =
+    const dialog =
         /** @type {BookmarksEditDialogElement} */ (this.$.addDialog.get());
-    dialog.showAddDialog(false, assert(this.getState().selectedFolder));
+    dialog.showAddDialog(false, assert(this.selectedFolder_));
     this.closeDropdownMenu_();
   },
 
+  /** @private */
   onAddFolderTap_: function() {
-    var dialog =
+    const dialog =
         /** @type {BookmarksEditDialogElement} */ (this.$.addDialog.get());
-    dialog.showAddDialog(true, assert(this.getState().selectedFolder));
+    dialog.showAddDialog(true, assert(this.selectedFolder_));
     this.closeDropdownMenu_();
   },
 
@@ -78,8 +135,21 @@ Polymer({
   },
 
   /** @private */
+  onDeleteSelectionTap_: function() {
+    const selection = this.selectedItems_;
+    const commandManager = bookmarks.CommandManager.getInstance();
+    assert(commandManager.canExecute(Command.DELETE, selection));
+    commandManager.handle(Command.DELETE, selection);
+  },
+
+  /** @private */
+  onClearSelectionTap_: function() {
+    this.dispatch(bookmarks.actions.deselectItems());
+  },
+
+  /** @private */
   closeDropdownMenu_: function() {
-    var menu = /** @type {!CrActionMenuElement} */ (this.$.dropdown);
+    const menu = /** @type {!CrActionMenuElement} */ (this.$.dropdown.get());
     menu.close();
   },
 
@@ -88,11 +158,12 @@ Polymer({
    * @private
    */
   onSearchChanged_: function(e) {
-    var searchTerm = /** @type {string} */ (e.detail);
+    const searchTerm = /** @type {string} */ (e.detail);
     if (searchTerm != this.searchTerm_)
       this.dispatch(bookmarks.actions.setSearchTerm(searchTerm));
   },
 
+  /** @private */
   onSidebarWidthChanged_: function() {
     this.style.setProperty('--sidebar-width', this.sidebarWidth);
   },
@@ -106,7 +177,38 @@ Polymer({
    * @return {boolean}
    * @private
    */
-  hasSearchTerm_: function() {
-    return !!this.searchTerm_;
+  computeCanSortFolder_: function() {
+    return this.canChangeList_ && this.selectedFolderChildren_ > 1;
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  computeCanChangeList_: function() {
+    return !this.searchTerm_ &&
+        bookmarks.util.canReorderChildren(
+            this.getState(), this.selectedFolder_);
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  shouldShowSelectionOverlay_: function() {
+    return this.selectedItems_.size > 1 && this.globalCanEdit_;
+  },
+
+  canDeleteSelection_: function() {
+    return bookmarks.CommandManager.getInstance().canExecute(
+        Command.DELETE, this.selectedItems_);
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  getItemsSelectedString_: function() {
+    return loadTimeData.getStringF('itemsSelected', this.selectedItems_.size);
   },
 });

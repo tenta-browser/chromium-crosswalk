@@ -14,6 +14,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/browser/cache_storage/cache_storage.h"
+#include "content/browser/cache_storage/cache_storage_context_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/cache_storage_context.h"
 #include "content/public/browser/cache_storage_usage_info.h"
@@ -58,30 +59,36 @@ class CONTENT_EXPORT CacheStorageManager {
   // corresponding CacheStorage method on the appropriate thread.
   void OpenCache(const GURL& origin,
                  const std::string& cache_name,
-                 const CacheStorage::CacheAndErrorCallback& callback);
+                 CacheStorage::CacheAndErrorCallback callback);
   void HasCache(const GURL& origin,
                 const std::string& cache_name,
-                const CacheStorage::BoolAndErrorCallback& callback);
+                CacheStorage::BoolAndErrorCallback callback);
   void DeleteCache(const GURL& origin,
                    const std::string& cache_name,
-                   const CacheStorage::BoolAndErrorCallback& callback);
+                   CacheStorage::BoolAndErrorCallback callback);
   void EnumerateCaches(const GURL& origin,
-                       const CacheStorage::IndexCallback& callback);
+                       CacheStorage::IndexCallback callback);
   void MatchCache(const GURL& origin,
                   const std::string& cache_name,
                   std::unique_ptr<ServiceWorkerFetchRequest> request,
                   const CacheStorageCacheQueryParams& match_params,
-                  const CacheStorageCache::ResponseCallback& callback);
+                  CacheStorageCache::ResponseCallback callback);
   void MatchAllCaches(const GURL& origin,
                       std::unique_ptr<ServiceWorkerFetchRequest> request,
                       const CacheStorageCacheQueryParams& match_params,
-                      const CacheStorageCache::ResponseCallback& callback);
+                      CacheStorageCache::ResponseCallback callback);
 
   // This must be called before creating any of the public *Cache functions
   // above.
   void SetBlobParametersForCache(
       scoped_refptr<net::URLRequestContextGetter> request_context_getter,
       base::WeakPtr<storage::BlobStorageContext> blob_storage_context);
+
+  void AddObserver(CacheStorageContextImpl::Observer* observer);
+  void RemoveObserver(CacheStorageContextImpl::Observer* observer);
+
+  void NotifyCacheListChanged(const GURL& origin);
+  void NotifyCacheContentChanged(const GURL& origin, const std::string& name);
 
   base::WeakPtr<CacheStorageManager> AsWeakPtr() {
     return weak_ptr_factory_.GetWeakPtr();
@@ -149,6 +156,8 @@ class CONTENT_EXPORT CacheStorageManager {
   // The map owns the CacheStorages and the CacheStorages are only accessed on
   // |cache_task_runner_|.
   CacheStorageMap cache_storage_map_;
+
+  base::ObserverList<CacheStorageContextImpl::Observer> observers_;
 
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
   base::WeakPtr<storage::BlobStorageContext> blob_context_;

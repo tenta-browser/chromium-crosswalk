@@ -11,9 +11,10 @@ TestAppListPresenter::TestAppListPresenter() : binding_(this) {}
 
 TestAppListPresenter::~TestAppListPresenter() {}
 
-app_list::mojom::AppListPresenterPtr
-TestAppListPresenter::CreateInterfacePtrAndBind() {
-  return binding_.CreateInterfacePtrAndBind();
+mojom::AppListPresenterPtr TestAppListPresenter::CreateInterfacePtrAndBind() {
+  mojom::AppListPresenterPtr ptr;
+  binding_.Bind(mojo::MakeRequest(&ptr));
+  return ptr;
 }
 
 void TestAppListPresenter::Show(int64_t display_id) {
@@ -30,6 +31,24 @@ void TestAppListPresenter::ToggleAppList(int64_t display_id) {
 
 void TestAppListPresenter::StartVoiceInteractionSession() {
   voice_session_count_++;
+}
+
+void TestAppListPresenter::ToggleVoiceInteractionSession() {
+  voice_session_count_++;
+}
+
+void TestAppListPresenter::UpdateYPositionAndOpacity(int y_position_in_screen,
+                                                     float background_opacity) {
+  set_y_position_count_++;
+}
+
+void TestAppListPresenter::EndDragFromShelf(
+    mojom::AppListState app_list_state) {
+  app_list_state_ = app_list_state;
+}
+
+void TestAppListPresenter::ProcessMouseWheelOffset(int y_scroll_offset) {
+  process_mouse_wheel_offset_count_++;
 }
 
 }  // namespace test

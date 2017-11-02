@@ -28,6 +28,8 @@ class URLRequest;
 
 namespace data_reduction_proxy {
 
+class LoFiDecider;
+
 enum class Client {
   UNKNOWN,
   CRONET_ANDROID,
@@ -42,6 +44,16 @@ enum class Client {
   CHROME_OPENBSD,
   CHROME_SOLARIS,
   CHROME_QNX,
+};
+
+// Scheme of the proxy used.
+enum ProxyScheme {
+  PROXY_SCHEME_UNKNOWN = 0,
+  PROXY_SCHEME_HTTP,
+  PROXY_SCHEME_HTTPS,
+  PROXY_SCHEME_QUIC,
+  PROXY_SCHEME_DIRECT,
+  PROXY_SCHEME_MAX
 };
 
 namespace util {
@@ -66,9 +78,6 @@ void GetChromiumBuildAndPatchAsInts(const std::string& version_string,
 // Get the human-readable version of |client|.
 const char* GetStringForClient(Client client);
 
-// Returns true if the request method is idempotent.
-bool IsMethodIdempotent(const std::string& method);
-
 GURL AddApiKeyToUrl(const GURL& url);
 
 // Returns whether this is valid for data reduction proxy use. |proxy_info|
@@ -91,6 +100,17 @@ bool ApplyProxyConfigToProxyInfo(const net::ProxyConfig& proxy_config,
 // Calculates the effective original content length of the |request|, accounting
 // for partial responses if necessary.
 int64_t CalculateEffectiveOCL(const net::URLRequest& request);
+
+// Given a |request| that went through the Data Reduction Proxy if |used_drp| is
+// true, this function estimates how many bytes would have been received if the
+// response had been received directly from the origin without any data saver
+// optimizations.
+int64_t EstimateOriginalReceivedBytes(const net::URLRequest& request,
+                                      bool used_drp,
+                                      const LoFiDecider* lofi_decider);
+
+// Converts net::ProxyServer::Scheme to type ProxyScheme.
+ProxyScheme ConvertNetProxySchemeToProxyScheme(net::ProxyServer::Scheme scheme);
 
 }  // namespace util
 

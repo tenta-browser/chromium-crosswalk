@@ -29,8 +29,8 @@
 #ifndef AudioScheduledSourceNode_h
 #define AudioScheduledSourceNode_h
 
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "modules/webaudio/AudioNode.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 
 namespace blink {
 
@@ -61,6 +61,10 @@ class AudioScheduledSourceHandler : public AudioHandler {
   // Scheduling.
   void Start(double when, ExceptionState&);
   void Stop(double when, ExceptionState&);
+
+  // AudioNode
+  double TailTime() const override { return 0; }
+  double LatencyTime() const override { return 0; }
 
   PlaybackState GetPlaybackState() const {
     return static_cast<PlaybackState>(AcquireLoad(&playback_state_));

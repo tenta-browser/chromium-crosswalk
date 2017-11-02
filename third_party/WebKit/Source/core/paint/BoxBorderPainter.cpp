@@ -10,7 +10,6 @@
 #include "core/paint/PaintInfo.h"
 #include "core/style/BorderEdge.h"
 #include "core/style/ComputedStyle.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/graphics/GraphicsContext.h"
 #include "platform/graphics/GraphicsContextStateSaver.h"
 #include "platform/wtf/Vector.h"
@@ -45,21 +44,21 @@ inline bool IncludesAdjacentEdges(BorderEdgeFlags flags) {
 
 inline bool StyleRequiresClipPolygon(EBorderStyle style) {
   // These are drawn with a stroke, so we have to clip to get corner miters.
-  return style == kBorderStyleDotted || style == kBorderStyleDashed;
+  return style == EBorderStyle::kDotted || style == EBorderStyle::kDashed;
 }
 
 inline bool BorderStyleFillsBorderArea(EBorderStyle style) {
-  return !(style == kBorderStyleDotted || style == kBorderStyleDashed ||
-           style == kBorderStyleDouble);
+  return !(style == EBorderStyle::kDotted || style == EBorderStyle::kDashed ||
+           style == EBorderStyle::kDouble);
 }
 
 inline bool BorderStyleHasInnerDetail(EBorderStyle style) {
-  return style == kBorderStyleGroove || style == kBorderStyleRidge ||
-         style == kBorderStyleDouble;
+  return style == EBorderStyle::kGroove || style == EBorderStyle::kRidge ||
+         style == EBorderStyle::kDouble;
 }
 
 inline bool BorderStyleIsDottedOrDashed(EBorderStyle style) {
-  return style == kBorderStyleDotted || style == kBorderStyleDashed;
+  return style == EBorderStyle::kDotted || style == EBorderStyle::kDashed;
 }
 
 // BorderStyleOutset darkens the bottom and right (and maybe lightens the top
@@ -69,8 +68,8 @@ inline bool BorderStyleHasUnmatchedColorsAtCorner(EBorderStyle style,
                                                   BoxSide side,
                                                   BoxSide adjacent_side) {
   // These styles match at the top/left and bottom/right.
-  if (style == kBorderStyleInset || style == kBorderStyleGroove ||
-      style == kBorderStyleRidge || style == kBorderStyleOutset) {
+  if (style == EBorderStyle::kInset || style == EBorderStyle::kGroove ||
+      style == EBorderStyle::kRidge || style == EBorderStyle::kOutset) {
     const BorderEdgeFlags top_right_flags =
         EdgeFlagForSide(kBSTop) | EdgeFlagForSide(kBSRight);
     const BorderEdgeFlags bottom_left_flags =
@@ -118,9 +117,10 @@ inline bool BorderStylesRequireMiter(BoxSide side,
                                      BoxSide adjacent_side,
                                      EBorderStyle style,
                                      EBorderStyle adjacent_style) {
-  if (style == kBorderStyleDouble || adjacent_style == kBorderStyleDouble ||
-      adjacent_style == kBorderStyleGroove ||
-      adjacent_style == kBorderStyleRidge)
+  if (style == EBorderStyle::kDouble ||
+      adjacent_style == EBorderStyle::kDouble ||
+      adjacent_style == EBorderStyle::kGroove ||
+      adjacent_style == EBorderStyle::kRidge)
     return true;
 
   if (BorderStyleIsDottedOrDashed(style) !=
@@ -276,12 +276,20 @@ LayoutRectOutsets DoubleStripeInsets(const BorderEdge edges[],
                            -edges[kBSLeft].GetDoubleBorderStripeWidth(stripe));
 }
 
+float ClampOrRound(float border_width) {
+  // Make sure non-zero borders never disappear
+  if (border_width > 0.0f && border_width <= 1.0f)
+    return 1.0f;
+
+  return roundf(border_width);
+}
+
 void DrawSolidBorderRect(GraphicsContext& context,
                          const FloatRect& border_rect,
                          float border_width,
                          const Color& color) {
   FloatRect stroke_rect(border_rect);
-  border_width = roundf(border_width);
+  border_width = ClampOrRound(border_width);
   stroke_rect.Inflate(-border_width / 2);
 
   bool was_antialias = context.ShouldAntialias();
@@ -334,22 +342,27 @@ void DrawBleedAdjustedDRRect(GraphicsContext& context,
   }
 }
 
-bool BleedAvoidanceIsClipping(BackgroundBleedAvoidance bleed_avoidance) {
-  return bleed_avoidance == kBackgroundBleedClipOnly ||
-         bleed_avoidance == kBackgroundBleedClipLayer;
-}
-
 // The LUTs below assume specific enum values.
-static_assert(kBorderStyleNone == 0, "unexpected EBorderStyle value");
-static_assert(kBorderStyleHidden == 1, "unexpected EBorderStyle value");
-static_assert(kBorderStyleInset == 2, "unexpected EBorderStyle value");
-static_assert(kBorderStyleGroove == 3, "unexpected EBorderStyle value");
-static_assert(kBorderStyleOutset == 4, "unexpected EBorderStyle value");
-static_assert(kBorderStyleRidge == 5, "unexpected EBorderStyle value");
-static_assert(kBorderStyleDotted == 6, "unexpected EBorderStyle value");
-static_assert(kBorderStyleDashed == 7, "unexpected EBorderStyle value");
-static_assert(kBorderStyleSolid == 8, "unexpected EBorderStyle value");
-static_assert(kBorderStyleDouble == 9, "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kNone == static_cast<EBorderStyle>(0),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kHidden == static_cast<EBorderStyle>(1),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kInset == static_cast<EBorderStyle>(2),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kGroove == static_cast<EBorderStyle>(3),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kOutset == static_cast<EBorderStyle>(4),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kRidge == static_cast<EBorderStyle>(5),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kDotted == static_cast<EBorderStyle>(6),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kDashed == static_cast<EBorderStyle>(7),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kSolid == static_cast<EBorderStyle>(8),
+              "unexpected EBorderStyle value");
+static_assert(EBorderStyle::kDouble == static_cast<EBorderStyle>(9),
+              "unexpected EBorderStyle value");
 
 static_assert(kBSTop == 0, "unexpected BoxSide value");
 static_assert(kBSRight == 1, "unexpected BoxSide value");
@@ -428,9 +441,9 @@ struct BoxBorderPainter::ComplexBorderInfo {
                   return alpha_a < alpha_b;
 
                 const unsigned style_priority_a =
-                    kStylePriority[edge_a.BorderStyle()];
+                    kStylePriority[static_cast<unsigned>(edge_a.BorderStyle())];
                 const unsigned style_priority_b =
-                    kStylePriority[edge_b.BorderStyle()];
+                    kStylePriority[static_cast<unsigned>(edge_b.BorderStyle())];
                 if (style_priority_a != style_priority_b)
                   return style_priority_a < style_priority_b;
 
@@ -480,7 +493,7 @@ void BoxBorderPainter::DrawDoubleBorder(GraphicsContext& context,
                                         const LayoutRect& border_rect) const {
   DCHECK(is_uniform_color_);
   DCHECK(is_uniform_style_);
-  DCHECK(FirstEdge().BorderStyle() == kBorderStyleDouble);
+  DCHECK(FirstEdge().BorderStyle() == EBorderStyle::kDouble);
   DCHECK(visible_edge_set_ == kAllBorderEdges);
 
   const Color color = FirstEdge().color;
@@ -509,12 +522,12 @@ bool BoxBorderPainter::PaintBorderFastPath(
   if (!is_uniform_color_ || !is_uniform_style_ || !inner_.IsRenderable())
     return false;
 
-  if (FirstEdge().BorderStyle() != kBorderStyleSolid &&
-      FirstEdge().BorderStyle() != kBorderStyleDouble)
+  if (FirstEdge().BorderStyle() != EBorderStyle::kSolid &&
+      FirstEdge().BorderStyle() != EBorderStyle::kDouble)
     return false;
 
   if (visible_edge_set_ == kAllBorderEdges) {
-    if (FirstEdge().BorderStyle() == kBorderStyleSolid) {
+    if (FirstEdge().BorderStyle() == EBorderStyle::kSolid) {
       if (is_uniform_width_ && !outer_.IsRounded()) {
         // 4-side, solid, uniform-width, rectangular border => one drawRect()
         DrawSolidBorderRect(context, outer_.Rect(), FirstEdge().Width(),
@@ -526,7 +539,7 @@ bool BoxBorderPainter::PaintBorderFastPath(
       }
     } else {
       // 4-side, double border => 2x drawDRRect()
-      DCHECK(FirstEdge().BorderStyle() == kBorderStyleDouble);
+      DCHECK(FirstEdge().BorderStyle() == EBorderStyle::kDouble);
       DrawDoubleBorder(context, border_rect);
     }
 
@@ -535,8 +548,8 @@ bool BoxBorderPainter::PaintBorderFastPath(
 
   // This is faster than the normal complex border path only if it avoids
   // creating transparency layers (when the border is translucent).
-  if (FirstEdge().BorderStyle() == kBorderStyleSolid && !outer_.IsRounded() &&
-      has_alpha_) {
+  if (FirstEdge().BorderStyle() == EBorderStyle::kSolid &&
+      !outer_.IsRounded() && has_alpha_) {
     DCHECK(visible_edge_set_ != kAllBorderEdges);
     // solid, rectangular border => one drawPath()
     Path path;
@@ -585,6 +598,15 @@ BoxBorderPainter::BoxBorderPainter(const LayoutRect& border_rect,
                                       include_logical_right_edge);
   inner_ = style_.GetRoundedInnerBorderFor(
       border_rect, include_logical_left_edge, include_logical_right_edge);
+
+  // Make sure that the border width isn't larger than the border box, which
+  // can pixel snap smaller.
+  float max_width = outer_.Rect().Width();
+  float max_height = outer_.Rect().Height();
+  edges_[kBSTop].ClampWidth(max_height);
+  edges_[kBSRight].ClampWidth(max_width);
+  edges_[kBSBottom].ClampWidth(max_height);
+  edges_[kBSLeft].ClampWidth(max_width);
 
   is_rounded_ = outer_.IsRounded();
 }
@@ -801,7 +823,7 @@ void BoxBorderPainter::PaintSide(GraphicsContext& context,
       if (use_path)
         path = &border_info.rounded_border_path;
       else
-        side_rect.SetHeight(roundf(edge.Width()));
+        side_rect.SetHeight(ClampOrRound(edge.Width()));
 
       PaintOneBorderSide(context, side_rect, kBSTop, kBSLeft, kBSRight, path,
                          border_info.anti_alias, color, completed_edges);
@@ -815,7 +837,7 @@ void BoxBorderPainter::PaintSide(GraphicsContext& context,
       if (use_path)
         path = &border_info.rounded_border_path;
       else
-        side_rect.ShiftYEdgeTo(side_rect.MaxY() - roundf(edge.Width()));
+        side_rect.ShiftYEdgeTo(side_rect.MaxY() - ClampOrRound(edge.Width()));
 
       PaintOneBorderSide(context, side_rect, kBSBottom, kBSLeft, kBSRight, path,
                          border_info.anti_alias, color, completed_edges);
@@ -829,7 +851,7 @@ void BoxBorderPainter::PaintSide(GraphicsContext& context,
       if (use_path)
         path = &border_info.rounded_border_path;
       else
-        side_rect.SetWidth(roundf(edge.Width()));
+        side_rect.SetWidth(ClampOrRound(edge.Width()));
 
       PaintOneBorderSide(context, side_rect, kBSLeft, kBSTop, kBSBottom, path,
                          border_info.anti_alias, color, completed_edges);
@@ -843,14 +865,14 @@ void BoxBorderPainter::PaintSide(GraphicsContext& context,
       if (use_path)
         path = &border_info.rounded_border_path;
       else
-        side_rect.ShiftXEdgeTo(side_rect.MaxX() - roundf(edge.Width()));
+        side_rect.ShiftXEdgeTo(side_rect.MaxX() - ClampOrRound(edge.Width()));
 
       PaintOneBorderSide(context, side_rect, kBSRight, kBSTop, kBSBottom, path,
                          border_info.anti_alias, color, completed_edges);
       break;
     }
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
   }
 }
 
@@ -929,11 +951,11 @@ void BoxBorderPainter::PaintOneBorderSide(
       ClipBorderSidePolygon(graphics_context, side, miter1, miter2);
     else
       ClipBorderSideForComplexInnerPath(graphics_context, side);
-    float thickness =
+    float stroke_thickness =
         std::max(std::max(edge_to_render.Width(), adjacent_edge1.Width()),
                  adjacent_edge2.Width());
     DrawBoxSideFromPath(graphics_context, LayoutRect(outer_.Rect()), *path,
-                        edge_to_render.Width(), thickness, side, color,
+                        edge_to_render.Width(), stroke_thickness, side, color,
                         edge_to_render.BorderStyle());
   } else {
     MiterType miter1 =
@@ -954,52 +976,55 @@ void BoxBorderPainter::PaintOneBorderSide(
     ObjectPainter::DrawLineForBoxSide(
         graphics_context, side_rect.X(), side_rect.Y(), side_rect.MaxX(),
         side_rect.MaxY(), side, color, edge_to_render.BorderStyle(),
-        miter1 != kNoMiter ? roundf(adjacent_edge1.Width()) : 0,
-        miter2 != kNoMiter ? roundf(adjacent_edge2.Width()) : 0, antialias);
+        miter1 != kNoMiter ? ClampOrRound(adjacent_edge1.Width()) : 0,
+        miter2 != kNoMiter ? ClampOrRound(adjacent_edge2.Width()) : 0,
+        antialias);
   }
 }
 
 void BoxBorderPainter::DrawBoxSideFromPath(GraphicsContext& graphics_context,
                                            const LayoutRect& border_rect,
                                            const Path& border_path,
-                                           float thickness,
-                                           float draw_thickness,
+                                           float border_thickness,
+                                           float stroke_thickness,
                                            BoxSide side,
                                            Color color,
                                            EBorderStyle border_style) const {
-  if (thickness <= 0)
+  if (border_thickness <= 0)
     return;
 
-  if (border_style == kBorderStyleDouble && thickness < 3)
-    border_style = kBorderStyleSolid;
+  if (border_style == EBorderStyle::kDouble && border_thickness < 3)
+    border_style = EBorderStyle::kSolid;
 
   switch (border_style) {
-    case kBorderStyleNone:
-    case kBorderStyleHidden:
+    case EBorderStyle::kNone:
+    case EBorderStyle::kHidden:
       return;
-    case kBorderStyleDotted:
-    case kBorderStyleDashed: {
-      DrawDashedDottedBoxSideFromPath(graphics_context, border_rect, thickness,
-                                      draw_thickness, color, border_style);
+    case EBorderStyle::kDotted:
+    case EBorderStyle::kDashed: {
+      DrawDashedDottedBoxSideFromPath(graphics_context, border_rect,
+                                      border_thickness, stroke_thickness, color,
+                                      border_style);
       return;
     }
-    case kBorderStyleDouble: {
+    case EBorderStyle::kDouble: {
       DrawDoubleBoxSideFromPath(graphics_context, border_rect, border_path,
-                                thickness, draw_thickness, side, color);
+                                border_thickness, stroke_thickness, side,
+                                color);
       return;
     }
-    case kBorderStyleRidge:
-    case kBorderStyleGroove: {
+    case EBorderStyle::kRidge:
+    case EBorderStyle::kGroove: {
       DrawRidgeGrooveBoxSideFromPath(graphics_context, border_rect, border_path,
-                                     thickness, draw_thickness, side, color,
-                                     border_style);
+                                     border_thickness, stroke_thickness, side,
+                                     color, border_style);
       return;
     }
-    case kBorderStyleInset:
+    case EBorderStyle::kInset:
       if (side == kBSTop || side == kBSLeft)
         color = color.Dark();
       break;
-    case kBorderStyleOutset:
+    case EBorderStyle::kOutset:
       if (side == kBSBottom || side == kBSRight)
         color = color.Dark();
       break;
@@ -1015,8 +1040,8 @@ void BoxBorderPainter::DrawBoxSideFromPath(GraphicsContext& graphics_context,
 void BoxBorderPainter::DrawDashedDottedBoxSideFromPath(
     GraphicsContext& graphics_context,
     const LayoutRect& border_rect,
-    float thickness,
-    float draw_thickness,
+    float border_thickness,
+    float stroke_thickness,
     Color color,
     EBorderStyle border_style) const {
   // Convert the path to be down the middle of the dots or dashes.
@@ -1030,99 +1055,50 @@ void BoxBorderPainter::DrawDashedDottedBoxSideFromPath(
 
   graphics_context.SetStrokeColor(color);
 
-  if (!StrokeData::StrokeIsDashed(thickness, border_style == kBorderStyleDashed
-                                                 ? kDashedStroke
-                                                 : kDottedStroke)) {
-    DrawWideDottedBoxSideFromPath(graphics_context, centerline_path, thickness);
+  if (!StrokeData::StrokeIsDashed(border_thickness,
+                                  border_style == EBorderStyle::kDashed
+                                      ? kDashedStroke
+                                      : kDottedStroke)) {
+    DrawWideDottedBoxSideFromPath(graphics_context, centerline_path,
+                                  border_thickness);
     return;
   }
 
-  // The extra multiplier is so that the clipping mask can antialias
+  // The stroke is doubled here because the provided path is the
+  // outside edge of the border so half the stroke is clipped off, with
+  // the extra multiplier so that the clipping mask can antialias
   // the edges to prevent jaggies.
-  graphics_context.SetStrokeThickness(draw_thickness * 1.1f);
+  const float thickness_multiplier = 2 * 1.1f;
+  graphics_context.SetStrokeThickness(stroke_thickness * thickness_multiplier);
   graphics_context.SetStrokeStyle(
-      border_style == kBorderStyleDashed ? kDashedStroke : kDottedStroke);
-
-  // TODO(schenney): This code for setting up the dash effect is trying to
-  // do the same thing as StrokeData::setupPaintDashPathEffect and should be
-  // refactored to re-use that code. It would require
-  // GraphicsContext::strokePath to take a length parameter.
-  float dash_length = draw_thickness;
-  float gap_length = dash_length;
-  if (border_style == kBorderStyleDashed) {
-    dash_length *= StrokeData::DashLengthRatio(draw_thickness);
-    gap_length *= StrokeData::DashGapRatio(draw_thickness);
-  }
-  float path_length = centerline_path.length();
-  // Don't try to show dashes if we have less than 2 dashes + 2 gaps.
-  // TODO(schenney): should do this test per side.
-  if (path_length >= 2 * dash_length + gap_length) {
-    float gap = gap_length;
-    if (border_style == kBorderStyleDashed)
-      gap = StrokeData::SelectBestDashGap(path_length, dash_length, gap_length);
-    DashArray line_dash;
-    line_dash.push_back(dash_length);
-    line_dash.push_back(gap);
-    graphics_context.SetLineDash(line_dash, dash_length);
-  } else if (path_length > dash_length) {
-    // Exactly 2 dashes proportionally sized
-    float multiplier = path_length / (2 * dash_length + gap_length);
-    DashArray line_dash;
-    line_dash.push_back(dash_length * multiplier);
-    line_dash.push_back(gap_length * multiplier);
-    graphics_context.SetLineDash(line_dash, 0);
-  }  // else don't dash at all
+      border_style == EBorderStyle::kDashed ? kDashedStroke : kDottedStroke);
 
   // TODO(schenney): stroking the border path causes issues with tight corners:
   // https://bugs.chromium.org/p/chromium/issues/detail?id=344234
-  graphics_context.StrokePath(centerline_path);
+  graphics_context.StrokePath(centerline_path, centerline_path.length(),
+                              border_thickness);
 }
 
 void BoxBorderPainter::DrawWideDottedBoxSideFromPath(
     GraphicsContext& graphics_context,
     const Path& border_path,
-    float thickness) const {
-  graphics_context.SetStrokeThickness(thickness);
+    float border_thickness) const {
+  graphics_context.SetStrokeThickness(border_thickness);
   graphics_context.SetStrokeStyle(kDottedStroke);
-
-  // TODO(schenney): This code for setting up the dash effect is largely
-  // duplicated from StrokeData::setupPaintDashPathEffect and both this code
-  // and the method above should be refactored to re-use that code. It would
-  // require GraphicsContext::strokePath to take a length parameter.
   graphics_context.SetLineCap(kRoundCap);
-
-  // Adjust the width to get equal dot spacing as much as possible.
-  float per_dot_length = thickness * 2;
-  float path_length = border_path.length();
-
-  if (path_length < per_dot_length) {
-    // Not enoguh space for 2 dots. Just draw 1 by giving a gap that is
-    // bigger than the length.
-    DashArray line_dash;
-    line_dash.push_back(0);
-    line_dash.push_back(per_dot_length);
-    graphics_context.SetLineDash(line_dash, 0);
-  } else {
-    float gap =
-        StrokeData::SelectBestDashGap(path_length, thickness, thickness);
-    static const float kEpsilon = 1.0e-2f;
-    DashArray line_dash;
-    line_dash.push_back(0);
-    line_dash.push_back(gap + thickness - kEpsilon);
-    graphics_context.SetLineDash(line_dash, 0);
-  }
 
   // TODO(schenney): stroking the border path causes issues with tight corners:
   // https://bugs.webkit.org/show_bug.cgi?id=58711
-  graphics_context.StrokePath(border_path);
+  graphics_context.StrokePath(border_path, border_path.length(),
+                              border_thickness);
 }
 
 void BoxBorderPainter::DrawDoubleBoxSideFromPath(
     GraphicsContext& graphics_context,
     const LayoutRect& border_rect,
     const Path& border_path,
-    float thickness,
-    float draw_thickness,
+    float border_thickness,
+    float stroke_thickness,
     BoxSide side,
     Color color) const {
   // Draw inner border line
@@ -1135,8 +1111,9 @@ void BoxBorderPainter::DrawDoubleBoxSideFromPath(
         include_logical_right_edge_);
 
     graphics_context.ClipRoundedRect(inner_clip);
-    DrawBoxSideFromPath(graphics_context, border_rect, border_path, thickness,
-                        draw_thickness, side, color, kBorderStyleSolid);
+    DrawBoxSideFromPath(graphics_context, border_rect, border_path,
+                        border_thickness, stroke_thickness, side, color,
+                        EBorderStyle::kSolid);
   }
 
   // Draw outer border line
@@ -1158,8 +1135,9 @@ void BoxBorderPainter::DrawDoubleBoxSideFromPath(
         outer_rect, outer_insets, include_logical_left_edge_,
         include_logical_right_edge_);
     graphics_context.ClipOutRoundedRect(outer_clip);
-    DrawBoxSideFromPath(graphics_context, border_rect, border_path, thickness,
-                        draw_thickness, side, color, kBorderStyleSolid);
+    DrawBoxSideFromPath(graphics_context, border_rect, border_path,
+                        border_thickness, stroke_thickness, side, color,
+                        EBorderStyle::kSolid);
   }
 }
 
@@ -1167,24 +1145,24 @@ void BoxBorderPainter::DrawRidgeGrooveBoxSideFromPath(
     GraphicsContext& graphics_context,
     const LayoutRect& border_rect,
     const Path& border_path,
-    float thickness,
-    float draw_thickness,
+    float border_thickness,
+    float stroke_thickness,
     BoxSide side,
     Color color,
     EBorderStyle border_style) const {
   EBorderStyle s1;
   EBorderStyle s2;
-  if (border_style == kBorderStyleGroove) {
-    s1 = kBorderStyleInset;
-    s2 = kBorderStyleOutset;
+  if (border_style == EBorderStyle::kGroove) {
+    s1 = EBorderStyle::kInset;
+    s2 = EBorderStyle::kOutset;
   } else {
-    s1 = kBorderStyleOutset;
-    s2 = kBorderStyleInset;
+    s1 = EBorderStyle::kOutset;
+    s2 = EBorderStyle::kInset;
   }
 
   // Paint full border
-  DrawBoxSideFromPath(graphics_context, border_rect, border_path, thickness,
-                      draw_thickness, side, color, s1);
+  DrawBoxSideFromPath(graphics_context, border_rect, border_path,
+                      border_thickness, stroke_thickness, side, color, s1);
 
   // Paint inner only
   GraphicsContextStateSaver state_saver(graphics_context);
@@ -1199,8 +1177,8 @@ void BoxBorderPainter::DrawRidgeGrooveBoxSideFromPath(
       include_logical_left_edge_, include_logical_right_edge_);
 
   graphics_context.ClipRoundedRect(clip_rect);
-  DrawBoxSideFromPath(graphics_context, border_rect, border_path, thickness,
-                      draw_thickness, side, color, s2);
+  DrawBoxSideFromPath(graphics_context, border_rect, border_path,
+                      border_thickness, stroke_thickness, side, color, s2);
 }
 
 void BoxBorderPainter::ClipBorderSideForComplexInnerPath(

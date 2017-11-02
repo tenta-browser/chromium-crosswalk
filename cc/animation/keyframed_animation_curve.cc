@@ -41,14 +41,13 @@ base::TimeDelta TransformedAnimationTime(
     double scaled_duration,
     base::TimeDelta time) {
   if (timing_function) {
-    base::TimeDelta start_time =
-        TimeUtil::Scale(keyframes.front()->Time(), scaled_duration);
-    base::TimeDelta duration = TimeUtil::Scale(
-        keyframes.back()->Time() - keyframes.front()->Time(), scaled_duration);
+    base::TimeDelta start_time = keyframes.front()->Time() * scaled_duration;
+    base::TimeDelta duration =
+        (keyframes.back()->Time() - keyframes.front()->Time()) *
+        scaled_duration;
     double progress = TimeUtil::Divide(time - start_time, duration);
 
-    time = TimeUtil::Scale(duration, timing_function->GetValue(progress)) +
-           start_time;
+    time = (duration * timing_function->GetValue(progress)) + start_time;
   }
 
   return time;
@@ -62,7 +61,7 @@ size_t GetActiveKeyframe(
   DCHECK_GE(keyframes.size(), 2ul);
   size_t i = 0;
   for (; i < keyframes.size() - 2; ++i) {  // Last keyframe is never active.
-    if (time < TimeUtil::Scale(keyframes[i + 1]->Time(), scaled_duration))
+    if (time < (keyframes[i + 1]->Time() * scaled_duration))
       break;
   }
 
@@ -75,10 +74,8 @@ double TransformedKeyframeProgress(
     double scaled_duration,
     base::TimeDelta time,
     size_t i) {
-  base::TimeDelta time1 =
-      TimeUtil::Scale(keyframes[i]->Time(), scaled_duration);
-  base::TimeDelta time2 =
-      TimeUtil::Scale(keyframes[i + 1]->Time(), scaled_duration);
+  base::TimeDelta time1 = keyframes[i]->Time() * scaled_duration;
+  base::TimeDelta time2 = keyframes[i + 1]->Time() * scaled_duration;
 
   double progress = TimeUtil::Divide(time - time1, time2 - time1);
 
@@ -204,6 +201,32 @@ std::unique_ptr<FilterKeyframe> FilterKeyframe::Clone() const {
   return FilterKeyframe::Create(Time(), Value(), std::move(func));
 }
 
+std::unique_ptr<SizeKeyframe> SizeKeyframe::Create(
+    base::TimeDelta time,
+    const gfx::SizeF& value,
+    std::unique_ptr<TimingFunction> timing_function) {
+  return base::WrapUnique(
+      new SizeKeyframe(time, value, std::move(timing_function)));
+}
+
+SizeKeyframe::SizeKeyframe(base::TimeDelta time,
+                           const gfx::SizeF& value,
+                           std::unique_ptr<TimingFunction> timing_function)
+    : Keyframe(time, std::move(timing_function)), value_(value) {}
+
+SizeKeyframe::~SizeKeyframe() {}
+
+const gfx::SizeF& SizeKeyframe::Value() const {
+  return value_;
+}
+
+std::unique_ptr<SizeKeyframe> SizeKeyframe::Clone() const {
+  std::unique_ptr<TimingFunction> func;
+  if (timing_function())
+    func = timing_function()->Clone();
+  return SizeKeyframe::Create(Time(), Value(), std::move(func));
+}
+
 std::unique_ptr<KeyframedColorAnimationCurve>
 KeyframedColorAnimationCurve::Create() {
   return base::WrapUnique(new KeyframedColorAnimationCurve);
@@ -220,15 +243,15 @@ void KeyframedColorAnimationCurve::AddKeyframe(
 }
 
 base::TimeDelta KeyframedColorAnimationCurve::Duration() const {
-  return TimeUtil::Scale(keyframes_.back()->Time() - keyframes_.front()->Time(),
-                         scaled_duration());
+  return (keyframes_.back()->Time() - keyframes_.front()->Time()) *
+         scaled_duration();
 }
 
 std::unique_ptr<AnimationCurve> KeyframedColorAnimationCurve::Clone() const {
   std::unique_ptr<KeyframedColorAnimationCurve> to_return =
       KeyframedColorAnimationCurve::Create();
-  for (size_t i = 0; i < keyframes_.size(); ++i)
-    to_return->AddKeyframe(keyframes_[i]->Clone());
+  for (const auto& keyframe : keyframes_)
+    to_return->AddKeyframe(keyframe->Clone());
 
   if (timing_function_)
     to_return->SetTimingFunction(timing_function_->Clone());
@@ -239,10 +262,10 @@ std::unique_ptr<AnimationCurve> KeyframedColorAnimationCurve::Clone() const {
 }
 
 SkColor KeyframedColorAnimationCurve::GetValue(base::TimeDelta t) const {
-  if (t <= TimeUtil::Scale(keyframes_.front()->Time(), scaled_duration()))
+  if (t <= (keyframes_.front()->Time() * scaled_duration()))
     return keyframes_.front()->Value();
 
-  if (t >= TimeUtil::Scale(keyframes_.back()->Time(), scaled_duration()))
+  if (t >= (keyframes_.back()->Time() * scaled_duration()))
     return keyframes_.back()->Value();
 
   t = TransformedAnimationTime(keyframes_, timing_function_, scaled_duration(),
@@ -254,8 +277,6 @@ SkColor KeyframedColorAnimationCurve::GetValue(base::TimeDelta t) const {
   return gfx::Tween::ColorValueBetween(
       progress, keyframes_[i]->Value(), keyframes_[i + 1]->Value());
 }
-
-// KeyframedFloatAnimationCurve
 
 std::unique_ptr<KeyframedFloatAnimationCurve>
 KeyframedFloatAnimationCurve::Create() {
@@ -273,15 +294,15 @@ void KeyframedFloatAnimationCurve::AddKeyframe(
 }
 
 base::TimeDelta KeyframedFloatAnimationCurve::Duration() const {
-  return TimeUtil::Scale(keyframes_.back()->Time() - keyframes_.front()->Time(),
-                         scaled_duration());
+  return (keyframes_.back()->Time() - keyframes_.front()->Time()) *
+         scaled_duration();
 }
 
 std::unique_ptr<AnimationCurve> KeyframedFloatAnimationCurve::Clone() const {
   std::unique_ptr<KeyframedFloatAnimationCurve> to_return =
       KeyframedFloatAnimationCurve::Create();
-  for (size_t i = 0; i < keyframes_.size(); ++i)
-    to_return->AddKeyframe(keyframes_[i]->Clone());
+  for (const auto& keyframe : keyframes_)
+    to_return->AddKeyframe(keyframe->Clone());
 
   if (timing_function_)
     to_return->SetTimingFunction(timing_function_->Clone());
@@ -292,10 +313,10 @@ std::unique_ptr<AnimationCurve> KeyframedFloatAnimationCurve::Clone() const {
 }
 
 float KeyframedFloatAnimationCurve::GetValue(base::TimeDelta t) const {
-  if (t <= TimeUtil::Scale(keyframes_.front()->Time(), scaled_duration()))
+  if (t <= (keyframes_.front()->Time() * scaled_duration()))
     return keyframes_.front()->Value();
 
-  if (t >= TimeUtil::Scale(keyframes_.back()->Time(), scaled_duration()))
+  if (t >= (keyframes_.back()->Time() * scaled_duration()))
     return keyframes_.back()->Value();
 
   t = TransformedAnimationTime(keyframes_, timing_function_, scaled_duration(),
@@ -324,16 +345,16 @@ void KeyframedTransformAnimationCurve::AddKeyframe(
 }
 
 base::TimeDelta KeyframedTransformAnimationCurve::Duration() const {
-  return TimeUtil::Scale(keyframes_.back()->Time() - keyframes_.front()->Time(),
-                         scaled_duration());
+  return (keyframes_.back()->Time() - keyframes_.front()->Time()) *
+         scaled_duration();
 }
 
 std::unique_ptr<AnimationCurve> KeyframedTransformAnimationCurve::Clone()
     const {
   std::unique_ptr<KeyframedTransformAnimationCurve> to_return =
       KeyframedTransformAnimationCurve::Create();
-  for (size_t i = 0; i < keyframes_.size(); ++i)
-    to_return->AddKeyframe(keyframes_[i]->Clone());
+  for (const auto& keyframe : keyframes_)
+    to_return->AddKeyframe(keyframe->Clone());
 
   if (timing_function_)
     to_return->SetTimingFunction(timing_function_->Clone());
@@ -343,13 +364,13 @@ std::unique_ptr<AnimationCurve> KeyframedTransformAnimationCurve::Clone()
   return std::move(to_return);
 }
 
-gfx::Transform KeyframedTransformAnimationCurve::GetValue(
+TransformOperations KeyframedTransformAnimationCurve::GetValue(
     base::TimeDelta t) const {
-  if (t <= TimeUtil::Scale(keyframes_.front()->Time(), scaled_duration()))
-    return keyframes_.front()->Value().Apply();
+  if (t <= (keyframes_.front()->Time() * scaled_duration()))
+    return keyframes_.front()->Value();
 
-  if (t >= TimeUtil::Scale(keyframes_.back()->Time(), scaled_duration()))
-    return keyframes_.back()->Value().Apply();
+  if (t >= (keyframes_.back()->Time() * scaled_duration()))
+    return keyframes_.back()->Value();
 
   t = TransformedAnimationTime(keyframes_, timing_function_, scaled_duration(),
                                t);
@@ -383,21 +404,21 @@ bool KeyframedTransformAnimationCurve::AnimatedBoundsForBox(
 }
 
 bool KeyframedTransformAnimationCurve::PreservesAxisAlignment() const {
-  for (size_t i = 0; i < keyframes_.size(); ++i) {
-    if (!keyframes_[i]->Value().PreservesAxisAlignment())
+  for (const auto& keyframe : keyframes_) {
+    if (!keyframe->Value().PreservesAxisAlignment())
       return false;
   }
   return true;
 }
 
 bool KeyframedTransformAnimationCurve::IsTranslation() const {
-  for (size_t i = 0; i < keyframes_.size(); ++i) {
-    if (!keyframes_[i]->Value().IsTranslation() &&
-        !keyframes_[i]->Value().IsIdentity())
+  for (const auto& keyframe : keyframes_) {
+    if (!keyframe->Value().IsTranslation() && !keyframe->Value().IsIdentity())
       return false;
   }
   return true;
 }
+
 bool KeyframedTransformAnimationCurve::AnimationStartScale(
     bool forward_direction,
     float* start_scale) const {
@@ -451,15 +472,15 @@ void KeyframedFilterAnimationCurve::AddKeyframe(
 }
 
 base::TimeDelta KeyframedFilterAnimationCurve::Duration() const {
-  return TimeUtil::Scale(keyframes_.back()->Time() - keyframes_.front()->Time(),
-                         scaled_duration());
+  return (keyframes_.back()->Time() - keyframes_.front()->Time()) *
+         scaled_duration();
 }
 
 std::unique_ptr<AnimationCurve> KeyframedFilterAnimationCurve::Clone() const {
   std::unique_ptr<KeyframedFilterAnimationCurve> to_return =
       KeyframedFilterAnimationCurve::Create();
-  for (size_t i = 0; i < keyframes_.size(); ++i)
-    to_return->AddKeyframe(keyframes_[i]->Clone());
+  for (const auto& keyframe : keyframes_)
+    to_return->AddKeyframe(keyframe->Clone());
 
   if (timing_function_)
     to_return->SetTimingFunction(timing_function_->Clone());
@@ -471,10 +492,10 @@ std::unique_ptr<AnimationCurve> KeyframedFilterAnimationCurve::Clone() const {
 
 FilterOperations KeyframedFilterAnimationCurve::GetValue(
     base::TimeDelta t) const {
-  if (t <= TimeUtil::Scale(keyframes_.front()->Time(), scaled_duration()))
+  if (t <= (keyframes_.front()->Time() * scaled_duration()))
     return keyframes_.front()->Value();
 
-  if (t >= TimeUtil::Scale(keyframes_.back()->Time(), scaled_duration()))
+  if (t >= (keyframes_.back()->Time() * scaled_duration()))
     return keyframes_.back()->Value();
 
   t = TransformedAnimationTime(keyframes_, timing_function_, scaled_duration(),
@@ -487,12 +508,63 @@ FilterOperations KeyframedFilterAnimationCurve::GetValue(
 }
 
 bool KeyframedFilterAnimationCurve::HasFilterThatMovesPixels() const {
-  for (size_t i = 0; i < keyframes_.size(); ++i) {
-    if (keyframes_[i]->Value().HasFilterThatMovesPixels()) {
+  for (const auto& keyframe : keyframes_) {
+    if (keyframe->Value().HasFilterThatMovesPixels()) {
       return true;
     }
   }
   return false;
+}
+
+std::unique_ptr<KeyframedSizeAnimationCurve>
+KeyframedSizeAnimationCurve::Create() {
+  return base::WrapUnique(new KeyframedSizeAnimationCurve);
+}
+
+KeyframedSizeAnimationCurve::KeyframedSizeAnimationCurve()
+    : scaled_duration_(1.0) {}
+
+KeyframedSizeAnimationCurve::~KeyframedSizeAnimationCurve() {}
+
+void KeyframedSizeAnimationCurve::AddKeyframe(
+    std::unique_ptr<SizeKeyframe> keyframe) {
+  InsertKeyframe(std::move(keyframe), &keyframes_);
+}
+
+base::TimeDelta KeyframedSizeAnimationCurve::Duration() const {
+  return (keyframes_.back()->Time() - keyframes_.front()->Time()) *
+         scaled_duration();
+}
+
+std::unique_ptr<AnimationCurve> KeyframedSizeAnimationCurve::Clone() const {
+  std::unique_ptr<KeyframedSizeAnimationCurve> to_return =
+      KeyframedSizeAnimationCurve::Create();
+  for (const auto& keyframe : keyframes_)
+    to_return->AddKeyframe(keyframe->Clone());
+
+  if (timing_function_)
+    to_return->SetTimingFunction(timing_function_->Clone());
+
+  to_return->set_scaled_duration(scaled_duration());
+
+  return std::move(to_return);
+}
+
+gfx::SizeF KeyframedSizeAnimationCurve::GetValue(base::TimeDelta t) const {
+  if (t <= (keyframes_.front()->Time() * scaled_duration()))
+    return keyframes_.front()->Value();
+
+  if (t >= (keyframes_.back()->Time() * scaled_duration()))
+    return keyframes_.back()->Value();
+
+  t = TransformedAnimationTime(keyframes_, timing_function_, scaled_duration(),
+                               t);
+  size_t i = GetActiveKeyframe(keyframes_, scaled_duration(), t);
+  double progress =
+      TransformedKeyframeProgress(keyframes_, scaled_duration(), t, i);
+
+  return gfx::Tween::SizeValueBetween(progress, keyframes_[i]->Value(),
+                                      keyframes_[i + 1]->Value());
 }
 
 }  // namespace cc

@@ -38,6 +38,9 @@ class TypedArrayBase : public ArrayBufferView {
   typedef T ValueType;
 
   T* Data() const { return static_cast<T*>(BaseAddress()); }
+  T* DataMaybeShared() const {
+    return static_cast<T*>(BaseAddressMaybeShared());
+  }
 
   bool Set(TypedArrayBase<T>* array, unsigned offset) {
     return SetImpl(array, offset * sizeof(T));
@@ -60,19 +63,19 @@ class TypedArrayBase : public ArrayBufferView {
   }
 
  protected:
-  TypedArrayBase(PassRefPtr<ArrayBuffer> buffer,
+  TypedArrayBase(RefPtr<ArrayBuffer> buffer,
                  unsigned byte_offset,
                  unsigned length)
       : ArrayBufferView(std::move(buffer), byte_offset), length_(length) {}
 
   template <class Subclass>
-  static PassRefPtr<Subclass> Create(unsigned length) {
+  static RefPtr<Subclass> Create(unsigned length) {
     RefPtr<ArrayBuffer> buffer = ArrayBuffer::Create(length, sizeof(T));
-    return Create<Subclass>(buffer.Release(), 0, length);
+    return Create<Subclass>(std::move(buffer), 0, length);
   }
 
   template <class Subclass>
-  static PassRefPtr<Subclass> Create(const T* array, unsigned length) {
+  static RefPtr<Subclass> Create(const T* array, unsigned length) {
     RefPtr<Subclass> a = Create<Subclass>(length);
     if (a)
       for (unsigned i = 0; i < length; ++i)
@@ -81,20 +84,28 @@ class TypedArrayBase : public ArrayBufferView {
   }
 
   template <class Subclass>
-  static PassRefPtr<Subclass> Create(PassRefPtr<ArrayBuffer> buffer,
-                                     unsigned byte_offset,
-                                     unsigned length) {
-    RefPtr<ArrayBuffer> buf(std::move(buffer));
-    RELEASE_ASSERT(VerifySubRange<T>(buf, byte_offset, length));
-    return AdoptRef(new Subclass(buf.Release(), byte_offset, length));
+  static RefPtr<Subclass> Create(RefPtr<ArrayBuffer> buffer,
+                                 unsigned byte_offset,
+                                 unsigned length) {
+    CHECK(VerifySubRange<T>(buffer.get(), byte_offset, length));
+    return WTF::AdoptRef(new Subclass(std::move(buffer), byte_offset, length));
   }
 
   template <class Subclass>
-  static PassRefPtr<Subclass> CreateOrNull(unsigned length) {
+  static RefPtr<Subclass> CreateOrNull(unsigned length) {
     RefPtr<ArrayBuffer> buffer = ArrayBuffer::CreateOrNull(length, sizeof(T));
     if (!buffer)
       return nullptr;
-    return Create<Subclass>(buffer.Release(), 0, length);
+    return Create<Subclass>(std::move(buffer), 0, length);
+  }
+
+  template <class Subclass>
+  static RefPtr<Subclass> CreateUninitializedOrNull(unsigned length) {
+    RefPtr<ArrayBuffer> buffer =
+        ArrayBuffer::CreateUninitializedOrNull(length, sizeof(T));
+    if (!buffer)
+      return nullptr;
+    return Create<Subclass>(std::move(buffer), 0, length);
   }
 
   void Neuter() final {

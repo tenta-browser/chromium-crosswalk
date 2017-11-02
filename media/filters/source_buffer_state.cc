@@ -119,7 +119,7 @@ SourceBufferState::SourceBufferState(
     std::unique_ptr<StreamParser> stream_parser,
     std::unique_ptr<FrameProcessor> frame_processor,
     const CreateDemuxerStreamCB& create_demuxer_stream_cb,
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     : create_demuxer_stream_cb_(create_demuxer_stream_cb),
       timestamp_offset_during_append_(NULL),
       parsing_media_segment_(false),
@@ -195,6 +195,13 @@ void SourceBufferState::SetTracksWatcher(
   DCHECK(init_segment_received_cb_.is_null());
   DCHECK(!tracks_updated_cb.is_null());
   init_segment_received_cb_ = tracks_updated_cb;
+}
+
+void SourceBufferState::SetParseWarningCallback(
+    const SourceBufferParseWarningCB& parse_warning_cb) {
+  // Give the callback to |frame_processor_|; none of these warnings are
+  // currently emitted elsewhere.
+  frame_processor_->SetParseWarningCallback(parse_warning_cb);
 }
 
 bool SourceBufferState::Append(const uint8_t* data,

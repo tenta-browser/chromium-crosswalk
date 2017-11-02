@@ -35,7 +35,7 @@ class Element;
 class LayoutObject;
 class LayoutTextFragment;
 
-class FirstLetterPseudoElement final : public PseudoElement {
+class CORE_EXPORT FirstLetterPseudoElement final : public PseudoElement {
   WTF_MAKE_NONCOPYABLE(FirstLetterPseudoElement);
 
  public:
@@ -55,7 +55,7 @@ class FirstLetterPseudoElement final : public PseudoElement {
 
   void UpdateTextFragments();
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
   void DetachLayoutTree(const AttachContext& = AttachContext()) override;
 
  private:

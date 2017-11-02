@@ -8,9 +8,9 @@
 #include <map>
 #include <vector>
 
-#include "cc/base/resource_id.h"
 #include "cc/cc_export.h"
-#include "cc/quads/render_pass.h"
+#include "components/viz/common/quads/render_pass.h"
+#include "components/viz/common/resources/resource_id.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -22,29 +22,31 @@ namespace gfx {
 class Rect;
 }
 
-namespace cc {
-
-class DrawQuad;
+namespace viz {
 class StreamVideoDrawQuad;
 class TextureDrawQuad;
-class ResourceProvider;
+class TileDrawQuad;
+}  // namespace viz
+
+namespace cc {
+class DisplayResourceProvider;
 
 class CC_EXPORT OverlayCandidate {
  public:
   // Returns true and fills in |candidate| if |draw_quad| is of a known quad
   // type and contains an overlayable resource.
-  static bool FromDrawQuad(ResourceProvider* resource_provider,
-                           const DrawQuad* quad,
+  static bool FromDrawQuad(DisplayResourceProvider* resource_provider,
+                           const viz::DrawQuad* quad,
                            OverlayCandidate* candidate);
   // Returns true if |quad| will not block quads underneath from becoming
   // an overlay.
-  static bool IsInvisibleQuad(const DrawQuad* quad);
+  static bool IsInvisibleQuad(const viz::DrawQuad* quad);
 
   // Returns true if any any of the quads in the list given by |quad_list_begin|
   // and |quad_list_end| are visible and on top of |candidate|.
   static bool IsOccluded(const OverlayCandidate& candidate,
-                         QuadList::ConstIterator quad_list_begin,
-                         QuadList::ConstIterator quad_list_end);
+                         viz::QuadList::ConstIterator quad_list_begin,
+                         viz::QuadList::ConstIterator quad_list_end);
 
   OverlayCandidate();
   OverlayCandidate(const OverlayCandidate& other);
@@ -61,8 +63,6 @@ class CC_EXPORT OverlayCandidate {
   gfx::RectF display_rect;
   // Crop within the buffer to be placed inside |display_rect|.
   gfx::RectF uv_rect;
-  // Quad geometry rect after applying the quad_transform().
-  gfx::Rect quad_rect_in_target_space;
   // Clip rect in the target content space after composition.
   gfx::Rect clip_rect;
   // If the quad is clipped after composition.
@@ -99,11 +99,19 @@ class CC_EXPORT OverlayCandidate {
   bool overlay_handled;
 
  private:
-  static bool FromTextureQuad(ResourceProvider* resource_provider,
-                              const TextureDrawQuad* quad,
+  static bool FromDrawQuadResource(DisplayResourceProvider* resource_provider,
+                                   const viz::DrawQuad* quad,
+                                   viz::ResourceId resource_id,
+                                   bool y_flipped,
+                                   OverlayCandidate* candidate);
+  static bool FromTextureQuad(DisplayResourceProvider* resource_provider,
+                              const viz::TextureDrawQuad* quad,
                               OverlayCandidate* candidate);
-  static bool FromStreamVideoQuad(ResourceProvider* resource_provider,
-                                  const StreamVideoDrawQuad* quad,
+  static bool FromTileQuad(DisplayResourceProvider* resource_provider,
+                           const viz::TileDrawQuad* quad,
+                           OverlayCandidate* candidate);
+  static bool FromStreamVideoQuad(DisplayResourceProvider* resource_provider,
+                                  const viz::StreamVideoDrawQuad* quad,
                                   OverlayCandidate* candidate);
 };
 
@@ -117,8 +125,8 @@ class CC_EXPORT OverlayCandidateList : public std::vector<OverlayCandidate> {
   OverlayCandidateList& operator=(const OverlayCandidateList&);
   OverlayCandidateList& operator=(OverlayCandidateList&&);
 
-  // [id] == origin of candidate's |display_rect| for all promotable resources.
-  using PromotionHintInfoMap = std::map<ResourceId, gfx::PointF>;
+  // [id] == candidate's |display_rect| for all promotable resources.
+  using PromotionHintInfoMap = std::map<viz::ResourceId, gfx::RectF>;
 
   // For android, this provides a set of resources that could be promoted to
   // overlay, if one backs them with a SurfaceView.

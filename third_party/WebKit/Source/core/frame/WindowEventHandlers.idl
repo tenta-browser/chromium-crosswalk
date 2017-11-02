@@ -32,15 +32,16 @@
 [
     ImplementedAs=DOMWindowEventHandlers,
     LegacyTreatAsPartialInterface,
-    NoInterfaceObject, // Always used on target of 'implements'
+    NoInterfaceObject // Always used on target of 'implements'
 ] interface WindowEventHandlers {
-    //attribute EventHandler onafterprint;
-    //attribute EventHandler onbeforeprint;
+    attribute EventHandler onafterprint;
+    attribute EventHandler onbeforeprint;
     // FIXME: onbeforeunload should be an OnBeforeUnloadEventHandler.
     attribute EventHandler onbeforeunload;
     attribute EventHandler onhashchange;
     attribute EventHandler onlanguagechange;
     attribute EventHandler onmessage;
+    attribute EventHandler onmessageerror;
     attribute EventHandler onoffline;
     attribute EventHandler ononline;
     attribute EventHandler onpagehide;

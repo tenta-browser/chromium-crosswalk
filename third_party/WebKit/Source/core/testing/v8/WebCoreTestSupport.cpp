@@ -25,9 +25,7 @@
 
 #include "core/testing/v8/WebCoreTestSupport.h"
 
-#include "bindings/core/v8/ConditionalFeatures.h"
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8OriginTrialsTest.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
@@ -36,6 +34,8 @@
 #include "core/testing/InternalSettings.h"
 #include "core/testing/Internals.h"
 #include "core/testing/WorkerInternals.h"
+#include "platform/bindings/ConditionalFeatures.h"
+#include "platform/bindings/DOMWrapperWorld.h"
 
 namespace WebCoreTestSupport {
 
@@ -74,9 +74,10 @@ void injectInternalsObject(v8::Local<v8::Context> context) {
     return;
 
   global
-      ->Set(scriptState->GetContext(),
-            blink::V8AtomicString(scriptState->GetIsolate(), "internals"),
-            internals)
+      ->CreateDataProperty(
+          scriptState->GetContext(),
+          blink::V8AtomicString(scriptState->GetIsolate(), "internals"),
+          internals)
       .ToChecked();
 }
 

@@ -18,7 +18,12 @@ namespace chromeos {
 namespace quick_unlock {
 
 namespace {
+// Quick unlock is enabled regardless of flags.
 bool enable_for_testing_ = false;
+// If testing is enabled, PIN will use prefs as backend. Otherwise, it will use
+// cryptohome.
+PinStorageType testing_pin_storage_type_ = PinStorageType::kPrefs;
+
 // Options for the quick unlock whitelist.
 const char kQuickUnlockWhitelistOptionAll[] = "all";
 const char kQuickUnlockWhitelistOptionPin[] = "PIN";
@@ -61,11 +66,10 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
   registry->RegisterBooleanPref(prefs::kEnableQuickUnlockFingerprint, false);
 }
 
-bool IsPinEnabled(PrefService* pref_service) {
+bool IsPinDisabledByPolicy(PrefService* pref_service) {
   if (enable_for_testing_)
-    return true;
+    return false;
 
-  // Check if policy allows PIN.
   const base::ListValue* quick_unlock_whitelist =
       pref_service->GetList(prefs::kQuickUnlockModeWhitelist);
   base::Value all_value(kQuickUnlockWhitelistOptionAll);
@@ -74,8 +78,15 @@ bool IsPinEnabled(PrefService* pref_service) {
           quick_unlock_whitelist->end() &&
       quick_unlock_whitelist->Find(pin_value) ==
           quick_unlock_whitelist->end()) {
-    return false;
+    return true;
   }
+
+  return false;
+}
+
+bool IsPinEnabled(PrefService* pref_service) {
+  if (enable_for_testing_)
+    return true;
 
   // TODO(jdufault): Disable PIN for supervised users until we allow the owner
   // to set the PIN. See crbug.com/632797.
@@ -87,6 +98,15 @@ bool IsPinEnabled(PrefService* pref_service) {
   return base::FeatureList::IsEnabled(features::kQuickUnlockPin);
 }
 
+PinStorageType GetPinStorageType() {
+  if (enable_for_testing_)
+    return testing_pin_storage_type_;
+
+  if (base::FeatureList::IsEnabled(features::kQuickUnlockPinSignin))
+    return PinStorageType::kCryptohome;
+  return PinStorageType::kPrefs;
+}
+
 bool IsFingerprintEnabled() {
   if (enable_for_testing_)
     return true;
@@ -95,8 +115,9 @@ bool IsFingerprintEnabled() {
   return base::FeatureList::IsEnabled(features::kQuickUnlockFingerprint);
 }
 
-void EnableForTesting() {
+void EnableForTesting(PinStorageType pin_storage_type) {
   enable_for_testing_ = true;
+  testing_pin_storage_type_ = pin_storage_type;
 }
 
 }  // namespace quick_unlock

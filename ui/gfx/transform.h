@@ -19,6 +19,7 @@ class BoxF;
 class RectF;
 class Point;
 class Point3F;
+class Quaternion;
 class Vector3dF;
 
 // 4x4 transformation matrix. Transform is cheap and explicitly allows
@@ -69,6 +70,9 @@ class GFX_EXPORT Transform {
             SkMScalar x_translation,
             SkMScalar y_translation);
 
+  // Constructs a transform corresponding to the given quaternion.
+  explicit Transform(const Quaternion& q);
+
   bool operator==(const Transform& rhs) const { return matrix_ == rhs.matrix_; }
   bool operator!=(const Transform& rhs) const { return matrix_ != rhs.matrix_; }
 
@@ -118,6 +122,7 @@ class GFX_EXPORT Transform {
   void ConcatTransform(const Transform& transform);
 
   // Returns true if this is the identity matrix.
+  // This function modifies a mutable variable in |matrix_|.
   bool IsIdentity() const { return matrix_.isIdentity(); }
 
   // Returns true if the matrix is either identity or pure translation.

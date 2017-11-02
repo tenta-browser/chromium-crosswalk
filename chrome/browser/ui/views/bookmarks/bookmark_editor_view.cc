@@ -72,7 +72,10 @@ BookmarkEditorView::BookmarkEditorView(
   DCHECK(profile);
   DCHECK(bb_model_);
   DCHECK(bb_model_->client()->CanBeEditedByUser(parent));
+  set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
+      views::CONTROL, views::CONTROL));
   Init();
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::BOOKMARK_EDITOR);
 }
 
 BookmarkEditorView::~BookmarkEditorView() {
@@ -131,9 +134,9 @@ bool BookmarkEditorView::Accept() {
   return true;
 }
 
-gfx::Size BookmarkEditorView::GetPreferredSize() const {
+gfx::Size BookmarkEditorView::CalculatePreferredSize() const {
   if (!show_tree_)
-    return views::View::GetPreferredSize();
+    return views::View::CalculatePreferredSize();
 
   return gfx::Size(views::Widget::GetLocalizedContentsSize(
       IDS_EDITBOOKMARK_DIALOG_WIDTH_CHARS,
@@ -245,18 +248,12 @@ void BookmarkEditorView::ShowContextMenuForView(
        tree_model_->GetRoot());
 
   context_menu_runner_.reset(new views::MenuRunner(
-      GetMenuModel(), views::MenuRunner::HAS_MNEMONICS |
-                          views::MenuRunner::CONTEXT_MENU |
-                          views::MenuRunner::ASYNC));
+      GetMenuModel(),
+      views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU));
 
-  if (context_menu_runner_->RunMenuAt(source->GetWidget()->GetTopLevelWidget(),
-                                      NULL,
-                                      gfx::Rect(point, gfx::Size()),
-                                      views::MENU_ANCHOR_TOPRIGHT,
-                                      source_type) ==
-      views::MenuRunner::MENU_DELETED) {
-    return;
-  }
+  context_menu_runner_->RunMenuAt(source->GetWidget()->GetTopLevelWidget(),
+                                  NULL, gfx::Rect(point, gfx::Size()),
+                                  views::MENU_ANCHOR_TOPRIGHT, source_type);
 }
 
 const char* BookmarkEditorView::GetClassName() const {
@@ -340,7 +337,7 @@ void BookmarkEditorView::Init() {
     new_folder_button_->SetEnabled(false);
   }
 
-  GridLayout* layout = GridLayout::CreatePanel(this);
+  GridLayout* layout = GridLayout::CreateAndInstall(this);
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
 
   const int labels_column_set_id = 0;
@@ -388,6 +385,7 @@ void BookmarkEditorView::Init() {
     url_tf_->set_controller(this);
     url_tf_->SetAccessibleName(
         l10n_util::GetStringUTF16(IDS_BOOKMARK_AX_EDITOR_URL_LABEL));
+    url_tf_->SetTextInputType(ui::TextInputType::TEXT_INPUT_TYPE_URL);
 
     layout->AddPaddingRow(0, provider->GetDistanceMetric(
                                  views::DISTANCE_RELATED_CONTROL_VERTICAL));

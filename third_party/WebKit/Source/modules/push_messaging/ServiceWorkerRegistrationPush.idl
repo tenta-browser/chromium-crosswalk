@@ -5,8 +5,9 @@
 // https://w3c.github.io/push-api/#extensions-to-the-serviceworkerregistration-interface
 
 [
-    Exposed=(Window, ServiceWorker),
-    RuntimeEnabled=PushMessaging,
+    Exposed=(Window,Worker),
+    ImplementedAs=ServiceWorkerRegistrationPush,
+    RuntimeEnabled=PushMessaging
 ] partial interface ServiceWorkerRegistration {
     readonly attribute PushManager pushManager;
 };

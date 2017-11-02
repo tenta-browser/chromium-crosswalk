@@ -25,14 +25,16 @@ bool PluginsEnterpriseSettingEnabled(
   std::string provider_id;
   host_content_settings_map->GetDefaultContentSetting(
       CONTENT_SETTINGS_TYPE_PLUGINS, &provider_id);
-  return provider_id == site_settings::kPolicyProviderId;
+  return HostContentSettingsMap::GetProviderTypeFromSource(provider_id) ==
+         HostContentSettingsMap::POLICY_PROVIDER;
 }
 
 }  // namespace
 
 FlashPermissionContext::FlashPermissionContext(Profile* profile)
     : PermissionContextBase(profile,
-                            CONTENT_SETTINGS_TYPE_PLUGINS) {}
+                            CONTENT_SETTINGS_TYPE_PLUGINS,
+                            blink::WebFeaturePolicyFeature::kNotFound) {}
 
 FlashPermissionContext::~FlashPermissionContext() {}
 

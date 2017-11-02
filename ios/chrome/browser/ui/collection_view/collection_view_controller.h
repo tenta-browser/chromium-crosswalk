@@ -28,8 +28,9 @@ typedef NS_ENUM(NSInteger, CollectionViewControllerStyle) {
 @property(strong, nonatomic, readonly)
     CollectionViewModel<CollectionViewItem*>* collectionViewModel;
 
-// Initializer with the desired style.
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style
+// Initializer with the desired style and layout.
+- (instancetype)initWithLayout:(UICollectionViewLayout*)layout
+                         style:(CollectionViewControllerStyle)style
     NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithCollectionViewLayout:(UICollectionViewLayout*)layout
     NS_UNAVAILABLE;
@@ -44,8 +45,7 @@ typedef NS_ENUM(NSInteger, CollectionViewControllerStyle) {
 
 // Reconfigures the cells corresponding to the given |items| by calling
 // |configureCell:| on each cell.
-- (void)reconfigureCellsForItems:(NSArray*)items
-         inSectionWithIdentifier:(NSInteger)sectionIdentifier;
+- (void)reconfigureCellsForItems:(NSArray*)items;
 
 // Reconfigures the cells corresponding to the given |indexPaths| by calling
 // |configureCell:| on each cell.

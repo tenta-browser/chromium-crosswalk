@@ -40,6 +40,27 @@
         'exception_snapshot.h',
         'handle_snapshot.cc',
         'handle_snapshot.h',
+        'linux/cpu_context_linux.cc',
+        'linux/cpu_context_linux.h',
+        'linux/debug_rendezvous.cc',
+        'linux/debug_rendezvous.h',
+        'linux/elf_dynamic_array_reader.cc',
+        'linux/elf_dynamic_array_reader.h',
+        'linux/elf_image_reader.cc',
+        'linux/elf_image_reader.h',
+        'linux/elf_symbol_table_reader.cc',
+        'linux/elf_symbol_table_reader.h',
+        'linux/exception_snapshot_linux.cc',
+        'linux/exception_snapshot_linux.h',
+        'linux/memory_snapshot_linux.cc',
+        'linux/memory_snapshot_linux.h',
+        'linux/process_reader.cc',
+        'linux/process_reader.h',
+        'linux/signal_context.h',
+        'linux/system_snapshot_linux.cc',
+        'linux/system_snapshot_linux.h',
+        'linux/thread_snapshot_linux.cc',
+        'linux/thread_snapshot_linux.h',
         'mac/cpu_context_mac.cc',
         'mac/cpu_context_mac.h',
         'mac/exception_snapshot_mac.cc',
@@ -88,6 +109,8 @@
         'minidump/process_snapshot_minidump.cc',
         'minidump/process_snapshot_minidump.h',
         'module_snapshot.h',
+        'posix/timezone.cc',
+        'posix/timezone.h',
         'process_snapshot.h',
         'system_snapshot.h',
         'thread_snapshot.h',
@@ -121,6 +144,8 @@
         'win/system_snapshot_win.h',
         'win/thread_snapshot_win.cc',
         'win/thread_snapshot_win.h',
+        'x86/cpuid_reader.cc',
+        'x86/cpuid_reader.h',
       ],
       'conditions': [
         ['OS=="win"', {
@@ -130,7 +155,25 @@
             ],
           },
         }],
-      ]
+        ['OS=="linux" or OS=="android"', {
+          'sources!': [
+            'capture_memory.cc',
+            'capture_memory.h',
+          ],
+        }],
+        ['target_arch!="ia32" and target_arch!="x64"', {
+          'sources/': [
+            ['exclude', '^x86/'],
+          ],
+        }],
+      ],
+      'target_conditions': [
+        ['OS=="android"', {
+          'sources/': [
+            ['include', '^linux/'],
+          ],
+        }],
+      ],
     },
     {
       'variables': {

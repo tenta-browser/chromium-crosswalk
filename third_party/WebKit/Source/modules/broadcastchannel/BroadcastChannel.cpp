@@ -4,9 +4,9 @@
 
 #include "modules/broadcastchannel/BroadcastChannel.h"
 
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/events/EventQueue.h"
+#include "core/dom/events/EventQueue.h"
 #include "core/events/MessageEvent.h"
 #include "platform/mojo/MojoHelper.h"
 #include "platform/wtf/Functional.h"
@@ -24,8 +24,7 @@ namespace {
 // associated interfaces, ensuring proper message ordering.
 mojom::blink::BroadcastChannelProviderPtr& GetThreadSpecificProvider() {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      ThreadSpecific<mojom::blink::BroadcastChannelProviderPtr>, provider,
-      new ThreadSpecific<mojom::blink::BroadcastChannelProviderPtr>);
+      ThreadSpecific<mojom::blink::BroadcastChannelProviderPtr>, provider, ());
   if (!provider.IsSet()) {
     Platform::Current()->GetInterfaceProvider()->GetInterface(
         mojo::MakeRequest(&*provider));
@@ -105,10 +104,11 @@ void BroadcastChannel::OnMessage(const WTF::Vector<uint8_t>& message) {
                         : reinterpret_cast<const char*>(&message.front()),
       message.size());
   MessageEvent* event = MessageEvent::Create(
-      nullptr, value.Release(),
+      nullptr, std::move(value),
       GetExecutionContext()->GetSecurityOrigin()->ToString());
   event->SetTarget(this);
-  bool success = GetExecutionContext()->GetEventQueue()->EnqueueEvent(event);
+  bool success = GetExecutionContext()->GetEventQueue()->EnqueueEvent(
+      BLINK_FROM_HERE, event);
   DCHECK(success);
   ALLOW_UNUSED_LOCAL(success);
 }
@@ -129,7 +129,7 @@ BroadcastChannel::BroadcastChannel(ExecutionContext* execution_context,
   // Local BroadcastChannelClient for messages send from the browser to this
   // channel.
   mojom::blink::BroadcastChannelClientAssociatedPtrInfo local_client_info;
-  binding_.Bind(&local_client_info);
+  binding_.Bind(mojo::MakeRequest(&local_client_info));
   binding_.set_connection_error_handler(ConvertToBaseCallback(
       WTF::Bind(&BroadcastChannel::OnError, WrapWeakPersistent(this))));
 

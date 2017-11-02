@@ -13,16 +13,18 @@
 #include "base/threading/thread_checker.h"
 #include "cc/cc_export.h"
 #include "cc/layers/layer.h"
-#include "cc/resources/texture_mailbox.h"
+#include "components/viz/common/quads/texture_mailbox.h"
 
 namespace gpu {
 struct SyncToken;
 }
 
-namespace cc {
-class BlockingTaskRunner;
+namespace viz {
 class SingleReleaseCallback;
-class SingleReleaseCallbackImpl;
+}
+
+namespace cc {
+class SingleReleaseCallback;
 class TextureLayerClient;
 
 // A Layer containing a the rendered output of a plugin instance.
@@ -42,41 +44,42 @@ class CC_EXPORT TextureLayer : public Layer {
       DISALLOW_COPY_AND_ASSIGN(MainThreadReference);
     };
 
-    const TextureMailbox& mailbox() const { return mailbox_; }
+    const viz::TextureMailbox& mailbox() const { return mailbox_; }
     void Return(const gpu::SyncToken& sync_token, bool is_lost);
 
-    // Gets a ReleaseCallback that can be called from another thread. Note: the
-    // caller must ensure the callback is called.
-    std::unique_ptr<SingleReleaseCallbackImpl> GetCallbackForImplThread();
+    // Gets a viz::ReleaseCallback that can be called from another thread. Note:
+    // the caller must ensure the callback is called.
+    std::unique_ptr<viz::SingleReleaseCallback> GetCallbackForImplThread(
+        scoped_refptr<base::SequencedTaskRunner> main_thread_task_runner);
 
    protected:
     friend class TextureLayer;
 
     // Protected visiblity so only TextureLayer and unit tests can create these.
     static std::unique_ptr<MainThreadReference> Create(
-        const TextureMailbox& mailbox,
-        std::unique_ptr<SingleReleaseCallback> release_callback);
+        const viz::TextureMailbox& mailbox,
+        std::unique_ptr<viz::SingleReleaseCallback> release_callback);
     virtual ~TextureMailboxHolder();
 
    private:
     friend class base::RefCountedThreadSafe<TextureMailboxHolder>;
     friend class MainThreadReference;
     explicit TextureMailboxHolder(
-        const TextureMailbox& mailbox,
-        std::unique_ptr<SingleReleaseCallback> release_callback);
+        const viz::TextureMailbox& mailbox,
+        std::unique_ptr<viz::SingleReleaseCallback> release_callback);
 
     void InternalAddRef();
     void InternalRelease();
     void ReturnAndReleaseOnImplThread(
+        const scoped_refptr<base::SequencedTaskRunner>& main_thread_task_runner,
         const gpu::SyncToken& sync_token,
-        bool is_lost,
-        BlockingTaskRunner* main_thread_task_runner);
+        bool is_lost);
 
     // These members are only accessed on the main thread, or on the impl thread
     // during commit where the main thread is blocked.
     unsigned internal_references_;
-    TextureMailbox mailbox_;
-    std::unique_ptr<SingleReleaseCallback> release_callback_;
+    viz::TextureMailbox mailbox_;
+    std::unique_ptr<viz::SingleReleaseCallback> release_callback_;
 
     // This lock guards the sync_token_ and is_lost_ fields because they can be
     // accessed on both the impl and main thread. We do this to ensure that the
@@ -130,8 +133,8 @@ class CC_EXPORT TextureLayer : public Layer {
 
   // Code path for plugins which supply their own mailbox.
   void SetTextureMailbox(
-      const TextureMailbox& mailbox,
-      std::unique_ptr<SingleReleaseCallback> release_callback);
+      const viz::TextureMailbox& mailbox,
+      std::unique_ptr<viz::SingleReleaseCallback> release_callback);
 
   void SetNeedsDisplayRect(const gfx::Rect& dirty_rect) override;
 
@@ -147,24 +150,24 @@ class CC_EXPORT TextureLayer : public Layer {
 
  private:
   void SetTextureMailboxInternal(
-      const TextureMailbox& mailbox,
-      std::unique_ptr<SingleReleaseCallback> release_callback,
+      const viz::TextureMailbox& mailbox,
+      std::unique_ptr<viz::SingleReleaseCallback> release_callback,
       bool requires_commit,
       bool allow_mailbox_reuse);
 
   TextureLayerClient* client_;
 
-  bool flipped_;
-  bool nearest_neighbor_;
-  gfx::PointF uv_top_left_;
-  gfx::PointF uv_bottom_right_;
+  bool flipped_ = true;
+  bool nearest_neighbor_ = false;
+  gfx::PointF uv_top_left_ = gfx::PointF();
+  gfx::PointF uv_bottom_right_ = gfx::PointF(1.f, 1.f);
   // [bottom left, top left, top right, bottom right]
-  float vertex_opacity_[4];
-  bool premultiplied_alpha_;
-  bool blend_background_color_;
+  float vertex_opacity_[4] = {1.f, 1.f, 1.f, 1.f};
+  bool premultiplied_alpha_ = true;
+  bool blend_background_color_ = false;
 
   std::unique_ptr<TextureMailboxHolder::MainThreadReference> holder_ref_;
-  bool needs_set_mailbox_;
+  bool needs_set_mailbox_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(TextureLayer);
 };

@@ -10,14 +10,12 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/browser_resources.h"
@@ -31,13 +29,14 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
+#include "ui/chromeos/events/keyboard_layout_util.h"
+#include "ui/chromeos/events/modifier_key.h"
 #include "ui/chromeos/events/pref_names.h"
 #include "ui/display/manager/display_manager.h"
 
-using chromeos::input_method::ModifierKey;
 using content::WebUIMessageHandler;
+using ui::chromeos::ModifierKey;
 using ui::WebDialogUI;
 
 namespace {
@@ -51,22 +50,30 @@ const char kLearnMoreURL[] =
 #endif
 
 struct ModifierToLabel {
-  const ModifierKey modifier;
+  const ModifierKey::ModifierKeyValue modifier;
   const char* label;
 } kModifierToLabels[] = {
-  {chromeos::input_method::kSearchKey, "search"},
-  {chromeos::input_method::kControlKey, "ctrl"},
-  {chromeos::input_method::kAltKey, "alt"},
-  {chromeos::input_method::kVoidKey, "disabled"},
-  {chromeos::input_method::kCapsLockKey, "caps lock"},
-  {chromeos::input_method::kEscapeKey, "esc"},
-  {chromeos::input_method::kBackspaceKey, "backspace"},
+    {ui::chromeos::ModifierKey::kSearchKey, "search"},
+    {ui::chromeos::ModifierKey::kControlKey, "ctrl"},
+    {ui::chromeos::ModifierKey::kAltKey, "alt"},
+    {ui::chromeos::ModifierKey::kVoidKey, "disabled"},
+    {ui::chromeos::ModifierKey::kCapsLockKey, "caps lock"},
+    {ui::chromeos::ModifierKey::kEscapeKey, "esc"},
+    {ui::chromeos::ModifierKey::kBackspaceKey, "backspace"},
 };
 
 struct I18nContentToMessage {
   const char* i18n_content;
   int message;
 } kI18nContentToMessage[] = {
+    {"keyboardOverlayAssistantKeyLabel",
+     IDS_KEYBOARD_OVERLAY_ASSISTANT_KEY_LABEL},
+    {"keyboardOverlayPlayPauseKeyLabel",
+     IDS_KEYBOARD_OVERLAY_PLAY_PAUSE_KEY_LABEL},
+    {"keyboardOverlaySystemMenuKeyLabel",
+     IDS_KEYBOARD_OVERLAY_SYSTEM_MENU_KEY_LABEL},
+    {"keyboardOverlayLauncherKeyLabel",
+     IDS_KEYBOARD_OVERLAY_LAUNCHER_KEY_LABEL},
     {"keyboardOverlayLearnMore", IDS_KEYBOARD_OVERLAY_LEARN_MORE},
     {"keyboardOverlayTitle", IDS_KEYBOARD_OVERLAY_TITLE},
     {"keyboardOverlayEscKeyLabel", IDS_KEYBOARD_OVERLAY_ESC_KEY_LABEL},
@@ -97,7 +104,6 @@ struct I18nContentToMessage {
     {"keyboardOverlayRightKeyLabel", IDS_KEYBOARD_OVERLAY_RIGHT_KEY_LABEL},
     {"keyboardOverlayUpKeyLabel", IDS_KEYBOARD_OVERLAY_UP_KEY_LABEL},
     {"keyboardOverlayDownKeyLabel", IDS_KEYBOARD_OVERLAY_DOWN_KEY_LABEL},
-    {"keyboardOverlayInstructions", IDS_KEYBOARD_OVERLAY_INSTRUCTIONS},
     {"keyboardOverlayInstructionsHide", IDS_KEYBOARD_OVERLAY_INSTRUCTIONS_HIDE},
     {"keyboardOverlayActivateLastShelfItem",
      IDS_KEYBOARD_OVERLAY_ACTIVATE_LAST_SHELF_ITEM},
@@ -277,7 +283,8 @@ struct I18nContentToMessage {
     {"keyboardOverlayZoomOut", IDS_KEYBOARD_OVERLAY_ZOOM_OUT},
     {"keyboardOverlayZoomScreenIn", IDS_KEYBOARD_OVERLAY_ZOOM_SCREEN_IN},
     {"keyboardOverlayZoomScreenOut", IDS_KEYBOARD_OVERLAY_ZOOM_SCREEN_OUT},
-};
+    {"keyboardOverlayVoiceInteraction",
+     IDS_KEYBOARD_OVERLAY_VOICE_INTERACTION}};
 
 bool TopRowKeysAreFunctionKeys(Profile* profile) {
   if (!profile)
@@ -287,7 +294,7 @@ bool TopRowKeysAreFunctionKeys(Profile* profile) {
   return prefs ? prefs->GetBoolean(prefs::kLanguageSendFunctionKeys) : false;
 }
 
-std::string ModifierKeyToLabel(ModifierKey modifier) {
+std::string ModifierKeyToLabel(ModifierKey::ModifierKeyValue modifier) {
   for (size_t i = 0; i < arraysize(kModifierToLabels); ++i) {
     if (modifier == kModifierToLabels[i].modifier) {
       return kModifierToLabels[i].label;
@@ -305,6 +312,14 @@ content::WebUIDataSource* CreateKeyboardOverlayUIHTMLSource(Profile* profile) {
                                kI18nContentToMessage[i].message);
   }
 
+  // |kI18nContentToMessage| is a static array initialized before it's possible
+  // to call ui::DeviceUsesKeyboardLayout2(), so we add the
+  // |keyboardOverlayInstructions| string at runtime here.
+  source->AddLocalizedString("keyboardOverlayInstructions",
+                             ui::DeviceUsesKeyboardLayout2()
+                                 ? IDS_KEYBOARD_OVERLAY_INSTRUCTIONS_LAYOUT2
+                                 : IDS_KEYBOARD_OVERLAY_INSTRUCTIONS);
+
   source->AddString("keyboardOverlayLearnMoreURL",
                     base::UTF8ToUTF16(kLearnMoreURL));
   source->AddBoolean("keyboardOverlayHasChromeOSDiamondKey",
@@ -312,13 +327,14 @@ content::WebUIDataSource* CreateKeyboardOverlayUIHTMLSource(Profile* profile) {
                          chromeos::switches::kHasChromeOSDiamondKey));
   source->AddBoolean("keyboardOverlayTopRowKeysAreFunctionKeys",
                      TopRowKeysAreFunctionKeys(profile));
+  source->AddBoolean("voiceInteractionEnabled",
+                     chromeos::switches::IsVoiceInteractionEnabled());
+  source->AddBoolean("keyboardOverlayUsesLayout2",
+                     ui::DeviceUsesKeyboardLayout2());
   ash::Shell* shell = ash::Shell::Get();
   display::DisplayManager* display_manager = shell->display_manager();
   source->AddBoolean("keyboardOverlayIsDisplayUIScalingEnabled",
                      display_manager->IsDisplayUIScalingEnabled());
-  source->AddBoolean(
-      "backspaceGoesBackFeatureEnabled",
-      base::FeatureList::IsEnabled(features::kBackspaceGoesBackFeature));
   source->SetJsonPath("strings.js");
   source->AddResourcePath("keyboard_overlay.js", IDR_KEYBOARD_OVERLAY_JS);
   source->SetDefaultResource(IDR_KEYBOARD_OVERLAY_HTML);
@@ -391,14 +407,18 @@ void KeyboardOverlayHandler::GetInputMethodId(const base::ListValue* args) {
 void KeyboardOverlayHandler::GetLabelMap(const base::ListValue* args) {
   DCHECK(profile_);
   PrefService* pref_service = profile_->GetPrefs();
-  typedef std::map<ModifierKey, ModifierKey> ModifierMap;
+  typedef std::map<ModifierKey::ModifierKeyValue, ModifierKey::ModifierKeyValue>
+      ModifierMap;
   ModifierMap modifier_map;
-  modifier_map[chromeos::input_method::kSearchKey] = static_cast<ModifierKey>(
-      pref_service->GetInteger(prefs::kLanguageRemapSearchKeyTo));
-  modifier_map[chromeos::input_method::kControlKey] = static_cast<ModifierKey>(
-      pref_service->GetInteger(prefs::kLanguageRemapControlKeyTo));
-  modifier_map[chromeos::input_method::kAltKey] = static_cast<ModifierKey>(
-      pref_service->GetInteger(prefs::kLanguageRemapAltKeyTo));
+  modifier_map[ModifierKey::kSearchKey] =
+      static_cast<ModifierKey::ModifierKeyValue>(
+          pref_service->GetInteger(prefs::kLanguageRemapSearchKeyTo));
+  modifier_map[ModifierKey::kControlKey] =
+      static_cast<ModifierKey::ModifierKeyValue>(
+          pref_service->GetInteger(prefs::kLanguageRemapControlKeyTo));
+  modifier_map[ModifierKey::kAltKey] =
+      static_cast<ModifierKey::ModifierKeyValue>(
+          pref_service->GetInteger(prefs::kLanguageRemapAltKeyTo));
   // TODO(mazda): Support prefs::kLanguageRemapCapsLockKeyTo once Caps Lock is
   // added to the overlay UI.
 

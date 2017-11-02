@@ -70,7 +70,7 @@ bool TextTrackCueList::Add(TextTrackCue* cue) {
   if (!list_.IsEmpty() && (index > 0) && (list_[index - 1].Get() == cue))
     return false;
 
-  list_.insert(index, TraceWrapperMember<TextTrackCue>(this, cue));
+  list_.insert(index, cue);
   InvalidateCueIndex(index);
   return true;
 }
@@ -97,10 +97,20 @@ bool TextTrackCueList::Remove(TextTrackCue* cue) {
   if (index == kNotFound)
     return false;
 
-  list_.erase(index);
+  list_.EraseAt(index);
   InvalidateCueIndex(index);
   cue->InvalidateCueIndex();
   return true;
+}
+
+void TextTrackCueList::RemoveAll() {
+  if (list_.IsEmpty())
+    return;
+
+  first_invalid_index_ = 0;
+  for (auto& cue : list_)
+    cue->InvalidateCueIndex();
+  Clear();
 }
 
 void TextTrackCueList::UpdateCueIndex(TextTrackCue* cue) {
@@ -110,7 +120,7 @@ void TextTrackCueList::UpdateCueIndex(TextTrackCue* cue) {
 }
 
 void TextTrackCueList::Clear() {
-  list_.Clear();
+  list_.clear();
 }
 
 void TextTrackCueList::InvalidateCueIndex(size_t index) {

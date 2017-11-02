@@ -11,7 +11,6 @@
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/profiler/stack_sampling_profiler.h"
-#include "base/tracked_objects.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_browser_field_trials.h"
 #include "chrome/browser/chrome_process_singleton.h"
@@ -19,6 +18,7 @@
 #include "chrome/browser/process_singleton.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/common/stack_sampling_configuration.h"
+#include "components/metrics/call_stack_profile_params.h"
 #include "content/public/browser/browser_main_parts.h"
 #include "content/public/common/main_function_params.h"
 
@@ -42,10 +42,6 @@ extern const char kMissingLocaleDataTitle[];
 #if defined(OS_WIN)
 extern const char kMissingLocaleDataMessage[];
 #endif
-}
-
-namespace metrics {
-class TrackingSynchronizer;
 }
 
 class ChromeBrowserMainParts : public content::BrowserMainParts {
@@ -145,7 +141,7 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
 
   ChromeBrowserFieldTrials browser_field_trials_;
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
   std::unique_ptr<WebUsbDetector> web_usb_detector_;
 #endif
 
@@ -160,7 +156,6 @@ class ChromeBrowserMainParts : public content::BrowserMainParts {
   // Members initialized after / released before main_message_loop_ ------------
 
   std::unique_ptr<BrowserProcessImpl> browser_process_;
-  scoped_refptr<metrics::TrackingSynchronizer> tracking_synchronizer_;
 
 #if !defined(OS_ANDROID)
   // Browser creation happens on the Java side in Android.

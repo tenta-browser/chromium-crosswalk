@@ -23,7 +23,7 @@ MediaStreamAudioSource::MediaStreamAudioSource(bool is_local_source)
 }
 
 MediaStreamAudioSource::~MediaStreamAudioSource() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DVLOG(1) << "MediaStreamAudioSource@" << this << " is being destroyed.";
 }
 
@@ -39,7 +39,7 @@ MediaStreamAudioSource* MediaStreamAudioSource::From(
 
 bool MediaStreamAudioSource::ConnectToTrack(
     const blink::WebMediaStreamTrack& blink_track) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(!blink_track.IsNull());
 
   // Sanity-check that there is not already a MediaStreamAudioTrack instance
@@ -91,19 +91,19 @@ void* MediaStreamAudioSource::GetClassIdentifier() const {
 
 std::unique_ptr<MediaStreamAudioTrack>
 MediaStreamAudioSource::CreateMediaStreamAudioTrack(const std::string& id) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   return std::unique_ptr<MediaStreamAudioTrack>(
       new MediaStreamAudioTrack(is_local_source()));
 }
 
 bool MediaStreamAudioSource::EnsureSourceIsStarted() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DVLOG(1) << "MediaStreamAudioSource@" << this << "::EnsureSourceIsStarted()";
   return true;
 }
 
 void MediaStreamAudioSource::EnsureSourceIsStopped() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DVLOG(1) << "MediaStreamAudioSource@" << this << "::EnsureSourceIsStopped()";
 }
 
@@ -121,13 +121,13 @@ void MediaStreamAudioSource::DeliverDataToTracks(
 }
 
 void MediaStreamAudioSource::DoStopSource() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   EnsureSourceIsStopped();
   is_stopped_ = true;
 }
 
 void MediaStreamAudioSource::StopAudioDeliveryTo(MediaStreamAudioTrack* track) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   const bool did_remove_last_track = deliverer_.RemoveConsumer(track);
   DVLOG(1) << "Removed MediaStreamAudioTrack@" << track
@@ -144,7 +144,14 @@ void MediaStreamAudioSource::StopSourceOnError(const std::string& why) {
 
   // Stop source when error occurs.
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(&MediaStreamSource::StopSource, GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&MediaStreamSource::StopSource, GetWeakPtr()));
+}
+
+void MediaStreamAudioSource::SetMutedState(bool muted_state) {
+  DVLOG(3) << "MediaStreamAudioSource::SetMutedState state=" << muted_state;
+  task_runner_->PostTask(FROM_HERE,
+                         base::BindOnce(&MediaStreamSource::SetSourceMuted,
+                                        GetWeakPtr(), muted_state));
 }
 
 }  // namespace content

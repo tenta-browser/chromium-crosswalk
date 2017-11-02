@@ -4,8 +4,6 @@
 
 #include "components/sync/syncable/base_node.h"
 
-#include <stack>
-
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/sync/base/time.h"
@@ -217,7 +215,7 @@ int BaseNode::GetPositionIndex() const {
   return GetEntry()->GetPositionIndex();
 }
 
-base::DictionaryValue* BaseNode::ToValue() const {
+std::unique_ptr<base::DictionaryValue> BaseNode::ToValue() const {
   return GetEntry()->ToValue(GetTransaction()->GetCryptographer());
 }
 

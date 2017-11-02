@@ -21,6 +21,9 @@ class CommandLine;
 // Chrome implementation of ContentMainDelegate.
 class ChromeMainDelegate : public content::ContentMainDelegate {
  public:
+  static const char* const kNonWildcardDomainNonPortSchemes[];
+  static const size_t kNonWildcardDomainNonPortSchemesSize;
+
   ChromeMainDelegate();
 
   // |exe_entry_point_ticks| is the time at which the main function of the
@@ -48,6 +51,10 @@ class ChromeMainDelegate : public content::ContentMainDelegate {
   void ZygoteForked() override;
 #endif
   bool ShouldEnableProfilerRecording() override;
+  service_manager::ProcessType OverrideProcessType() override;
+  bool ShouldTerminateServiceManagerOnInstanceQuit(
+      const service_manager::Identity& identity,
+      int* exit_code) override;
 
   content::ContentBrowserClient* CreateContentBrowserClient() override;
   content::ContentGpuClient* CreateContentGpuClient() override;

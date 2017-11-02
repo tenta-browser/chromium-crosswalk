@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "device/vr/vr_device.h"
+
 #include "device/vr/vr_device_provider.h"
 #include "device/vr/vr_display_impl.h"
 
@@ -10,8 +11,7 @@ namespace device {
 
 unsigned int VRDevice::next_id_ = 1;
 
-VRDevice::VRDevice()
-    : presenting_display_(nullptr), id_(next_id_), weak_ptr_factory_(this) {
+VRDevice::VRDevice() : id_(next_id_) {
   // Prevent wraparound. Devices with this ID will be treated as invalid.
   if (next_id_ != VR_DEVICE_LAST_ID)
     next_id_++;
@@ -27,6 +27,10 @@ void VRDevice::RemoveDisplay(VRDisplayImpl* display) {
   if (CheckPresentingDisplay(display))
     ExitPresent();
   displays_.erase(display);
+  if (listening_for_activate_diplay_ == display)
+    listening_for_activate_diplay_ = nullptr;
+  if (last_listening_for_activate_diplay_ == display)
+    last_listening_for_activate_diplay_ = nullptr;
 }
 
 bool VRDevice::IsAccessAllowed(VRDisplayImpl* display) {
@@ -38,16 +42,11 @@ bool VRDevice::CheckPresentingDisplay(VRDisplayImpl* display) {
 }
 
 void VRDevice::OnChanged() {
-  base::Callback<void(mojom::VRDisplayInfoPtr)> callback = base::Bind(
-      &VRDevice::OnVRDisplayInfoCreated, weak_ptr_factory_.GetWeakPtr());
-  CreateVRDisplayInfo(callback);
-}
-
-void VRDevice::OnVRDisplayInfoCreated(mojom::VRDisplayInfoPtr vr_device_info) {
-  if (vr_device_info.is_null())
+  mojom::VRDisplayInfoPtr display_info = GetVRDisplayInfo();
+  if (!display_info)
     return;
-  for (auto* display : displays_)
-    display->OnChanged(vr_device_info.Clone());
+  for (VRDisplayImpl* display : displays_)
+    display->OnChanged(display_info.Clone());
 }
 
 void VRDevice::OnExitPresent() {
@@ -59,28 +58,48 @@ void VRDevice::OnExitPresent() {
   SetPresentingDisplay(nullptr);
 }
 
+void VRDevice::OnActivate(mojom::VRDisplayEventReason reason,
+                          const base::Callback<void(bool)>& on_handled) {
+  if (listening_for_activate_diplay_) {
+    listening_for_activate_diplay_->OnActivate(reason, on_handled);
+  } else if (last_listening_for_activate_diplay_ &&
+             last_listening_for_activate_diplay_->InFocusedFrame()) {
+    last_listening_for_activate_diplay_->OnActivate(reason, on_handled);
+  } else {
+    std::move(on_handled).Run(true /* will_not_present */);
+  }
+}
+
 void VRDevice::OnBlur() {
-  for (auto* display : displays_)
+  for (VRDisplayImpl* display : displays_)
     display->OnBlur();
 }
 
 void VRDevice::OnFocus() {
-  for (auto* display : displays_)
+  for (VRDisplayImpl* display : displays_)
     display->OnFocus();
-}
-
-void VRDevice::OnActivate(mojom::VRDisplayEventReason reason) {
-  for (auto* display : displays_)
-    display->OnActivate(reason);
-}
-
-void VRDevice::OnDeactivate(mojom::VRDisplayEventReason reason) {
-  for (auto* display : displays_)
-    display->OnDeactivate(reason);
 }
 
 void VRDevice::SetPresentingDisplay(VRDisplayImpl* display) {
   presenting_display_ = display;
+}
+
+void VRDevice::OnListeningForActivateChanged(VRDisplayImpl* display) {
+  UpdateListeningForActivate(display);
+}
+
+void VRDevice::OnFrameFocusChanged(VRDisplayImpl* display) {
+  UpdateListeningForActivate(display);
+}
+
+void VRDevice::UpdateListeningForActivate(VRDisplayImpl* display) {
+  if (display->ListeningForActivate() && display->InFocusedFrame()) {
+    listening_for_activate_diplay_ = display;
+  } else if (listening_for_activate_diplay_ == display) {
+    last_listening_for_activate_diplay_ = listening_for_activate_diplay_;
+    listening_for_activate_diplay_ = nullptr;
+  }
+  OnListeningForActivateChanged(!!listening_for_activate_diplay_);
 }
 
 }  // namespace device

@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/profiler/scoped_tracker.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
@@ -22,7 +21,6 @@
 #include "chrome/common/render_messages.h"
 #include "chrome/common/thumbnail_capturer.mojom.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/guest_view/browser/guest_view_manager.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/strings/grit/components_strings.h"
@@ -42,6 +40,10 @@
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/browser.h"
+#endif
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "components/guest_view/browser/guest_view_manager.h"
 #endif
 
 using content::WebContents;
@@ -116,6 +118,7 @@ void CoreTabHelper::SearchByImageInNewTab(
   thumbnail_capturer_proxy->RequestThumbnailForContextNode(
       kImageSearchThumbnailMinSize,
       gfx::Size(kImageSearchThumbnailMaxWidth, kImageSearchThumbnailMaxHeight),
+      chrome::mojom::ImageFormat::JPEG,
       base::Bind(&CoreTabHelper::DoSearchByImageInNewTab,
                  weak_factory_.GetWeakPtr(), base::Passed(&thumbnail_capturer),
                  src_url));
@@ -124,32 +127,22 @@ void CoreTabHelper::SearchByImageInNewTab(
 // static
 bool CoreTabHelper::GetStatusTextForWebContents(
     base::string16* status_text, content::WebContents* source) {
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/467185 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile1(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "467185 CoreTabHelper::GetStatusTextForWebContents1"));
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   auto* guest_manager = guest_view::GuestViewManager::FromBrowserContext(
       source->GetBrowserContext());
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
   if (!source->IsLoading() ||
       source->GetLoadState().state == net::LOAD_STATE_IDLE) {
-    // TODO(robliao): Remove ScopedTracker below once https://crbug.com/467185
-    // is fixed.
-    tracked_objects::ScopedTracker tracking_profile2(
-        FROM_HERE_WITH_EXPLICIT_FUNCTION(
-            "467185 CoreTabHelper::GetStatusTextForWebContents2"));
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     if (!guest_manager)
       return false;
     return guest_manager->ForEachGuest(
         source, base::Bind(&CoreTabHelper::GetStatusTextForWebContents,
                            status_text));
+#else  // !BUILDFLAG(ENABLE_EXTENSIONS)
+    return false;
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
   }
-
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/467185
-  // is fixed.
-  tracked_objects::ScopedTracker tracking_profile3(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "467185 CoreTabHelper::GetStatusTextForWebContents3"));
 
   switch (source->GetLoadState().state) {
     case net::LOAD_STATE_WAITING_FOR_STALLED_SOCKET_POOL:
@@ -226,17 +219,16 @@ bool CoreTabHelper::GetStatusTextForWebContents(
     case net::LOAD_STATE_READING_RESPONSE:
       break;
   }
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   if (!guest_manager)
     return false;
 
-  // TODO(robliao): Remove ScopedTracker below once https://crbug.com/467185 is
-  // fixed.
-  tracked_objects::ScopedTracker tracking_profile4(
-      FROM_HERE_WITH_EXPLICIT_FUNCTION(
-          "467185 CoreTabHelper::GetStatusTextForWebContents4"));
   return guest_manager->ForEachGuest(
       source, base::Bind(&CoreTabHelper::GetStatusTextForWebContents,
                          status_text));
+#else  // !BUILDFLAG(ENABLE_EXTENSIONS)
+  return false;
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -248,7 +240,7 @@ void CoreTabHelper::DidStartLoading() {
 
 void CoreTabHelper::WasShown() {
   web_cache::WebCacheManager::GetInstance()->ObserveActivity(
-      web_contents()->GetRenderProcessHost()->GetID());
+      web_contents()->GetMainFrame()->GetProcess()->GetID());
 }
 
 void CoreTabHelper::WebContentsDestroyed() {

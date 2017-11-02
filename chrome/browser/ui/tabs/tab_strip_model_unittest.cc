@@ -12,6 +12,7 @@
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -33,6 +34,7 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -184,8 +186,8 @@ class TabStripModelTest : public ChromeRenderViewHostTestHarness {
     WebContents::CreateParams create_params(
         profile(), web_contents->GetRenderViewHost()->GetSiteInstance());
     WebContents* retval = WebContents::Create(create_params);
-    EXPECT_EQ(retval->GetRenderProcessHost(),
-              web_contents->GetRenderProcessHost());
+    EXPECT_EQ(retval->GetMainFrame()->GetProcess(),
+              web_contents->GetMainFrame()->GetProcess());
     return retval;
   }
 
@@ -198,7 +200,7 @@ class TabStripModelTest : public ChromeRenderViewHostTestHarness {
   // Sets the id of the specified contents.
   void SetID(WebContents* contents, int id) {
     contents->SetUserData(&kTabStripModelTestIDUserDataKey,
-                          new TabStripModelTestIDUserData(id));
+                          base::MakeUnique<TabStripModelTestIDUserData>(id));
   }
 
   // Returns the id of the specified contents.
@@ -1884,7 +1886,7 @@ TEST_F(TabStripModelTest, MAYBE_FastShutdown) {
     tabstrip.CloseAllTabs();
     // On a mock RPH this checks whether we *attempted* fast shutdown.
     // A real RPH would reject our attempt since there is an unload handler.
-    EXPECT_TRUE(contents1->GetRenderProcessHost()->FastShutdownStarted());
+    EXPECT_TRUE(contents1->GetMainFrame()->GetProcess()->FastShutdownStarted());
     EXPECT_EQ(2, tabstrip.count());
 
     delegate.set_run_unload_listener(false);
@@ -1905,7 +1907,8 @@ TEST_F(TabStripModelTest, MAYBE_FastShutdown) {
     tabstrip.AppendWebContents(contents2, true);
 
     tabstrip.CloseWebContentsAt(1, TabStripModel::CLOSE_NONE);
-    EXPECT_FALSE(contents1->GetRenderProcessHost()->FastShutdownStarted());
+    EXPECT_FALSE(
+        contents1->GetMainFrame()->GetProcess()->FastShutdownStarted());
     EXPECT_EQ(1, tabstrip.count());
 
     tabstrip.CloseAllTabs();
@@ -2165,6 +2168,33 @@ TEST_F(TabStripModelTest, DeleteTabStripFromDestroy) {
   DeleteWebContentsOnDestroyedObserver observer(contents2, contents1, strip);
   strip->CloseAllTabs();
   EXPECT_TRUE(tab_strip_model_observer.empty());
+}
+
+// Ensure pinned tabs are not mixed with non-pinned tabs when using
+// MoveWebContentsAt.
+TEST_F(TabStripModelTest, MoveWebContentsAtWithPinned) {
+  TabStripDummyDelegate delegate;
+  TabStripModel strip(&delegate, profile());
+  ASSERT_NO_FATAL_FAILURE(PrepareTabstripForSelectionTest(&strip, 6, 3, "0"));
+  EXPECT_EQ("0p 1p 2p 3 4 5", GetTabStripStateString(strip));
+
+  // Move middle tabs into the wrong area.
+  strip.MoveWebContentsAt(1, 5, true);
+  EXPECT_EQ("0p 2p 1p 3 4 5", GetTabStripStateString(strip));
+  strip.MoveWebContentsAt(4, 1, true);
+  EXPECT_EQ("0p 2p 1p 4 3 5", GetTabStripStateString(strip));
+
+  // Test moving edge cases into the wrong area.
+  strip.MoveWebContentsAt(5, 0, true);
+  EXPECT_EQ("0p 2p 1p 5 4 3", GetTabStripStateString(strip));
+  strip.MoveWebContentsAt(0, 5, true);
+  EXPECT_EQ("2p 1p 0p 5 4 3", GetTabStripStateString(strip));
+
+  // Test moving edge cases in the correct area.
+  strip.MoveWebContentsAt(3, 5, true);
+  EXPECT_EQ("2p 1p 0p 4 3 5", GetTabStripStateString(strip));
+  strip.MoveWebContentsAt(2, 0, true);
+  EXPECT_EQ("0p 2p 1p 4 3 5", GetTabStripStateString(strip));
 }
 
 TEST_F(TabStripModelTest, MoveSelectedTabsTo) {

@@ -33,20 +33,19 @@
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/Range.h"
+#include "core/editing/EditingUtilities.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/Position.h"
 #include "core/editing/iterators/BackwardsCharacterIterator.h"
 #include "core/editing/iterators/CharacterIterator.h"
+#include "core/html/forms/HTMLFormControlElement.h"
 
 namespace blink {
 
-SurroundingText::SurroundingText(const Range& range, unsigned max_length)
+SurroundingText::SurroundingText(const EphemeralRange& range,
+                                 unsigned max_length)
     : start_offset_in_content_(0), end_offset_in_content_(0) {
   Initialize(range.StartPosition(), range.EndPosition(), max_length);
-}
-
-SurroundingText::SurroundingText(const Position& position, unsigned max_length)
-    : start_offset_in_content_(0), end_offset_in_content_(0) {
-  Initialize(position, position, max_length);
 }
 
 void SurroundingText::Initialize(const Position& start_position,
@@ -63,35 +62,46 @@ void SurroundingText::Initialize(const Position& start_position,
   DCHECK(!document->NeedsLayoutTreeUpdate());
 
   // The forward range starts at the selection end and ends at the document's
-  // end. It will then be updated to only contain the text in the text in the
-  // right range around the selection.
+  // or the input element's end. It will then be updated to only contain the
+  // text in the right range around the selection.
+  DCHECK_EQ(RootEditableElementOf(start_position),
+            RootEditableElementOf(end_position));
+  Element* const root_editable = RootEditableElementOf(start_position);
+  Element* const root_element =
+      root_editable ? root_editable : document->documentElement();
+
+  // Do not create surrounding text if start or end position is within a
+  // control.
+  if (HTMLFormControlElement::EnclosingFormControlElement(
+          start_position.ComputeContainerNode()) ||
+      HTMLFormControlElement::EnclosingFormControlElement(
+          end_position.ComputeContainerNode()))
+    return;
+
   CharacterIterator forward_iterator(
       end_position,
-      Position::LastPositionInNode(document->documentElement())
-          .ParentAnchoredEquivalent(),
+      Position::LastPositionInNode(*root_element).ParentAnchoredEquivalent(),
       TextIteratorBehavior::Builder().SetStopsOnFormControls(true).Build());
-  // FIXME: why do we stop going trough the text if we were not able to select
-  // something on the right?
   if (!forward_iterator.AtEnd())
     forward_iterator.Advance(max_length - half_max_length);
 
-  EphemeralRange forward_range = forward_iterator.Range();
-  if (forward_range.IsNull() ||
-      !Range::Create(*document, end_position, forward_range.StartPosition())
-           ->GetText()
-           .length())
-    return;
-
   // Same as with the forward range but with the backward range. The range
-  // starts at the document's start and ends at the selection start and will
-  // be updated.
+  // starts at the document's or input element's start and ends at the selection
+  // start and will be updated.
   BackwardsCharacterIterator backwards_iterator(
-      Position::FirstPositionInNode(document->documentElement())
-          .ParentAnchoredEquivalent(),
-      start_position,
+      EphemeralRange(Position::FirstPositionInNode(*root_element)
+                         .ParentAnchoredEquivalent(),
+                     start_position),
       TextIteratorBehavior::Builder().SetStopsOnFormControls(true).Build());
   if (!backwards_iterator.AtEnd())
     backwards_iterator.Advance(half_max_length);
+
+  // Upon some conditions backwards iterator yields invalid EndPosition() which
+  // causes a crash in TextIterator::RangeLength().
+  // TODO(editing-dev): Fix BackwardsCharacterIterator, http://crbug.com/758438.
+  if (backwards_iterator.EndPosition() > start_position ||
+      end_position > forward_iterator.StartPosition())
+    return;
 
   const TextIteratorBehavior behavior =
       TextIteratorBehavior::NoTrailingSpaceRangeLengthBehavior();
@@ -100,7 +110,7 @@ void SurroundingText::Initialize(const Position& start_position,
   end_offset_in_content_ = TextIterator::RangeLength(
       backwards_iterator.EndPosition(), end_position, behavior);
   content_range_ = Range::Create(*document, backwards_iterator.EndPosition(),
-                                 forward_range.StartPosition());
+                                 forward_iterator.StartPosition());
   DCHECK(content_range_);
 }
 

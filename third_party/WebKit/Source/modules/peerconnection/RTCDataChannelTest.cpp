@@ -6,9 +6,10 @@
 
 #include <string>
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/DOMException.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
+#include "core/testing/NullExecutionContext.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "platform/heap/Heap.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/RefPtr.h"
@@ -76,7 +77,8 @@ class MockHandler final : public WebRTCDataChannelHandler {
 
 TEST(RTCDataChannelTest, BufferedAmount) {
   MockHandler* handler = new MockHandler();
-  RTCDataChannel* channel = RTCDataChannel::Create(0, WTF::WrapUnique(handler));
+  RTCDataChannel* channel = RTCDataChannel::Create(new NullExecutionContext,
+                                                   WTF::WrapUnique(handler));
 
   handler->ChangeState(WebRTCDataChannelHandlerClient::kReadyStateOpen);
   String message(std::string(100, 'A').c_str());
@@ -86,7 +88,8 @@ TEST(RTCDataChannelTest, BufferedAmount) {
 
 TEST(RTCDataChannelTest, BufferedAmountLow) {
   MockHandler* handler = new MockHandler();
-  RTCDataChannel* channel = RTCDataChannel::Create(0, WTF::WrapUnique(handler));
+  RTCDataChannel* channel = RTCDataChannel::Create(new NullExecutionContext,
+                                                   WTF::WrapUnique(handler));
 
   // Add and drain 100 bytes
   handler->ChangeState(WebRTCDataChannelHandlerClient::kReadyStateOpen);
@@ -100,7 +103,7 @@ TEST(RTCDataChannelTest, BufferedAmountLow) {
   EXPECT_EQ(2U, channel->scheduled_events_.size());
   EXPECT_EQ(
       "bufferedamountlow",
-      std::string(channel->scheduled_events_.back()->type().Utf8().Data()));
+      std::string(channel->scheduled_events_.back()->type().Utf8().data()));
 
   // Add and drain 1 byte
   channel->send("A", IGNORE_EXCEPTION_FOR_TESTING);
@@ -112,7 +115,7 @@ TEST(RTCDataChannelTest, BufferedAmountLow) {
   EXPECT_EQ(3U, channel->scheduled_events_.size());
   EXPECT_EQ(
       "bufferedamountlow",
-      std::string(channel->scheduled_events_.back()->type().Utf8().Data()));
+      std::string(channel->scheduled_events_.back()->type().Utf8().data()));
 
   // Set the threshold to 99 bytes, add 101, and drain 1 byte at a time.
   channel->setBufferedAmountLowThreshold(99U);
@@ -131,7 +134,7 @@ TEST(RTCDataChannelTest, BufferedAmountLow) {
   EXPECT_EQ(4U, channel->scheduled_events_.size());  // One new event.
   EXPECT_EQ(
       "bufferedamountlow",
-      std::string(channel->scheduled_events_.back()->type().Utf8().Data()));
+      std::string(channel->scheduled_events_.back()->type().Utf8().data()));
 
   handler->DrainBuffer(1);
   EXPECT_EQ(98U, channel->bufferedAmount());
@@ -144,7 +147,31 @@ TEST(RTCDataChannelTest, BufferedAmountLow) {
   EXPECT_EQ(5U, channel->scheduled_events_.size());  // New event.
   EXPECT_EQ(
       "bufferedamountlow",
-      std::string(channel->scheduled_events_.back()->type().Utf8().Data()));
+      std::string(channel->scheduled_events_.back()->type().Utf8().data()));
+}
+
+TEST(RTCDataChannelTest, SendAfterContextDestroyed) {
+  MockHandler* handler = new MockHandler();
+  RTCDataChannel* channel = RTCDataChannel::Create(new NullExecutionContext,
+                                                   WTF::WrapUnique(handler));
+  handler->ChangeState(WebRTCDataChannelHandlerClient::kReadyStateOpen);
+  channel->ContextDestroyed(nullptr);
+
+  String message(std::string(100, 'A').c_str());
+  DummyExceptionStateForTesting exception_state;
+  channel->send(message, exception_state);
+
+  EXPECT_TRUE(exception_state.HadException());
+}
+
+TEST(RTCDataChannelTest, CloseAfterContextDestroyed) {
+  MockHandler* handler = new MockHandler();
+  RTCDataChannel* channel = RTCDataChannel::Create(new NullExecutionContext,
+                                                   WTF::WrapUnique(handler));
+  handler->ChangeState(WebRTCDataChannelHandlerClient::kReadyStateOpen);
+  channel->ContextDestroyed(nullptr);
+  channel->close();
+  EXPECT_EQ(String::FromUTF8("closed"), channel->readyState());
 }
 
 TEST(RTCDataChannelTest, SendAfterContextDestroyed) {

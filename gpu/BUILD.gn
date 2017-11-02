@@ -45,6 +45,7 @@ shared_library("command_buffer_gles2") {
   deps = [
     ":gpu",
     "//base",
+    "//build/config:exe_and_shlib_deps",
     "//gpu/command_buffer/client:gles2_c_lib",
     "//gpu/command_buffer/client:gles2_implementation",
     "//gpu/command_buffer/common:gles2_utils",
@@ -104,6 +105,8 @@ test("command_buffer_gles2_tests") {
 static_library("test_support") {
   testonly = true
   sources = [
+    "command_buffer/client/client_test_helper.cc",
+    "command_buffer/client/client_test_helper.h",
     "command_buffer/client/gles2_interface_stub.cc",
     "command_buffer/client/gles2_interface_stub.h",
     "command_buffer/service/error_state_mock.cc",
@@ -120,6 +123,7 @@ static_library("test_support") {
     "//testing/gmock",
     "//testing/gtest",
     "//ui/gl:gl_unittest_utils",
+    "//ui/latency:test_support",
   ]
 }
 
@@ -153,11 +157,13 @@ test("gl_tests") {
     "command_buffer/tests/gl_map_buffer_range_unittest.cc",
     "command_buffer/tests/gl_native_gmb_backbuffer_unittest.cc",
     "command_buffer/tests/gl_object_bindings_unittest.cc",
+    "command_buffer/tests/gl_oob_attrib_unittest.cc",
     "command_buffer/tests/gl_pointcoord_unittest.cc",
     "command_buffer/tests/gl_program_unittest.cc",
     "command_buffer/tests/gl_query_unittest.cc",
     "command_buffer/tests/gl_readback_unittest.cc",
     "command_buffer/tests/gl_request_extension_unittest.cc",
+    "command_buffer/tests/gl_set_aggressively_free_resources_unittest.cc",
     "command_buffer/tests/gl_shared_resources_unittest.cc",
     "command_buffer/tests/gl_stream_draw_unittest.cc",
     "command_buffer/tests/gl_test_utils.cc",
@@ -186,6 +192,7 @@ test("gl_tests") {
     "//base",
     "//base/test:test_support",
     "//base/third_party/dynamic_annotations",
+    "//components/viz/test:test_support",
     "//gpu/command_buffer/client:gles2_c_lib",
     "//gpu/command_buffer/client:gles2_implementation",
     "//gpu/command_buffer/common:gles2_utils",
@@ -217,9 +224,10 @@ test("gl_tests") {
 test("gpu_unittests") {
   sources = [
     "command_buffer/client/buffer_tracker_unittest.cc",
-    "command_buffer/client/client_test_helper.cc",
-    "command_buffer/client/client_test_helper.h",
+    "command_buffer/client/client_discardable_manager_unittest.cc",
     "command_buffer/client/cmd_buffer_helper_test.cc",
+    "command_buffer/client/command_buffer_direct_locked.cc",
+    "command_buffer/client/command_buffer_direct_locked.h",
     "command_buffer/client/fenced_allocator_test.cc",
     "command_buffer/client/gles2_implementation_unittest.cc",
     "command_buffer/client/mapped_memory_unittest.cc",
@@ -230,8 +238,7 @@ test("gpu_unittests") {
     "command_buffer/client/vertex_array_object_manager_unittest.cc",
     "command_buffer/common/activity_flags_unittest.cc",
     "command_buffer/common/bitfield_helpers_test.cc",
-    "command_buffer/common/command_buffer_mock.cc",
-    "command_buffer/common/command_buffer_mock.h",
+    "command_buffer/common/buffer_unittest.cc",
     "command_buffer/common/command_buffer_shared_test.cc",
     "command_buffer/common/debug_marker_manager_unittest.cc",
     "command_buffer/common/discardable_handle_unittest.cc",
@@ -242,9 +249,7 @@ test("gpu_unittests") {
     "command_buffer/common/id_type_unittest.cc",
     "command_buffer/common/unittest_main.cc",
     "command_buffer/service/buffer_manager_unittest.cc",
-    "command_buffer/service/cmd_parser_test.cc",
     "command_buffer/service/command_buffer_service_unittest.cc",
-    "command_buffer/service/command_executor_unittest.cc",
     "command_buffer/service/common_decoder_unittest.cc",
     "command_buffer/service/context_group_unittest.cc",
     "command_buffer/service/context_state_unittest.cc",
@@ -289,6 +294,8 @@ test("gpu_unittests") {
     "command_buffer/service/program_manager_unittest.cc",
     "command_buffer/service/query_manager_unittest.cc",
     "command_buffer/service/renderbuffer_manager_unittest.cc",
+    "command_buffer/service/scheduler_unittest.cc",
+    "command_buffer/service/service_discardable_manager_unittest.cc",
     "command_buffer/service/shader_manager_unittest.cc",
     "command_buffer/service/shader_translator_cache_unittest.cc",
     "command_buffer/service/shader_translator_unittest.cc",
@@ -330,6 +337,16 @@ test("gpu_unittests") {
     sources += [ "ipc/client/gpu_memory_buffer_impl_native_pixmap_unittest.cc" ]
   }
 
+  # TODO(geofflang): Run passthrough command decoder unittests on more platforms
+  # once initialization of ANGLE's NULL context is supported
+  if ((is_win || (is_linux && !use_ozone)) && !is_asan) {
+    sources += [
+      "command_buffer/service/gles2_cmd_decoder_passthrough_unittest_buffers.cc",
+      "command_buffer/service/gles2_cmd_decoder_passthrough_unittest_drawing.cc",
+      "command_buffer/service/gles2_cmd_decoder_passthrough_unittest_framebuffers.cc",
+    ]
+  }
+
   configs += [
     "//build/config:precompiled_headers",
 
@@ -361,6 +378,7 @@ test("gpu_unittests") {
     "//ui/gl",
     "//ui/gl:gl_unittest_utils",
     "//ui/gl:test_support",
+    "//ui/latency:test_support",
   ]
 
   if (is_android) {
@@ -455,6 +473,26 @@ if (is_linux) {
       "GPU_FUZZER_USE_ANGLE",
       "GPU_FUZZER_USE_PASSTHROUGH_CMD_DECODER",
     ]
+
+    deps = [
+      ":gpu",
+      "//base",
+      "//base/third_party/dynamic_annotations",
+      "//gpu/command_buffer/common:gles2_utils",
+      "//ui/gfx/geometry",
+      "//ui/gl",
+      "//ui/gl:test_support",
+    ]
+
+    libfuzzer_options = [ "max_len=16384" ]
+  }
+
+  fuzzer_test("gpu_swiftshader_fuzzer") {
+    sources = [
+      "command_buffer/tests/fuzzer_main.cc",
+    ]
+
+    defines = [ "GPU_FUZZER_USE_SWIFTSHADER" ]
 
     deps = [
       ":gpu",

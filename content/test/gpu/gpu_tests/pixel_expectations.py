@@ -42,6 +42,8 @@ class PixelExpectations(GpuTestExpectations):
     # TODO(kbr): flakily timing out on this configuration.
     self.Flaky('*', ['linux', 'intel', 'debug'], bug=648369)
 
+    self.Flaky('Pixel_Video_MP4', ['android', 'nvidia'], bug=716564)
+
     # Flaky for unknown reasons only on macOS. Not planning to investigate
     # further.
     self.Flaky('Pixel_ScissorTestWithPreserveDrawingBuffer', ['mac'],
@@ -50,8 +52,14 @@ class PixelExpectations(GpuTestExpectations):
     self.Flaky('Pixel_OffscreenCanvas2DResizeOnWorker',
         ['win10', ('intel', 0x1912)], bug=690663)
 
-    # TODO(jbauman): Re-enable when references images created.
-    self.Fail('Pixel_DirectComposition_Video_*', ['win'], bug=704389)
+    self.Flaky('Pixel_OffscreenCanvasTransferBeforeStyleResize',
+              ['mac', 'linux', 'win', 'android'], bug=735228)
+    self.Flaky('Pixel_OffscreenCanvasTransferAfterStyleResize',
+              ['mac', 'linux', 'win', 'android'], bug=735171)
 
-    # TODO(zakerinasab): check / generate reference images.
-    self.Fail('Pixel_Canvas2DUntagged', bug=713632)
+    self.Flaky('Pixel_OffscreenCanvasWebGLSoftwareCompositingWorker',
+        ['mac', ('nvidia', 0xfe9), 'debug'], bug=751328)
+
+    # Failing on Nexus 5; haven't investigated why yet.
+    self.Skip('Pixel_WebGL2_BlitFramebuffer_Result_Displayed',
+        ['android', ('qualcomm', 'Adreno (TM) 330')], bug=773293)

@@ -13,9 +13,9 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_util.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_util.h"
 #include "net/proxy/proxy_config.h"
 #include "net/proxy/proxy_info.h"
 #include "net/proxy/proxy_list.h"
@@ -169,14 +169,13 @@ bool DataReductionProxyBypassProtocol::MaybeBypassProxyAndPrepareToRetry(
                           data_reduction_proxy_info->bypass_all,
                           data_reduction_proxy_type_info.proxy_servers);
   } else {
-    request->SetLoadFlags(request->load_flags() |
-                          net::LOAD_DISABLE_CACHE |
+    request->SetLoadFlags(request->load_flags() | net::LOAD_BYPASS_CACHE |
                           net::LOAD_BYPASS_PROXY);
   }
 
   // Retry if block-once was specified or if method is idempotent.
   return bypass_type == BYPASS_EVENT_TYPE_CURRENT ||
-         util::IsMethodIdempotent(request->method());
+         net::HttpUtil::IsMethodIdempotent(request->method());
 }
 
 }  // namespace data_reduction_proxy

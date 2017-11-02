@@ -31,6 +31,7 @@
 #include "core/layout/line/AbstractInlineTextBox.h"
 
 #include "core/dom/AXObjectCache.h"
+#include "core/editing/EphemeralRange.h"
 #include "core/editing/iterators/TextIterator.h"
 #include "platform/text/TextBreakIterator.h"
 
@@ -39,7 +40,7 @@ namespace blink {
 AbstractInlineTextBox::InlineToAbstractInlineTextBoxHashMap*
     AbstractInlineTextBox::g_abstract_inline_text_box_map_ = nullptr;
 
-PassRefPtr<AbstractInlineTextBox> AbstractInlineTextBox::GetOrCreate(
+RefPtr<AbstractInlineTextBox> AbstractInlineTextBox::GetOrCreate(
     LineLayoutText line_layout_text,
     InlineTextBox* inline_text_box) {
   if (!inline_text_box)
@@ -50,12 +51,12 @@ PassRefPtr<AbstractInlineTextBox> AbstractInlineTextBox::GetOrCreate(
         new InlineToAbstractInlineTextBoxHashMap();
 
   InlineToAbstractInlineTextBoxHashMap::const_iterator it =
-      g_abstract_inline_text_box_map_->Find(inline_text_box);
+      g_abstract_inline_text_box_map_->find(inline_text_box);
   if (it != g_abstract_inline_text_box_map_->end())
     return it->value;
 
-  RefPtr<AbstractInlineTextBox> obj =
-      AdoptRef(new AbstractInlineTextBox(line_layout_text, inline_text_box));
+  RefPtr<AbstractInlineTextBox> obj = WTF::AdoptRef(
+      new AbstractInlineTextBox(line_layout_text, inline_text_box));
   g_abstract_inline_text_box_map_->Set(inline_text_box, obj);
   return obj;
 }
@@ -65,7 +66,7 @@ void AbstractInlineTextBox::WillDestroy(InlineTextBox* inline_text_box) {
     return;
 
   InlineToAbstractInlineTextBoxHashMap::const_iterator it =
-      g_abstract_inline_text_box_map_->Find(inline_text_box);
+      g_abstract_inline_text_box_map_->find(inline_text_box);
   if (it != g_abstract_inline_text_box_map_->end()) {
     it->value->Detach();
     g_abstract_inline_text_box_map_->erase(inline_text_box);
@@ -78,7 +79,7 @@ AbstractInlineTextBox::~AbstractInlineTextBox() {
 }
 
 void AbstractInlineTextBox::Detach() {
-  if (Node* node = line_layout_item_.GetNode()) {
+  if (Node* node = GetNode()) {
     if (AXObjectCache* cache = node->GetDocument().ExistingAXObjectCache())
       cache->Remove(this);
   }
@@ -87,8 +88,7 @@ void AbstractInlineTextBox::Detach() {
   inline_text_box_ = nullptr;
 }
 
-PassRefPtr<AbstractInlineTextBox> AbstractInlineTextBox::NextInlineTextBox()
-    const {
+RefPtr<AbstractInlineTextBox> AbstractInlineTextBox::NextInlineTextBox() const {
   DCHECK(!inline_text_box_ ||
          !inline_text_box_->GetLineLayoutItem().NeedsLayout());
   if (!inline_text_box_)
@@ -122,6 +122,12 @@ AbstractInlineTextBox::Direction AbstractInlineTextBox::GetDirection() const {
   }
   return (inline_text_box_->Direction() == TextDirection::kRtl ? kBottomToTop
                                                                : kTopToBottom);
+}
+
+Node* AbstractInlineTextBox::GetNode() const {
+  if (!line_layout_item_)
+    return nullptr;
+  return line_layout_item_.GetNode();
 }
 
 void AbstractInlineTextBox::CharacterWidths(Vector<float>& widths) const {
@@ -193,7 +199,7 @@ bool AbstractInlineTextBox::IsLast() const {
   return !inline_text_box_ || !inline_text_box_->NextTextBox();
 }
 
-PassRefPtr<AbstractInlineTextBox> AbstractInlineTextBox::NextOnLine() const {
+RefPtr<AbstractInlineTextBox> AbstractInlineTextBox::NextOnLine() const {
   DCHECK(!inline_text_box_ ||
          !inline_text_box_->GetLineLayoutItem().NeedsLayout());
   if (!inline_text_box_)
@@ -207,8 +213,7 @@ PassRefPtr<AbstractInlineTextBox> AbstractInlineTextBox::NextOnLine() const {
   return nullptr;
 }
 
-PassRefPtr<AbstractInlineTextBox> AbstractInlineTextBox::PreviousOnLine()
-    const {
+RefPtr<AbstractInlineTextBox> AbstractInlineTextBox::PreviousOnLine() const {
   DCHECK(!inline_text_box_ ||
          !inline_text_box_->GetLineLayoutItem().NeedsLayout());
   if (!inline_text_box_)

@@ -10,11 +10,13 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/values.h"
 #include "components/ntp_snippets/category_rankers/constant_category_ranker.h"
 #include "components/ntp_snippets/content_suggestions_metrics.h"
 #include "components/ntp_snippets/features.h"
 #include "components/ntp_snippets/pref_names.h"
+#include "components/ntp_snippets/time_serialization.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/variations/variations_associated_data.h"
@@ -131,6 +133,14 @@ base::Optional<Category> GetPromotedCategoryFromVariations() {
   return Category::FromIDValue(category_id);
 }
 
+std::string GetOptionalCategoryAsString(
+    const base::Optional<Category>& optional_category) {
+  if (optional_category.has_value()) {
+    return base::IntToString(optional_category->id());
+  }
+  return "None";
+}
+
 }  // namespace
 
 ClickBasedCategoryRanker::ClickBasedCategoryRanker(
@@ -144,7 +154,7 @@ ClickBasedCategoryRanker::ClickBasedCategoryRanker(
     RestoreDefaultOrder();
   }
 
-  if (ReadLastDecayTimeFromPrefs() == base::Time::FromInternalValue(0)) {
+  if (ReadLastDecayTimeFromPrefs() == DeserializeTime(0)) {
     StoreLastDecayTimeToPrefs(clock_->Now());
   }
   promoted_category_ = DeterminePromotedCategory();
@@ -210,7 +220,7 @@ void ClickBasedCategoryRanker::ClearHistory(base::Time begin, base::Time end) {
     return;
   }
 
-  StoreLastDecayTimeToPrefs(base::Time::FromInternalValue(0));
+  StoreLastDecayTimeToPrefs(DeserializeTime(0));
 
   // The categories added through |AppendCategoryIfNecessary| cannot be
   // completely removed, since no one is required to reregister them. Instead
@@ -262,6 +272,46 @@ void ClickBasedCategoryRanker::InsertCategoryAfterIfNecessary(
     Category anchor) {
   InsertCategoryRelativeToIfNecessary(category_to_insert, anchor,
                                       /*after=*/true);
+}
+
+std::vector<CategoryRanker::DebugDataItem>
+ClickBasedCategoryRanker::GetDebugData() {
+  std::vector<CategoryRanker::DebugDataItem> result;
+  result.push_back(
+      CategoryRanker::DebugDataItem("Type", "ClickBasedCategoryRanker"));
+
+  std::string initial_order_type;
+  CategoryOrderChoice choice = GetSelectedCategoryOrder();
+  if (choice == CategoryOrderChoice::GENERAL) {
+    initial_order_type = "GENERAL";
+  }
+  if (choice == CategoryOrderChoice::EMERGING_MARKETS_ORIENTED) {
+    initial_order_type = "EMERGING_MARKETS_ORIENTED;";
+  }
+  result.push_back(
+      CategoryRanker::DebugDataItem("Initial order type", initial_order_type));
+
+  std::vector<std::string> category_strings;
+  for (const auto& ranked_category : ordered_categories_) {
+    category_strings.push_back(base::ReplaceStringPlaceholders(
+        "($1; $2)",
+        {base::IntToString(ranked_category.category.id()),
+         base::IntToString(ranked_category.clicks)},
+        /*offsets=*/nullptr));
+  }
+  result.push_back(
+      CategoryRanker::DebugDataItem("Current order (with click counts)",
+                                    base::JoinString(category_strings, ", ")));
+
+  result.push_back(CategoryRanker::DebugDataItem(
+      "Actual promoted category",
+      GetOptionalCategoryAsString(promoted_category_)));
+
+  result.push_back(CategoryRanker::DebugDataItem(
+      "Raw promoted category from variations",
+      GetOptionalCategoryAsString(GetPromotedCategoryFromVariations())));
+
+  return result;
 }
 
 void ClickBasedCategoryRanker::OnSuggestionOpened(Category category) {
@@ -412,7 +462,7 @@ base::Time ParseLastDismissedDate(const base::DictionaryValue& value) {
   int64_t parsed_value;
   if (value.GetString(kLastDismissedKey, &serialized_value) &&
       base::StringToInt64(serialized_value, &parsed_value)) {
-    return base::Time::FromInternalValue(parsed_value);
+    return DeserializeTime(parsed_value);
   }
   return base::Time();
 }
@@ -462,7 +512,7 @@ void ClickBasedCategoryRanker::StoreOrderToPrefs(
     dictionary->SetInteger(kClicksKey, category.clicks);
     dictionary->SetString(
         kLastDismissedKey,
-        base::Int64ToString(category.last_dismissed.ToInternalValue()));
+        base::Int64ToString(SerializeTime(category.last_dismissed)));
     list.Append(std::move(dictionary));
   }
   pref_service_->Set(prefs::kClickBasedCategoryRankerOrderWithClicks, list);
@@ -503,14 +553,14 @@ void ClickBasedCategoryRanker::InsertCategoryRelativeToIfNecessary(
 }
 
 base::Time ClickBasedCategoryRanker::ReadLastDecayTimeFromPrefs() const {
-  return base::Time::FromInternalValue(
+  return DeserializeTime(
       pref_service_->GetInt64(prefs::kClickBasedCategoryRankerLastDecayTime));
 }
 
 void ClickBasedCategoryRanker::StoreLastDecayTimeToPrefs(
     base::Time last_decay_time) {
   pref_service_->SetInt64(prefs::kClickBasedCategoryRankerLastDecayTime,
-                          last_decay_time.ToInternalValue());
+                          SerializeTime(last_decay_time));
 }
 
 bool ClickBasedCategoryRanker::IsEnoughClicksToDecay() const {

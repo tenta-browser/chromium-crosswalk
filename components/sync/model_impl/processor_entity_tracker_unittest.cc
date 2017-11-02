@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/non_blocking_sync_common.h"
@@ -65,7 +64,7 @@ UpdateResponseData GenerateTombstone(const ProcessorEntityTracker& entity,
                                      const std::string& name,
                                      const base::Time& mtime,
                                      int64_t version) {
-  std::unique_ptr<EntityData> data = base::MakeUnique<EntityData>();
+  std::unique_ptr<EntityData> data = std::make_unique<EntityData>();
   data->client_tag_hash = hash;
   data->non_unique_name = name;
   data->id = id;
@@ -106,6 +105,9 @@ class ProcessorEntityTrackerTest : public ::testing::Test {
 
   std::unique_ptr<ProcessorEntityTracker> CreateNew() {
     return ProcessorEntityTracker::CreateNew(kKey, kHash, "", ctime_);
+  }
+  std::unique_ptr<ProcessorEntityTracker> CreateNewWithEmptyStorageKey() {
+    return ProcessorEntityTracker::CreateNew("", kHash, "", ctime_);
   }
 
   std::unique_ptr<ProcessorEntityTracker> CreateSynced() {
@@ -194,7 +196,7 @@ TEST_F(ProcessorEntityTrackerTest, NewLocalItem) {
   EXPECT_EQ(entity->metadata().specifics_hash(), request.specifics_hash);
 
   // Ack the commit.
-  entity->ReceiveCommitResponse(GenerateAckData(request, kId, 1));
+  entity->ReceiveCommitResponse(GenerateAckData(request, kId, 1), false);
 
   EXPECT_EQ(kId, entity->metadata().server_id());
   EXPECT_FALSE(entity->metadata().is_deleted());
@@ -240,6 +242,21 @@ TEST_F(ProcessorEntityTrackerTest, NewServerItem) {
   EXPECT_TRUE(entity->UpdateIsReflection(10));
   EXPECT_FALSE(entity->UpdateIsReflection(11));
   EXPECT_FALSE(entity->HasCommitData());
+}
+
+// Test creating tracker for new server item with empty storage key, applying
+// update and updating storage key.
+TEST_F(ProcessorEntityTrackerTest, NewServerItem_EmptyStorageKey) {
+  std::unique_ptr<ProcessorEntityTracker> entity =
+      CreateNewWithEmptyStorageKey();
+
+  EXPECT_EQ("", entity->storage_key());
+
+  const base::Time mtime = base::Time::Now();
+  entity->RecordAcceptedUpdate(
+      GenerateUpdate(*entity, kHash, kId, kName, kValue1, mtime, 10));
+  entity->SetStorageKey(kKey);
+  EXPECT_EQ(kKey, entity->storage_key());
 }
 
 // Test state for a tombstone received for a previously unknown item.
@@ -328,7 +345,7 @@ TEST_F(ProcessorEntityTrackerTest, LocalChange) {
   EXPECT_FALSE(entity->RequiresCommitRequest());
 
   // Ack the commit.
-  entity->ReceiveCommitResponse(GenerateAckData(request, kId, 2));
+  entity->ReceiveCommitResponse(GenerateAckData(request, kId, 2), false);
 
   EXPECT_EQ(1, entity->metadata().sequence_number());
   EXPECT_EQ(1, entity->metadata().acked_sequence_number());
@@ -393,7 +410,7 @@ TEST_F(ProcessorEntityTrackerTest, LocalDeletion) {
   EXPECT_EQ(entity->metadata().specifics_hash(), request.specifics_hash);
 
   // Ack the deletion.
-  entity->ReceiveCommitResponse(GenerateAckData(request, kId, 2));
+  entity->ReceiveCommitResponse(GenerateAckData(request, kId, 2), false);
 
   EXPECT_TRUE(entity->metadata().is_deleted());
   EXPECT_EQ(1, entity->metadata().sequence_number());
@@ -450,7 +467,7 @@ TEST_F(ProcessorEntityTrackerTest, LocalChangesInterleaved) {
   EXPECT_TRUE(entity->HasCommitData());
 
   // Ack the first commit.
-  entity->ReceiveCommitResponse(GenerateAckData(request_v1, kId, 2));
+  entity->ReceiveCommitResponse(GenerateAckData(request_v1, kId, 2), false);
 
   EXPECT_EQ(2, entity->metadata().sequence_number());
   EXPECT_EQ(1, entity->metadata().acked_sequence_number());
@@ -465,7 +482,7 @@ TEST_F(ProcessorEntityTrackerTest, LocalChangesInterleaved) {
   EXPECT_TRUE(entity->HasCommitData());
 
   // Ack the second commit.
-  entity->ReceiveCommitResponse(GenerateAckData(request_v2, kId, 3));
+  entity->ReceiveCommitResponse(GenerateAckData(request_v2, kId, 3), false);
 
   EXPECT_EQ(2, entity->metadata().sequence_number());
   EXPECT_EQ(2, entity->metadata().acked_sequence_number());

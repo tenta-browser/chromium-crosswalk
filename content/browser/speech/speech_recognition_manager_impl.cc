@@ -79,17 +79,15 @@ SpeechRecognitionManagerImpl::SpeechRecognitionManagerImpl(
 }
 
 SpeechRecognitionManagerImpl::~SpeechRecognitionManagerImpl() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(g_speech_recognition_manager_impl);
+
   g_speech_recognition_manager_impl = NULL;
 
   for (SessionsTable::iterator it = sessions_.begin(); it != sessions_.end();
        ++it) {
-    // MediaStreamUIProxy must be deleted on the IO thread.
-    BrowserThread::DeleteSoon(BrowserThread::IO, FROM_HERE,
-                              it->second->ui.release());
     delete it->second;
   }
-  sessions_.clear();
 }
 
 int SpeechRecognitionManagerImpl::CreateSession(
@@ -158,9 +156,9 @@ void SpeechRecognitionManagerImpl::StartSession(int session_id) {
   if (delegate_) {
     delegate_->CheckRecognitionIsAllowed(
         session_id,
-        base::Bind(&SpeechRecognitionManagerImpl::RecognitionAllowedCallback,
-                   weak_factory_.GetWeakPtr(),
-                   session_id));
+        base::BindOnce(
+            &SpeechRecognitionManagerImpl::RecognitionAllowedCallback,
+            weak_factory_.GetWeakPtr(), session_id));
   }
 }
 
@@ -183,7 +181,7 @@ void SpeechRecognitionManagerImpl::RecognitionAllowedCallback(int session_id,
     context.label = media_stream_manager_->MakeMediaAccessRequest(
         context.render_process_id, context.render_frame_id, context.request_id,
         StreamControls(true, false), url::Origin(GURL(context.context_name)),
-        base::Bind(
+        base::BindOnce(
             &SpeechRecognitionManagerImpl::MediaRequestPermissionCallback,
             weak_factory_.GetWeakPtr(), session_id));
     return;
@@ -192,15 +190,15 @@ void SpeechRecognitionManagerImpl::RecognitionAllowedCallback(int session_id,
   if (is_allowed) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&SpeechRecognitionManagerImpl::DispatchEvent,
-                   weak_factory_.GetWeakPtr(), session_id, EVENT_START));
+        base::BindOnce(&SpeechRecognitionManagerImpl::DispatchEvent,
+                       weak_factory_.GetWeakPtr(), session_id, EVENT_START));
   } else {
     OnRecognitionError(session_id, SpeechRecognitionError(
         SPEECH_RECOGNITION_ERROR_NOT_ALLOWED));
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&SpeechRecognitionManagerImpl::DispatchEvent,
-                   weak_factory_.GetWeakPtr(), session_id, EVENT_ABORT));
+        base::BindOnce(&SpeechRecognitionManagerImpl::DispatchEvent,
+                       weak_factory_.GetWeakPtr(), session_id, EVENT_ABORT));
   }
 }
 
@@ -245,8 +243,8 @@ void SpeechRecognitionManagerImpl::AbortSession(int session_id) {
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&SpeechRecognitionManagerImpl::DispatchEvent,
-                 weak_factory_.GetWeakPtr(), session_id, EVENT_ABORT));
+      base::BindOnce(&SpeechRecognitionManagerImpl::DispatchEvent,
+                     weak_factory_.GetWeakPtr(), session_id, EVENT_ABORT));
 }
 
 void SpeechRecognitionManagerImpl::StopAudioCaptureForSession(int session_id) {
@@ -258,9 +256,9 @@ void SpeechRecognitionManagerImpl::StopAudioCaptureForSession(int session_id) {
   iter->second->ui.reset();
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&SpeechRecognitionManagerImpl::DispatchEvent,
-                 weak_factory_.GetWeakPtr(), session_id, EVENT_STOP_CAPTURE));
+      FROM_HERE, base::BindOnce(&SpeechRecognitionManagerImpl::DispatchEvent,
+                                weak_factory_.GetWeakPtr(), session_id,
+                                EVENT_STOP_CAPTURE));
 }
 
 // Here begins the SpeechRecognitionEventListener interface implementation,
@@ -276,7 +274,7 @@ void SpeechRecognitionManagerImpl::OnRecognitionStart(int session_id) {
   SessionsTable::iterator iter = sessions_.find(session_id);
   if (iter->second->ui) {
     // Notify the UI that the devices are being used.
-    iter->second->ui->OnStarted(base::Closure(),
+    iter->second->ui->OnStarted(base::OnceClosure(),
                                 MediaStreamUIProxy::WindowIdCallback());
   }
 
@@ -345,9 +343,9 @@ void SpeechRecognitionManagerImpl::OnAudioEnd(int session_id) {
   if (SpeechRecognitionEventListener* listener = GetListener(session_id))
     listener->OnAudioEnd(session_id);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&SpeechRecognitionManagerImpl::DispatchEvent,
-                 weak_factory_.GetWeakPtr(), session_id, EVENT_AUDIO_ENDED));
+      FROM_HERE, base::BindOnce(&SpeechRecognitionManagerImpl::DispatchEvent,
+                                weak_factory_.GetWeakPtr(), session_id,
+                                EVENT_AUDIO_ENDED));
 }
 
 void SpeechRecognitionManagerImpl::OnRecognitionResults(
@@ -396,9 +394,9 @@ void SpeechRecognitionManagerImpl::OnRecognitionEnd(int session_id) {
   if (SpeechRecognitionEventListener* listener = GetListener(session_id))
     listener->OnRecognitionEnd(session_id);
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&SpeechRecognitionManagerImpl::DispatchEvent,
-                            weak_factory_.GetWeakPtr(), session_id,
-                            EVENT_RECOGNITION_ENDED));
+      FROM_HERE, base::BindOnce(&SpeechRecognitionManagerImpl::DispatchEvent,
+                                weak_factory_.GetWeakPtr(), session_id,
+                                EVENT_RECOGNITION_ENDED));
 }
 
 int SpeechRecognitionManagerImpl::GetSession(

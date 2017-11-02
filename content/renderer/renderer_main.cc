@@ -21,8 +21,8 @@
 #include "base/timer/hi_res_timer_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "content/child/child_process.h"
 #include "content/common/content_constants_internal.h"
+#include "content/common/content_switches_internal.h"
 #include "content/common/service_manager/service_manager_connection_impl.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
@@ -39,6 +39,12 @@
 #if defined(OS_ANDROID)
 #include "base/android/library_loader/library_loader_hooks.h"
 #endif  // OS_ANDROID
+
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#include "content/common/font_config_ipc_linux.h"
+#include "content/common/sandbox_linux/sandbox_linux.h"
+#include "third_party/skia/include/ports/SkFontConfigInterface.h"
+#endif
 
 #if defined(OS_MACOSX)
 #include <Carbon/Carbon.h>
@@ -72,7 +78,7 @@ static void HandleRendererErrorTestParameters(
     base::debug::WaitForDebugger(60, true);
 
   if (command_line.HasSwitch(switches::kRendererStartupDialog))
-    ChildProcess::WaitForDebugger("Renderer");
+    WaitForDebugger("Renderer");
 }
 
 #if defined(USE_OZONE)
@@ -110,7 +116,21 @@ int RendererMain(const MainFunctionParams& parameters) {
   }
 #endif
 
-  SkGraphics::Init();
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID) && \
+    !defined(OS_FUCHSIA)
+  // This call could already have been made from zygote_main_linux.cc. However
+  // we need to do it here if Zygote is disabled.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoZygote)) {
+    SkFontConfigInterface::SetGlobal(new FontConfigIPC(GetSandboxFD()))
+        ->unref();
+  }
+#endif
+
+  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableSkiaRuntimeOpts)) {
+    SkGraphics::Init();
+  }
+
 #if defined(OS_ANDROID)
   const int kMB = 1024 * 1024;
   size_t font_cache_limit =

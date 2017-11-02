@@ -4,15 +4,16 @@
 
 #include "core/inspector/InspectorHighlight.h"
 
-#include "core/dom/ClientRect.h"
 #include "core/dom/PseudoElement.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
+#include "core/geometry/DOMRect.h"
 #include "core/layout/LayoutBox.h"
+#include "core/layout/LayoutGrid.h"
 #include "core/layout/LayoutInline.h"
 #include "core/layout/LayoutObject.h"
 #include "core/layout/shapes/ShapeOutsideInfo.h"
 #include "core/style/ComputedStyleConstants.h"
-#include "platform/HostWindow.h"
+#include "platform/PlatformChromeClient.h"
 #include "platform/graphics/Path.h"
 
 namespace blink {
@@ -90,7 +91,7 @@ void PathBuilder::AppendPathElement(const PathElement* path_element) {
 
 class ShapePathBuilder : public PathBuilder {
  public:
-  ShapePathBuilder(FrameView& view,
+  ShapePathBuilder(LocalFrameView& view,
                    LayoutObject& layout_object,
                    const ShapeOutsideInfo& shape_outside_info)
       : view_(&view),
@@ -98,7 +99,7 @@ class ShapePathBuilder : public PathBuilder {
         shape_outside_info_(shape_outside_info) {}
 
   static std::unique_ptr<protocol::ListValue> BuildPath(
-      FrameView& view,
+      LocalFrameView& view,
       LayoutObject& layout_object,
       const ShapeOutsideInfo& shape_outside_info,
       const Path& path,
@@ -117,7 +118,7 @@ class ShapePathBuilder : public PathBuilder {
   }
 
  private:
-  Member<FrameView> view_;
+  Member<LocalFrameView> view_;
   LayoutObject& layout_object_;
   const ShapeOutsideInfo& shape_outside_info_;
 };
@@ -147,7 +148,7 @@ Path QuadToPath(const FloatQuad& quad) {
   return quad_path;
 }
 
-void ContentsQuadToViewport(const FrameView* view, FloatQuad& quad) {
+void ContentsQuadToViewport(const LocalFrameView* view, FloatQuad& quad) {
   quad.SetP1(view->ContentsToViewport(RoundedIntPoint(quad.P1())));
   quad.SetP2(view->ContentsToViewport(RoundedIntPoint(quad.P2())));
   quad.SetP3(view->ContentsToViewport(RoundedIntPoint(quad.P3())));
@@ -162,7 +163,7 @@ const ShapeOutsideInfo* ShapeOutsideInfoForNode(Node* node,
       !ToLayoutBox(layout_object)->GetShapeOutsideInfo())
     return nullptr;
 
-  FrameView* containing_view = node->GetDocument().View();
+  LocalFrameView* containing_view = node->GetDocument().View();
   LayoutBox* layout_box = ToLayoutBox(layout_object);
   const ShapeOutsideInfo* shape_outside_info =
       layout_box->GetShapeOutsideInfo();
@@ -214,17 +215,62 @@ std::unique_ptr<protocol::DictionaryValue> BuildElementInfo(Element* element) {
     element_info->setString("className", class_names.ToString());
 
   LayoutObject* layout_object = element->GetLayoutObject();
-  FrameView* containing_view = element->GetDocument().View();
+  LocalFrameView* containing_view = element->GetDocument().View();
   if (!layout_object || !containing_view)
     return element_info;
 
   // layoutObject the getBoundingClientRect() data in the tooltip
   // to be consistent with the rulers (see http://crbug.com/262338).
-  ClientRect* bounding_box = element->getBoundingClientRect();
+  DOMRect* bounding_box = element->getBoundingClientRect();
   element_info->setString("nodeWidth", String::Number(bounding_box->width()));
   element_info->setString("nodeHeight", String::Number(bounding_box->height()));
 
   return element_info;
+}
+
+std::unique_ptr<protocol::Value> BuildGapAndPositions(
+    double origin,
+    LayoutUnit gap,
+    const Vector<LayoutUnit>& positions,
+    float scale) {
+  std::unique_ptr<protocol::DictionaryValue> result =
+      protocol::DictionaryValue::create();
+  result->setDouble("origin", floor(origin * scale));
+  result->setDouble("gap", round(gap * scale));
+
+  std::unique_ptr<protocol::ListValue> spans = protocol::ListValue::create();
+  for (const LayoutUnit& position : positions) {
+    spans->pushValue(
+        protocol::FundamentalValue::create(round(position * scale)));
+  }
+  result->setValue("positions", std::move(spans));
+
+  return result;
+}
+
+std::unique_ptr<protocol::DictionaryValue> BuildGridInfo(
+    LayoutGrid* layout_grid,
+    FloatPoint origin,
+    Color color,
+    float scale,
+    bool isPrimary) {
+  std::unique_ptr<protocol::DictionaryValue> grid_info =
+      protocol::DictionaryValue::create();
+
+  grid_info->setValue(
+      "rows", BuildGapAndPositions(origin.Y(),
+                                   layout_grid->GridGap(kForRows) +
+                                       layout_grid->GridItemOffset(kForRows),
+                                   layout_grid->RowPositions(), scale));
+  grid_info->setValue(
+      "columns",
+      BuildGapAndPositions(origin.X(),
+                           layout_grid->GridGap(kForColumns) +
+                               layout_grid->GridItemOffset(kForColumns),
+                           layout_grid->ColumnPositions(), scale));
+  grid_info->setString("color", color.Serialized());
+  grid_info->setBoolean("isPrimaryGrid", isPrimary);
+  return grid_info;
 }
 
 }  // namespace
@@ -251,9 +297,9 @@ InspectorHighlight::InspectorHighlight(
       show_extension_lines_(highlight_config.show_extension_lines),
       display_as_material_(highlight_config.display_as_material),
       scale_(1.f) {
-  FrameView* frame_view = node->GetDocument().View();
+  LocalFrameView* frame_view = node->GetDocument().View();
   if (frame_view)
-    scale_ = 1.f / frame_view->GetHostWindow()->WindowToViewportScalar(1.f);
+    scale_ = 1.f / frame_view->GetChromeClient()->WindowToViewportScalar(1.f);
   AppendPathsForShapeOutside(node, highlight_config);
   AppendNodeHighlight(node, highlight_config);
   if (append_element_info && node->IsElementNode())
@@ -337,7 +383,7 @@ void InspectorHighlight::AppendNodeHighlight(
       !layout_object->IsSVGRoot()) {
     Vector<FloatQuad> quads;
     layout_object->AbsoluteQuads(quads);
-    FrameView* containing_view = layout_object->GetFrameView();
+    LocalFrameView* containing_view = layout_object->GetFrameView();
     for (size_t i = 0; i < quads.size(); ++i) {
       if (containing_view)
         ContentsQuadToViewport(containing_view, quads[i]);
@@ -355,6 +401,23 @@ void InspectorHighlight::AppendNodeHighlight(
   AppendQuad(padding, highlight_config.padding, Color::kTransparent, "padding");
   AppendQuad(border, highlight_config.border, Color::kTransparent, "border");
   AppendQuad(margin, highlight_config.margin, Color::kTransparent, "margin");
+
+  if (highlight_config.css_grid == Color::kTransparent)
+    return;
+  grid_info_ = protocol::ListValue::create();
+  if (layout_object->IsLayoutGrid()) {
+    grid_info_->pushValue(BuildGridInfo(ToLayoutGrid(layout_object),
+                                        border.P1(), highlight_config.css_grid,
+                                        scale_, true));
+  }
+  LayoutObject* parent = layout_object->Parent();
+  if (!parent || !parent->IsLayoutGrid())
+    return;
+  if (!BuildNodeQuads(parent->GetNode(), &content, &padding, &border, &margin))
+    return;
+  grid_info_->pushValue(BuildGridInfo(ToLayoutGrid(parent), border.P1(),
+                                      highlight_config.css_grid, scale_,
+                                      false));
 }
 
 std::unique_ptr<protocol::DictionaryValue> InspectorHighlight::AsProtocolValue()
@@ -367,6 +430,8 @@ std::unique_ptr<protocol::DictionaryValue> InspectorHighlight::AsProtocolValue()
   if (element_info_)
     object->setValue("elementInfo", element_info_->clone());
   object->setBoolean("displayAsMaterial", display_as_material_);
+  if (grid_info_ && grid_info_->size() > 0)
+    object->setValue("gridInfo", grid_info_->clone());
   return object;
 }
 
@@ -375,7 +440,7 @@ bool InspectorHighlight::GetBoxModel(
     Node* node,
     std::unique_ptr<protocol::DOM::BoxModel>* model) {
   LayoutObject* layout_object = node->GetLayoutObject();
-  FrameView* view = node->GetDocument().View();
+  LocalFrameView* view = node->GetDocument().View();
   if (!layout_object || !view)
     return false;
 
@@ -442,7 +507,7 @@ bool InspectorHighlight::BuildNodeQuads(Node* node,
   if (!layout_object)
     return false;
 
-  FrameView* containing_view = layout_object->GetFrameView();
+  LocalFrameView* containing_view = layout_object->GetFrameView();
   if (!containing_view)
     return false;
   if (!layout_object->IsBox() && !layout_object->IsLayoutInline())
@@ -529,6 +594,7 @@ InspectorHighlightConfig InspectorHighlight::DefaultConfig() {
   config.show_rulers = true;
   config.show_extension_lines = true;
   config.display_as_material = false;
+  config.css_grid = Color(128, 128, 128, 0);
   return config;
 }
 

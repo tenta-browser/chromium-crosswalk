@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
@@ -43,12 +44,14 @@ AnimationHost::AnimationHost(ThreadInstance thread_instance)
     : mutator_host_client_(nullptr),
       thread_instance_(thread_instance),
       supports_scroll_animations_(false),
-      needs_push_properties_(false) {
+      needs_push_properties_(false),
+      mutator_needs_mutate_(false),
+      mutator_(nullptr) {
   if (thread_instance_ == ThreadInstance::IMPL) {
     scroll_offset_animations_impl_ =
-        base::MakeUnique<ScrollOffsetAnimationsImpl>(this);
+        std::make_unique<ScrollOffsetAnimationsImpl>(this);
   } else {
-    scroll_offset_animations_ = base::MakeUnique<ScrollOffsetAnimations>(this);
+    scroll_offset_animations_ = std::make_unique<ScrollOffsetAnimations>(this);
   }
 }
 
@@ -138,7 +141,7 @@ void AnimationHost::RegisterPlayerForElement(ElementId element_id,
     element_animations->InitAffectedElementTypes();
   }
 
-  element_animations->AddPlayer(player);
+  element_animations->AddTicker(player->animation_ticker());
 }
 
 void AnimationHost::UnregisterPlayerForElement(ElementId element_id,
@@ -149,7 +152,7 @@ void AnimationHost::UnregisterPlayerForElement(ElementId element_id,
   scoped_refptr<ElementAnimations> element_animations =
       GetElementAnimationsForElementId(element_id);
   DCHECK(element_animations);
-  element_animations->RemovePlayer(player);
+  element_animations->RemoveTicker(player->animation_ticker());
 
   if (element_animations->IsEmpty()) {
     element_animations->ClearAffectedElementTypes();
@@ -165,9 +168,6 @@ void AnimationHost::SetMutatorHostClient(MutatorHostClient* client) {
     return;
 
   mutator_host_client_ = client;
-
-  if (needs_push_properties() && mutator_host_client())
-    SetNeedsPushProperties();
 }
 
 void AnimationHost::SetNeedsCommit() {
@@ -228,23 +228,18 @@ void AnimationHost::PushPropertiesToImplThread(AnimationHost* host_impl) {
   // to happen before the element animations are synced below.
   for (auto& kv : id_to_timeline_map_) {
     AnimationTimeline* timeline = kv.second.get();
-    if (timeline->needs_push_properties()) {
-      AnimationTimeline* timeline_impl =
-          host_impl->GetTimelineById(timeline->id());
-      if (timeline_impl)
-        timeline->PushPropertiesTo(timeline_impl);
+    if (AnimationTimeline* timeline_impl =
+            host_impl->GetTimelineById(timeline->id())) {
+      timeline->PushPropertiesTo(timeline_impl);
     }
   }
 
   // Sync properties for created ElementAnimations.
   for (auto& kv : element_to_animations_map_) {
     const auto& element_animations = kv.second;
-    if (element_animations->needs_push_properties()) {
-      auto element_animations_impl =
-          host_impl->GetElementAnimationsForElementId(kv.first);
-      if (element_animations_impl)
-        element_animations->PushPropertiesTo(
-            std::move(element_animations_impl));
+    if (auto element_animations_impl =
+            host_impl->GetElementAnimationsForElementId(kv.first)) {
+      element_animations->PushPropertiesTo(std::move(element_animations_impl));
     }
   }
 
@@ -271,11 +266,19 @@ bool AnimationHost::SupportsScrollAnimations() const {
 }
 
 bool AnimationHost::NeedsTickAnimations() const {
+  return NeedsTickAnimationPlayers() || NeedsTickMutator();
+}
+
+bool AnimationHost::NeedsTickMutator() const {
+  return mutator_ && mutator_needs_mutate_;
+}
+
+bool AnimationHost::NeedsTickAnimationPlayers() const {
   return !ticking_players_.empty();
 }
 
 bool AnimationHost::ActivateAnimations() {
-  if (!NeedsTickAnimations())
+  if (!NeedsTickAnimationPlayers())
     return false;
 
   TRACE_EVENT0("cc", "AnimationHost::ActivateAnimations");
@@ -287,20 +290,43 @@ bool AnimationHost::ActivateAnimations() {
 }
 
 bool AnimationHost::TickAnimations(base::TimeTicks monotonic_time) {
-  if (!NeedsTickAnimations())
-    return false;
-
   TRACE_EVENT0("cc", "AnimationHost::TickAnimations");
-  PlayersList ticking_players_copy = ticking_players_;
-  for (auto& it : ticking_players_copy)
-    it->Tick(monotonic_time);
+  bool did_animate = false;
 
-  return true;
+  if (NeedsTickAnimationPlayers()) {
+    PlayersList ticking_players_copy = ticking_players_;
+    for (auto& it : ticking_players_copy)
+      it->Tick(monotonic_time);
+
+    did_animate = true;
+  }
+  if (NeedsTickMutator()) {
+    // TODO(majidvp): At the moment we call this for both active and pending
+    // trees similar to other animations. However our final goal is to only
+    // call these once ideally after activation.
+    did_animate |= mutator_->Mutate(monotonic_time);
+    mutator_needs_mutate_ = did_animate;
+  }
+
+  return did_animate;
+}
+
+void AnimationHost::TickScrollAnimations(base::TimeTicks monotonic_time) {
+  // TODO(majidvp) For now the logic simply assumes all AnimationWorklet
+  // animations depend on scroll offset but this is inefficient. We need a more
+  // fine-grained approach based on invalidating individual ScrollTimelines and
+  // then ticking the animation players attached to those timelines. To make
+  // this happen we probably need to move "ticking" players to timeline.
+
+  // TODO(majidvp): We need to return a boolean here so that LTHI knows
+  // whether it needs to schedule another frame.
+  if (mutator_)
+    mutator_->Mutate(monotonic_time);
 }
 
 bool AnimationHost::UpdateAnimationState(bool start_ready_animations,
                                          MutatorEvents* mutator_events) {
-  if (!NeedsTickAnimations())
+  if (!NeedsTickAnimationPlayers())
     return false;
 
   auto* animation_events = static_cast<AnimationEvents*>(mutator_events);
@@ -314,7 +340,7 @@ bool AnimationHost::UpdateAnimationState(bool start_ready_animations,
 }
 
 std::unique_ptr<MutatorEvents> AnimationHost::CreateEvents() {
-  return base::MakeUnique<AnimationEvents>();
+  return std::make_unique<AnimationEvents>();
 }
 
 void AnimationHost::SetAnimationEvents(
@@ -343,11 +369,6 @@ void AnimationHost::SetAnimationEvents(
 
         case AnimationEvent::ABORTED:
           (*iter).second->NotifyAnimationAborted(events->events_[event_index]);
-          break;
-
-        case AnimationEvent::PROPERTY_UPDATE:
-          (*iter).second->NotifyAnimationPropertyUpdate(
-              events->events_[event_index]);
           break;
 
         case AnimationEvent::TAKEOVER:
@@ -435,48 +456,6 @@ bool AnimationHost::HasAnyAnimationTargetingProperty(
   return element_animations->HasAnyAnimationTargetingProperty(property);
 }
 
-bool AnimationHost::HasFilterAnimationThatInflatesBounds(
-    ElementId element_id) const {
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->HasFilterAnimationThatInflatesBounds()
-             : false;
-}
-
-bool AnimationHost::HasTransformAnimationThatInflatesBounds(
-    ElementId element_id) const {
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->HasTransformAnimationThatInflatesBounds()
-             : false;
-}
-
-bool AnimationHost::HasAnimationThatInflatesBounds(ElementId element_id) const {
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->HasAnimationThatInflatesBounds()
-             : false;
-}
-
-bool AnimationHost::FilterAnimationBoundsForBox(ElementId element_id,
-                                                const gfx::BoxF& box,
-                                                gfx::BoxF* bounds) const {
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->FilterAnimationBoundsForBox(box, bounds)
-             : false;
-}
-
-bool AnimationHost::TransformAnimationBoundsForBox(ElementId element_id,
-                                                   const gfx::BoxF& box,
-                                                   gfx::BoxF* bounds) const {
-  *bounds = gfx::BoxF();
-  auto element_animations = GetElementAnimationsForElementId(element_id);
-  return element_animations
-             ? element_animations->TransformAnimationBoundsForBox(box, bounds)
-             : true;
-}
-
 bool AnimationHost::HasOnlyTranslationTransforms(
     ElementId element_id,
     ElementListType list_type) const {
@@ -528,10 +507,12 @@ void AnimationHost::ImplOnlyScrollAnimationCreate(
     ElementId element_id,
     const gfx::ScrollOffset& target_offset,
     const gfx::ScrollOffset& current_offset,
-    base::TimeDelta delayed_by) {
+    base::TimeDelta delayed_by,
+    base::TimeDelta animation_start_offset) {
   DCHECK(scroll_offset_animations_impl_);
   scroll_offset_animations_impl_->ScrollAnimationCreate(
-      element_id, target_offset, current_offset, delayed_by);
+      element_id, target_offset, current_offset, delayed_by,
+      animation_start_offset);
 }
 
 bool AnimationHost::ImplOnlyScrollAnimationUpdateTarget(
@@ -578,6 +559,18 @@ const AnimationHost::PlayersList& AnimationHost::ticking_players_for_testing()
 const AnimationHost::ElementToAnimationsMap&
 AnimationHost::element_animations_for_testing() const {
   return element_to_animations_map_;
+}
+
+void AnimationHost::SetLayerTreeMutator(
+    std::unique_ptr<LayerTreeMutator> mutator) {
+  if (mutator == mutator_)
+    return;
+  mutator_ = std::move(mutator);
+  mutator_->SetClient(this);
+}
+
+void AnimationHost::SetNeedsMutate() {
+  mutator_needs_mutate_ = true;
 }
 
 }  // namespace cc

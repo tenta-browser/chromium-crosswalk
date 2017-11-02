@@ -13,6 +13,7 @@
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/pattern.h"
 #include "base/strings/utf_string_conversions.h"
@@ -38,6 +39,8 @@
 #include "content/shell/common/shell_messages.h"
 #include "content/shell/common/shell_switches.h"
 #include "content/shell/grit/shell_resources.h"
+#include "media/mojo/features.h"
+#include "net/ssl/client_cert_identity.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "storage/browser/quota/quota_settings.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -47,7 +50,7 @@
 #if defined(OS_ANDROID)
 #include "base/android/apk_assets.h"
 #include "base/android/path_utils.h"
-#include "components/crash/content/browser/crash_dump_manager_android.h"
+#include "components/crash/content/browser/crash_dump_observer_android.h"
 #include "content/shell/android/shell_descriptors.h"
 #endif
 
@@ -63,12 +66,9 @@
 #include "sandbox/win/src/sandbox.h"
 #endif
 
-#if defined(ENABLE_MOJO_MEDIA_IN_BROWSER_PROCESS)
+#if BUILDFLAG(ENABLE_MOJO_MEDIA_IN_BROWSER_PROCESS)
+#include "media/mojo/interfaces/constants.mojom.h"      // nogncheck
 #include "media/mojo/services/media_service_factory.h"  // nogncheck
-#endif
-
-#if defined(USE_AURA)
-#include "services/navigation/navigation.h"
 #endif
 
 namespace content {
@@ -156,7 +156,8 @@ bool ShellContentBrowserClient::DoesSiteRequireDedicatedProcess(
     BrowserContext* browser_context,
     const GURL& effective_site_url) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  DCHECK(command_line->HasSwitch(switches::kIsolateSitesForTesting));
+  if (!command_line->HasSwitch(switches::kIsolateSitesForTesting))
+    return false;
   std::string pattern =
       command_line->GetSwitchValueASCII(switches::kIsolateSitesForTesting);
 
@@ -195,28 +196,34 @@ bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
   return false;
 }
 
+void ShellContentBrowserClient::BindInterfaceRequestFromFrame(
+    RenderFrameHost* render_frame_host,
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle interface_pipe) {
+  if (!frame_interfaces_) {
+    frame_interfaces_ = base::MakeUnique<
+        service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>>();
+    ExposeInterfacesToFrame(frame_interfaces_.get());
+  }
+
+  frame_interfaces_->TryBindInterface(interface_name, &interface_pipe,
+                                      render_frame_host);
+}
+
 void ShellContentBrowserClient::RegisterInProcessServices(
     StaticServiceMap* services) {
-#if defined(ENABLE_MOJO_MEDIA_IN_BROWSER_PROCESS)
+#if BUILDFLAG(ENABLE_MOJO_MEDIA_IN_BROWSER_PROCESS)
   {
-    content::ServiceInfo info;
+    service_manager::EmbeddedServiceInfo info;
     info.factory = base::Bind(&media::CreateMediaServiceForTesting);
-    services->insert(std::make_pair("media", info));
-  }
-#endif
-#if defined(USE_AURA)
-  {
-    content::ServiceInfo info;
-    info.factory = base::Bind(&navigation::CreateNavigationService);
-    services->insert(std::make_pair("navigation", info));
+    services->insert(std::make_pair(media::mojom::kMediaServiceName, info));
   }
 #endif
 }
 
 void ShellContentBrowserClient::RegisterOutOfProcessServices(
       OutOfProcessServiceMap* services) {
-  services->insert(std::make_pair(kTestServiceUrl,
-                                  base::UTF8ToUTF16("Test Service")));
+  (*services)[kTestServiceUrl] = base::UTF8ToUTF16("Test Service");
 }
 
 std::unique_ptr<base::Value>
@@ -224,6 +231,8 @@ ShellContentBrowserClient::GetServiceManifestOverlay(base::StringPiece name) {
   int id = -1;
   if (name == content::mojom::kBrowserServiceName)
     id = IDR_CONTENT_SHELL_BROWSER_MANIFEST_OVERLAY;
+  else if (name == content::mojom::kGpuServiceName)
+    id = IDR_CONTENT_SHELL_GPU_MANIFEST_OVERLAY;
   else if (name == content::mojom::kRendererServiceName)
     id = IDR_CONTENT_SHELL_RENDERER_MANIFEST_OVERLAY;
   else if (name == content::mojom::kUtilityServiceName)
@@ -295,13 +304,14 @@ ShellContentBrowserClient::CreateQuotaPermissionContext() {
 void ShellContentBrowserClient::GetQuotaSettings(
     BrowserContext* context,
     StoragePartition* partition,
-    const storage::OptionalQuotaSettingsCallback& callback) {
-  callback.Run(storage::GetHardCodedSettings(100 * 1024 * 1024));
+    storage::OptionalQuotaSettingsCallback callback) {
+  std::move(callback).Run(storage::GetHardCodedSettings(100 * 1024 * 1024));
 }
 
 void ShellContentBrowserClient::SelectClientCertificate(
     WebContents* web_contents,
     net::SSLCertRequestInfo* cert_request_info,
+    net::ClientCertIdentityList client_certs,
     std::unique_ptr<ClientCertificateDelegate> delegate) {
   if (!select_client_certificate_callback_.is_null())
     select_client_certificate_callback_.Run();
@@ -342,7 +352,7 @@ void ShellContentBrowserClient::OpenURL(
 void ShellContentBrowserClient::GetAdditionalMappedFilesForChildProcess(
     const base::CommandLine& command_line,
     int child_process_id,
-    content::FileDescriptorInfo* mappings) {
+    content::PosixFileDescriptorInfo* mappings) {
 #if defined(OS_ANDROID)
   mappings->ShareWithRegion(
       kShellPakDescriptor,
@@ -385,5 +395,9 @@ ShellBrowserContext*
     ShellContentBrowserClient::off_the_record_browser_context() {
   return shell_browser_main_parts_->off_the_record_browser_context();
 }
+
+void ShellContentBrowserClient::ExposeInterfacesToFrame(
+    service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
+        registry) {}
 
 }  // namespace content

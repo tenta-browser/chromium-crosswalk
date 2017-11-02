@@ -5,12 +5,13 @@
 #ifndef CONTENT_PUBLIC_TEST_BROWSER_TEST_UTILS_H_
 #define CONTENT_PUBLIC_TEST_BROWSER_TEST_UTILS_H_
 
-#include <queue>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/containers/queue.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -18,7 +19,7 @@
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
-#include "cc/output/compositor_frame.h"
+#include "components/viz/common/quads/compositor_frame.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -30,6 +31,7 @@
 #include "storage/common/fileapi/file_system_types.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/WebMouseEvent.h"
+#include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_tree_update.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -101,6 +103,10 @@ void WaitForLoadStopWithoutSuccessCheck(WebContents* web_contents);
 // navigations should be refactored to do EXPECT_TRUE(WaitForLoadStop()).
 bool WaitForLoadStop(WebContents* web_contents);
 
+// If a test uses a beforeunload dialog, it must be prepared to avoid flakes.
+// This function collects everything that needs to be done.
+void PrepContentsForBeforeUnloadTest(WebContents* web_contents);
+
 #if defined(USE_AURA) || defined(OS_ANDROID)
 // If WebContent's view is currently being resized, this will wait for the ack
 // from the renderer that the resize is complete and for the
@@ -111,6 +117,11 @@ void WaitForResizeComplete(WebContents* web_contents);
 
 // Causes the specified web_contents to crash. Blocks until it is crashed.
 void CrashTab(WebContents* web_contents);
+
+// Causes the specified web_contents to issue an OnUnresponsiveRenderer event
+// to its observers.
+void SimulateUnresponsiveRenderer(WebContents* web_contents,
+                                  RenderWidgetHost* widget);
 
 // Simulates clicking at the center of the given tab asynchronously; modifiers
 // may contain bits from WebInputEvent::Modifiers.
@@ -133,7 +144,8 @@ void SimulateMouseEvent(WebContents* web_contents,
 // Simulate a mouse wheel event.
 void SimulateMouseWheelEvent(WebContents* web_contents,
                              const gfx::Point& point,
-                             const gfx::Vector2d& delta);
+                             const gfx::Vector2d& delta,
+                             const blink::WebMouseWheelEvent::Phase phase);
 
 // Sends a simple, three-event (Begin/Update/End) gesture scroll.
 void SimulateGestureScrollSequence(WebContents* web_contents,
@@ -163,6 +175,8 @@ void SimulateTapWithModifiersAt(WebContents* web_contents,
 // |key_code| alone is good enough for scenarios that only need the char
 // value represented by a key event and not the physical key on the keyboard
 // or the keyboard layout.
+// If set to true, the modifiers |control|, |shift|, |alt|, and |command| are
+// pressed down first before the key event, and released after.
 void SimulateKeyPress(WebContents* web_contents,
                       ui::DomKey key,
                       ui::DomCode code,
@@ -171,6 +185,54 @@ void SimulateKeyPress(WebContents* web_contents,
                       bool shift,
                       bool alt,
                       bool command);
+
+// Like SimulateKeyPress(), but does not send the char (AKA keypress) event.
+// This is useful for arrow keys and other key presses that do not generate
+// characters.
+void SimulateKeyPressWithoutChar(WebContents* web_contents,
+                                 ui::DomKey key,
+                                 ui::DomCode code,
+                                 ui::KeyboardCode key_code,
+                                 bool control,
+                                 bool shift,
+                                 bool alt,
+                                 bool command);
+
+// Holds down modifier keys for the duration of its lifetime and releases them
+// upon destruction. This allows simulating multiple input events without
+// simulating modifier key releases in between.
+class ScopedSimulateModifierKeyPress {
+ public:
+  ScopedSimulateModifierKeyPress(WebContents* web_contents,
+                                 bool control,
+                                 bool shift,
+                                 bool alt,
+                                 bool command);
+  ~ScopedSimulateModifierKeyPress();
+
+  // Similar to SimulateMouseClickAt().
+  void MouseClickAt(int additional_modifiers,
+                    blink::WebMouseEvent::Button button,
+                    const gfx::Point& point);
+
+  // Similar to SimulateKeyPress().
+  void KeyPress(ui::DomKey key, ui::DomCode code, ui::KeyboardCode key_code);
+
+  // Similar to SimulateKeyPressWithoutChar().
+  void KeyPressWithoutChar(ui::DomKey key,
+                           ui::DomCode code,
+                           ui::KeyboardCode key_code);
+
+ private:
+  WebContents* const web_contents_;
+  int modifiers_;
+  const bool control_;
+  const bool shift_;
+  const bool alt_;
+  const bool command_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedSimulateModifierKeyPress);
+};
 
 // Method to check what devices we have on the system.
 bool IsWebcamAvailableOnSystem(WebContents* web_contents);
@@ -198,9 +260,23 @@ RenderFrameHost* ConvertToRenderFrameHost(RenderFrameHost* render_view_host);
 RenderFrameHost* ConvertToRenderFrameHost(WebContents* web_contents);
 
 // Executes the passed |script| in the specified frame with the user gesture.
-// The |script| should not invoke domAutomationController.send(); otherwise,
-// your test will hang or be flaky. If you want to extract a result, use one of
-// the below functions. Returns true on success.
+//
+// Appends |domAutomationController.send(...)| to the end of |script| and waits
+// until the response comes back (pumping the message loop while waiting).  The
+// |script| itself should not invoke domAutomationController.send(); if you want
+// to call domAutomationController.send(...) yourself and extract the result,
+// then use one of ExecuteScriptAndExtract... functions).
+//
+// Returns true on success (if the renderer responded back with the expected
+// value).  Returns false otherwise (e.g. if the script threw an exception
+// before calling the appended |domAutomationController.send(...)|, or if the
+// renderer died or if the renderer called |domAutomationController.send(...)|
+// with a malformed or unexpected value).
+//
+// See also:
+// - ExecuteScriptAsync
+// - ExecuteScriptAndExtractBool/Int/String/etc.
+// - DOMMessageQueue (to manually wait for domAutomationController.send(...))
 bool ExecuteScript(const ToRenderFrameHost& adapter,
                    const std::string& script) WARN_UNUSED_RESULT;
 
@@ -210,11 +286,18 @@ bool ExecuteScriptWithoutUserGesture(const ToRenderFrameHost& adapter,
                                      const std::string& script)
     WARN_UNUSED_RESULT;
 
-// The following methods execute the passed |script| in the specified frame with
-// the user gesture and set |result| to the value passed to
-// "window.domAutomationController.send" by the executed script. They return
-// true on success, false if the script execution failed or did not evaluate to
-// the expected type.
+// Similar to ExecuteScript above, but
+// - Doesn't modify the |script|.
+// - Kicks off execution of the |script| in the specified frame and returns
+//   immediately (without waiting for a response from the renderer and/or
+//   without checking that the script succeeded).
+void ExecuteScriptAsync(const ToRenderFrameHost& adapter,
+                        const std::string& script);
+
+// The following methods execute the passed |script| in the specified frame and
+// sets |result| to the value passed to "window.domAutomationController.send" by
+// the executed script. They return true on success, false if the script
+// execution failed or did not evaluate to the expected type.
 bool ExecuteScriptAndExtractDouble(const ToRenderFrameHost& adapter,
                                    const std::string& script,
                                    double* result) WARN_UNUSED_RESULT;
@@ -367,6 +450,9 @@ std::vector<RenderWidgetHostView*> GetInputEventRouterRenderWidgetHostViews(
 // Returns the focused RenderWidgetHost.
 RenderWidgetHost* GetFocusedRenderWidgetHost(WebContents* web_contents);
 
+// Returns the focused WebContents.
+WebContents* GetFocusedWebContents(WebContents* web_contents);
+
 // Route the |event| through the RenderWidgetHostInputEventRouter. This allows
 // correct targeting of events to out of process iframes.
 void RouteMouseEvent(WebContents* web_contents, blink::WebMouseEvent* event);
@@ -391,8 +477,7 @@ void SendRoutedGestureTapSequence(content::WebContents* web_contents,
 // safe to assume that events sent to the top-level RenderWidgetHostView can
 // be expected to properly hit-test to this surface, if appropriate.
 void WaitForGuestSurfaceReady(content::WebContents* web_contents);
-
-#endif
+#endif  // defined(USE_AURA)
 
 // Waits until the cc::Surface associated with a cross-process child frame
 // has been drawn for the first time. Once this method returns it should be
@@ -422,7 +507,7 @@ class TitleWatcher : public WebContentsObserver {
  private:
   // Overridden WebContentsObserver methods.
   void DidStopLoading() override;
-  void TitleWasSet(NavigationEntry* entry, bool explicit_set) override;
+  void TitleWasSet(NavigationEntry* entry) override;
 
   void TestTitle();
 
@@ -510,8 +595,9 @@ class DOMMessageQueue : public NotificationObserver,
 
  private:
   NotificationRegistrar registrar_;
-  std::queue<std::string> message_queue_;
+  base::queue<std::string> message_queue_;
   scoped_refptr<MessageLoopRunner> message_loop_runner_;
+  bool renderer_crashed_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(DOMMessageQueue);
 };
@@ -566,7 +652,7 @@ class FrameWatcher : public WebContentsObserver {
   void WaitFrames(int frames_to_wait);
 
   // Return the last received CompositorFrame's metadata.
-  const cc::CompositorFrameMetadata& LastMetadata();
+  const viz::CompositorFrameMetadata& LastMetadata();
 
   // Call this method to start observing a WebContents for CompositorFrames.
   using WebContentsObserver::Observe;
@@ -694,13 +780,18 @@ class TestNavigationManager : public WebContentsObserver {
   // stack. Returns false if the request was aborted before starting.
   WARN_UNUSED_RESULT bool WaitForRequestStart();
 
-  // Waits until the navigation response has been sent received. Returns false
-  // if the request was aborted before getting a response.
+  // Waits until the navigation response's headers have been received. Returns
+  // false if the request was aborted before getting a response.
   WARN_UNUSED_RESULT bool WaitForResponse();
 
   // Waits until the navigation has been finished. Will automatically resume
   // navigations paused before this point.
   void WaitForNavigationFinished();
+
+  // Resume the navigation.
+  // * Called after |WaitForRequestStart|, it causes the request to be sent.
+  // * Called after |WaitForResponse|, it causes the response to be committed.
+  void ResumeNavigation();
 
  protected:
   // Derived classes can override if they want to filter out navigations. This
@@ -746,6 +837,24 @@ class TestNavigationManager : public WebContentsObserver {
   base::WeakPtrFactory<TestNavigationManager> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TestNavigationManager);
+};
+
+class NavigationHandleCommitObserver : public content::WebContentsObserver {
+ public:
+  NavigationHandleCommitObserver(content::WebContents* web_contents,
+                                 const GURL& url);
+
+  bool has_committed() const { return has_committed_; }
+  bool was_same_document() const { return was_same_document_; }
+  bool was_renderer_initiated() const { return was_renderer_initiated_; }
+
+ private:
+  void DidFinishNavigation(content::NavigationHandle* handle) override;
+
+  const GURL url_;
+  bool has_committed_;
+  bool was_same_document_;
+  bool was_renderer_initiated_;
 };
 
 // A WebContentsDelegate that catches messages sent to the console.
@@ -814,7 +923,6 @@ class PwnMessageHelper {
   static void LockMouse(RenderProcessHost* process,
                         int routing_id,
                         bool user_gesture,
-                        bool last_unlocked_by_target,
                         bool privileged);
 
  private:
@@ -822,6 +930,25 @@ class PwnMessageHelper {
 
   DISALLOW_COPY_AND_ASSIGN(PwnMessageHelper);
 };
+
+#if defined(USE_AURA)
+// Mock of an OverscrollController so we can inspect the scroll events that it
+// receives. Note that this is only a partial mock as the methods of a real
+// OverscrollController are being invoked.
+// TODO(mcnee): Tests needing this are BrowserPlugin specific. Remove after
+// removing BrowserPlugin (crbug.com/533069).
+class MockOverscrollController {
+ public:
+  // Creates a mock and installs it on the given RenderWidgetHostViewAura.
+  // The returned mock is owned by the RWHVA.
+  static MockOverscrollController* Create(RenderWidgetHostView* rwhv);
+
+  virtual ~MockOverscrollController() {}
+
+  // Waits until the mock receives a consumed GestureScrollUpdate.
+  virtual void WaitForConsumedScroll() = 0;
+};
+#endif  // defined(USE_AURA)
 
 }  // namespace content
 

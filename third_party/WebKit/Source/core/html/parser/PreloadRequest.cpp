@@ -5,11 +5,13 @@
 #include "core/html/parser/PreloadRequest.h"
 
 #include "core/dom/Document.h"
+#include "core/dom/DocumentWriteIntervention.h"
 #include "core/loader/DocumentLoader.h"
 #include "platform/CrossOriginAttributeValue.h"
 #include "platform/loader/fetch/FetchInitiatorInfo.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/weborigin/SecurityPolicy.h"
 
 namespace blink {
@@ -44,10 +46,15 @@ Resource* PreloadRequest::Start(Document* document) {
       referrer_source_ == kBaseUrlIsReferrer
           ? base_url_.StrippedForUseAsReferrer()
           : document->OutgoingReferrer()));
-  resource_request.SetRequestContext(
-      ResourceFetcher::DetermineRequestContext(resource_type_, false));
+  resource_request.SetRequestContext(ResourceFetcher::DetermineRequestContext(
+      resource_type_, is_image_set_, false));
 
-  FetchParameters params(resource_request, initiator_info);
+  if (resource_type_ == Resource::kScript)
+    MaybeDisallowFetchForDocWrittenScript(resource_request, defer_, *document);
+
+  ResourceLoaderOptions options;
+  options.initiator_info = initiator_info;
+  FetchParameters params(resource_request, options);
 
   if (resource_type_ == Resource::kImportResource) {
     SecurityOrigin* security_origin =
@@ -56,7 +63,24 @@ Resource* PreloadRequest::Start(Document* document) {
                                        kCrossOriginAttributeAnonymous);
   }
 
-  if (cross_origin_ != kCrossOriginAttributeNotSet) {
+  if (script_type_ == ScriptType::kModule) {
+    DCHECK_EQ(resource_type_, Resource::kScript);
+    WebURLRequest::FetchCredentialsMode credentials_mode =
+        WebURLRequest::kFetchCredentialsModeOmit;
+    switch (cross_origin_) {
+      case kCrossOriginAttributeNotSet:
+        credentials_mode = WebURLRequest::kFetchCredentialsModeOmit;
+        break;
+      case kCrossOriginAttributeAnonymous:
+        credentials_mode = WebURLRequest::kFetchCredentialsModeSameOrigin;
+        break;
+      case kCrossOriginAttributeUseCredentials:
+        credentials_mode = WebURLRequest::kFetchCredentialsModeInclude;
+        break;
+    }
+    params.SetCrossOriginAccessControl(document->GetSecurityOrigin(),
+                                       credentials_mode);
+  } else if (cross_origin_ != kCrossOriginAttributeNotSet) {
     params.SetCrossOriginAccessControl(document->GetSecurityOrigin(),
                                        cross_origin_);
   }
@@ -71,11 +95,15 @@ Resource* PreloadRequest::Start(Document* document) {
   if (request_type_ == kRequestTypeLinkRelPreload)
     params.SetLinkPreload(true);
 
-  if (resource_type_ == Resource::kScript ||
-      resource_type_ == Resource::kCSSStyleSheet ||
-      resource_type_ == Resource::kImportResource) {
-    params.SetCharset(charset_.IsEmpty() ? document->characterSet().GetString()
-                                         : charset_);
+  if (script_type_ == ScriptType::kModule) {
+    DCHECK_EQ(resource_type_, Resource::kScript);
+    params.SetDecoderOptions(
+        TextResourceDecoderOptions::CreateAlwaysUseUTF8ForText());
+  } else if (resource_type_ == Resource::kScript ||
+             resource_type_ == Resource::kCSSStyleSheet ||
+             resource_type_ == Resource::kImportResource) {
+    params.SetCharset(charset_.IsEmpty() ? document->Encoding()
+                                         : WTF::TextEncoding(charset_));
   }
   FetchParameters::SpeculativePreloadType speculative_preload_type =
       FetchParameters::SpeculativePreloadType::kInDocument;

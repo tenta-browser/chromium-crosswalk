@@ -34,7 +34,6 @@
 #include "WebCommon.h"
 #include "base/logging.h"
 
-#include <algorithm>
 #include <vector>
 
 namespace blink {
@@ -54,9 +53,9 @@ namespace blink {
 // It is also possible to assign from any container that implements begin()
 // and end().
 //
-//   void Foo(const std::vector<std::string>& input)
+//   void Foo(const std::vector<WTF::String>& input)
 //   {
-//       WebVector<WebCString> cstrings = input;
+//       WebVector<WebString> strings = input;
 //       ...
 //   }
 //
@@ -81,6 +80,10 @@ class WebVector {
 
   WebVector(WebVector<T>&& other) { Swap(other); }
 
+  WebVector(std::vector<T>&& other) : data_(std::move(other)) {}
+
+  std::vector<T> ReleaseVector() { return std::move(data_); }
+
   WebVector& operator=(const WebVector& other) {
     if (this != &other)
       Assign(other);
@@ -100,6 +103,11 @@ class WebVector {
     return *this;
   }
 
+  WebVector<T>& operator=(std::vector<T>&& other) {
+    data_ = std::move(other);
+    return *this;
+  }
+
   template <typename C>
   void Assign(const C& other) {
     data_.assign(other.begin(), other.end());
@@ -112,7 +120,7 @@ class WebVector {
 
   size_t size() const { return data_.size(); }
   bool empty() const { return data_.empty(); }
-  // TODO(slangley): Remove all uses of isEmpty.
+  // TODO(slangley): Remove all uses of IsEmpty.
   bool IsEmpty() const { return empty(); }
 
   T& operator[](size_t i) {

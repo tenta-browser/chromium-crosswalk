@@ -11,13 +11,16 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ui/aura/client/capture_client.h"
+#include "ui/aura/client/drag_drop_client_observer.h"
+#include "ui/aura/env.h"
+#include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
-#include "ui/base/dragdrop/drag_utils.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/events/event.h"
@@ -34,7 +37,6 @@
 #include "ui/views/widget/widget.h"
 
 namespace ash {
-namespace test {
 
 namespace {
 
@@ -77,8 +79,7 @@ class DragTestView : public views::View {
     data->SetString(base::UTF8ToUTF16("I am being dragged"));
     gfx::ImageSkiaRep image_rep(gfx::Size(10, 20), 1.0f);
     gfx::ImageSkia image_skia(image_rep);
-
-    drag_utils::SetDragImageOnDataObject(image_skia, gfx::Vector2d(), data);
+    data->provider().SetDragImage(image_skia, gfx::Vector2d());
   }
 
   bool OnMousePressed(const ui::MouseEvent& event) override { return true; }
@@ -121,18 +122,15 @@ class DragTestView : public views::View {
 
 class CompletableLinearAnimation : public gfx::LinearAnimation {
  public:
-  CompletableLinearAnimation(int duration,
+  CompletableLinearAnimation(base::TimeDelta duration,
                              int frame_rate,
                              gfx::AnimationDelegate* delegate)
-      : gfx::LinearAnimation(duration, frame_rate, delegate),
-        duration_(duration) {}
+      : gfx::LinearAnimation(duration, frame_rate, delegate) {}
 
-  void Complete() {
-    Step(start_time() + base::TimeDelta::FromMilliseconds(duration_));
-  }
+  void Complete() { Step(start_time() + duration()); }
 
  private:
-  int duration_;
+  DISALLOW_COPY_AND_ASSIGN(CompletableLinearAnimation);
 };
 
 class TestDragDropController : public DragDropController {
@@ -176,14 +174,14 @@ class TestDragDropController : public DragDropController {
   }
 
   gfx::LinearAnimation* CreateCancelAnimation(
-      int duration,
+      base::TimeDelta duration,
       int frame_rate,
       gfx::AnimationDelegate* delegate) override {
     return new CompletableLinearAnimation(duration, frame_rate, delegate);
   }
 
-  void DoDragCancel(int animation_duration_ms) override {
-    DragDropController::DoDragCancel(animation_duration_ms);
+  void DoDragCancel(base::TimeDelta animation_duration) override {
+    DragDropController::DoDragCancel(animation_duration);
     drag_canceled_ = true;
   }
 
@@ -213,6 +211,72 @@ class TestNativeWidgetAura : public views::NativeWidgetAura {
   bool check_if_capture_lost_;
 
   DISALLOW_COPY_AND_ASSIGN(TestNativeWidgetAura);
+};
+
+class TestObserver : public aura::client::DragDropClientObserver {
+ public:
+  enum class State { kNotInvoked, kDragStartedInvoked, kDragEndedInvoked };
+
+  TestObserver() : state_(State::kNotInvoked) {}
+
+  State state() const { return state_; }
+
+  // aura::client::DragDropClientObserver
+
+  void OnDragStarted() override {
+    EXPECT_EQ(State::kNotInvoked, state_);
+    state_ = State::kDragStartedInvoked;
+  }
+
+  void OnDragEnded() override {
+    EXPECT_EQ(State::kDragStartedInvoked, state_);
+    state_ = State::kDragEndedInvoked;
+  }
+
+ private:
+  State state_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestObserver);
+};
+
+class EventTargetTestDelegate : public aura::client::DragDropDelegate {
+ public:
+  enum class State {
+    kNotInvoked,
+    kDragEnteredInvoked,
+    kDragUpdateInvoked,
+    kPerformDropInvoked
+  };
+
+  EventTargetTestDelegate(aura::Window* window) : window_(window) {}
+  State state() const { return state_; }
+
+  // aura::client::DragDropDelegate:
+  void OnDragEntered(const ui::DropTargetEvent& event) override {
+    EXPECT_EQ(State::kNotInvoked, state_);
+    EXPECT_EQ(window_, event.target());
+    state_ = State::kDragEnteredInvoked;
+  }
+  int OnDragUpdated(const ui::DropTargetEvent& event) override {
+    EXPECT_TRUE(State::kDragEnteredInvoked == state_ ||
+                State::kDragUpdateInvoked == state_);
+    EXPECT_EQ(window_, event.target());
+    state_ = State::kDragUpdateInvoked;
+    return ui::DragDropTypes::DRAG_MOVE;
+  }
+  void OnDragExited() override { ADD_FAILURE(); }
+  int OnPerformDrop(const ui::DropTargetEvent& event) override {
+    EXPECT_EQ(State::kDragUpdateInvoked, state_);
+    EXPECT_EQ(window_, event.target());
+    state_ = State::kPerformDropInvoked;
+    return ui::DragDropTypes::DRAG_MOVE;
+  }
+
+ private:
+  aura::Window* const window_;
+  State state_{State::kNotInvoked};
+
+  DISALLOW_COPY_AND_ASSIGN(EventTargetTestDelegate);
 };
 
 // TODO(sky): this is for debugging, remove when track down failure.
@@ -612,7 +676,7 @@ TEST_F(DragDropControllerTest, DragLeavesClipboardAloneTest) {
                                     ui::CLIPBOARD_TYPE_COPY_PASTE));
   cb->ReadAsciiText(ui::CLIPBOARD_TYPE_COPY_PASTE, &result);
   EXPECT_EQ(clip_str, result);
-  // Destory the clipboard here because ash doesn't delete it.
+  // Destroy the clipboard here because ash doesn't delete it.
   // crbug.com/158150.
   ui::Clipboard::DestroyClipboardForCurrentThread();
 }
@@ -1103,5 +1167,66 @@ TEST_F(DragDropControllerTest, TouchDragDropCompletesOnFling) {
   EXPECT_TRUE(drag_view->drag_done_received_);
 }
 
-}  // namespace test
+TEST_F(DragDropControllerTest, DragStartedAndEndedEvents) {
+  TestObserver observer;
+  drag_drop_controller_->AddObserver(&observer);
+
+  ui::OSExchangeData data;
+  data.SetString(base::UTF8ToUTF16("I am being dragged"));
+  {
+    std::unique_ptr<views::Widget> widget(CreateNewWidget());
+    aura::Window* window = widget->GetNativeWindow();
+    drag_drop_controller_->StartDragAndDrop(
+        data, window->GetRootWindow(), window, gfx::Point(5, 5),
+        ui::DragDropTypes::DRAG_MOVE,
+        ui::DragDropTypes::DRAG_EVENT_SOURCE_MOUSE);
+
+    EXPECT_EQ(TestObserver::State::kDragStartedInvoked, observer.state());
+
+    ui::MouseEvent e(ui::ET_MOUSE_DRAGGED, gfx::Point(200, 0),
+                     gfx::Point(200, 0), ui::EventTimeForNow(), ui::EF_NONE,
+                     ui::EF_NONE);
+    drag_drop_controller_->Drop(window, e);
+
+    EXPECT_EQ(TestObserver::State::kDragEndedInvoked, observer.state());
+  }
+
+  drag_drop_controller_->RemoveObserver(&observer);
+}
+
+TEST_F(DragDropControllerTest, EventTarget) {
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
+      aura::test::TestWindowDelegate::CreateSelfDestroyingDelegate(), -1,
+      gfx::Rect(0, 0, 100, 100)));
+  EventTargetTestDelegate delegate(window.get());
+  aura::client::SetDragDropDelegate(window.get(), &delegate);
+
+  // Posted task will be run when the inner loop runs in StartDragAndDrop.
+  ui::test::EventGenerator generator(window->GetRootWindow(), window.get());
+  generator.PressLeftButton();
+  // For drag enter
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&ui::test::EventGenerator::MoveMouseBy,
+                                base::Unretained(&generator), 0, 1));
+  // For drag update
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&ui::test::EventGenerator::MoveMouseBy,
+                                base::Unretained(&generator), 0, 1));
+  // For perform drop
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&ui::test::EventGenerator::ReleaseLeftButton,
+                                base::Unretained(&generator)));
+
+  drag_drop_controller_->set_should_block_during_drag_drop(true);
+  ui::OSExchangeData data;
+  data.SetString(base::UTF8ToUTF16("I am being dragged"));
+  drag_drop_controller_->StartDragAndDrop(
+      data, window->GetRootWindow(), window.get(), gfx::Point(5, 5),
+      ui::DragDropTypes::DRAG_MOVE, ui::DragDropTypes::DRAG_EVENT_SOURCE_MOUSE);
+
+  EXPECT_EQ(EventTargetTestDelegate::State::kPerformDropInvoked,
+            delegate.state());
+  RunAllPendingInMessageLoop();
+}
+
 }  // namespace ash

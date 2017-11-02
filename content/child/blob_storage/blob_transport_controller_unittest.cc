@@ -45,7 +45,7 @@ namespace {
 
 class OtherThreadTestSimpleTaskRunner : public base::TestSimpleTaskRunner {
  public:
-  bool RunsTasksOnCurrentThread() const override { return false; }
+  bool RunsTasksInCurrentSequence() const override { return false; }
 
  protected:
   ~OtherThreadTestSimpleTaskRunner() override {}
@@ -138,7 +138,7 @@ class BlobTransportControllerTest : public testing::Test {
     EXPECT_EQ(expected_uuid, std::get<0>(register_contents));
     EXPECT_EQ(expected_content_type, std::get<1>(register_contents));
     if (descriptions)
-      *descriptions = std::get<3>(register_contents);
+      *descriptions = std::get<3>(std::move(register_contents));
     // We don't have dispositions from the renderer.
     EXPECT_TRUE(std::get<2>(register_contents).empty());
     sink_.ClearMessages();
@@ -300,7 +300,7 @@ TEST_F(BlobTransportControllerTest, SharedMemory) {
   memory.CreateAnonymous(11 + 6);
   base::SharedMemoryHandle handle =
       base::SharedMemory::DuplicateHandle(memory.handle());
-  CHECK(base::SharedMemory::NULLHandle() != handle);
+  CHECK(handle.IsValid());
   memory_handles.push_back(handle);
 
   OnMemoryRequest(holder, kBlobUUID, requests, &memory_handles, file_handles);

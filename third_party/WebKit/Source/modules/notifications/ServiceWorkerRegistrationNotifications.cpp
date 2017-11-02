@@ -100,8 +100,7 @@ ScriptPromise ServiceWorkerRegistrationNotifications::showNotification(
   //     17+  -> overflow bucket.
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       EnumerationHistogram, notification_count_histogram,
-      new EnumerationHistogram(
-          "Notifications.PersistentNotificationActionCount", 17));
+      ("Notifications.PersistentNotificationActionCount", 17));
   notification_count_histogram.Count(options.actions().size());
 
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
@@ -123,7 +122,7 @@ ScriptPromise ServiceWorkerRegistrationNotifications::getNotifications(
   ScriptPromise promise = resolver->Promise();
 
   auto callbacks =
-      WTF::MakeUnique<CallbackPromiseAdapter<NotificationArray, void>>(
+      std::make_unique<CallbackPromiseAdapter<NotificationArray, void>>(
           resolver);
 
   WebNotificationManager* notification_manager =
@@ -174,14 +173,14 @@ void ServiceWorkerRegistrationNotifications::PrepareShow(
   RefPtr<SecurityOrigin> origin = GetExecutionContext()->GetSecurityOrigin();
   NotificationResourcesLoader* loader = new NotificationResourcesLoader(
       WTF::Bind(&ServiceWorkerRegistrationNotifications::DidLoadResources,
-                WrapWeakPersistent(this), origin.Release(), data,
+                WrapWeakPersistent(this), std::move(origin), data,
                 WTF::Passed(std::move(callbacks))));
   loaders_.insert(loader);
   loader->Start(GetExecutionContext(), data);
 }
 
 void ServiceWorkerRegistrationNotifications::DidLoadResources(
-    PassRefPtr<SecurityOrigin> origin,
+    RefPtr<SecurityOrigin> origin,
     const WebNotificationData& data,
     std::unique_ptr<WebNotificationShowCallbacks> callbacks,
     NotificationResourcesLoader* loader) {
@@ -192,7 +191,7 @@ void ServiceWorkerRegistrationNotifications::DidLoadResources(
   DCHECK(notification_manager);
 
   notification_manager->ShowPersistent(
-      WebSecurityOrigin(origin.Get()), data, loader->GetResources(),
+      WebSecurityOrigin(origin.get()), data, loader->GetResources(),
       registration_->WebRegistration(), std::move(callbacks));
   loaders_.erase(loader);
 }

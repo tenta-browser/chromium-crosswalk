@@ -19,7 +19,7 @@
 #include "content/browser/devtools/service_worker_devtools_agent_host.h"
 #include "content/browser/devtools/service_worker_devtools_manager.h"
 #include "content/browser/service_worker/embedded_worker_status.h"
-#include "content/browser/service_worker/service_worker_context_observer.h"
+#include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/browser/service_worker/service_worker_version.h"
@@ -52,10 +52,9 @@ void OperationCompleteCallback(WeakPtr<ServiceWorkerInternalsUI> internals,
                                int callback_id,
                                ServiceWorkerStatusCode status) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(
-        BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(OperationCompleteCallback, internals, callback_id, status));
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            base::BindOnce(OperationCompleteCallback, internals,
+                                           callback_id, status));
     return;
   }
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -64,32 +63,6 @@ void OperationCompleteCallback(WeakPtr<ServiceWorkerInternalsUI> internals,
         "serviceworker.onOperationComplete", Value(static_cast<int>(status)),
         Value(callback_id));
   }
-}
-
-void CallServiceWorkerVersionMethodWithVersionID(
-    ServiceWorkerInternalsUI::ServiceWorkerVersionMethod method,
-    scoped_refptr<ServiceWorkerContextWrapper> context,
-    int64_t version_id,
-    const ServiceWorkerInternalsUI::StatusCallback& callback) {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    BrowserThread::PostTask(
-        BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(CallServiceWorkerVersionMethodWithVersionID,
-                   method,
-                   context,
-                   version_id,
-                   callback));
-    return;
-  }
-
-  scoped_refptr<ServiceWorkerVersion> version =
-      context->GetLiveVersion(version_id);
-  if (!version.get()) {
-    callback.Run(SERVICE_WORKER_ERROR_NOT_FOUND);
-    return;
-  }
-  (*version.get().*method)(callback);
 }
 
 std::vector<const Value*> ConvertToRawPtrVector(
@@ -194,16 +167,16 @@ std::unique_ptr<ListValue> GetRegistrationListValue(
 
     if (registration.active_version.version_id !=
         kInvalidServiceWorkerVersionId) {
-      DictionaryValue* active_info = new DictionaryValue();
-      UpdateVersionInfo(registration.active_version, active_info);
-      registration_info->Set("active", active_info);
+      auto active_info = base::MakeUnique<DictionaryValue>();
+      UpdateVersionInfo(registration.active_version, active_info.get());
+      registration_info->Set("active", std::move(active_info));
     }
 
     if (registration.waiting_version.version_id !=
         kInvalidServiceWorkerVersionId) {
-      DictionaryValue* waiting_info = new DictionaryValue();
-      UpdateVersionInfo(registration.waiting_version, waiting_info);
-      registration_info->Set("waiting", waiting_info);
+      auto waiting_info = base::MakeUnique<DictionaryValue>();
+      UpdateVersionInfo(registration.waiting_version, waiting_info.get());
+      registration_info->Set("waiting", std::move(waiting_info));
     }
 
     result->Append(std::move(registration_info));
@@ -233,8 +206,8 @@ void DidGetStoredRegistrationsOnIOThread(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(callback, context->GetAllLiveRegistrationInfo(),
-                 context->GetAllLiveVersionInfo(), stored_registrations));
+      base::BindOnce(callback, context->GetAllLiveRegistrationInfo(),
+                     context->GetAllLiveVersionInfo(), stored_registrations));
 }
 
 void GetRegistrationsOnIOThread(
@@ -269,12 +242,12 @@ void DidGetRegistrations(
 }  // namespace
 
 class ServiceWorkerInternalsUI::PartitionObserver
-    : public ServiceWorkerContextObserver {
+    : public ServiceWorkerContextCoreObserver {
  public:
   PartitionObserver(int partition_id, WebUI* web_ui)
       : partition_id_(partition_id), web_ui_(web_ui) {}
   ~PartitionObserver() override {}
-  // ServiceWorkerContextObserver overrides:
+  // ServiceWorkerContextCoreObserver overrides:
   void OnRunningStateChanged(int64_t version_id,
                              EmbeddedWorkerStatus) override {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -357,7 +330,7 @@ ServiceWorkerInternalsUI::ServiceWorkerInternalsUI(WebUI* web_ui)
                           IDR_SERVICE_WORKER_INTERNALS_CSS);
   source->SetDefaultResource(IDR_SERVICE_WORKER_INTERNALS_HTML);
   source->DisableDenyXFrameOptions();
-  source->UseGzip(std::unordered_set<std::string>());
+  source->UseGzip();
 
   BrowserContext* browser_context =
       web_ui->GetWebContents()->GetBrowserContext();
@@ -375,10 +348,8 @@ ServiceWorkerInternalsUI::ServiceWorkerInternalsUI(WebUI* web_ui)
       base::Bind(&ServiceWorkerInternalsUI::GetAllRegistrations,
                  base::Unretained(this)));
   web_ui->RegisterMessageCallback(
-      "stop",
-      base::Bind(&ServiceWorkerInternalsUI::CallServiceWorkerVersionMethod,
-                 base::Unretained(this),
-                 &ServiceWorkerVersion::StopWorker));
+      "stop", base::Bind(&ServiceWorkerInternalsUI::StopWorker,
+                         base::Unretained(this)));
   web_ui->RegisterMessageCallback(
       "inspect",
       base::Bind(&ServiceWorkerInternalsUI::InspectWorker,
@@ -455,10 +426,11 @@ void ServiceWorkerInternalsUI::AddContextFromStoragePartition(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(GetRegistrationsOnIOThread, context,
-                 base::Bind(DidGetRegistrations, AsWeakPtr(), partition_id,
-                            context->is_incognito() ? base::FilePath()
-                                                    : partition->GetPath())));
+      base::BindOnce(
+          GetRegistrationsOnIOThread, context,
+          base::Bind(DidGetRegistrations, AsWeakPtr(), partition_id,
+                     context->is_incognito() ? base::FilePath()
+                                             : partition->GetPath())));
 }
 
 void ServiceWorkerInternalsUI::RemoveObserverFromStoragePartition(
@@ -503,9 +475,7 @@ bool ServiceWorkerInternalsUI::GetServiceWorkerContext(
   return true;
 }
 
-void ServiceWorkerInternalsUI::CallServiceWorkerVersionMethod(
-    ServiceWorkerVersionMethod method,
-    const ListValue* args) {
+void ServiceWorkerInternalsUI::StopWorker(const ListValue* args) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   int callback_id;
   const DictionaryValue* cmd_args = NULL;
@@ -522,10 +492,9 @@ void ServiceWorkerInternalsUI::CallServiceWorkerVersionMethod(
     return;
   }
 
-  base::Callback<void(ServiceWorkerStatusCode)> callback =
+  base::OnceCallback<void(ServiceWorkerStatusCode)> callback =
       base::Bind(OperationCompleteCallback, AsWeakPtr(), callback_id);
-  CallServiceWorkerVersionMethodWithVersionID(
-      method, context, version_id, callback);
+  StopWorkerWithId(context, version_id, std::move(callback));
 }
 
 void ServiceWorkerInternalsUI::InspectWorker(const ListValue* args) {
@@ -594,26 +563,53 @@ void ServiceWorkerInternalsUI::StartWorker(const ListValue* args) {
   context->StartServiceWorker(GURL(scope_string), callback);
 }
 
-void ServiceWorkerInternalsUI::UnregisterWithScope(
+void ServiceWorkerInternalsUI::StopWorkerWithId(
     scoped_refptr<ServiceWorkerContextWrapper> context,
-    const GURL& scope,
-    const ServiceWorkerInternalsUI::StatusCallback& callback) const {
+    int64_t version_id,
+    StatusCallback callback) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&ServiceWorkerInternalsUI::UnregisterWithScope,
-                   base::Unretained(this), context, scope, callback));
+        base::BindOnce(&ServiceWorkerInternalsUI::StopWorkerWithId,
+                       base::Unretained(this), context, version_id,
+                       std::move(callback)));
+    return;
+  }
+
+  scoped_refptr<ServiceWorkerVersion> version =
+      context->GetLiveVersion(version_id);
+  if (!version.get()) {
+    std::move(callback).Run(SERVICE_WORKER_ERROR_NOT_FOUND);
+    return;
+  }
+
+  // ServiceWorkerVersion::StopWorker() takes a base::OnceClosure for argument,
+  // so bind SERVICE_WORKER_OK to callback here.
+  version->StopWorker(base::BindOnce(std::move(callback), SERVICE_WORKER_OK));
+}
+
+void ServiceWorkerInternalsUI::UnregisterWithScope(
+    scoped_refptr<ServiceWorkerContextWrapper> context,
+    const GURL& scope,
+    ServiceWorkerInternalsUI::StatusCallback callback) const {
+  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&ServiceWorkerInternalsUI::UnregisterWithScope,
+                       base::Unretained(this), context, scope,
+                       std::move(callback)));
     return;
   }
 
   if (!context->context()) {
-    callback.Run(SERVICE_WORKER_ERROR_ABORT);
+    std::move(callback).Run(SERVICE_WORKER_ERROR_ABORT);
     return;
   }
 
   // ServiceWorkerContextWrapper::UnregisterServiceWorker doesn't work here
   // because that reduces a status code to boolean.
-  context->context()->UnregisterServiceWorker(scope, callback);
+  context->context()->UnregisterServiceWorker(
+      scope, base::AdaptCallbackForRepeating(std::move(callback)));
 }
 
 }  // namespace content

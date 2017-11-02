@@ -124,13 +124,12 @@ class FakeSpeechRecognizer {
       base::SharedMemoryHandle* foreign_memory_handle) {
     // Shared memory is allocated, mapped and shared.
     const uint32_t kSharedMemorySize =
-        sizeof(media::AudioInputBufferParameters) +
-        media::AudioBus::CalculateMemorySize(sink_params);
+        media::ComputeAudioInputBufferSize(sink_params, 1u);
     shared_memory_.reset(new base::SharedMemory());
     ASSERT_TRUE(shared_memory_->CreateAndMapAnonymous(kSharedMemorySize));
     memset(shared_memory_->memory(), 0, kSharedMemorySize);
-    ASSERT_TRUE(shared_memory_->ShareToProcess(base::GetCurrentProcessHandle(),
-                                               foreign_memory_handle));
+    *foreign_memory_handle = shared_memory_->handle().Duplicate();
+    ASSERT_TRUE(foreign_memory_handle->IsValid());
 
     // Wrap the shared memory for the audio bus.
     media::AudioInputBuffer* buffer =
@@ -294,8 +293,8 @@ class SpeechRecognitionAudioSinkTest : public testing::Test {
                             blink::WebString::FromUTF8("dummy_source_name"),
                             false /* remote */);
     TestDrivenAudioSource* const audio_source = new TestDrivenAudioSource();
-    audio_source->SetDeviceInfo(
-        StreamDeviceInfo(device_type, "Mock device", "mock_device_id"));
+    audio_source->SetDevice(
+        MediaStreamDevice(device_type, "mock_device_id", "Mock device"));
     blink_source.SetExtraData(audio_source);  // Takes ownership.
 
     blink_track->Initialize(blink::WebString::FromUTF8("dummy_track"),

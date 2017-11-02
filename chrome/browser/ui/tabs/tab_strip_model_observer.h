@@ -120,8 +120,7 @@ class TabStripModelObserver {
                             int index,
                             TabChangeType change_type);
 
-  // The WebContents was replaced at the specified index. This is invoked
-  // when instant is enabled and the user navigates by way of instant or when
+  // The WebContents was replaced at the specified index. This is invoked when
   // prerendering swaps in a prerendered WebContents.
   virtual void TabReplacedAt(TabStripModel* tab_strip_model,
                              content::WebContents* old_contents,
@@ -152,6 +151,11 @@ class TabStripModelObserver {
   // (DetachWebContentsAt()) then this is not sent.
   virtual void WillCloseAllTabs();
   virtual void CloseAllTabsCanceled();
+
+  // The specified tab at |index| requires the display of a UI indication to the
+  // user that it needs their attention. The UI indication must be cleared when
+  // the tab is next activated.
+  virtual void TabNeedsAttentionAt(int index);
 
  protected:
   TabStripModelObserver();

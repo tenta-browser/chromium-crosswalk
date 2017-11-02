@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 
+#include "base/callback_forward.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process_platform_part.h"
@@ -36,6 +37,7 @@ class NotificationUIManager;
 class PrefService;
 class ProfileManager;
 class StatusTray;
+class SystemNetworkContextManager;
 class WatchDogThread;
 #if BUILDFLAG(ENABLE_WEBRTC)
 class WebRtcLogUploader;
@@ -55,7 +57,6 @@ class VariationsService;
 
 namespace component_updater {
 class ComponentUpdateService;
-class PnaclComponentInstaller;
 class SupervisedUserWhitelistInstaller;
 }
 
@@ -65,10 +66,6 @@ class EventRouterForwarder;
 
 namespace gcm {
 class GCMDriver;
-}
-
-namespace memory {
-class TabManager;
 }
 
 namespace message_center {
@@ -104,6 +101,10 @@ class BrowserPolicyConnector;
 class PolicyService;
 }
 
+namespace prefs {
+class InProcessPrefServiceFactory;
+}
+
 namespace printing {
 class BackgroundPrintingManager;
 class PrintJobManager;
@@ -114,12 +115,16 @@ namespace rappor {
 class RapporServiceImpl;
 }
 
+namespace resource_coordinator {
+class TabManager;
+}
+
 namespace safe_browsing {
 class ClientSideDetectionService;
 }
 
 namespace ukm {
-class UkmService;
+class UkmRecorder;
 }
 
 // NOT THREAD SAFE, call only from the main thread.
@@ -134,9 +139,13 @@ class BrowserProcess {
 
   // Invoked when the user is logging out/shutting down. When logging off we may
   // not have enough time to do a normal shutdown. This method is invoked prior
-  // to normal shutdown and saves any state that must be saved before we are
-  // continue shutdown.
+  // to normal shutdown and saves any state that must be saved before system
+  // shutdown.
   virtual void EndSession() = 0;
+
+  // Ensures |local_state()| was flushed to disk and then posts |reply| back on
+  // the current sequence.
+  virtual void FlushLocalStateAndReply(base::OnceClosure reply) = 0;
 
   // Gets the manager for the various metrics-related services, constructing it
   // if necessary.
@@ -146,7 +155,7 @@ class BrowserProcess {
   // Services: any of these getters may return NULL
   virtual metrics::MetricsService* metrics_service() = 0;
   virtual rappor::RapporServiceImpl* rappor_service() = 0;
-  virtual ukm::UkmService* ukm_service() = 0;
+  virtual ukm::UkmRecorder* ukm_recorder() = 0;
   virtual ProfileManager* profile_manager() = 0;
   virtual PrefService* local_state() = 0;
   virtual net::URLRequestContextGetter* system_request_context() = 0;
@@ -175,6 +184,12 @@ class BrowserProcess {
   // NOTE: If you want to post a task to the IO thread, use
   // BrowserThread::PostTask (or other variants).
   virtual IOThread* io_thread() = 0;
+
+  // Replacement for IOThread (And ChromeNetLog). It owns and manages the
+  // NetworkContext which will use the network service when the network service
+  // is enabled. When the network service is not enabled, its NetworkContext is
+  // backed by the IOThread's URLRequestContext.
+  virtual SystemNetworkContextManager* system_network_context_manager() = 0;
 
   // Returns the thread that is used for health check of all browser threads.
   virtual WatchDogThread* watchdog_thread() = 0;
@@ -259,15 +274,10 @@ class BrowserProcess {
 
   virtual CRLSetFetcher* crl_set_fetcher() = 0;
 
-  virtual component_updater::PnaclComponentInstaller*
-  pnacl_component_installer() = 0;
-
   virtual component_updater::SupervisedUserWhitelistInstaller*
   supervised_user_whitelist_installer() = 0;
 
   virtual MediaFileSystemRegistry* media_file_system_registry() = 0;
-
-  virtual bool created_local_state() const = 0;
 
 #if BUILDFLAG(ENABLE_WEBRTC)
   virtual WebRtcLogUploader* webrtc_log_uploader() = 0;
@@ -278,7 +288,7 @@ class BrowserProcess {
   virtual gcm::GCMDriver* gcm_driver() = 0;
 
   // Returns the tab manager. On non-supported platforms, this returns null.
-  virtual memory::TabManager* GetTabManager() = 0;
+  virtual resource_coordinator::TabManager* GetTabManager() = 0;
 
   // Returns the default web client state of Chrome (i.e., was it the user's
   // default browser) at the time a previous check was made sometime between
@@ -288,6 +298,8 @@ class BrowserProcess {
 
   // Returns the Physical Web data source.
   virtual physical_web::PhysicalWebDataSource* GetPhysicalWebDataSource() = 0;
+
+  virtual prefs::InProcessPrefServiceFactory* pref_service_factory() const = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BrowserProcess);

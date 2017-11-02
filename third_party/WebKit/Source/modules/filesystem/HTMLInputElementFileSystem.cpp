@@ -30,16 +30,16 @@
 
 #include "modules/filesystem/HTMLInputElementFileSystem.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/fileapi/FileList.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "modules/filesystem/DOMFilePath.h"
 #include "modules/filesystem/DOMFileSystem.h"
 #include "modules/filesystem/DirectoryEntry.h"
 #include "modules/filesystem/Entry.h"
 #include "modules/filesystem/FileEntry.h"
 #include "platform/FileMetadata.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {

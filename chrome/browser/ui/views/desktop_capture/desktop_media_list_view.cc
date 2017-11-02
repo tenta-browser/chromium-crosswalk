@@ -29,7 +29,7 @@ namespace {
 
 const int kDesktopMediaSourceViewGroupId = 1;
 
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
 // Here we are going to display default app icon for app windows without an
 // icon, and display product logo for chrome browser windows.
 gfx::ImageSkia LoadDefaultIcon(aura::Window* window) {
@@ -95,7 +95,7 @@ DesktopMediaSourceView* DesktopMediaListView::GetSelection() {
   return nullptr;
 }
 
-gfx::Size DesktopMediaListView::GetPreferredSize() const {
+gfx::Size DesktopMediaListView::CalculatePreferredSize() const {
   int total_rows =
       (child_count() + active_style_->columns - 1) / active_style_->columns;
   return gfx::Size(active_style_->columns * active_style_->item_size.width(),
@@ -175,7 +175,7 @@ void DesktopMediaListView::OnSourceAdded(DesktopMediaList* list, int index) {
   source_view->SetGroup(kDesktopMediaSourceViewGroupId);
   if (source.id.type == DesktopMediaID::TYPE_WINDOW) {
     gfx::ImageSkia icon_image = GetWindowIcon(source.id);
-#if defined(USE_ASH)
+#if defined(OS_CHROMEOS)
     // Empty icons are used to represent default icon for aura windows. By
     // detecting this, we load the default icon from resource.
     if (icon_image.isNull()) {
@@ -203,11 +203,12 @@ void DesktopMediaListView::OnSourceAdded(DesktopMediaList* list, int index) {
   if (!autoselect_source.empty() &&
       base::ASCIIToUTF16(autoselect_source) == source.name) {
     // Select, then accept and close the dialog when we're done adding sources.
+    parent_->SelectTab(source.id.type);
     source_view->OnFocus();
     content::BrowserThread::PostTask(
         content::BrowserThread::UI, FROM_HERE,
-        base::Bind(&DesktopMediaListView::AcceptSelection,
-                   weak_factory_.GetWeakPtr()));
+        base::BindOnce(&DesktopMediaListView::AcceptSelection,
+                       weak_factory_.GetWeakPtr()));
   }
 }
 

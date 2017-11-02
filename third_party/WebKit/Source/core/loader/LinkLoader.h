@@ -34,10 +34,8 @@
 
 #include "core/CoreExport.h"
 #include "core/loader/LinkLoaderClient.h"
-#include "core/loader/resource/LinkPreloadResourceClients.h"
 #include "platform/CrossOriginAttributeValue.h"
 #include "platform/PrerenderClient.h"
-#include "platform/loader/fetch/ResourceClient.h"
 #include "platform/loader/fetch/ResourceOwner.h"
 #include "platform/wtf/Optional.h"
 
@@ -45,15 +43,15 @@ namespace blink {
 
 class Document;
 class LinkRelAttribute;
+class LocalFrame;
 class NetworkHintsInterface;
 class PrerenderHandle;
 struct ViewportDescriptionWrapper;
 
-// The LinkLoader can load link rel types icon, dns-prefetch, subresource,
-// prefetch and prerender.
+// The LinkLoader can load link rel types icon, dns-prefetch, prefetch, and
+// prerender.
 class CORE_EXPORT LinkLoader final
     : public GarbageCollectedFinalized<LinkLoader>,
-      public ResourceOwner<Resource, ResourceClient>,
       public PrerenderClient {
   USING_GARBAGE_COLLECTED_MIXIN(LinkLoader);
 
@@ -63,24 +61,19 @@ class CORE_EXPORT LinkLoader final
   }
   ~LinkLoader() override;
 
-  // from ResourceClient
-  void NotifyFinished(Resource*) override;
-  String DebugName() const override { return "LinkLoader"; }
-
   // from PrerenderClient
   void DidStartPrerender() override;
   void DidStopPrerender() override;
   void DidSendLoadForPrerender() override;
   void DidSendDOMContentLoadedForPrerender() override;
 
-  void TriggerEvents(const Resource*);
-
-  void Released();
+  void Abort();
   bool LoadLink(const LinkRelAttribute&,
                 CrossOriginAttributeValue,
                 const String& type,
                 const String& as,
                 const String& media,
+                const String& nonce,
                 ReferrerPolicy,
                 const KURL&,
                 Document&,
@@ -95,7 +88,8 @@ class CORE_EXPORT LinkLoader final
   enum MediaPreloadPolicy { kLoadAll, kOnlyLoadNonMedia, kOnlyLoadMedia };
   static void LoadLinksFromHeader(const String& header_value,
                                   const KURL& base_url,
-                                  Document*,
+                                  LocalFrame&,
+                                  Document*,  // can be nullptr
                                   const NetworkHintsInterface&,
                                   CanLoadResources,
                                   MediaPreloadPolicy,
@@ -103,24 +97,20 @@ class CORE_EXPORT LinkLoader final
   static WTF::Optional<Resource::Type> GetResourceTypeFromAsAttribute(
       const String& as);
 
-  Resource* LinkPreloadedResourceForTesting();
+  Resource* GetResourceForTesting();
 
   DECLARE_TRACE();
 
  private:
+  class FinishObserver;
   LinkLoader(LinkLoaderClient*, RefPtr<WebTaskRunner>);
 
-  void LinkLoadTimerFired(TimerBase*);
-  void LinkLoadingErrorTimerFired(TimerBase*);
-  void CreateLinkPreloadResourceClient(Resource*);
+  void NotifyFinished();
 
+  Member<FinishObserver> finish_observer_;
   Member<LinkLoaderClient> client_;
 
-  TaskRunnerTimer<LinkLoader> link_load_timer_;
-  TaskRunnerTimer<LinkLoader> link_loading_error_timer_;
-
   Member<PrerenderHandle> prerender_;
-  Member<LinkPreloadResourceClient> link_preload_resource_client_;
 };
 
 }  // namespace blink

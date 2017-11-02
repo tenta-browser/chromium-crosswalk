@@ -77,11 +77,11 @@ DOMTimer::DOMTimer(ExecutionContext* context,
                    int interval,
                    bool single_shot,
                    int timeout_id)
-    : SuspendableTimer(context, TaskType::kTimer),
+    : SuspendableTimer(context, TaskType::kJavascriptTimer),
       timeout_id_(timeout_id),
       nesting_level_(context->Timers()->TimerNestingLevel() + 1),
       action_(action) {
-  ASSERT(timeout_id > 0);
+  DCHECK_GT(timeout_id, 0);
   if (ShouldForwardUserGesture(interval, nesting_level_)) {
     // Thread safe because shouldForwardUserGesture will only return true if
     // execution is on the the main thread.
@@ -133,7 +133,7 @@ void DOMTimer::ContextDestroyed(ExecutionContext*) {
 
 void DOMTimer::Fired() {
   ExecutionContext* context = GetExecutionContext();
-  ASSERT(context);
+  DCHECK(context);
   context->Timers()->SetTimerNestingLevel(nesting_level_);
   DCHECK(!context->IsContextSuspended());
   // Only the first execution of a multi-shot timer should get an affirmative

@@ -4,6 +4,8 @@
 
 #include "content/public/test/content_browser_test.h"
 
+#include <string>
+
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/process/launch.h"
@@ -13,6 +15,7 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/web_contents.h"
@@ -24,10 +27,6 @@
 #include "content/shell/browser/shell.h"
 #include "content/shell/common/shell_switches.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
 
 namespace content {
 
@@ -48,7 +47,7 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_ShouldntRun) {
 
 class CrashObserver : public RenderProcessHostObserver {
  public:
-  CrashObserver(const base::Closure& quit_closure)
+  explicit CrashObserver(const base::Closure& quit_closure)
       : quit_closure_(quit_closure) {}
   void RenderProcessExited(RenderProcessHost* host,
                            base::TerminationStatus status,
@@ -65,7 +64,8 @@ class CrashObserver : public RenderProcessHostObserver {
 IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_RendererCrash) {
   scoped_refptr<MessageLoopRunner> message_loop_runner = new MessageLoopRunner;
   CrashObserver crash_observer(message_loop_runner->QuitClosure());
-  shell()->web_contents()->GetRenderProcessHost()->AddObserver(&crash_observer);
+  shell()->web_contents()->GetMainFrame()->GetProcess()->AddObserver(
+      &crash_observer);
 
   NavigateToURL(shell(), GURL("chrome:crash"));
   message_loop_runner->Run();
@@ -73,13 +73,6 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, MANUAL_RendererCrash) {
 
 // Tests that browser tests print the callstack when a child process crashes.
 IN_PROC_BROWSER_TEST_F(ContentBrowserTest, RendererCrashCallStack) {
-#if defined(OS_WIN)
-  // Matches the same condition in RouteStdioToConsole, which makes this test
-  // fail on XP.
-  if (base::win::GetVersion() < base::win::VERSION_VISTA)
-    return;
-#endif
-
   base::ThreadRestrictions::ScopedAllowIO allow_io_for_temp_dir;
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
@@ -90,25 +83,19 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, RendererCrashCallStack) {
   new_test.AppendSwitch(kRunManualTestsFlag);
   new_test.AppendSwitch(kSingleProcessTestsFlag);
 
-  // Per https://www.chromium.org/developers/testing/addresssanitizer, there are
-  // ASAN bots that run without the sandbox which this test will pass for. The
-  // other ones pipe the output to a symbolizer script.
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoSandbox)) {
-    new_test.AppendSwitch(switches::kNoSandbox);
-  } else {
-#if defined(ADDRESS_SANITIZER)
-    LOG(INFO) << "Couldn't run ContentBrowserTest.RendererCrashCallStack since "
-              << "sandbox is enabled and ASAN requires piping to an external "
-              << "script.";
-    return;
-#endif
-  }
-
   std::string output;
   base::GetAppOutputAndError(new_test, &output);
 
+  // In sanitizer builds, an external script is responsible for symbolizing,
+  // so the stack that the tests sees here looks like:
+  // "#0 0x0000007ea911 (...content_browsertests+0x7ea910)"
   std::string crash_string =
+#if !defined(ADDRESS_SANITIZER) && !defined(LEAK_SANITIZER) && \
+    !defined(MEMORY_SANITIZER) && !defined(THREAD_SANITIZER)
       "content::RenderFrameImpl::PrepareRenderViewForNavigation";
+#else
+      "#0 ";
+#endif
 
   if (output.find(crash_string) == std::string::npos) {
     GTEST_FAIL() << "Couldn't find\n" << crash_string << "\n in output\n "
@@ -134,8 +121,17 @@ IN_PROC_BROWSER_TEST_F(ContentBrowserTest, BrowserCrashCallStack) {
   std::string output;
   base::GetAppOutputAndError(new_test, &output);
 
+  // In sanitizer builds, an external script is responsible for symbolizing,
+  // so the stack that the test sees here looks like:
+  // "#0 0x0000007ea911 (...content_browsertests+0x7ea910)"
   std::string crash_string =
-      "content::ContentBrowserTest_MANUAL_BrowserCrash_Test::RunTestOnMainThread";
+#if !defined(ADDRESS_SANITIZER) && !defined(LEAK_SANITIZER) && \
+    !defined(MEMORY_SANITIZER) && !defined(THREAD_SANITIZER)
+      "content::ContentBrowserTest_MANUAL_BrowserCrash_Test::"
+      "RunTestOnMainThread";
+#else
+      "#0 ";
+#endif
 
   if (output.find(crash_string) == std::string::npos) {
     GTEST_FAIL() << "Couldn't find\n" << crash_string << "\n in output\n "
@@ -184,7 +180,7 @@ void CallbackChecker(bool* non_nested_task_ran) {
 IN_PROC_BROWSER_TEST_F(ContentBrowserTest, NonNestableTask) {
   bool non_nested_task_ran = false;
   base::ThreadTaskRunnerHandle::Get()->PostNonNestableTask(
-      FROM_HERE, base::Bind(&CallbackChecker, &non_nested_task_ran));
+      FROM_HERE, base::BindOnce(&CallbackChecker, &non_nested_task_ran));
   content::RunAllPendingInMessageLoop();
   ASSERT_TRUE(non_nested_task_ran);
 }

@@ -30,6 +30,12 @@ const char* DefaultMessageForStatusCode(StatusCode code) {
       return "invalid element state";
     case kUnknownError:
       return "unknown error";
+    case kInvalidArgument:
+      return "invalid argument";
+    case kElementNotInteractable:
+      return "element not interactable";
+    case kUnsupportedOperation:
+      return "unsupported operation";
     case kJavaScriptError:
       return "javascript error";
     case kXPathLookupError:
@@ -60,6 +66,10 @@ const char* DefaultMessageForStatusCode(StatusCode code) {
       return "forbidden";
     case kTabCrashed:
       return "tab crashed";
+    case kNoSuchCookie:
+      return "no such cookie";
+    case kUnableToSetCookie:
+      return "unable to set cookie";
     default:
       return "<unknown>";
   }

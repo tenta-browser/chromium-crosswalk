@@ -36,11 +36,6 @@ extern "C" {
 /** Maximal value for ::BROTLI_PARAM_QUALITY parameter. */
 #define BROTLI_MAX_QUALITY 11
 
-BROTLI_DEPRECATED static const int kBrotliMinWindowBits =
-    BROTLI_MIN_WINDOW_BITS;
-BROTLI_DEPRECATED static const int kBrotliMaxWindowBits =
-    BROTLI_MAX_WINDOW_BITS;
-
 /** Options for ::BROTLI_PARAM_MODE parameter. */
 typedef enum BrotliEncoderMode {
   /**
@@ -50,7 +45,7 @@ typedef enum BrotliEncoderMode {
    * properties of the input.
    */
   BROTLI_MODE_GENERIC = 0,
-  /** Compression mode for UTF-8 formated text input. */
+  /** Compression mode for UTF-8 formatted text input. */
   BROTLI_MODE_TEXT = 1,
   /** Compression mode used in WOFF 2.0. */
   BROTLI_MODE_FONT = 2
@@ -77,7 +72,9 @@ typedef enum BrotliEncoderOperation {
    * Actual flush is performed when input stream is depleted and there is enough
    * space in output stream. This means that client should repeat
    * ::BROTLI_OPERATION_FLUSH operation until @p available_in becomes @c 0, and
-   * ::BrotliEncoderHasMoreOutput returns ::BROTLI_FALSE.
+   * ::BrotliEncoderHasMoreOutput returns ::BROTLI_FALSE. If output is acquired
+   * via ::BrotliEncoderTakeOutput, then operation should be repeated after
+   * output buffer is drained.
    *
    * @warning Until flush is complete, client @b SHOULD @b NOT swap,
    *          reduce or extend input stream.
@@ -91,8 +88,10 @@ typedef enum BrotliEncoderOperation {
    *
    * Actual finalization is performed when input stream is depleted and there is
    * enough space in output stream. This means that client should repeat
-   * ::BROTLI_OPERATION_FLUSH operation until @p available_in becomes @c 0, and
-   * ::BrotliEncoderHasMoreOutput returns ::BROTLI_FALSE.
+   * ::BROTLI_OPERATION_FINISH operation until @p available_in becomes @c 0, and
+   * ::BrotliEncoderHasMoreOutput returns ::BROTLI_FALSE. If output is acquired
+   * via ::BrotliEncoderTakeOutput, then operation should be repeated after
+   * output buffer is drained.
    *
    * @warning Until finalization is complete, client @b SHOULD @b NOT swap,
    *          reduce or extend input stream.
@@ -165,7 +164,19 @@ typedef enum BrotliEncoderParameter {
    *       memory. \n The rough formula of memory used for temporary input
    *       storage is `3 << lgBlock`.
    */
-  BROTLI_PARAM_LGBLOCK = 3
+  BROTLI_PARAM_LGBLOCK = 3,
+  /**
+   * Flag that affects usage of "literal context modeling" format feature.
+   *
+   * This flag is a "decoding-speed vs compression ratio" trade-off.
+   */
+  BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING = 4,
+  /**
+   * Estimated total input size for all ::BrotliEncoderCompressStream calls.
+   *
+   * The default value is 0, which means that the total input size is unknown.
+   */
+  BROTLI_PARAM_SIZE_HINT = 5
 } BrotliEncoderParameter;
 
 /**
@@ -215,43 +226,6 @@ BROTLI_ENC_API BrotliEncoderState* BrotliEncoderCreateInstance(
  * @param state decoder instance to be cleaned up and deallocated
  */
 BROTLI_ENC_API void BrotliEncoderDestroyInstance(BrotliEncoderState* state);
-
-/* Calculates maximum input size that can be processed at once. */
-BROTLI_DEPRECATED BROTLI_ENC_API size_t BrotliEncoderInputBlockSize(
-    BrotliEncoderState* state);
-
-/* Copies the given input data to the internal ring buffer. */
-BROTLI_DEPRECATED BROTLI_ENC_API void BrotliEncoderCopyInputToRingBuffer(
-    BrotliEncoderState* state, const size_t input_size,
-    const uint8_t* input_buffer);
-
-/* Processes the accumulated input. */
-BROTLI_DEPRECATED BROTLI_ENC_API BROTLI_BOOL BrotliEncoderWriteData(
-    BrotliEncoderState* state, const BROTLI_BOOL is_last,
-    const BROTLI_BOOL force_flush, size_t* out_size, uint8_t** output);
-
-/**
- * Prepends imaginary LZ77 dictionary.
- *
- * Fills the fresh ::BrotliEncoderState with additional data corpus for LZ77
- * backward references.
- *
- * @note Not to be confused with the static dictionary (see RFC7932 section 8).
- *
- * Workflow:
- *  -# Allocate and initialize state with ::BrotliEncoderCreateInstance
- *  -# Set ::BROTLI_PARAM_LGWIN parameter
- *  -# Invoke ::BrotliEncoderSetCustomDictionary
- *  -# Use ::BrotliEncoderCompressStream
- *  -# Clean up and free state with ::BrotliEncoderDestroyInstance
- *
- * @param state encoder instance
- * @param size length of @p dict; at most "window size" bytes are used
- * @param dict "dictionary"; @b MUST use same dictionary during decompression
- */
-BROTLI_ENC_API void BrotliEncoderSetCustomDictionary(
-    BrotliEncoderState* state, size_t size,
-    const uint8_t dict[BROTLI_ARRAY_PARAM(size)]);
 
 /**
  * Calculates the output size bound for the given @p input_size.

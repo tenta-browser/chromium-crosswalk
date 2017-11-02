@@ -131,8 +131,10 @@ class NonBlockingEventBrowserTest : public ContentBrowserTest {
     scoped_refptr<InputMsgWatcher> input_msg_watcher(new InputMsgWatcher(
         GetWidgetHost(), blink::WebInputEvent::kMouseWheel));
 
-    GetWidgetHost()->ForwardWheelEvent(
-        SyntheticWebMouseWheelEventBuilder::Build(10, 10, 0, -53, 0, true));
+    blink::WebMouseWheelEvent wheel_event =
+        SyntheticWebMouseWheelEventBuilder::Build(10, 10, 0, -53, 0, true);
+    wheel_event.phase = blink::WebMouseWheelEvent::kPhaseBegan;
+    GetWidgetHost()->ForwardWheelEvent(wheel_event);
 
     // Runs until we get the InputMsgAck callback
     EXPECT_EQ(INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING,
@@ -162,8 +164,9 @@ class NonBlockingEventBrowserTest : public ContentBrowserTest {
         new SyntheticSmoothScrollGesture(params));
     GetWidgetHost()->QueueSyntheticGesture(
         std::move(gesture),
-        base::Bind(&NonBlockingEventBrowserTest::OnSyntheticGestureCompleted,
-                   base::Unretained(this)));
+        base::BindOnce(
+            &NonBlockingEventBrowserTest::OnSyntheticGestureCompleted,
+            base::Unretained(this)));
 
     // Expect that the compositor scrolled at least one pixel while the
     // main thread was in a busy loop.

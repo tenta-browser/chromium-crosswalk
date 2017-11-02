@@ -9,6 +9,8 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
 #include "components/metrics/proto/omnibox_input_type.pb.h"
@@ -21,17 +23,18 @@
 #include "components/url_formatter/url_fixer.h"
 
 // static
-const size_t AutocompleteResult::kMaxMatches = 6;
+size_t AutocompleteResult::GetMaxMatches() {
+  constexpr size_t kDefaultMaxAutocompleteMatches = 6;
 
-void AutocompleteResult::Selection::Clear() {
-  destination_url = GURL();
-  provider_affinity = NULL;
-  is_history_what_you_typed_match = false;
+  return base::GetFieldTrialParamByFeatureAsInt(
+      omnibox::kUIExperimentMaxAutocompleteMatches,
+      OmniboxFieldTrial::kUIMaxAutocompleteMatchesParam,
+      kDefaultMaxAutocompleteMatches);
 }
 
 AutocompleteResult::AutocompleteResult() {
   // Reserve space for the max number of matches we'll show.
-  matches_.reserve(kMaxMatches);
+  matches_.reserve(GetMaxMatches());
 
   // It's probably safe to do this in the initializer list, but there's little
   // penalty to doing it here and it ensures our object is fully constructed
@@ -129,8 +132,8 @@ void AutocompleteResult::SortAndCull(
 
   SortAndDedupMatches(input.current_page_classification(), &matches_);
 
-  // Sort and trim to the most relevant kMaxMatches matches.
-  size_t max_num_matches = std::min(kMaxMatches, matches_.size());
+  // Sort and trim to the most relevant GetMaxMatches() matches.
+  size_t max_num_matches = std::min(GetMaxMatches(), matches_.size());
   CompareWithDemoteByType<AutocompleteMatch> comparing_object(
       input.current_page_classification());
   std::sort(matches_.begin(), matches_.end(), comparing_object);
@@ -300,8 +303,9 @@ GURL AutocompleteResult::ComputeAlternateNavUrl(
           (AutocompleteMatch::IsSearchType(match.type)) &&
           !ui::PageTransitionCoreTypeIs(match.transition,
                                         ui::PAGE_TRANSITION_KEYWORD) &&
-          (input.canonicalized_url() != match.destination_url)) ?
-      input.canonicalized_url() : GURL();
+          (input.canonicalized_url() != match.destination_url))
+             ? input.canonicalized_url()
+             : GURL();
 }
 
 void AutocompleteResult::SortAndDedupMatches(
@@ -330,6 +334,27 @@ void AutocompleteResult::SortAndDedupMatches(
   matches->erase(std::unique(matches->begin(), matches->end(),
                              &AutocompleteMatch::DestinationsEqual),
                  matches->end());
+}
+
+void AutocompleteResult::InlineTailPrefixes() {
+  base::string16 common_prefix;
+
+  for (const auto& match : matches_) {
+    if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL) {
+      int common_length;
+      base::StringToInt(
+          match.GetAdditionalInfo(kACMatchPropertyContentsStartIndex),
+          &common_length);
+      common_prefix = base::UTF8ToUTF16(match.GetAdditionalInfo(
+                                            kACMatchPropertySuggestionText))
+                          .substr(0, common_length);
+      break;
+    }
+  }
+  if (common_prefix.size()) {
+    for (auto& match : matches_)
+      match.InlineTailPrefix(common_prefix);
+  }
 }
 
 void AutocompleteResult::CopyFrom(const AutocompleteResult& rhs) {

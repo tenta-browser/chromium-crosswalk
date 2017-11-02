@@ -3,54 +3,6 @@
 // found in the LICENSE file.
 
 /**
- * Class representing the results of a scan operation.
- *
- * @interface
- */
-importer.MediaScanner = function() {};
-
-/**
- * @typedef {function(!importer.ScanEvent, importer.ScanResult)}
- */
-importer.ScanObserver;
-
-/**
- * Initiates scanning.
- *
- * @param {!DirectoryEntry} directory
- * @param {!importer.ScanMode} mode
- * @return {!importer.ScanResult} ScanResult object representing the scan
- *     job both while in-progress and when completed.
- */
-importer.MediaScanner.prototype.scanDirectory;
-
-/**
- * Initiates scanning.
- *
- * @param {!Array<!FileEntry>} entries Must be non-empty, and all entires
- *     must be of a supported media type. Individually supplied files
- *     are not subject to deduplication.
- * @param {!importer.ScanMode} mode The method to detect new files.
- * @return {!importer.ScanResult} ScanResult object representing the scan
- *     job for the explicitly supplied entries.
- */
-importer.MediaScanner.prototype.scanFiles;
-
-/**
- * Adds an observer, which will be notified on scan events.
- *
- * @param {!importer.ScanObserver} observer
- */
-importer.MediaScanner.prototype.addObserver;
-
-/**
- * Remove a previously registered observer.
- *
- * @param {!importer.ScanObserver} observer
- */
-importer.MediaScanner.prototype.removeObserver;
-
-/**
  * Recursively scans through a list of given files and directories, and creates
  * a list of media files.
  *
@@ -117,11 +69,11 @@ importer.DefaultMediaScanner.prototype.scanDirectory = function(directory,
   console.info(scan.name + ': Scanning directory ' + directory.fullPath);
 
   var watcher = this.watcherFactory_(
-      /** @this {importer.DefaultMediaScanner} */
+      (/** @this {importer.DefaultMediaScanner} */
       function() {
         scan.cancel();
         this.notify_(importer.ScanEvent.INVALIDATED, scan);
-      }.bind(this));
+      }).bind(this));
 
   this.crawlDirectory_(directory, watcher)
       .then(this.scanMediaFiles_.bind(this, scan))
@@ -130,13 +82,13 @@ importer.DefaultMediaScanner.prototype.scanDirectory = function(directory,
 
   scan.whenFinal()
       .then(
-          /** @this {importer.DefaultMediaScanner} */
+          (/** @this {importer.DefaultMediaScanner} */
           function() {
             console.info(
                 scan.name + ': Finished directory scan. Details: ' +
                 JSON.stringify(scan.getStatistics()));
             this.notify_(importer.ScanEvent.FINALIZED, scan);
-          }.bind(this));
+          }).bind(this));
 
   return scan;
 };
@@ -153,10 +105,10 @@ importer.DefaultMediaScanner.prototype.scanFiles = function(entries, mode) {
 
   var watcher = this.watcherFactory_(
       /** @this {importer.DefaultMediaScanner} */
-      function() {
+      (function() {
         scan.cancel();
         this.notify_(importer.ScanEvent.INVALIDATED, scan);
-      }.bind(this));
+      }).bind(this));
 
   scan.setCandidateCount(entries.length);
   var scanPromises = entries.map(this.onFileEntryFound_.bind(this, scan));
@@ -167,13 +119,13 @@ importer.DefaultMediaScanner.prototype.scanFiles = function(entries, mode) {
 
   scan.whenFinal()
       .then(
-          /** @this {importer.DefaultMediaScanner} */
+          (/** @this {importer.DefaultMediaScanner} */
           function() {
             console.info(
                 scan.name + ': Finished file-selection scan. Details: ' +
                 JSON.stringify(scan.getStatistics()));
             this.notify_(importer.ScanEvent.FINALIZED, scan);
-          }.bind(this));
+          }).bind(this));
 
   return scan;
 };
@@ -290,7 +242,7 @@ importer.DefaultMediaScanner.prototype.onFileEntryFound_ =
   return this.getDisposition_(entry, importer.Destination.GOOGLE_DRIVE,
                               scan.mode)
       .then(
-          /**
+          (/**
            * @param {!importer.Disposition} disposition The disposition
            *     of the entry. Either some sort of dupe, or an original.
            * @return {!Promise}
@@ -300,7 +252,7 @@ importer.DefaultMediaScanner.prototype.onFileEntryFound_ =
             return disposition === importer.Disposition.ORIGINAL ?
                 this.onUniqueFileFound_(scan, entry) :
                 this.onDuplicateFileFound_(scan, entry, disposition);
-          }.bind(this));
+          }).bind(this));
 };
 
 /**
@@ -322,7 +274,7 @@ importer.DefaultMediaScanner.prototype.onUniqueFileFound_ =
 
   return scan.addFileEntry(entry)
       .then(
-          /**
+          (/**
            * @param {boolean} added
            * @this {importer.DefaultMediaScanner}
            */
@@ -330,7 +282,7 @@ importer.DefaultMediaScanner.prototype.onUniqueFileFound_ =
             if (added) {
               this.notify_(importer.ScanEvent.UPDATED, scan);
             }
-          }.bind(this));
+          }).bind(this));
 };
 
 /**
@@ -350,95 +302,6 @@ importer.DefaultMediaScanner.prototype.onDuplicateFileFound_ =
   this.notify_(importer.ScanEvent.UPDATED, scan);
   return Promise.resolve();
 };
-
-/**
- * Class representing the results of a scan operation.
- *
- * @interface
- */
-importer.ScanResult = function() {};
-
-/**
- * @return {boolean} true if scanning is complete.
- */
-importer.ScanResult.prototype.isFinal;
-
-/**
- * Notifies the scan to stop working. Some in progress work
- * may continue, but no new work will be undertaken.
- */
-importer.ScanResult.prototype.cancel;
-
-/**
- * @return {boolean} True if the scan has been canceled. Some
- * work started prior to cancelation may still be ongoing.
- */
-importer.ScanResult.prototype.canceled;
-
-/**
- * @param {number} count Sets the total number of candidate entries
- *     that were checked while scanning. Used when determining
- *     total progress.
- */
-importer.ScanResult.prototype.setCandidateCount;
-
-/**
- * Event method called when a candidate has been processed.
- * @param {number} count
- */
-importer.ScanResult.prototype.onCandidatesProcessed;
-
-/**
- * Returns all files entries discovered so far. The list will be
- * complete only after scanning has completed and {@code isFinal}
- * returns {@code true}.
- *
- * @return {!Array<!FileEntry>}
- */
-importer.ScanResult.prototype.getFileEntries;
-
-/**
- * Returns all files entry duplicates discovered so far.
- * The list will be
- * complete only after scanning has completed and {@code isFinal}
- * returns {@code true}.
- *
- * Duplicates are files that were found during scanning,
- * where not found in import history, and were matched to
- * an existing entry either in the import destination, or
- * to another entry within the scan itself.
- *
- * @return {!Array<!FileEntry>}
- */
-importer.ScanResult.prototype.getDuplicateFileEntries;
-
-/**
- * Returns a promise that fires when scanning is finished
- * normally or has been canceled.
- *
- * @return {!Promise<!importer.ScanResult>}
- */
-importer.ScanResult.prototype.whenFinal;
-
-/**
- * @return {!importer.ScanResult.Statistics}
- */
-importer.ScanResult.prototype.getStatistics;
-
-/**
- * @typedef {{
- *   scanDuration: number,
- *   newFileCount: number,
- *   duplicates: !Object<!importer.Disposition, number>,
- *   sizeBytes: number,
- *   candidates: {
- *     total: number,
- *     processed: number
- *   },
- *   progress: number
- * }}
- */
-importer.ScanResult.Statistics;
 
 /**
  * Results of a scan operation. The object is "live" in that data can and
@@ -591,8 +454,8 @@ importer.DefaultScanResult.prototype.canceled = function() {
  *     rejected as a dupe.
  */
 importer.DefaultScanResult.prototype.addFileEntry = function(entry) {
-  return new Promise(entry.getMetadata.bind(entry)).then(
-      /**
+  return metadataProxy.getEntryMetadata(entry).then(
+      (/**
        * @param {!Metadata} metadata
        * @this {importer.DefaultScanResult}
        */
@@ -603,7 +466,7 @@ importer.DefaultScanResult.prototype.addFileEntry = function(entry) {
 
         return this.createHashcode_(entry)
             .then(
-                /**
+                (/**
                  * @param {string} hashcode
                  * @this {importer.DefaultScanResult}
                  */
@@ -622,9 +485,9 @@ importer.DefaultScanResult.prototype.addFileEntry = function(entry) {
                   this.fileHashcodes_[hashcode] = entry;
                   this.fileEntries_.push(entry);
                   return true;
-                }.bind(this));
+                }).bind(this));
 
-    }.bind(this));
+      }).bind(this));
 };
 
 /**

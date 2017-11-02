@@ -9,10 +9,10 @@
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_time.h"
 #include "net/quic/core/quic_utils.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/quic_config_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 #include "net/test/gtest_util.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
 
@@ -20,7 +20,7 @@ namespace net {
 namespace test {
 namespace {
 
-class QuicConfigTest : public ::testing::Test {
+class QuicConfigTest : public QuicTest {
  protected:
   QuicConfig config_;
 };
@@ -33,9 +33,6 @@ TEST_F(QuicConfigTest, ToHandshakeMessage) {
   config_.SetIdleNetworkTimeout(QuicTime::Delta::FromSeconds(5),
                                 QuicTime::Delta::FromSeconds(2));
   config_.SetMaxStreamsPerConnection(4, 2);
-  if (!FLAGS_quic_reloadable_flag_quic_no_socket_receive_buffer) {
-    config_.SetSocketReceiveBufferToSend(kDefaultSocketReceiveBuffer);
-  }
   CryptoHandshakeMessage msg;
   config_.ToHandshakeMessage(&msg);
 
@@ -55,12 +52,6 @@ TEST_F(QuicConfigTest, ToHandshakeMessage) {
   error = msg.GetUint32(kCFCW, &value);
   EXPECT_EQ(QUIC_NO_ERROR, error);
   EXPECT_EQ(kInitialSessionFlowControlWindowForTest, value);
-
-  if (!FLAGS_quic_reloadable_flag_quic_no_socket_receive_buffer) {
-    error = msg.GetUint32(kSRBF, &value);
-    EXPECT_EQ(QUIC_NO_ERROR, error);
-    EXPECT_EQ(kDefaultSocketReceiveBuffer, value);
-  }
 }
 
 TEST_F(QuicConfigTest, ProcessClientHello) {
@@ -77,10 +68,6 @@ TEST_F(QuicConfigTest, ProcessClientHello) {
       2 * kInitialStreamFlowControlWindowForTest);
   client_config.SetInitialSessionFlowControlWindowToSend(
       2 * kInitialSessionFlowControlWindowForTest);
-  if (!FLAGS_quic_reloadable_flag_quic_no_socket_receive_buffer) {
-    client_config.SetSocketReceiveBufferToSend(kDefaultSocketReceiveBuffer);
-  }
-  client_config.SetForceHolBlocking();
   QuicTagVector copt;
   copt.push_back(kTBBR);
   client_config.SetConnectionOptionsToSend(copt);
@@ -106,7 +93,6 @@ TEST_F(QuicConfigTest, ProcessClientHello) {
             config_.IdleNetworkTimeout());
   EXPECT_EQ(kDefaultMaxStreamsPerConnection, config_.MaxStreamsPerConnection());
   EXPECT_EQ(10 * kNumMicrosPerMilli, config_.ReceivedInitialRoundTripTimeUs());
-  EXPECT_TRUE(config_.ForceHolBlocking(Perspective::IS_SERVER));
   EXPECT_TRUE(config_.HasReceivedConnectionOptions());
   EXPECT_EQ(2u, config_.ReceivedConnectionOptions().size());
   EXPECT_EQ(config_.ReceivedConnectionOptions()[0], kIW50);
@@ -115,16 +101,13 @@ TEST_F(QuicConfigTest, ProcessClientHello) {
             2 * kInitialStreamFlowControlWindowForTest);
   EXPECT_EQ(config_.ReceivedInitialSessionFlowControlWindowBytes(),
             2 * kInitialSessionFlowControlWindowForTest);
-  if (!FLAGS_quic_reloadable_flag_quic_no_socket_receive_buffer) {
-    EXPECT_EQ(config_.ReceivedSocketReceiveBuffer(),
-              kDefaultSocketReceiveBuffer);
-  }
 }
 
 TEST_F(QuicConfigTest, ProcessServerHello) {
   QuicIpAddress host;
   host.FromString("127.0.3.1");
   const QuicSocketAddress kTestServerAddress = QuicSocketAddress(host, 1234);
+  const uint128 kTestResetToken = MakeUint128(0, 10111100001);
   QuicConfig server_config;
   QuicTagVector cgst;
   cgst.push_back(kQBIC);
@@ -138,10 +121,8 @@ TEST_F(QuicConfigTest, ProcessServerHello) {
       2 * kInitialStreamFlowControlWindowForTest);
   server_config.SetInitialSessionFlowControlWindowToSend(
       2 * kInitialSessionFlowControlWindowForTest);
-  if (!FLAGS_quic_reloadable_flag_quic_no_socket_receive_buffer) {
-    server_config.SetSocketReceiveBufferToSend(kDefaultSocketReceiveBuffer);
-  }
   server_config.SetAlternateServerAddressToSend(kTestServerAddress);
+  server_config.SetStatelessResetTokenToSend(kTestResetToken);
   CryptoHandshakeMessage msg;
   server_config.ToHandshakeMessage(&msg);
   string error_details;
@@ -158,12 +139,10 @@ TEST_F(QuicConfigTest, ProcessServerHello) {
             2 * kInitialStreamFlowControlWindowForTest);
   EXPECT_EQ(config_.ReceivedInitialSessionFlowControlWindowBytes(),
             2 * kInitialSessionFlowControlWindowForTest);
-  if (!FLAGS_quic_reloadable_flag_quic_no_socket_receive_buffer) {
-    EXPECT_EQ(config_.ReceivedSocketReceiveBuffer(),
-              kDefaultSocketReceiveBuffer);
-  }
   EXPECT_TRUE(config_.HasReceivedAlternateServerAddress());
   EXPECT_EQ(kTestServerAddress, config_.ReceivedAlternateServerAddress());
+  EXPECT_TRUE(config_.HasReceivedStatelessResetToken());
+  EXPECT_EQ(kTestResetToken, config_.ReceivedStatelessResetToken());
 }
 
 TEST_F(QuicConfigTest, MissingOptionalValuesInCHLO) {

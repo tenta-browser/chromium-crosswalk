@@ -31,6 +31,8 @@ namespace blink {
 
 class CSSValue;
 class CSSImageGeneratorValue;
+class Document;
+class ImageResourceObserver;
 
 class CORE_EXPORT StyleGeneratedImage final : public StyleImage {
  public:
@@ -43,17 +45,21 @@ class CORE_EXPORT StyleGeneratedImage final : public StyleImage {
   CSSValue* CssValue() const override;
   CSSValue* ComputedCSSValue() const override;
 
-  LayoutSize ImageSize(const LayoutObject&,
+  LayoutSize ImageSize(const Document&,
                        float multiplier,
                        const LayoutSize& default_object_size) const override;
   bool ImageHasRelativeSize() const override { return !fixed_size_; }
   bool UsesImageContainerSize() const override { return !fixed_size_; }
-  void AddClient(LayoutObject*) override;
-  void RemoveClient(LayoutObject*) override;
-  PassRefPtr<Image> GetImage(const LayoutObject&,
-                             const IntSize&,
-                             float) const override;
-  bool KnownToBeOpaque(const LayoutObject&) const override;
+  void AddClient(ImageResourceObserver*) override;
+  void RemoveClient(ImageResourceObserver*) override;
+  // The |container_size| is the container size with subpixel snapping, where
+  // the |logical_size| is without it. Both sizes include zoom.
+  RefPtr<Image> GetImage(const ImageResourceObserver&,
+                         const Document&,
+                         const ComputedStyle&,
+                         const IntSize& container_size,
+                         const LayoutSize* logical_size) const override;
+  bool KnownToBeOpaque(const Document&, const ComputedStyle&) const override;
 
   DECLARE_VIRTUAL_TRACE();
 

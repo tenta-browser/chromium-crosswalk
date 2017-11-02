@@ -30,12 +30,11 @@ function draw()
 function waitForFinish()
 {
   if (g_swapsBeforeAck == 0) {
-    domAutomationController.setAutomationId(1);
     domAutomationController.send("SUCCESS");
   } else {
     g_swapsBeforeAck--;
     document.getElementById('container').style.zIndex = g_swapsBeforeAck + 1;
-    window.webkitRequestAnimationFrame(waitForFinish);
+    window.requestAnimationFrame(waitForFinish);
   }
 }
 </script>

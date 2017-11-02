@@ -5,10 +5,7 @@
 #ifndef DEVICE_HID_MOCK_HID_SERVICE_H_
 #define DEVICE_HID_MOCK_HID_SERVICE_H_
 
-#include <map>
-
 #include "device/hid/hid_service.h"
-#include "testing/gmock/include/gmock/gmock.h"
 
 namespace device {
 
@@ -19,13 +16,17 @@ class MockHidService : public HidService {
 
   // Public wrappers around protected functions needed for tests.
   void AddDevice(scoped_refptr<HidDeviceInfo> info);
-  void RemoveDevice(const HidDeviceId& device_id);
+  void RemoveDevice(const HidPlatformDeviceId& platform_device_id);
   void FirstEnumerationComplete();
-  const std::map<HidDeviceId, scoped_refptr<HidDeviceInfo>>& devices() const;
+  const std::map<std::string, scoped_refptr<HidDeviceInfo>>& devices() const;
 
-  MOCK_METHOD2(Connect,
-               void(const HidDeviceId& device_id,
-                    const ConnectCallback& callback));
+  void Connect(const std::string& device_id,
+               const ConnectCallback& callback) override;
+
+ private:
+  base::WeakPtr<HidService> GetWeakPtr() override;
+
+  base::WeakPtrFactory<MockHidService> weak_factory_;
 };
 
 }  // namespace device

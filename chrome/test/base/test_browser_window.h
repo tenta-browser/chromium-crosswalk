@@ -91,9 +91,6 @@ class TestBrowserWindow : public BrowserWindow {
   bool IsToolbarShowing() const override;
   void ShowUpdateChromeDialog() override {}
   void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override {}
-  void ShowBookmarkAppBubble(
-      const WebApplicationInfo& web_app_info,
-      const ShowBookmarkAppBubbleCallback& callback) override {}
   autofill::SaveCardBubbleView* ShowSaveCreditCardBubble(
       content::WebContents* contents,
       autofill::SaveCardBubbleController* controller,
@@ -116,11 +113,6 @@ class TestBrowserWindow : public BrowserWindow {
       bool app_modal,
       const base::Callback<void(bool)>& callback) override {}
   void UserChangedTheme() override {}
-  void ShowPageInfo(
-      Profile* profile,
-      content::WebContents* web_contents,
-      const GURL& virtual_url,
-      const security_state::SecurityInfo& security_info) override {}
   void CutCopyPaste(int command_id) override {}
   WindowOpenDisposition GetDispositionForPopupBounds(
       const gfx::Rect& bounds) override;
@@ -153,7 +145,6 @@ class TestBrowserWindow : public BrowserWindow {
     ~TestLocationBar() override {}
 
     // LocationBar:
-    void ShowFirstRunBubble() override {}
     GURL GetDestinationURL() const override;
     WindowOpenDisposition GetWindowOpenDisposition() const override;
     ui::PageTransition GetPageTransition() const override;
@@ -164,6 +155,7 @@ class TestBrowserWindow : public BrowserWindow {
     void UpdateManagePasswordsIconAndBubble() override {}
     void UpdateSaveCreditCardIcon() override {}
     void UpdateBookmarkStarVisibility() override {}
+    void UpdateZoomViewVisibility() override {}
     void UpdateLocationBarVisibility(bool visible, bool animate) override {}
     void SaveStateToContents(content::WebContents* contents) override {}
     void Revert() override {}

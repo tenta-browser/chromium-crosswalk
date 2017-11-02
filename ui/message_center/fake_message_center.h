@@ -50,7 +50,6 @@ class FakeMessageCenter : public MessageCenter {
   void SetNotificationButtonIcon(const std::string& notification_id,
                                  int button_index,
                                  const gfx::Image& image) override;
-  void DisableNotificationsByNotifier(const NotifierId& notifier_id) override;
   void ClickOnNotification(const std::string& id) override;
   void ClickOnNotificationButton(const std::string& id,
                                  int button_index) override;
@@ -68,10 +67,11 @@ class FakeMessageCenter : public MessageCenter {
   bool IsMessageCenterVisible() const override;
   void RestartPopupTimers() override;
   void PausePopupTimers() override;
+  const base::string16& GetProductOSName() const override;
+  void SetProductOSName(const base::string16& product_os_name) override;
 
  protected:
   void DisableTimersForTest() override;
-  void EnableChangeQueueForTest(bool enabled) override;
 
  private:
   const NotificationList::Notifications empty_notifications_;

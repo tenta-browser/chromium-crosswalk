@@ -29,10 +29,9 @@ class NaClBrokerSandboxedProcessLauncherDelegate
     : public content::SandboxedProcessLauncherDelegate {
  public:
   NaClBrokerSandboxedProcessLauncherDelegate() {}
-  ~NaClBrokerSandboxedProcessLauncherDelegate() override {}
 
-  bool ShouldSandbox() override {
-    return false;
+  service_manager::SandboxType GetSandboxType() override {
+    return service_manager::SANDBOX_TYPE_NO_SANDBOX;
   }
 
  private:
@@ -87,15 +86,16 @@ bool NaClBrokerHost::OnMessageReceived(const IPC::Message& msg) {
   return handled;
 }
 
-bool NaClBrokerHost::LaunchLoader(const std::string& loader_channel_token) {
-  return process_->Send(
-      new NaClProcessMsg_LaunchLoaderThroughBroker(loader_channel_token));
+bool NaClBrokerHost::LaunchLoader(
+    int launch_id,
+    service_manager::mojom::ServiceRequest service_request) {
+  return process_->Send(new NaClProcessMsg_LaunchLoaderThroughBroker(
+      launch_id, service_request.PassMessagePipe().release()));
 }
 
-void NaClBrokerHost::OnLoaderLaunched(const std::string& loader_channel_token,
+void NaClBrokerHost::OnLoaderLaunched(int launch_id,
                                       base::ProcessHandle handle) {
-  NaClBrokerService::GetInstance()->OnLoaderLaunched(loader_channel_token,
-                                                     handle);
+  NaClBrokerService::GetInstance()->OnLoaderLaunched(launch_id, handle);
 }
 
 bool NaClBrokerHost::LaunchDebugExceptionHandler(

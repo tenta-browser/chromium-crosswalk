@@ -9,7 +9,6 @@
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/test/scoped_async_task_scheduler.h"
 #include "chrome/browser/component_updater/chrome_component_updater_configurator.h"
 #include "components/component_updater/component_updater_switches.h"
 #include "components/component_updater/component_updater_url_constants.h"
@@ -25,7 +24,7 @@ namespace component_updater {
 class ChromeComponentUpdaterConfiguratorTest : public testing::Test {
  public:
   ChromeComponentUpdaterConfiguratorTest() {}
-  ~ChromeComponentUpdaterConfiguratorTest() override{};
+  ~ChromeComponentUpdaterConfiguratorTest() override {}
 
   // Overrides from testing::Test.
   void SetUp() override;
@@ -34,7 +33,6 @@ class ChromeComponentUpdaterConfiguratorTest : public testing::Test {
   TestingPrefServiceSimple* pref_service() { return pref_service_.get(); }
 
  private:
-  base::test::ScopedAsyncTaskScheduler scoped_async_task_scheduler_;
   std::unique_ptr<TestingPrefServiceSimple> pref_service_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeComponentUpdaterConfiguratorTest);
@@ -124,8 +122,8 @@ TEST_F(ChromeComponentUpdaterConfiguratorTest, TestUseEncryption) {
 
   const auto urls = config->UpdateUrl();
   ASSERT_EQ(2u, urls.size());
-  ASSERT_STREQ(kUpdaterDefaultUrl, urls[0].spec().c_str());
-  ASSERT_STREQ(kUpdaterFallbackUrl, urls[1].spec().c_str());
+  ASSERT_STREQ(kUpdaterDefaultUrlAlt, urls[0].spec().c_str());
+  ASSERT_STREQ(kUpdaterFallbackUrlAlt, urls[1].spec().c_str());
 
   ASSERT_EQ(config->UpdateUrl(), config->PingUrl());
 
@@ -135,7 +133,7 @@ TEST_F(ChromeComponentUpdaterConfiguratorTest, TestUseEncryption) {
     const ConfiguratorImpl config(cmdline, nullptr, true);
     const auto urls = config.UpdateUrl();
     ASSERT_EQ(1u, urls.size());
-    ASSERT_STREQ(kUpdaterDefaultUrl, urls[0].spec().c_str());
+    ASSERT_STREQ(kUpdaterDefaultUrlAlt, urls[0].spec().c_str());
     ASSERT_EQ(config.UpdateUrl(), config.PingUrl());
   }
 
@@ -143,8 +141,8 @@ TEST_F(ChromeComponentUpdaterConfiguratorTest, TestUseEncryption) {
     const ConfiguratorImpl config(cmdline, nullptr, false);
     const auto urls = config.UpdateUrl();
     ASSERT_EQ(2u, urls.size());
-    ASSERT_STREQ(kUpdaterDefaultUrl, urls[0].spec().c_str());
-    ASSERT_STREQ(kUpdaterFallbackUrl, urls[1].spec().c_str());
+    ASSERT_STREQ(kUpdaterDefaultUrlAlt, urls[0].spec().c_str());
+    ASSERT_STREQ(kUpdaterFallbackUrlAlt, urls[1].spec().c_str());
     ASSERT_EQ(config.UpdateUrl(), config.PingUrl());
   }
 }

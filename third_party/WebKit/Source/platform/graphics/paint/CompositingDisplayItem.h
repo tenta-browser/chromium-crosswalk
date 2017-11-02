@@ -33,12 +33,12 @@ class PLATFORM_EXPORT BeginCompositingDisplayItem final
   }
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
  private:
 #ifndef NDEBUG
-  void DumpPropertiesAsDebugString(WTF::StringBuilder&) const override;
+  void PropertiesAsJSON(JSONObject&) const override;
 #endif
   bool Equals(const DisplayItem& other) const final {
     return DisplayItem::Equals(other) &&
@@ -69,7 +69,7 @@ class PLATFORM_EXPORT EndCompositingDisplayItem final
       : PairedEndDisplayItem(client, kEndCompositing, sizeof(*this)) {}
 
   void Replay(GraphicsContext&) const override;
-  void AppendToWebDisplayItemList(const IntRect&,
+  void AppendToWebDisplayItemList(const LayoutSize&,
                                   WebDisplayItemList*) const override;
 
  private:

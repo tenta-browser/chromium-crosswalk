@@ -17,7 +17,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/about_flags.h"
@@ -34,7 +36,6 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/tracing/common/tracing_switches.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/tracing_controller.h"
 #include "printing/features/features.h"
@@ -49,25 +50,25 @@
 #include "chrome/browser/first_run/upgrade_util.h"
 #endif
 
-#if BUILDFLAG(ENABLE_BACKGROUND)
-#include "chrome/browser/background/background_mode_manager.h"
-#endif
-
-#if BUILDFLAG(ENABLE_RLZ)
-#include "components/rlz/rlz_tracker.h"
-#endif
-
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/boot_times_recorder.h"
+#include "chrome/browser/lifetime/termination_notification.h"
+#endif
+
+#if BUILDFLAG(ENABLE_BACKGROUND)
+#include "chrome/browser/background/background_mode_manager.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/service_process/service_process_control.h"
 #endif
 
+#if BUILDFLAG(ENABLE_RLZ)
+#include "components/rlz/rlz_tracker.h"
+#endif
+
 using base::Time;
 using base::TimeDelta;
-using content::BrowserThread;
 
 namespace browser_shutdown {
 namespace {
@@ -80,7 +81,13 @@ ShutdownType g_shutdown_type = NOT_VALID;
 int g_shutdown_num_processes;
 int g_shutdown_num_processes_slow;
 
-const char kShutdownMsFile[] = "chrome_shutdown_ms.txt";
+constexpr char kShutdownMsFile[] = "chrome_shutdown_ms.txt";
+
+base::FilePath GetShutdownMsPath() {
+  base::FilePath shutdown_ms_file;
+  PathService::Get(chrome::DIR_USER_DATA, &shutdown_ms_file);
+  return shutdown_ms_file.AppendASCII(kShutdownMsFile);
+}
 
 const char* ToShutdownTypeString(ShutdownType type) {
   switch (type) {
@@ -141,12 +148,6 @@ void OnShutdownStarting(ShutdownType type) {
     if (!i.GetCurrentValue()->FastShutdownIfPossible())
       ++g_shutdown_num_processes_slow;
   }
-}
-
-base::FilePath GetShutdownMsPath() {
-  base::FilePath shutdown_ms_file;
-  PathService::Get(chrome::DIR_USER_DATA, &shutdown_ms_file);
-  return shutdown_ms_file.AppendASCII(kShutdownMsFile);
 }
 
 #if !defined(OS_ANDROID)
@@ -272,11 +273,15 @@ void ShutdownPostThreadsStop(int shutdown_flags) {
         base::Int64ToString(shutdown_delta.InMilliseconds());
     int len = static_cast<int>(shutdown_ms.length()) + 1;
     base::FilePath shutdown_ms_file = GetShutdownMsPath();
+    // Note: ReadLastShutdownFile() is done as a BLOCK_SHUTDOWN task so there's
+    // an implicit sequencing between it and this write which happens after
+    // threads have been stopped (and thus TaskScheduler::Shutdown() is
+    // complete).
     base::WriteFile(shutdown_ms_file, shutdown_ms.c_str(), len);
   }
 
 #if defined(OS_CHROMEOS)
-  chrome::NotifyAndTerminate(false);
+  NotifyAndTerminate(false /* fast_path */);
 #endif
 }
 #endif  // !defined(OS_ANDROID)
@@ -284,7 +289,7 @@ void ShutdownPostThreadsStop(int shutdown_flags) {
 void ReadLastShutdownFile(ShutdownType type,
                           int num_procs,
                           int num_procs_slow) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   base::FilePath shutdown_ms_file = GetShutdownMsPath();
   std::string shutdown_ms_str;
@@ -297,25 +302,16 @@ void ReadLastShutdownFile(ShutdownType type,
     return;
 
   if (type == WINDOW_CLOSE) {
-    // TODO(manzagop): turn down recording in M57 (once trendlines overlap).
-    UMA_HISTOGRAM_TIMES("Shutdown.window_close.time",
-                        TimeDelta::FromMilliseconds(shutdown_ms));
     UMA_HISTOGRAM_MEDIUM_TIMES("Shutdown.window_close.time2",
                                TimeDelta::FromMilliseconds(shutdown_ms));
     UMA_HISTOGRAM_TIMES("Shutdown.window_close.time_per_process",
                         TimeDelta::FromMilliseconds(shutdown_ms / num_procs));
   } else if (type == BROWSER_EXIT) {
-    // TODO(manzagop): turn down recording in M57 (once trendlines overlap).
-    UMA_HISTOGRAM_TIMES("Shutdown.browser_exit.time",
-                        TimeDelta::FromMilliseconds(shutdown_ms));
     UMA_HISTOGRAM_MEDIUM_TIMES("Shutdown.browser_exit.time2",
                                TimeDelta::FromMilliseconds(shutdown_ms));
     UMA_HISTOGRAM_TIMES("Shutdown.browser_exit.time_per_process",
                         TimeDelta::FromMilliseconds(shutdown_ms / num_procs));
   } else if (type == END_SESSION) {
-    // TODO(manzagop): turn down recording in M57 (once trendlines overlap).
-    UMA_HISTOGRAM_TIMES("Shutdown.end_session.time",
-                        TimeDelta::FromMilliseconds(shutdown_ms));
     UMA_HISTOGRAM_MEDIUM_TIMES("Shutdown.end_session.time2",
                                TimeDelta::FromMilliseconds(shutdown_ms));
     UMA_HISTOGRAM_TIMES("Shutdown.end_session.time_per_process",
@@ -340,10 +336,11 @@ void ReadLastShutdownInfo() {
 
   UMA_HISTOGRAM_ENUMERATION("Shutdown.ShutdownType", type, kNumShutdownTypes);
 
-  // Read and delete the file on the file thread.
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&ReadLastShutdownFile, type, num_procs, num_procs_slow));
+  base::PostTaskWithTraits(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+      base::BindOnce(&ReadLastShutdownFile, type, num_procs, num_procs_slow));
 }
 
 void SetTryingToQuit(bool quitting) {

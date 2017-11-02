@@ -42,6 +42,10 @@ int GetIconForAutocompleteMatchType(AutocompleteMatchType::Type type,
       return is_incognito ? IDR_IOS_OMNIBOX_SEARCH_INCOGNITO
                           : IDR_IOS_OMNIBOX_SEARCH;
     case AutocompleteMatchType::CALCULATOR:
+      // Calculator answers are never shown in incognito mode because input is
+      // never sent to the search provider.
+      DCHECK(!is_incognito);
+      return IDR_IOS_OMNIBOX_CALCULATOR;
     case AutocompleteMatchType::EXTENSION_APP:
     case AutocompleteMatchType::NUM_TYPES:
       NOTREACHED();
@@ -57,9 +61,6 @@ int GetIconForSecurityState(security_state::SecurityLevel security_level) {
     case security_state::EV_SECURE:
     case security_state::SECURE:
       return IDR_IOS_OMNIBOX_HTTPS_VALID;
-    case security_state::SECURITY_WARNING:
-      // Surface Dubious as Neutral.
-      return IDR_IOS_OMNIBOX_HTTP;
     case security_state::SECURE_WITH_POLICY_INSTALLED_CERT:
       return IDR_IOS_OMNIBOX_HTTPS_POLICY_WARNING;
     case security_state::DANGEROUS:

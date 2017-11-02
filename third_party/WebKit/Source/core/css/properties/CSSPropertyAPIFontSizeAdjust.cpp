@@ -5,15 +5,15 @@
 #include "core/css/properties/CSSPropertyAPIFontSizeAdjust.h"
 
 #include "core/css/parser/CSSPropertyParserHelpers.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "platform/runtime_enabled_features.h"
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIFontSizeAdjust::parseSingleValue(
+const CSSValue* CSSPropertyAPIFontSizeAdjust::ParseSingleValue(
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
-  DCHECK(RuntimeEnabledFeatures::cssFontSizeAdjustEnabled());
+    const CSSParserLocalContext&) const {
+  DCHECK(RuntimeEnabledFeatures::CSSFontSizeAdjustEnabled());
   if (range.Peek().Id() == CSSValueNone)
     return CSSPropertyParserHelpers::ConsumeIdent(range);
   return CSSPropertyParserHelpers::ConsumeNumber(range, kValueRangeNonNegative);

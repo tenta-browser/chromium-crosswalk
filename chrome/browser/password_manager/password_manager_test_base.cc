@@ -4,10 +4,15 @@
 
 #include "chrome/browser/password_manager/password_manager_test_base.h"
 
+#include <map>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
+#include "base/optional.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
@@ -26,6 +31,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/cert/cert_verify_result.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/http/transport_security_state.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/url_request/url_request_context.h"
@@ -61,8 +67,25 @@ class CustomManagePasswordsUIController : public ManagePasswordsUIController {
 
   void WaitForState(password_manager::ui::State target_state);
 
+  void WaitForFallbackForSaving();
+
+  bool was_prompt_automatically_shown() {
+    return was_prompt_automatically_shown_;
+  }
+
  private:
   // PasswordsClientUIDelegate:
+  void OnPasswordSubmitted(
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager)
+      override;
+  void OnUpdatePasswordSubmitted(
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager)
+      override;
+  void OnShowManualFallbackForSaving(
+      std::unique_ptr<password_manager::PasswordFormManager> form_manager,
+      bool has_generated_password,
+      bool is_update) override;
+  void OnHideManualFallbackForSaving() override;
   bool OnChooseCredentials(
       std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials,
       const GURL& origin,
@@ -73,12 +96,31 @@ class CustomManagePasswordsUIController : public ManagePasswordsUIController {
       const GURL& origin,
       const std::vector<const autofill::PasswordForm*>* federated_matches)
       override;
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
 
-  // The loop to be stopped when the target state is observed.
+  // Should not be used for manual fallback events.
+  bool IsTargetStateObserved(
+      const password_manager::ui::State target_state,
+      const password_manager::ui::State current_state) const;
+
+  void ProcessStateExpectations(
+      const password_manager::ui::State current_state);
+
+  // Quits |run_loop_| and clears expectations.
+  void QuitRunLoop();
+
+  // The loop to be stopped when the target state or fallback is observed.
   base::RunLoop* run_loop_;
 
   // The state CustomManagePasswordsUIController is currently waiting for.
-  password_manager::ui::State target_state_;
+  base::Optional<password_manager::ui::State> target_state_;
+
+  // True iff showing fallback is waited.
+  bool wait_for_fallback_;
+
+  // True iff a prompt was automatically shown.
+  bool was_prompt_automatically_shown_;
 
   DISALLOW_COPY_AND_ASSIGN(CustomManagePasswordsUIController);
 };
@@ -87,32 +129,75 @@ CustomManagePasswordsUIController::CustomManagePasswordsUIController(
     content::WebContents* web_contents)
     : ManagePasswordsUIController(web_contents),
       run_loop_(nullptr),
-      target_state_(password_manager::ui::INACTIVE_STATE) {
+      wait_for_fallback_(false),
+      was_prompt_automatically_shown_(false) {
   // Attach CustomManagePasswordsUIController to |web_contents| so the default
   // ManagePasswordsUIController isn't created.
   // Do not silently replace an existing ManagePasswordsUIController because it
   // unregisters itself in WebContentsDestroyed().
   EXPECT_FALSE(web_contents->GetUserData(UserDataKey()));
-  web_contents->SetUserData(UserDataKey(), this);
+  web_contents->SetUserData(UserDataKey(), base::WrapUnique(this));
 }
 
 void CustomManagePasswordsUIController::WaitForState(
     password_manager::ui::State target_state) {
+  if (IsTargetStateObserved(target_state, GetState()))
+    return;
+
   base::RunLoop run_loop;
   target_state_ = target_state;
   run_loop_ = &run_loop;
   run_loop_->Run();
 }
 
+void CustomManagePasswordsUIController::WaitForFallbackForSaving() {
+  if (!was_prompt_automatically_shown_ &&
+      GetState() == password_manager::ui::PENDING_PASSWORD_STATE)
+    return;
+
+  base::RunLoop run_loop;
+  wait_for_fallback_ = true;
+  run_loop_ = &run_loop;
+  run_loop_->Run();
+}
+
+void CustomManagePasswordsUIController::OnPasswordSubmitted(
+    std::unique_ptr<password_manager::PasswordFormManager> form_manager) {
+  was_prompt_automatically_shown_ = true;
+  ProcessStateExpectations(password_manager::ui::PENDING_PASSWORD_STATE);
+  return ManagePasswordsUIController::OnPasswordSubmitted(
+      std::move(form_manager));
+}
+
+void CustomManagePasswordsUIController::OnUpdatePasswordSubmitted(
+    std::unique_ptr<password_manager::PasswordFormManager> form_manager) {
+  was_prompt_automatically_shown_ = true;
+  ProcessStateExpectations(password_manager::ui::PENDING_PASSWORD_UPDATE_STATE);
+  return ManagePasswordsUIController::OnUpdatePasswordSubmitted(
+      std::move(form_manager));
+}
+
+void CustomManagePasswordsUIController::OnShowManualFallbackForSaving(
+    std::unique_ptr<password_manager::PasswordFormManager> form_manager,
+    bool has_generated_password,
+    bool is_update) {
+  if (wait_for_fallback_)
+    QuitRunLoop();
+
+  ManagePasswordsUIController::OnShowManualFallbackForSaving(
+      std::move(form_manager), has_generated_password, is_update);
+}
+
+void CustomManagePasswordsUIController::OnHideManualFallbackForSaving() {
+  ManagePasswordsUIController::OnHideManualFallbackForSaving();
+  ProcessStateExpectations(GetState());
+}
+
 bool CustomManagePasswordsUIController::OnChooseCredentials(
     std::vector<std::unique_ptr<autofill::PasswordForm>> local_credentials,
     const GURL& origin,
     const ManagePasswordsState::CredentialsCallback& callback) {
-  if (target_state_ == password_manager::ui::CREDENTIAL_REQUEST_STATE) {
-    run_loop_->Quit();
-    run_loop_ = nullptr;
-    target_state_ = password_manager::ui::INACTIVE_STATE;
-  }
+  ProcessStateExpectations(password_manager::ui::CREDENTIAL_REQUEST_STATE);
   return ManagePasswordsUIController::OnChooseCredentials(
       std::move(local_credentials), origin, callback);
 }
@@ -122,13 +207,49 @@ void CustomManagePasswordsUIController::OnPasswordAutofilled(
         password_form_map,
     const GURL& origin,
     const std::vector<const autofill::PasswordForm*>* federated_matches) {
-  if (target_state_ == password_manager::ui::MANAGE_STATE) {
-    run_loop_->Quit();
-    run_loop_ = nullptr;
-    target_state_ = password_manager::ui::INACTIVE_STATE;
-  }
+  ProcessStateExpectations(password_manager::ui::MANAGE_STATE);
   return ManagePasswordsUIController::OnPasswordAutofilled(
       password_form_map, origin, federated_matches);
+}
+
+void CustomManagePasswordsUIController::DidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  ManagePasswordsUIController::DidFinishNavigation(navigation_handle);
+  if (GetState() != password_manager::ui::PENDING_PASSWORD_STATE &&
+      GetState() != password_manager::ui::PENDING_PASSWORD_UPDATE_STATE) {
+    // Navigation cleared the state, an automatic prompt disappears.
+    was_prompt_automatically_shown_ = false;
+  }
+  ProcessStateExpectations(GetState());
+}
+
+bool CustomManagePasswordsUIController::IsTargetStateObserved(
+    const password_manager::ui::State target_state,
+    const password_manager::ui::State current_state) const {
+  // This function should not be used for manual fallback expectations.
+  DCHECK(!wait_for_fallback_);
+
+  bool should_wait_for_automatic_prompt =
+      target_state == password_manager::ui::PENDING_PASSWORD_STATE ||
+      target_state == password_manager::ui::PENDING_PASSWORD_UPDATE_STATE;
+  return target_state == current_state &&
+         (!should_wait_for_automatic_prompt || was_prompt_automatically_shown_);
+}
+
+void CustomManagePasswordsUIController::ProcessStateExpectations(
+    const password_manager::ui::State current_state) {
+  if (!target_state_)
+    return;
+
+  if (IsTargetStateObserved(*target_state_, current_state))
+    QuitRunLoop();
+}
+
+void CustomManagePasswordsUIController::QuitRunLoop() {
+  run_loop_->Quit();
+  run_loop_ = nullptr;
+  wait_for_fallback_ = false;
+  target_state_.reset();
 }
 
 void AddHSTSHostImpl(
@@ -185,14 +306,30 @@ BubbleObserver::BubbleObserver(content::WebContents* web_contents)
     : passwords_ui_controller_(
           ManagePasswordsUIController::FromWebContents(web_contents)) {}
 
-bool BubbleObserver::IsShowingSavePrompt() const {
+bool BubbleObserver::IsSavePromptAvailable() const {
   return passwords_ui_controller_->GetState() ==
       password_manager::ui::PENDING_PASSWORD_STATE;
 }
 
-bool BubbleObserver::IsShowingUpdatePrompt() const {
+bool BubbleObserver::IsUpdatePromptAvailable() const {
   return passwords_ui_controller_->GetState() ==
       password_manager::ui::PENDING_PASSWORD_UPDATE_STATE;
+}
+
+bool BubbleObserver::IsSavePromptShownAutomatically() const {
+  if (!IsSavePromptAvailable())
+    return false;
+  return static_cast<CustomManagePasswordsUIController*>(
+             passwords_ui_controller_)
+      ->was_prompt_automatically_shown();
+}
+
+bool BubbleObserver::IsUpdatePromptShownAutomatically() const {
+  if (!IsUpdatePromptAvailable())
+    return false;
+  return static_cast<CustomManagePasswordsUIController*>(
+             passwords_ui_controller_)
+      ->was_prompt_automatically_shown();
 }
 
 void BubbleObserver::Dismiss() const  {
@@ -202,34 +339,48 @@ void BubbleObserver::Dismiss() const  {
 }
 
 void BubbleObserver::AcceptSavePrompt() const {
-  ASSERT_TRUE(IsShowingSavePrompt());
-  passwords_ui_controller_->SavePassword();
-  EXPECT_FALSE(IsShowingSavePrompt());
+  ASSERT_TRUE(IsSavePromptAvailable());
+  passwords_ui_controller_->SavePassword(
+      passwords_ui_controller_->GetPendingPassword().username_value,
+      passwords_ui_controller_->GetPendingPassword().password_value);
+  EXPECT_FALSE(IsSavePromptAvailable());
 }
 
 void BubbleObserver::AcceptUpdatePrompt(
     const autofill::PasswordForm& form) const {
-  ASSERT_TRUE(IsShowingUpdatePrompt());
+  ASSERT_TRUE(IsUpdatePromptAvailable());
   passwords_ui_controller_->UpdatePassword(form);
-  EXPECT_FALSE(IsShowingUpdatePrompt());
+  EXPECT_FALSE(IsUpdatePromptAvailable());
 }
 
 void BubbleObserver::WaitForAccountChooser() const {
-  if (passwords_ui_controller_->GetState() ==
-      password_manager::ui::CREDENTIAL_REQUEST_STATE)
-    return;
   CustomManagePasswordsUIController* controller =
       static_cast<CustomManagePasswordsUIController*>(passwords_ui_controller_);
   controller->WaitForState(password_manager::ui::CREDENTIAL_REQUEST_STATE);
 }
 
+void BubbleObserver::WaitForInactiveState() const {
+  CustomManagePasswordsUIController* controller =
+      static_cast<CustomManagePasswordsUIController*>(passwords_ui_controller_);
+  controller->WaitForState(password_manager::ui::INACTIVE_STATE);
+}
+
 void BubbleObserver::WaitForManagementState() const {
-  if (passwords_ui_controller_->GetState() ==
-      password_manager::ui::MANAGE_STATE)
-    return;
   CustomManagePasswordsUIController* controller =
       static_cast<CustomManagePasswordsUIController*>(passwords_ui_controller_);
   controller->WaitForState(password_manager::ui::MANAGE_STATE);
+}
+
+void BubbleObserver::WaitForAutomaticSavePrompt() const {
+  CustomManagePasswordsUIController* controller =
+      static_cast<CustomManagePasswordsUIController*>(passwords_ui_controller_);
+  controller->WaitForState(password_manager::ui::PENDING_PASSWORD_STATE);
+}
+
+void BubbleObserver::WaitForFallbackForSaving() const {
+  CustomManagePasswordsUIController* controller =
+      static_cast<CustomManagePasswordsUIController*>(passwords_ui_controller_);
+  controller->WaitForFallbackForSaving();
 }
 
 PasswordManagerBrowserTestBase::PasswordManagerBrowserTestBase()
@@ -255,6 +406,9 @@ void PasswordManagerBrowserTestBase::SetUpOnMainThread() {
       FILE_PATH_LITERAL("chrome/test/data");
   https_test_server().ServeFilesFromSourceDirectory(base::FilePath(kDocRoot));
   ASSERT_TRUE(https_test_server().Start());
+
+  // Setup the mock host resolver
+  host_resolver()->AddRule("*", "127.0.0.1");
 
   // Whitelist all certs for the HTTPS server.
   auto cert = https_test_server().GetCertificate();
@@ -425,7 +579,8 @@ void PasswordManagerBrowserTestBase::WaitForPasswordStore() {
       PasswordStoreFactory::GetForProfile(browser()->profile(),
                                           ServiceAccessType::IMPLICIT_ACCESS);
   PasswordStoreResultsObserver syncer;
-  password_store->GetAutofillableLoginsWithAffiliatedRealms(&syncer);
+  password_store->GetAutofillableLoginsWithAffiliationAndBrandingInformation(
+      &syncer);
   syncer.Wait();
 }
 
@@ -460,10 +615,28 @@ void PasswordManagerBrowserTestBase::AddHSTSHost(const std::string& host) {
 
   content::BrowserThread::PostTaskAndReply(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&AddHSTSHostImpl,
-                 make_scoped_refptr(browser()->profile()->GetRequestContext()),
-                 host),
+      base::BindOnce(
+          &AddHSTSHostImpl,
+          base::WrapRefCounted(browser()->profile()->GetRequestContext()),
+          host),
       run_loop.QuitClosure());
 
   run_loop.Run();
+}
+
+void PasswordManagerBrowserTestBase::CheckThatCredentialsStored(
+    const base::string16& username,
+    const base::string16& password) {
+  scoped_refptr<password_manager::TestPasswordStore> password_store =
+      static_cast<password_manager::TestPasswordStore*>(
+          PasswordStoreFactory::GetForProfile(
+              browser()->profile(), ServiceAccessType::IMPLICIT_ACCESS)
+              .get());
+  auto& passwords_map = password_store->stored_passwords();
+  ASSERT_EQ(1u, passwords_map.size());
+  auto& passwords_vector = passwords_map.begin()->second;
+  ASSERT_EQ(1u, passwords_vector.size());
+  const autofill::PasswordForm& form = passwords_vector[0];
+  EXPECT_EQ(username, form.username_value);
+  EXPECT_EQ(password, form.password_value);
 }

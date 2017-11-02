@@ -4,10 +4,47 @@
 
 #include "core/geometry/DOMMatrix.h"
 
+#include "core/dom/ExecutionContext.h"
+
 namespace blink {
 
-DOMMatrix* DOMMatrix::Create(ExceptionState& exception_state) {
+DOMMatrix* DOMMatrix::Create() {
   return new DOMMatrix(TransformationMatrix());
+}
+
+DOMMatrix* DOMMatrix::Create(ExecutionContext* execution_context,
+                             ExceptionState& exception_state) {
+  return new DOMMatrix(TransformationMatrix());
+}
+
+DOMMatrix* DOMMatrix::Create(ExecutionContext* execution_context,
+                             StringOrUnrestrictedDoubleSequence& init,
+                             ExceptionState& exception_state) {
+  if (init.IsString()) {
+    if (!execution_context->IsDocument()) {
+      exception_state.ThrowTypeError(
+          "DOMMatrix can't be constructed with strings on workers.");
+      return nullptr;
+    }
+
+    DOMMatrix* matrix = new DOMMatrix(TransformationMatrix());
+    matrix->SetMatrixValueFromString(init.GetAsString(), exception_state);
+    return matrix;
+  }
+
+  if (init.IsUnrestrictedDoubleSequence()) {
+    const Vector<double>& sequence = init.GetAsUnrestrictedDoubleSequence();
+    if (sequence.size() != 6 && sequence.size() != 16) {
+      exception_state.ThrowTypeError(
+          "The sequence must contain 6 elements for a 2D matrix or 16 elements "
+          "for a 3D matrix.");
+      return nullptr;
+    }
+    return new DOMMatrix(sequence, sequence.size());
+  }
+
+  NOTREACHED();
+  return nullptr;
 }
 
 DOMMatrix* DOMMatrix::Create(DOMMatrixReadOnly* other,
@@ -21,22 +58,8 @@ DOMMatrix* DOMMatrix::Create(const SkMatrix44& matrix,
   return new DOMMatrix(transformation_matrix, transformation_matrix.IsAffine());
 }
 
-DOMMatrix* DOMMatrix::Create(const String& transform_list,
-                             ExceptionState& exception_state) {
-  DOMMatrix* matrix = new DOMMatrix(TransformationMatrix());
-  matrix->SetMatrixValueFromString(transform_list, exception_state);
-  return matrix;
-}
-
-DOMMatrix* DOMMatrix::Create(Vector<double> sequence,
-                             ExceptionState& exception_state) {
-  if (sequence.size() != 6 && sequence.size() != 16) {
-    exception_state.ThrowTypeError(
-        "The sequence must contain 6 elements for a 2D matrix or 16 elements "
-        "for a 3D matrix.");
-    return nullptr;
-  }
-  return new DOMMatrix(sequence, sequence.size());
+DOMMatrix* DOMMatrix::CreateForSerialization(double sequence[], int size) {
+  return new DOMMatrix(sequence, size);
 }
 
 DOMMatrix* DOMMatrix::fromFloat32Array(NotShared<DOMFloat32Array> float32_array,
@@ -71,6 +94,17 @@ DOMMatrix::DOMMatrix(T sequence, int size)
 
 DOMMatrix::DOMMatrix(const TransformationMatrix& matrix, bool is2d)
     : DOMMatrixReadOnly(matrix, is2d) {}
+
+DOMMatrix* DOMMatrix::fromMatrix2D(DOMMatrix2DInit& other,
+                                   ExceptionState& exception_state) {
+  if (!ValidateAndFixup2D(other, exception_state)) {
+    DCHECK(exception_state.HadException());
+    return nullptr;
+  }
+  return new DOMMatrix({other.m11(), other.m12(), other.m21(), other.m22(),
+                        other.m41(), other.m42()},
+                       true);
+}
 
 DOMMatrix* DOMMatrix::fromMatrix(DOMMatrixInit& other,
                                  ExceptionState& exception_state) {
@@ -122,10 +156,14 @@ DOMMatrix* DOMMatrix::multiplySelf(DOMMatrixInit& other,
     DCHECK(exception_state.HadException());
     return nullptr;
   }
-  if (!other_matrix->is2D())
+  return multiplySelf(*other_matrix);
+}
+
+DOMMatrix* DOMMatrix::multiplySelf(const DOMMatrix& other_matrix) {
+  if (!other_matrix.is2D())
     is2d_ = false;
 
-  *matrix_ *= other_matrix->Matrix();
+  *matrix_ *= other_matrix.Matrix();
 
   return this;
 }
@@ -249,6 +287,11 @@ DOMMatrix* DOMMatrix::skewXSelf(double sx) {
 
 DOMMatrix* DOMMatrix::skewYSelf(double sy) {
   matrix_->SkewY(sy);
+  return this;
+}
+
+DOMMatrix* DOMMatrix::perspectiveSelf(double p) {
+  matrix_->ApplyPerspective(p);
   return this;
 }
 

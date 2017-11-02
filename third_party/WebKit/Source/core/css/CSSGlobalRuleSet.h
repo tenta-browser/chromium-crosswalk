@@ -21,12 +21,11 @@ class RuleSet;
 // to the ScopedStyleResolver as possible to avoid full reconstruction of these
 // rulesets on shadow tree changes. See https://crbug.com/401359
 
-class CSSGlobalRuleSet {
-  DISALLOW_NEW();
+class CSSGlobalRuleSet : public GarbageCollectedFinalized<CSSGlobalRuleSet> {
   WTF_MAKE_NONCOPYABLE(CSSGlobalRuleSet);
 
  public:
-  CSSGlobalRuleSet() {}
+  static CSSGlobalRuleSet* Create() { return new CSSGlobalRuleSet(); }
 
   void Dispose();
   void InitWatchedSelectorsRuleSet(Document&);
@@ -38,10 +37,6 @@ class CSSGlobalRuleSet {
     CHECK(features_.IsAlive());
     return features_;
   }
-  RuleSet* SiblingRuleSet() const { return sibling_rule_set_; }
-  RuleSet* UncommonAttributeRuleSet() const {
-    return uncommon_attribute_rule_set_;
-  }
   RuleSet* WatchedSelectorsRuleSet() const {
     return watched_selectors_rule_set_;
   }
@@ -50,11 +45,10 @@ class CSSGlobalRuleSet {
   DECLARE_TRACE();
 
  private:
+  CSSGlobalRuleSet() {}
   // Constructed from rules in all TreeScopes including UA style and style
   // injected from extensions.
   RuleFeatureSet features_;
-  Member<RuleSet> sibling_rule_set_;
-  Member<RuleSet> uncommon_attribute_rule_set_;
 
   // Rules injected from extensions.
   Member<RuleSet> watched_selectors_rule_set_;

@@ -9,8 +9,9 @@
 #include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/layout_constants.h"
-#include "chrome/browser/ui/views/elevation_icon_setter.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/upgrade_detector.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
@@ -20,7 +21,6 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/fill_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
@@ -30,19 +30,16 @@
 
 namespace {
 
-// Fixed width of the description label of the bubble.
-// TODO(mad): Make sure there is enough room for all languages.
-const int kWidthOfDescriptionText = 330;
-
 // The URL to be used to re-install Chrome when auto-update failed for too long.
-const char kDownloadChromeUrl[] = "https://www.google.com/chrome/?&brand=CHWL"
+constexpr char kDownloadChromeUrl[] =
+    "https://www.google.com/chrome/?&brand=CHWL"
     "&utm_campaign=en&utm_source=en-et-na-us-chrome-bubble&utm_medium=et";
 
 // The maximum number of ignored bubble we track in the NumLaterPerReinstall
 // histogram.
-const int kMaxIgnored = 50;
+constexpr int kMaxIgnored = 50;
 // The number of buckets we want the NumLaterPerReinstall histogram to use.
-const int kNumIgnoredBuckets = 5;
+constexpr int kNumIgnoredBuckets = 5;
 
 // The currently showing bubble.
 OutdatedUpgradeBubbleView* g_upgrade_bubble = nullptr;
@@ -70,16 +67,6 @@ void OutdatedUpgradeBubbleView::ShowBubble(views::View* anchor_view,
           : base::UserMetricsAction("OutdatedUpgradeBubble.ShowNoAU"));
 }
 
-bool OutdatedUpgradeBubbleView::IsAvailable() {
-// This should only work on non-Chrome OS desktop platforms.
-#if defined(OS_WIN) || defined(OS_MACOSX) || \
-    (defined(OS_LINUX) && !defined(OS_CHROMEOS))
-  return true;
-#else
-  return false;
-#endif
-}
-
 OutdatedUpgradeBubbleView::~OutdatedUpgradeBubbleView() {
   // Increment the ignored bubble count (if this bubble wasn't ignored, this
   // increment is offset by a decrement in Accept()).
@@ -99,15 +86,14 @@ base::string16 OutdatedUpgradeBubbleView::GetWindowTitle() const {
   return l10n_util::GetStringUTF16(IDS_UPGRADE_BUBBLE_TITLE);
 }
 
-bool OutdatedUpgradeBubbleView::Cancel() {
-  base::RecordAction(base::UserMetricsAction("OutdatedUpgradeBubble.Later"));
+bool OutdatedUpgradeBubbleView::ShouldShowCloseButton() const {
   return true;
 }
 
 bool OutdatedUpgradeBubbleView::Accept() {
+  uma_recorded_ = true;
   // Offset the +1 in the dtor.
   --g_num_ignored_bubbles;
-
   if (auto_update_enabled_) {
     DCHECK(UpgradeDetector::GetInstance()->is_outdated_install());
     UMA_HISTOGRAM_CUSTOM_COUNTS("OutdatedUpgradeBubble.NumLaterPerReinstall",
@@ -136,10 +122,8 @@ bool OutdatedUpgradeBubbleView::Accept() {
     // Re-enable updates by shelling out to setup.exe asynchronously.
     base::PostTaskWithTraits(
         FROM_HERE,
-        base::TaskTraits()
-            .MayBlock()
-            .WithPriority(base::TaskPriority::BACKGROUND)
-            .WithShutdownBehavior(base::TaskShutdownBehavior::BLOCK_SHUTDOWN),
+        {base::MayBlock(), base::TaskPriority::BACKGROUND,
+         base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
         base::Bind(&google_update::ElevateIfNeededToReenableUpdates));
 #endif  // defined(OS_WIN)
   }
@@ -147,32 +131,38 @@ bool OutdatedUpgradeBubbleView::Accept() {
   return true;
 }
 
-void OutdatedUpgradeBubbleView::UpdateButton(views::LabelButton* button,
-                                             ui::DialogButton type) {
-  BubbleDialogDelegateView::UpdateButton(button, type);
-  if (type == ui::DIALOG_BUTTON_OK) {
-    elevation_icon_setter_.reset(new ElevationIconSetter(
-        button, base::Bind(&OutdatedUpgradeBubbleView::SizeToContents,
-                           base::Unretained(this))));
-  }
+bool OutdatedUpgradeBubbleView::Close() {
+  // DialogDelegate::Close() would call Accept(), as there is only one button.
+  // Prevent that and record UMA. Note in the past there was also a "Later"
+  // button, hence the name.
+  if (!uma_recorded_)
+    base::RecordAction(base::UserMetricsAction("OutdatedUpgradeBubble.Later"));
+  return true;
+}
+
+int OutdatedUpgradeBubbleView::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_OK;
 }
 
 base::string16 OutdatedUpgradeBubbleView::GetDialogButtonLabel(
     ui::DialogButton button) const {
-  return l10n_util::GetStringUTF16(
-      button == ui::DIALOG_BUTTON_CANCEL
-          ? IDS_LATER
-          : auto_update_enabled_ ? IDS_REINSTALL_APP : IDS_REENABLE_UPDATES);
+  return l10n_util::GetStringUTF16(auto_update_enabled_ ? IDS_REINSTALL_APP
+                                                        : IDS_REENABLE_UPDATES);
 }
 
 void OutdatedUpgradeBubbleView::Init() {
   SetLayoutManager(new views::FillLayout());
-  views::Label* text_label = new views::Label(l10n_util::GetStringUTF16(
-      auto_update_enabled_ ? IDS_UPGRADE_BUBBLE_TEXT
-                           : IDS_UPGRADE_BUBBLE_REENABLE_TEXT));
+  views::Label* text_label =
+      new views::Label(l10n_util::GetStringUTF16(IDS_UPGRADE_BUBBLE_TEXT));
   text_label->SetMultiLine(true);
   text_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  text_label->SizeToFit(kWidthOfDescriptionText);
+
+  constexpr int kExpectedBubbleWidth = 320;
+  int text_width =
+      kExpectedBubbleWidth - ChromeLayoutProvider::Get()
+                                 ->GetInsetsMetric(views::INSETS_DIALOG)
+                                 .width();
+  text_label->SizeToFit(text_width);
   AddChildView(text_label);
 }
 
@@ -186,4 +176,5 @@ OutdatedUpgradeBubbleView::OutdatedUpgradeBubbleView(
   // Compensate for built-in vertical padding in the anchor view's image.
   set_anchor_view_insets(gfx::Insets(
       GetLayoutConstant(LOCATION_BAR_BUBBLE_ANCHOR_VERTICAL_INSET), 0));
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::OUTDATED_UPGRADE);
 }

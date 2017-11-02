@@ -4,8 +4,9 @@
 
 #include "modules/canvas2d/CanvasRenderingContext2D.h"
 
+#include <memory>
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLCanvasElement.h"
 #include "core/html/ImageData.h"
@@ -20,7 +21,6 @@
 #include "platform/graphics/UnacceleratedImageBufferSurface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 using ::testing::Mock;
 
@@ -69,10 +69,10 @@ void CanvasRenderingContext2DAPITest::SetUp() {
   dummy_page_holder_ =
       DummyPageHolder::Create(IntSize(800, 600), &page_clients);
   document_ = &dummy_page_holder_->GetDocument();
-  document_->documentElement()->setInnerHTML(
+  document_->documentElement()->SetInnerHTMLFromString(
       "<body><canvas id='c'></canvas></body>");
   document_->View()->UpdateAllLifecyclePhases();
-  canvas_element_ = toHTMLCanvasElement(document_->GetElementById("c"));
+  canvas_element_ = ToHTMLCanvasElement(document_->getElementById("c"));
 }
 
 TEST_F(CanvasRenderingContext2DAPITest, SetShadowColor_Clamping) {
@@ -143,24 +143,24 @@ TEST_F(CanvasRenderingContext2DAPITest, SetShadowColor_Clamping) {
 String TrySettingStrokeStyle(CanvasRenderingContext2D* ctx,
                              const String& value) {
   StringOrCanvasGradientOrCanvasPattern arg1, arg2, arg3;
-  arg1.setString("#666");
+  arg1.SetString("#666");
   ctx->setStrokeStyle(arg1);
-  arg2.setString(value);
+  arg2.SetString(value);
   ctx->setStrokeStyle(arg2);
   ctx->strokeStyle(arg3);
-  EXPECT_TRUE(arg3.isString());
-  return arg3.getAsString();
+  EXPECT_TRUE(arg3.IsString());
+  return arg3.GetAsString();
 }
 
 String TrySettingFillStyle(CanvasRenderingContext2D* ctx, const String& value) {
   StringOrCanvasGradientOrCanvasPattern arg1, arg2, arg3;
-  arg1.setString("#666");
+  arg1.SetString("#666");
   ctx->setFillStyle(arg1);
-  arg2.setString(value);
+  arg2.SetString(value);
   ctx->setFillStyle(arg2);
   ctx->fillStyle(arg3);
-  EXPECT_TRUE(arg3.isString());
-  return arg3.getAsString();
+  EXPECT_TRUE(arg3.IsString());
+  return arg3.GetAsString();
 }
 
 String TrySettingShadowColor(CanvasRenderingContext2D* ctx,
@@ -198,15 +198,15 @@ TEST_F(CanvasRenderingContext2DAPITest, DefaultAttributeValues) {
   {
     StringOrCanvasGradientOrCanvasPattern value;
     Context2d()->strokeStyle(value);
-    EXPECT_TRUE(value.isString());
-    EXPECT_EQ(String("#000000"), value.getAsString());
+    EXPECT_TRUE(value.IsString());
+    EXPECT_EQ(String("#000000"), value.GetAsString());
   }
 
   {
     StringOrCanvasGradientOrCanvasPattern value;
     Context2d()->fillStyle(value);
-    EXPECT_TRUE(value.isString());
-    EXPECT_EQ(String("#000000"), value.getAsString());
+    EXPECT_TRUE(value.IsString());
+    EXPECT_EQ(String("#000000"), value.GetAsString());
   }
 
   EXPECT_EQ(String("rgba(0, 0, 0, 0)"), Context2d()->shadowColor());
@@ -295,13 +295,13 @@ TEST_F(CanvasRenderingContext2DAPITest, GetImageDataTooBig) {
 }
 
 void ResetCanvasForAccessibilityRectTest(Document& document) {
-  document.documentElement()->setInnerHTML(
+  document.documentElement()->SetInnerHTMLFromString(
       "<canvas id='canvas' style='position:absolute; top:0px; left:0px; "
       "padding:10px; margin:5px;'>"
       "<button id='button'></button></canvas>");
   document.GetSettings()->SetAccessibilityEnabled(true);
   HTMLCanvasElement* canvas =
-      toHTMLCanvasElement(document.GetElementById("canvas"));
+      ToHTMLCanvasElement(document.getElementById("canvas"));
 
   String canvas_type("2d");
   CanvasContextCreationAttributes attributes;
@@ -315,9 +315,9 @@ void ResetCanvasForAccessibilityRectTest(Document& document) {
 TEST_F(CanvasRenderingContext2DAPITest, AccessibilityRectTestForAddHitRegion) {
   ResetCanvasForAccessibilityRectTest(GetDocument());
 
-  Element* button_element = GetDocument().GetElementById("button");
+  Element* button_element = GetDocument().getElementById("button");
   HTMLCanvasElement* canvas =
-      toHTMLCanvasElement(GetDocument().GetElementById("canvas"));
+      ToHTMLCanvasElement(GetDocument().getElementById("canvas"));
   CanvasRenderingContext2D* context =
       static_cast<CanvasRenderingContext2D*>(canvas->RenderingContext());
 
@@ -344,9 +344,9 @@ TEST_F(CanvasRenderingContext2DAPITest,
        AccessibilityRectTestForDrawFocusIfNeeded) {
   ResetCanvasForAccessibilityRectTest(GetDocument());
 
-  Element* button_element = GetDocument().GetElementById("button");
+  Element* button_element = GetDocument().getElementById("button");
   HTMLCanvasElement* canvas =
-      toHTMLCanvasElement(GetDocument().GetElementById("canvas"));
+      ToHTMLCanvasElement(GetDocument().getElementById("canvas"));
   CanvasRenderingContext2D* context =
       static_cast<CanvasRenderingContext2D*>(canvas->RenderingContext());
 

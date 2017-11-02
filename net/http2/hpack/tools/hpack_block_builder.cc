@@ -4,6 +4,7 @@
 
 #include "net/http2/hpack/tools/hpack_block_builder.h"
 
+#include "net/http2/tools/http2_bug_tracker.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -65,7 +66,7 @@ void HpackBlockBuilder::AppendEntryTypeAndVarint(HpackEntryType entry_type,
       prefix_length = 4;
       break;
     default:
-      NOTREACHED();
+      HTTP2_BUG << "Unreached, entry_type=" << entry_type;
       high_bits = 0;
       prefix_length = 0;
   }
@@ -73,7 +74,7 @@ void HpackBlockBuilder::AppendEntryTypeAndVarint(HpackEntryType entry_type,
 }
 
 void HpackBlockBuilder::AppendString(bool is_huffman_encoded,
-                                     base::StringPiece str) {
+                                     Http2StringPiece str) {
   uint8_t high_bits = is_huffman_encoded ? 0x80 : 0;
   uint8_t prefix_length = 7;
   AppendHighBitsAndVarint(high_bits, prefix_length, str.size());

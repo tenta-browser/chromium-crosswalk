@@ -73,7 +73,7 @@ DEFINE_TRACE(WebGLRenderbufferAttachment) {
 
 WebGLRenderbufferAttachment::WebGLRenderbufferAttachment(
     WebGLRenderbuffer* renderbuffer)
-    : renderbuffer_(this, renderbuffer) {}
+    : renderbuffer_(renderbuffer) {}
 
 WebGLSharedObject* WebGLRenderbufferAttachment::Object() const {
   return renderbuffer_->Object() ? renderbuffer_.Get() : 0;
@@ -155,7 +155,7 @@ WebGLTextureAttachment::WebGLTextureAttachment(WebGLTexture* texture,
                                                GLenum target,
                                                GLint level,
                                                GLint layer)
-    : texture_(this, texture), target_(target), level_(level), layer_(layer) {}
+    : texture_(texture), target_(target), level_(level), layer_(layer) {}
 
 WebGLSharedObject* WebGLTextureAttachment::Object() const {
   return texture_->Object() ? texture_.Get() : 0;
@@ -309,14 +309,14 @@ WebGLSharedObject* WebGLFramebuffer::GetAttachmentObject(
 
 WebGLFramebuffer::WebGLAttachment* WebGLFramebuffer::GetAttachment(
     GLenum attachment) const {
-  const AttachmentMap::const_iterator it = attachments_.Find(attachment);
+  const AttachmentMap::const_iterator it = attachments_.find(attachment);
   return (it != attachments_.end()) ? it->value.Get() : 0;
 }
 
 void WebGLFramebuffer::RemoveAttachmentFromBoundFramebuffer(
     GLenum target,
     WebGLSharedObject* attachment) {
-  ASSERT(IsBound(target));
+  DCHECK(IsBound(target));
   if (!object_)
     return;
   if (!attachment)
@@ -392,7 +392,7 @@ bool WebGLFramebuffer::IsBound(GLenum target) const {
 
 void WebGLFramebuffer::DrawBuffers(const Vector<GLenum>& bufs) {
   draw_buffers_ = bufs;
-  filtered_draw_buffers_.Resize(draw_buffers_.size());
+  filtered_draw_buffers_.resize(draw_buffers_.size());
   for (size_t i = 0; i < filtered_draw_buffers_.size(); ++i)
     filtered_draw_buffers_[i] = GL_NONE;
   DrawBuffersIfNecessary(true);
@@ -418,7 +418,7 @@ void WebGLFramebuffer::DrawBuffersIfNecessary(bool force) {
     }
     if (reset) {
       Context()->ContextGL()->DrawBuffersEXT(filtered_draw_buffers_.size(),
-                                             filtered_draw_buffers_.Data());
+                                             filtered_draw_buffers_.data());
     }
   }
 }
@@ -433,10 +433,8 @@ void WebGLFramebuffer::SetAttachmentInternal(GLenum target,
   DCHECK(object_);
   RemoveAttachmentInternal(target, attachment);
   if (texture && texture->Object()) {
-    attachments_.insert(attachment,
-                        TraceWrapperMember<WebGLAttachment>(
-                            this, WebGLTextureAttachment::Create(
-                                      texture, tex_target, level, layer)));
+    attachments_.insert(attachment, WebGLTextureAttachment::Create(
+                                        texture, tex_target, level, layer));
     DrawBuffersIfNecessary(false);
     texture->OnAttached();
   }
@@ -449,10 +447,8 @@ void WebGLFramebuffer::SetAttachmentInternal(GLenum target,
   DCHECK(object_);
   RemoveAttachmentInternal(target, attachment);
   if (renderbuffer && renderbuffer->Object()) {
-    attachments_.insert(
-        attachment,
-        TraceWrapperMember<WebGLAttachment>(
-            this, WebGLRenderbufferAttachment::Create(renderbuffer)));
+    attachments_.insert(attachment,
+                        WebGLRenderbufferAttachment::Create(renderbuffer));
     DrawBuffersIfNecessary(false);
     renderbuffer->OnAttached();
   }
@@ -533,7 +529,7 @@ void WebGLFramebuffer::CommitWebGL1DepthStencilIfConsistent(GLenum target) {
 
 GLenum WebGLFramebuffer::GetDrawBuffer(GLenum draw_buffer) {
   int index = static_cast<int>(draw_buffer - GL_DRAW_BUFFER0_EXT);
-  ASSERT(index >= 0);
+  DCHECK_GE(index, 0);
   if (index < static_cast<int>(draw_buffers_.size()))
     return draw_buffers_[index];
   if (draw_buffer == GL_DRAW_BUFFER0_EXT)

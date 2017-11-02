@@ -33,14 +33,14 @@
 #define EventSource_h
 
 #include <memory>
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/loader/ThreadableLoader.h"
 #include "core/loader/ThreadableLoaderClient.h"
 #include "modules/ModulesExport.h"
 #include "modules/eventsource/EventSourceParser.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/Forward.h"
@@ -111,7 +111,6 @@ class MODULES_EXPORT EventSource final
   void DidReceiveData(const char*, unsigned) override;
   void DidFinishLoading(unsigned long, double) override;
   void DidFail(const ResourceError&) override;
-  void DidFailAccessControlCheck(const ResourceError&) override;
   void DidFailRedirectCheck() override;
 
   void OnMessageEvent(const AtomicString& event,

@@ -29,9 +29,9 @@
 #include "core/css/MediaQuery.h"
 
 #include <memory>
-#include "core/MediaTypeNames.h"
 #include "core/css/MediaQueryExp.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/media_type_names.h"
 #include "platform/wtf/NonCopyingSort.h"
 #include "platform/wtf/text/StringBuilder.h"
 
@@ -90,7 +90,7 @@ MediaQuery::MediaQuery(RestrictorType restrictor,
                        String media_type,
                        ExpressionHeapVector expressions)
     : restrictor_(restrictor),
-      media_type_(AttemptStaticStringCreation(media_type.DeprecatedLower())),
+      media_type_(AttemptStaticStringCreation(media_type.LowerASCII())),
       expressions_(std::move(expressions)) {
   NonCopyingSort(expressions_.begin(), expressions_.end(), ExpressionCompare);
 
@@ -100,7 +100,7 @@ MediaQuery::MediaQuery(RestrictorType restrictor,
     MediaQueryExp exp = expressions_.at(i);
     CHECK(exp.IsValid());
     if (exp == key)
-      expressions_.erase(i);
+      expressions_.EraseAt(i);
     else
       key = exp;
   }

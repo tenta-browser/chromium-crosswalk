@@ -10,11 +10,9 @@
 
 #include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "content/browser/renderer_host/pepper/pepper_truetype_font_list.h"
 #include "content/common/font_list.h"
 #include "content/public/browser/browser_ppapi_host.h"
-#include "content/public/browser/browser_thread.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/resource_message_filter.h"
@@ -25,9 +23,9 @@ namespace content {
 namespace {
 
 // Handles the font list request on the blocking pool.
-class FontMessageFilter : public ppapi::host::ResourceMessageFilter {
+class TrueTypeFontMessageFilter : public ppapi::host::ResourceMessageFilter {
  public:
-  FontMessageFilter();
+  TrueTypeFontMessageFilter();
 
   // ppapi::host::ResourceMessageFilter implementation.
   scoped_refptr<base::TaskRunner> OverrideTaskRunnerForMessage(
@@ -37,34 +35,33 @@ class FontMessageFilter : public ppapi::host::ResourceMessageFilter {
       ppapi::host::HostMessageContext* context) override;
 
  private:
-  ~FontMessageFilter() override;
+  ~TrueTypeFontMessageFilter() override;
 
   // Message handlers.
   int32_t OnHostMsgGetFontFamilies(ppapi::host::HostMessageContext* context);
   int32_t OnHostMsgGetFontsInFamily(ppapi::host::HostMessageContext* context,
                                     const std::string& family);
 
-  DISALLOW_COPY_AND_ASSIGN(FontMessageFilter);
+  DISALLOW_COPY_AND_ASSIGN(TrueTypeFontMessageFilter);
 };
 
-FontMessageFilter::FontMessageFilter() {}
+TrueTypeFontMessageFilter::TrueTypeFontMessageFilter() {}
 
-FontMessageFilter::~FontMessageFilter() {}
+TrueTypeFontMessageFilter::~TrueTypeFontMessageFilter() {}
 
-scoped_refptr<base::TaskRunner> FontMessageFilter::OverrideTaskRunnerForMessage(
+scoped_refptr<base::TaskRunner>
+TrueTypeFontMessageFilter::OverrideTaskRunnerForMessage(
     const IPC::Message& msg) {
-  // Use the blocking pool to get the font list (currently the only message)
-  // Since getting the font list is non-threadsafe on Linux (for versions of
-  // Pango predating 2013), use a sequenced task runner.
-  base::SequencedWorkerPool* pool = BrowserThread::GetBlockingPool();
-  return pool->GetSequencedTaskRunner(
-      pool->GetNamedSequenceToken(kFontListSequenceToken));
+  // Use the font list SequencedTaskRunner to get the font list (currently the
+  // only message) since getting the font list is non-threadsafe on Linux (for
+  // versions of Pango predating 2013).
+  return GetFontListTaskRunner();
 }
 
-int32_t FontMessageFilter::OnResourceMessageReceived(
+int32_t TrueTypeFontMessageFilter::OnResourceMessageReceived(
     const IPC::Message& msg,
     ppapi::host::HostMessageContext* context) {
-  PPAPI_BEGIN_MESSAGE_MAP(FontMessageFilter, msg)
+  PPAPI_BEGIN_MESSAGE_MAP(TrueTypeFontMessageFilter, msg)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL_0(
         PpapiHostMsg_TrueTypeFontSingleton_GetFontFamilies,
         OnHostMsgGetFontFamilies)
@@ -75,7 +72,7 @@ int32_t FontMessageFilter::OnResourceMessageReceived(
   return PP_ERROR_FAILED;
 }
 
-int32_t FontMessageFilter::OnHostMsgGetFontFamilies(
+int32_t TrueTypeFontMessageFilter::OnHostMsgGetFontFamilies(
     ppapi::host::HostMessageContext* context) {
   // OK to use "slow blocking" version since we're on the blocking pool.
   std::vector<std::string> font_families;
@@ -88,7 +85,7 @@ int32_t FontMessageFilter::OnHostMsgGetFontFamilies(
   return base::checked_cast<int32_t>(font_families.size());
 }
 
-int32_t FontMessageFilter::OnHostMsgGetFontsInFamily(
+int32_t TrueTypeFontMessageFilter::OnHostMsgGetFontsInFamily(
     ppapi::host::HostMessageContext* context,
     const std::string& family) {
   // OK to use "slow blocking" version since we're on the blocking pool.
@@ -108,7 +105,7 @@ PepperTrueTypeFontListHost::PepperTrueTypeFontListHost(BrowserPpapiHost* host,
                                                        PP_Resource resource)
     : ResourceHost(host->GetPpapiHost(), instance, resource) {
   AddFilter(scoped_refptr<ppapi::host::ResourceMessageFilter>(
-      new FontMessageFilter()));
+      new TrueTypeFontMessageFilter()));
 }
 
 PepperTrueTypeFontListHost::~PepperTrueTypeFontListHost() {}

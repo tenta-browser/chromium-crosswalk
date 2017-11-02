@@ -4,22 +4,22 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow DIV",
-      "position": [8, 8],
-      "bounds": [500, 500]
+      "bounds": [500, 500],
+      "drawsContent": false,
+      "transform": 1
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutBlockFlow (positioned) DIV)",
       "position": [55, 55],
       "bounds": [500, 500],
-      "drawsContent": true,
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV",
@@ -34,15 +34,27 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV id='to-be-removed'",
           "rect": [0, 0, 50, 50],
-          "reason": "layoutObject removal"
+          "reason": "disappeared"
         }
       ]
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [8, 8, 0, 1]
+      ],
+      "flattenInheritedTransform": false
     }
   ],
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow (positioned) DIV id='to-be-removed'",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV",

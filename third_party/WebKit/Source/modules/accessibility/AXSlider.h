@@ -48,7 +48,7 @@ class AXSlider : public AXLayoutObject {
   AXSlider(LayoutObject*, AXObjectCacheImpl&);
 
  private:
-  HTMLInputElement* GetElement() const;
+  HTMLInputElement* GetInputElement() const;
   AXObject* ElementAccessibilityHitTest(const IntPoint&) const final;
 
   AccessibilityRole DetermineAccessibilityRole() final;
@@ -57,9 +57,7 @@ class AXSlider : public AXLayoutObject {
 
   void AddChildren() final;
 
-  bool CanSetValueAttribute() const final { return true; }
-
-  void SetValue(const String&) final;
+  bool OnNativeSetValueAction(const String&) final;
   AccessibilityOrientation Orientation() const final;
 };
 

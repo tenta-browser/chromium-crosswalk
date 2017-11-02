@@ -34,16 +34,17 @@ class FakeSessionManagerClient : public SessionManagerClient {
   void EmitLoginPromptVisible() override;
   void RestartJob(int socket_fd,
                   const std::vector<std::string>& argv,
-                  const VoidDBusMethodCallback& callback) override;
+                  VoidDBusMethodCallback callback) override;
   void StartSession(const cryptohome::Identification& cryptohome_id) override;
   void StopSession() override;
   void NotifySupervisedUserCreationStarted() override;
   void NotifySupervisedUserCreationFinished() override;
   void StartDeviceWipe() override;
+  void StartTPMFirmwareUpdate(const std::string& update_mode) override;
   void RequestLockScreen() override;
   void NotifyLockScreenShown() override;
   void NotifyLockScreenDismissed() override;
-  void RetrieveActiveSessions(const ActiveSessionsCallback& callback) override;
+  void RetrieveActiveSessions(ActiveSessionsCallback callback) override;
   void RetrieveDevicePolicy(const RetrievePolicyCallback& callback) override;
   RetrievePolicyResponseType BlockingRetrieveDevicePolicy(
       std::string* policy_out) override;
@@ -52,6 +53,9 @@ class FakeSessionManagerClient : public SessionManagerClient {
   RetrievePolicyResponseType BlockingRetrievePolicyForUser(
       const cryptohome::Identification& cryptohome_id,
       std::string* policy_out) override;
+  void RetrievePolicyForUserWithoutSession(
+      const cryptohome::Identification& cryptohome_id,
+      const RetrievePolicyCallback& callback) override;
   void RetrieveDeviceLocalAccountPolicy(
       const std::string& account_id,
       const RetrievePolicyCallback& callback) override;
@@ -72,9 +76,11 @@ class FakeSessionManagerClient : public SessionManagerClient {
                        const std::vector<std::string>& flags) override;
   void GetServerBackedStateKeys(const StateKeysCallback& callback) override;
 
-  void CheckArcAvailability(const ArcCallback& callback) override;
-  void StartArcInstance(const cryptohome::Identification& cryptohome_id,
+  void StartArcInstance(ArcStartupMode startup_mode,
+                        const cryptohome::Identification& cryptohome_id,
                         bool disable_boot_completed_broadcast,
+                        bool enable_vendor_privileged,
+                        bool native_bridge_experiment,
                         const StartArcInstanceCallback& callback) override;
   void StopArcInstance(const ArcCallback& callback) override;
   void SetArcCpuRestriction(
@@ -82,7 +88,7 @@ class FakeSessionManagerClient : public SessionManagerClient {
       const ArcCallback& callback) override;
   void EmitArcBooted(const cryptohome::Identification& cryptohome_id,
                      const ArcCallback& callback) override;
-  void GetArcStartTime(const GetArcStartTimeCallback& callback) override;
+  void GetArcStartTime(DBusMethodCallback<base::TimeTicks> callback) override;
   void RemoveArcData(const cryptohome::Identification& cryptohome_id,
                      const ArcCallback& callback) override;
 
@@ -93,6 +99,13 @@ class FakeSessionManagerClient : public SessionManagerClient {
       const cryptohome::Identification& cryptohome_id) const;
   void set_user_policy(const cryptohome::Identification& cryptohome_id,
                        const std::string& policy_blob);
+  void set_user_policy_without_session(
+      const cryptohome::Identification& cryptohome_id,
+      const std::string& policy_blob);
+
+  void set_store_user_policy_success(bool success) {
+    store_user_policy_success_ = success;
+  }
 
   const std::string& device_local_account_policy(
       const std::string& account_id) const;
@@ -131,6 +144,12 @@ class FakeSessionManagerClient : public SessionManagerClient {
  private:
   std::string device_policy_;
   std::map<cryptohome::Identification, std::string> user_policies_;
+  std::map<cryptohome::Identification, std::string>
+      user_policies_without_session_;
+
+  // Controls whether StorePolicyForUser() should report success or not.
+  bool store_user_policy_success_ = true;
+
   std::map<std::string, std::string> device_local_account_policy_;
   base::ObserverList<Observer> observers_;
   SessionManagerClient::ActiveSessionsMap user_sessions_;

@@ -13,7 +13,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/platform/WebMessagePortChannel.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorker.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 
@@ -34,23 +33,24 @@ class ThreadSafeSender;
 // corresponding ServiceWorkerHandle doesn't go away in the browser process
 // while the ServiceWorker object is alive.
 class CONTENT_EXPORT WebServiceWorkerImpl
-    : NON_EXPORTED_BASE(public blink::WebServiceWorker),
+    : public blink::WebServiceWorker,
       public base::RefCounted<WebServiceWorkerImpl> {
  public:
   WebServiceWorkerImpl(std::unique_ptr<ServiceWorkerHandleReference> handle_ref,
                        ThreadSafeSender* thread_safe_sender);
 
-  void OnStateChanged(blink::WebServiceWorkerState new_state);
+  void OnStateChanged(blink::mojom::ServiceWorkerState new_state);
 
   // blink::WebServiceWorker overrides.
   void SetProxy(blink::WebServiceWorkerProxy* proxy) override;
   blink::WebServiceWorkerProxy* Proxy() override;
   blink::WebURL Url() const override;
-  blink::WebServiceWorkerState GetState() const override;
-  void PostMessage(blink::WebServiceWorkerProvider* provider,
-                   const blink::WebString& message,
-                   const blink::WebSecurityOrigin& source_origin,
-                   blink::WebMessagePortChannelArray channels) override;
+  blink::mojom::ServiceWorkerState GetState() const override;
+  void PostMessage(
+      blink::WebServiceWorkerProvider* provider,
+      const blink::WebString& message,
+      const blink::WebSecurityOrigin& source_origin,
+      blink::WebVector<blink::MessagePortChannel> channels) override;
   void Terminate() override;
 
   // Creates WebServiceWorker::Handle object that owns a reference to the given
@@ -63,7 +63,7 @@ class CONTENT_EXPORT WebServiceWorkerImpl
   ~WebServiceWorkerImpl() override;
 
   std::unique_ptr<ServiceWorkerHandleReference> handle_ref_;
-  blink::WebServiceWorkerState state_;
+  blink::mojom::ServiceWorkerState state_;
   scoped_refptr<ThreadSafeSender> thread_safe_sender_;
   blink::WebServiceWorkerProxy* proxy_;
 

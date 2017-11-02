@@ -13,13 +13,17 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "content/browser/indexed_db/fake_indexed_db_metadata_coding.h"
 #include "content/browser/indexed_db/indexed_db_connection.h"
+#include "content/browser/indexed_db/indexed_db_database_error.h"
 #include "content/browser/indexed_db/indexed_db_fake_backing_store.h"
+#include "content/browser/indexed_db/indexed_db_metadata_coding.h"
 #include "content/browser/indexed_db/indexed_db_observer.h"
 #include "content/browser/indexed_db/mock_indexed_db_database_callbacks.h"
 #include "content/browser/indexed_db/mock_indexed_db_factory.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBDatabaseException.h"
 
 namespace content {
 const int kFakeProcessId = 10;
@@ -51,6 +55,7 @@ class IndexedDBTransactionTest : public testing::Test {
     leveldb::Status s;
     std::tie(db_, s) = IndexedDBDatabase::Create(
         base::ASCIIToUTF16("db"), backing_store_.get(), factory_.get(),
+        base::MakeUnique<FakeIndexedDBMetadataCoding>(),
         IndexedDBDatabase::Identifier());
     ASSERT_TRUE(s.ok());
   }
@@ -63,7 +68,7 @@ class IndexedDBTransactionTest : public testing::Test {
   leveldb::Status AbortableOperation(AbortObserver* observer,
                                      IndexedDBTransaction* transaction) {
     transaction->ScheduleAbortTask(
-        base::Bind(&AbortObserver::AbortTask, base::Unretained(observer)));
+        base::BindOnce(&AbortObserver::AbortTask, base::Unretained(observer)));
     return leveldb::Status::OK();
   }
 
@@ -108,8 +113,8 @@ TEST_F(IndexedDBTransactionTest, Timeout) {
 
   // Schedule a task - timer won't be started until it's processed.
   transaction->ScheduleTask(
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::OK()));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this), leveldb::Status::OK()));
   EXPECT_FALSE(transaction->IsTimeoutTimerRunning());
   EXPECT_EQ(1, transaction->diagnostics().tasks_scheduled);
   EXPECT_EQ(0, transaction->diagnostics().tasks_completed);
@@ -125,8 +130,8 @@ TEST_F(IndexedDBTransactionTest, Timeout) {
 
   // This task will be ignored.
   transaction->ScheduleTask(
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::OK()));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this), leveldb::Status::OK()));
   EXPECT_EQ(IndexedDBTransaction::FINISHED, transaction->state());
   EXPECT_FALSE(transaction->IsTimeoutTimerRunning());
   EXPECT_EQ(1, transaction->diagnostics().tasks_scheduled);
@@ -152,8 +157,8 @@ TEST_F(IndexedDBTransactionTest, NoTimeoutReadOnly) {
 
   // Schedule a task - timer won't be started until it's processed.
   transaction->ScheduleTask(
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::OK()));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this), leveldb::Status::OK()));
   EXPECT_FALSE(transaction->IsTimeoutTimerRunning());
 
   // Transaction is read-only, so no need to time it out.
@@ -161,7 +166,9 @@ TEST_F(IndexedDBTransactionTest, NoTimeoutReadOnly) {
   EXPECT_FALSE(transaction->IsTimeoutTimerRunning());
 
   // Clean up to avoid leaks.
-  transaction->Abort();
+  transaction->Abort(IndexedDBDatabaseError(
+      IndexedDBDatabaseError(blink::kWebIDBDatabaseExceptionAbortError,
+                             "Transaction aborted by user.")));
   EXPECT_EQ(IndexedDBTransaction::FINISHED, transaction->state());
   EXPECT_FALSE(transaction->IsTimeoutTimerRunning());
 }
@@ -194,8 +201,8 @@ TEST_P(IndexedDBTransactionTestMode, ScheduleNormalTask) {
 
   transaction->ScheduleTask(
       blink::kWebIDBTaskTypeNormal,
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::OK()));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this), leveldb::Status::OK()));
 
   EXPECT_EQ(1, transaction->diagnostics().tasks_scheduled);
   EXPECT_EQ(0, transaction->diagnostics().tasks_completed);
@@ -258,8 +265,9 @@ TEST_P(IndexedDBTransactionTestMode, TaskFails) {
 
   transaction->ScheduleTask(
       blink::kWebIDBTaskTypeNormal,
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::IOError("error")));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this),
+                     leveldb::Status::IOError("error")));
 
   EXPECT_EQ(1, transaction->diagnostics().tasks_scheduled);
   EXPECT_EQ(0, transaction->diagnostics().tasks_completed);
@@ -321,8 +329,8 @@ TEST_F(IndexedDBTransactionTest, SchedulePreemptiveTask) {
 
   transaction->ScheduleTask(
       blink::kWebIDBTaskTypePreemptive,
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::OK()));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this), leveldb::Status::OK()));
   transaction->AddPreemptiveEvent();
 
   EXPECT_TRUE(transaction->HasPendingTasks());
@@ -369,9 +377,8 @@ TEST_P(IndexedDBTransactionTestMode, AbortTasks) {
 
   AbortObserver observer;
   transaction->ScheduleTask(
-      base::Bind(&IndexedDBTransactionTest::AbortableOperation,
-                 base::Unretained(this),
-                 base::Unretained(&observer)));
+      base::BindOnce(&IndexedDBTransactionTest::AbortableOperation,
+                     base::Unretained(this), base::Unretained(&observer)));
 
   // Pump the message loop so that the transaction completes all pending tasks,
   // otherwise it will defer the commit.
@@ -403,15 +410,17 @@ TEST_P(IndexedDBTransactionTestMode, AbortPreemptive) {
 
   transaction->ScheduleTask(
       blink::kWebIDBTaskTypePreemptive,
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::OK()));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this), leveldb::Status::OK()));
   EXPECT_EQ(0, transaction->pending_preemptive_events_);
   transaction->AddPreemptiveEvent();
   EXPECT_EQ(1, transaction->pending_preemptive_events_);
 
   RunPostedTasks();
 
-  transaction->Abort();
+  transaction->Abort(
+      IndexedDBDatabaseError(blink::kWebIDBDatabaseExceptionAbortError,
+                             "Transaction aborted by user."));
   EXPECT_EQ(IndexedDBTransaction::FINISHED, transaction->state());
   EXPECT_FALSE(transaction->IsTimeoutTimerRunning());
   EXPECT_EQ(0, transaction->pending_preemptive_events_);
@@ -427,8 +436,8 @@ TEST_P(IndexedDBTransactionTestMode, AbortPreemptive) {
 
   // This task will be ignored.
   transaction->ScheduleTask(
-      base::Bind(&IndexedDBTransactionTest::DummyOperation,
-                 base::Unretained(this), leveldb::Status::OK()));
+      base::BindOnce(&IndexedDBTransactionTest::DummyOperation,
+                     base::Unretained(this), leveldb::Status::OK()));
   EXPECT_EQ(IndexedDBTransaction::FINISHED, transaction->state());
   EXPECT_FALSE(transaction->IsTimeoutTimerRunning());
   EXPECT_FALSE(transaction->HasPendingTasks());

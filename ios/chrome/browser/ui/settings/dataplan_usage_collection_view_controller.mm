@@ -53,19 +53,18 @@ typedef NS_ENUM(NSInteger, ItemType) {
                      basePref:(const char*)basePreference
                      wifiPref:(const char*)wifiPreference
                         title:(NSString*)title {
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     self.title = title;
     basePreference_.Init(basePreference, prefs);
     wifiPreference_.Init(wifiPreference, prefs);
+    // TODO(crbug.com/764578): -loadModel should not be called from
+    // initializer. A possible fix is to move this call to -viewDidLoad.
     [self loadModel];
   }
   return self;
-}
-
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style {
-  NOTREACHED();
-  return nil;
 }
 
 - (void)loadModel {
@@ -121,8 +120,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
     }
   }
 
-  [self reconfigureCellsForItems:modifiedItems
-         inSectionWithIdentifier:SectionIdentifierOptions];
+  [self reconfigureCellsForItems:modifiedItems];
 }
 
 - (void)updateBasePref:(BOOL)basePref wifiPref:(BOOL)wifiPref {

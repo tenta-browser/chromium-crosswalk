@@ -17,11 +17,13 @@ namespace net {
 
 static URLFetcherFactory* g_factory = NULL;
 
-URLFetcherImpl::URLFetcherImpl(const GURL& url,
-                               RequestType request_type,
-                               URLFetcherDelegate* d)
-    : core_(new URLFetcherCore(this, url, request_type, d)) {
-}
+URLFetcherImpl::URLFetcherImpl(
+    const GURL& url,
+    RequestType request_type,
+    URLFetcherDelegate* d,
+    net::NetworkTrafficAnnotationTag traffic_annotation)
+    : core_(
+          new URLFetcherCore(this, url, request_type, d, traffic_annotation)) {}
 
 URLFetcherImpl::~URLFetcherImpl() {
   core_->Stop();
@@ -150,6 +152,10 @@ HttpResponseHeaders* URLFetcherImpl::GetResponseHeaders() const {
 
 HostPortPair URLFetcherImpl::GetSocketAddress() const {
   return core_->GetSocketAddress();
+}
+
+const ProxyServer& URLFetcherImpl::ProxyServerUsed() const {
+  return core_->ProxyServerUsed();
 }
 
 bool URLFetcherImpl::WasFetchedViaProxy() const {

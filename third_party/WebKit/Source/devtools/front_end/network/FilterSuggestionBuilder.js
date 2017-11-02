@@ -89,11 +89,11 @@ Network.FilterSuggestionBuilder = class {
       result = [];
       /** @type {!Map<number, !Protocol.Network.ResourcePriority>} */
       var numericToPriorityMap = new Map();
-      NetworkConditions.prioritySymbolToNumericMap().forEach((value, key) => numericToPriorityMap.set(value, key));
+      NetworkPriorities.prioritySymbolToNumericMap().forEach((value, key) => numericToPriorityMap.set(value, key));
       var sortedNumericPriorities = numericToPriorityMap.keysArray();
       sortedNumericPriorities.sortNumbers();
       var sortedPriorities = sortedNumericPriorities.map(value => numericToPriorityMap.get(value));
-      var sortedPriorityLabels = sortedPriorities.map(value => NetworkConditions.uiLabelForPriority(value));
+      var sortedPriorityLabels = sortedPriorities.map(value => NetworkPriorities.uiLabelForPriority(value));
 
       for (var value of sortedPriorityLabels) {
         if (!resultSet.has(value))
@@ -130,38 +130,4 @@ Network.FilterSuggestionBuilder = class {
     set[value] = true;
     list.push(value);
   }
-
-  /**
-   * @param {string} query
-   * @return {{text: !Array.<string>, filters: !Array.<!Network.FilterSuggestionBuilder.Filter>}}
-   */
-  parseQuery(query) {
-    var filters = [];
-    var text = [];
-    var parts = query.split(/\s+/);
-    for (var i = 0; i < parts.length; ++i) {
-      var part = parts[i];
-      if (!part)
-        continue;
-      var colonIndex = part.indexOf(':');
-      if (colonIndex === -1) {
-        text.push(part);
-        continue;
-      }
-      var key = part.substring(0, colonIndex);
-      var negative = key.startsWith('-');
-      if (negative)
-        key = key.substring(1);
-      if (this._keys.indexOf(key) === -1) {
-        text.push(part);
-        continue;
-      }
-      var value = part.substring(colonIndex + 1);
-      filters.push({type: key, data: value, negative: negative});
-    }
-    return {text: text, filters: filters};
-  }
 };
-
-/** @typedef {{type: string, data: string, negative: boolean}} */
-Network.FilterSuggestionBuilder.Filter;

@@ -7,7 +7,8 @@
 
 #include <string>
 
-#include "components/prefs/base_prefs_export.h"
+#include "base/callback.h"
+#include "components/prefs/prefs_export.h"
 #include "components/prefs/writeable_pref_store.h"
 
 // This interface is complementary to the PrefStore interface, declaring
@@ -61,8 +62,10 @@ class COMPONENTS_PREFS_EXPORT PersistentPrefStore : public WriteablePrefStore {
   // Owns |error_delegate|.
   virtual void ReadPrefsAsync(ReadErrorDelegate* error_delegate) = 0;
 
-  // Lands any pending writes to disk.
-  virtual void CommitPendingWrite() = 0;
+  // Starts an asynchronous attempt to commit pending writes to disk. Posts a
+  // task to run |done_callback| on the current sequence when disk operations,
+  // if any, are complete (even if they are unsuccessful).
+  virtual void CommitPendingWrite(base::OnceClosure done_callback);
 
   // Schedule a write if there is any lossy data pending. Unlike
   // CommitPendingWrite() this does not immediately sync to disk, instead it
@@ -72,6 +75,9 @@ class COMPONENTS_PREFS_EXPORT PersistentPrefStore : public WriteablePrefStore {
 
   // It should be called only for Incognito pref store.
   virtual void ClearMutableValues() = 0;
+
+  // Cleans preference data that may have been saved outside of the store.
+  virtual void OnStoreDeletionFromDisk() = 0;
 
  protected:
   ~PersistentPrefStore() override {}

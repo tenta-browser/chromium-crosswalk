@@ -25,15 +25,15 @@
 
 #include "core/css/CSSFontFace.h"
 
+#include <algorithm>
 #include "core/css/CSSFontFaceSource.h"
 #include "core/css/CSSFontSelector.h"
 #include "core/css/CSSSegmentedFontFace.h"
-#include "core/css/FontFaceSet.h"
+#include "core/css/FontFaceSetDocument.h"
 #include "core/css/RemoteFontFaceSource.h"
 #include "core/frame/UseCounter.h"
 #include "platform/fonts/FontDescription.h"
 #include "platform/fonts/SimpleFontData.h"
-#include <algorithm>
 
 namespace blink {
 
@@ -53,16 +53,18 @@ void CSSFontFace::DidBeginLoad() {
     SetLoadStatus(FontFace::kLoading);
 }
 
-void CSSFontFace::FontLoaded(RemoteFontFaceSource* source) {
+void CSSFontFace::FontLoaded(RemoteFontFaceSource* source,
+                             LoadFinishReason reason) {
   if (!IsValid() || source != sources_.front())
     return;
 
   if (LoadStatus() == FontFace::kLoading) {
     if (source->IsValid()) {
       SetLoadStatus(FontFace::kLoaded);
-    } else if (source->GetDisplayPeriod() ==
-               RemoteFontFaceSource::kFailurePeriod) {
-      sources_.Clear();
+    } else if (reason == LoadFinishReason::WasCancelled ||
+               source->GetDisplayPeriod() ==
+                   RemoteFontFaceSource::kFailurePeriod) {
+      sources_.clear();
       SetLoadStatus(FontFace::kError);
     } else {
       sources_.pop_front();
@@ -88,20 +90,22 @@ void CSSFontFace::DidBecomeVisibleFallback(RemoteFontFaceSource* source) {
     segmented_font_face_->FontFaceInvalidated();
 }
 
-PassRefPtr<SimpleFontData> CSSFontFace::GetFontData(
+RefPtr<SimpleFontData> CSSFontFace::GetFontData(
     const FontDescription& font_description) {
   if (!IsValid())
     return nullptr;
 
   while (!sources_.IsEmpty()) {
     Member<CSSFontFaceSource>& source = sources_.front();
-    if (RefPtr<SimpleFontData> result = source->GetFontData(font_description)) {
+    if (RefPtr<SimpleFontData> result = source->GetFontData(
+            font_description,
+            segmented_font_face_->GetFontSelectionCapabilities())) {
       if (LoadStatus() == FontFace::kUnloaded &&
           (source->IsLoading() || source->IsLoaded()))
         SetLoadStatus(FontFace::kLoading);
       if (LoadStatus() == FontFace::kLoading && source->IsLoaded())
         SetLoadStatus(FontFace::kLoaded);
-      return result.Release();
+      return result;
     }
     sources_.pop_front();
   }
@@ -144,7 +148,6 @@ void CSSFontFace::Load() {
   FontFamily font_family;
   font_family.SetFamily(font_face_->family());
   font_description.SetFamily(font_family);
-  font_description.SetTraits(font_face_->Traits());
   Load(font_description);
 }
 
@@ -181,11 +184,12 @@ void CSSFontFace::SetLoadStatus(FontFace::LoadStatusType new_status) {
   else
     font_face_->SetLoadStatus(new_status);
 
-  if (!segmented_font_face_)
+  if (!segmented_font_face_ || !font_face_->GetExecutionContext() ||
+      !font_face_->GetExecutionContext()->IsDocument())
     return;
-  Document* document = segmented_font_face_->FontSelector()->GetDocument();
+  Document* document = ToDocument(font_face_->GetExecutionContext());
   if (document && new_status == FontFace::kLoading)
-    FontFaceSet::From(*document)->BeginFontLoading(font_face_);
+    FontFaceSetDocument::From(*document)->BeginFontLoading(font_face_);
 }
 
 DEFINE_TRACE(CSSFontFace) {

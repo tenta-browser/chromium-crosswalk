@@ -10,6 +10,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "media/base/timestamp_constants.h"
 #include "media/formats/mp4/rcheck.h"
 #include "media/formats/mp4/sample_to_group_iterator.h"
 #include "media/media_features.h"
@@ -18,9 +19,9 @@ namespace media {
 namespace mp4 {
 
 struct SampleInfo {
-  int size;
-  int duration;
-  int cts_offset;
+  uint32_t size;
+  uint32_t duration;
+  int64_t cts_offset;
   bool is_keyframe;
   uint32_t cenc_group_description_index;
 };
@@ -67,26 +68,41 @@ TrackRunInfo::TrackRunInfo()
 TrackRunInfo::~TrackRunInfo() {}
 
 base::TimeDelta TimeDeltaFromRational(int64_t numer, int64_t denom) {
-  // To avoid overflow, split the following calculation:
-  // (numer * base::Time::kMicrosecondsPerSecond) / denom
-  // into:
-  //  (numer / denom) * base::Time::kMicrosecondsPerSecond +
-  // ((numer % denom) * base::Time::kMicrosecondsPerSecond) / denom
-  int64_t a = numer / denom;
-  DCHECK_LE((a > 0 ? a : -a), std::numeric_limits<int64_t>::max() /
-                                  base::Time::kMicrosecondsPerSecond);
-  int64_t timea_in_us = a * base::Time::kMicrosecondsPerSecond;
+  // TODO(sandersd): Change all callers to pass a |denom| as a uint32_t. This is
+  // the correct (and sufficient) type in all cases, but some intermediaries
+  // currently store -1 as a default value.
+  // TODO(sandersd): Change all callers to pass |numer| as a uint64_t. The few
+  // cases that could theoretically be negative would result in negative PTS
+  // anyway, and there are cases where an int64_t is not sufficient to store the
+  // entire representable range.
+  DCHECK_GT(denom, 0);
+  DCHECK_LE(denom, std::numeric_limits<uint32_t>::max());
 
-  int64_t b = numer % denom;
-  DCHECK_LE((b > 0 ? b : -b), std::numeric_limits<int64_t>::max() /
-                                  base::Time::kMicrosecondsPerSecond);
-  int64_t timeb_in_us = (b * base::Time::kMicrosecondsPerSecond) / denom;
+  // The maximum number of seconds that a TimeDelta can hold (about 300,000
+  // years worth). There is a (t ~= 0.775)-second fraction that is ignored.
+  const int64_t max_seconds =
+      std::numeric_limits<int64_t>::max() / base::Time::kMicrosecondsPerSecond;
 
-  DCHECK((timeb_in_us < 0) ||
-         (timea_in_us <= std::numeric_limits<int64_t>::max() - timeb_in_us));
-  DCHECK((timeb_in_us > 0) ||
-         (timea_in_us >= std::numeric_limits<int64_t>::min() - timeb_in_us));
-  return base::TimeDelta::FromMicroseconds(timea_in_us + timeb_in_us);
+  // The integer part of the result, in seconds. There is a (0 <= f < 1)-second
+  // fraction that is not computed. (Also true for negative |numer|, since
+  // rounding of integer division is towards zero in C++.)
+  const int64_t result_seconds = numer / denom;
+
+  // Reject |actual_seconds == max_seconds| under the assumption that f > t.
+  // This rejects valid times that are within t seconds of the limit.
+  if (result_seconds >= max_seconds || result_seconds <= -max_seconds)
+    return kNoTimestamp;
+
+  // Since (denom <= 2 ** 32), the multiplication fits in 52 bits.
+  // Note: When |numer| is negative, (numer % denom) is also negative. C++
+  // guarantees that ((numer / denom) * denom + (numer % denom) == numer).
+  // TODO(sandersd): Is round-toward-zero the best possible computation here?
+  const int64_t result_microseconds =
+      base::Time::kMicrosecondsPerSecond * (numer % denom) / denom;
+
+  const int64_t total_microseconds =
+      base::Time::kMicrosecondsPerSecond * result_seconds + result_microseconds;
+  return base::TimeDelta::FromMicroseconds(total_microseconds);
 }
 
 DecodeTimestamp DecodeTimestampFromRational(int64_t numer, int64_t denom) {
@@ -94,8 +110,7 @@ DecodeTimestamp DecodeTimestampFromRational(int64_t numer, int64_t denom) {
       TimeDeltaFromRational(numer, denom));
 }
 
-TrackRunIterator::TrackRunIterator(const Movie* moov,
-                                   const scoped_refptr<MediaLog>& media_log)
+TrackRunIterator::TrackRunIterator(const Movie* moov, MediaLog* media_log)
     : moov_(moov), media_log_(media_log), sample_offset_(0) {
   CHECK(moov);
 }
@@ -117,7 +132,7 @@ static bool PopulateSampleInfo(const TrackExtends& trex,
                                SampleInfo* sample_info,
                                const SampleDependsOn sdtp_sample_depends_on,
                                bool is_audio,
-                               const scoped_refptr<MediaLog>& media_log) {
+                               MediaLog* media_log) {
   if (i < trun.sample_sizes.size()) {
     sample_info->size = trun.sample_sizes[i];
   } else if (tfhd.default_sample_size > 0) {
@@ -170,11 +185,11 @@ static bool PopulateSampleInfo(const TrackExtends& trex,
   // that marks non-key video frames as sync samples (http://crbug.com/507916
   // and http://crbug.com/310712). Hence, for video we additionally check that
   // the sample does not depend on others (FFmpeg does too, see mov_read_trun).
-  // Sample dependency is not ignored for audio because encoded audio samples
-  // can depend on other samples and still be used for random access. Generally
-  // all audio samples are expected to be sync samples, but we  prefer to check
-  // the flags to catch badly muxed audio (for now anyway ;P). History of
-  // attempts to get this right discussed in http://crrev.com/1319813002
+  // Sample dependency is ignored for audio because encoded audio samples can
+  // depend on other samples and still be used for random access. Generally all
+  // audio samples are expected to be sync samples, but we  prefer to check the
+  // flags to catch badly muxed audio (for now anyway ;P). History of attempts
+  // to get this right discussed in http://crrev.com/1319813002
   bool sample_is_sync_sample = !(flags & kSampleIsNonSyncSample);
   bool sample_depends_on_others = sample_depends_on == kSampleDependsOnOthers;
   sample_info->is_keyframe = sample_is_sync_sample &&
@@ -213,7 +228,6 @@ static const CencSampleEncryptionInfoEntry* GetSampleEncryptionInfoEntry(
   }
 
   // |group_description_index| is 1-based.
-  DCHECK_LE(group_description_index, entries->size());
   return (group_description_index > entries->size())
              ? nullptr
              : &(*entries)[group_description_index - 1];
@@ -327,13 +341,13 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
       tri.is_audio = (stsd.type == kAudio);
       if (tri.is_audio) {
         RCHECK(!stsd.audio_entries.empty());
-        if (desc_idx > stsd.audio_entries.size())
+        if (desc_idx >= stsd.audio_entries.size())
           desc_idx = 0;
         tri.audio_description = &stsd.audio_entries[desc_idx];
         track_encryption = &tri.audio_description->sinf.info.track_encryption;
       } else {
         RCHECK(!stsd.video_entries.empty());
-        if (desc_idx > stsd.video_entries.size())
+        if (desc_idx >= stsd.video_entries.size())
           desc_idx = 0;
         tri.video_description = &stsd.video_entries[desc_idx];
         track_encryption = &tri.video_description->sinf.info.track_encryption;
@@ -383,6 +397,9 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
                                 tri.is_audio, media_log_)) {
           return false;
         }
+
+        RCHECK(std::numeric_limits<int64_t>::max() - tri.samples[k].duration >
+               run_start_dts);
 
         run_start_dts += tri.samples[k].duration;
 
@@ -506,7 +523,9 @@ bool TrackRunIterator::CacheAuxInfo(const uint8_t* buf, int buf_size) {
       const uint8_t iv_size = GetIvSize(i);
       const bool has_subsamples = info_size > iv_size;
       SampleEncryptionEntry& entry = sample_encryption_entries[i];
-      RCHECK(entry.Parse(&reader, iv_size, has_subsamples));
+      RCHECK_MEDIA_LOGGED(
+          entry.Parse(&reader, iv_size, has_subsamples), media_log_,
+          "SampleEncryptionEntry parse failed when caching aux info");
 #if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
       // if we don't have a per-sample IV, get the constant IV.
       if (!iv_size) {
@@ -595,7 +614,7 @@ int64_t TrackRunIterator::sample_offset() const {
   return sample_offset_;
 }
 
-int TrackRunIterator::sample_size() const {
+uint32_t TrackRunIterator::sample_size() const {
   DCHECK(IsSampleValid());
   return sample_itr_->size;
 }

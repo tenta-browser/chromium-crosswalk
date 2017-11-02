@@ -29,16 +29,6 @@ IPC_MESSAGE_CONTROL1(ShellViewMsg_SetWebKitSourceDir,
 // to finish the test.
 IPC_MESSAGE_ROUTED0(ShellViewMsg_TestFinishedInSecondaryRenderer)
 
-// Pushes a snapshot of the current session history from the browser process.
-// This includes only information about those RenderViews that are in the
-// same process as the main window of the layout test and that are the current
-// active RenderView of their WebContents.
-IPC_MESSAGE_ROUTED3(
-    ShellViewMsg_SessionHistory,
-    std::vector<int> /* routing_ids */,
-    std::vector<std::vector<content::PageState> > /* session_histories */,
-    std::vector<unsigned> /* current_entry_indexes */)
-
 IPC_MESSAGE_ROUTED0(ShellViewMsg_TryLeakDetection)
 
 // Notifies BlinkTestRunner that the layout dump has completed
@@ -47,17 +37,15 @@ IPC_MESSAGE_ROUTED1(ShellViewMsg_LayoutDumpCompleted,
                     std::string /* completed/stitched layout dump */)
 
 // Send a text dump of the WebContents to the render host.
-IPC_MESSAGE_ROUTED1(ShellViewHostMsg_TextDump,
-                    std::string /* dump */)
+IPC_MESSAGE_ROUTED2(ShellViewHostMsg_TextDump,
+                    std::string /* dump */,
+                    bool /* should_dump_history */)
 
 // Asks the browser process to perform a layout dump spanning all the
-// (potentially cross-process) frames.  This triggers multiple
-// ShellViewMsg_LayoutDumpRequest / ShellViewHostMsg_LayoutDumpResponse messages
-// and ends with sending of ShellViewMsg_LayoutDumpCompleted.
+// (potentially cross-process) frames.  This goes through multiple
+// LayoutTestControl.DumpFrameLayout calls and ends with sending of
+// ShellViewMsg_LayoutDumpCompleted.
 IPC_MESSAGE_ROUTED0(ShellViewHostMsg_InitiateLayoutDump)
-
-// Sends a layout dump of a frame (response to ShellViewMsg_LayoutDumpRequest).
-IPC_MESSAGE_ROUTED1(ShellViewHostMsg_LayoutDumpResponse, std::string /* dump */)
 
 // Send an image dump of the WebContents to the render host.
 IPC_MESSAGE_ROUTED2(ShellViewHostMsg_ImageDump,
@@ -93,7 +81,6 @@ IPC_MESSAGE_ROUTED0(ShellViewHostMsg_Reload)
 IPC_MESSAGE_ROUTED2(ShellViewHostMsg_LoadURLForFrame,
                     GURL /* url */,
                     std::string /* frame_name */)
-IPC_MESSAGE_ROUTED0(ShellViewHostMsg_CaptureSessionHistory)
 IPC_MESSAGE_ROUTED0(ShellViewHostMsg_CloseRemainingWindows)
 
 IPC_STRUCT_TRAITS_BEGIN(content::LeakDetectionResult)
@@ -112,3 +99,5 @@ IPC_MESSAGE_ROUTED1(ShellViewMsg_ReplyBluetoothManualChooserEvents,
 IPC_MESSAGE_ROUTED2(ShellViewHostMsg_SendBluetoothManualChooserEvent,
                     std::string /* event */,
                     std::string /* argument */)
+IPC_MESSAGE_ROUTED1(ShellViewHostMsg_SetPopupBlockingEnabled,
+                    bool /* block_popups */)

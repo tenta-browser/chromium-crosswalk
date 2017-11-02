@@ -5,9 +5,11 @@
 #include "content/browser/ssl/ssl_manager.h"
 
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/supports_user_data.h"
@@ -25,6 +27,7 @@
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/ssl_host_state_delegate.h"
+#include "content/public/common/console_message_level.h"
 #include "net/url_request/url_request.h"
 
 namespace content {
@@ -146,8 +149,8 @@ void SSLManager::OnSSLCertificateError(
   // on the UI thread for processing.
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&HandleSSLErrorOnUI, web_contents_getter, delegate,
-                 resource_type, url, ssl_info, fatal));
+      base::BindOnce(&HandleSSLErrorOnUI, web_contents_getter, delegate,
+                     resource_type, url, ssl_info, fatal));
 }
 
 // static
@@ -173,8 +176,10 @@ SSLManager::SSLManager(NavigationControllerImpl* controller)
   SSLManagerSet* managers = static_cast<SSLManagerSet*>(
       controller_->GetBrowserContext()->GetUserData(kSSLManagerKeyName));
   if (!managers) {
-    managers = new SSLManagerSet;
-    controller_->GetBrowserContext()->SetUserData(kSSLManagerKeyName, managers);
+    auto managers_owned = base::MakeUnique<SSLManagerSet>();
+    managers = managers_owned.get();
+    controller_->GetBrowserContext()->SetUserData(kSSLManagerKeyName,
+                                                  std::move(managers_owned));
   }
   managers->get().insert(this);
 }
@@ -187,7 +192,9 @@ SSLManager::~SSLManager() {
 
 void SSLManager::DidCommitProvisionalLoad(const LoadCommittedDetails& details) {
   NavigationEntryImpl* entry = controller_->GetLastCommittedEntry();
-  int content_status_flags = 0;
+  int add_content_status_flags = 0;
+  int remove_content_status_flags = 0;
+
   if (!details.is_main_frame) {
     // If it wasn't a main-frame navigation, then carry over content
     // status flags. (For example, the mixed content flag shouldn't
@@ -195,13 +202,25 @@ void SSLManager::DidCommitProvisionalLoad(const LoadCommittedDetails& details) {
     NavigationEntryImpl* previous_entry =
         controller_->GetEntryAtIndex(details.previous_entry_index);
     if (previous_entry) {
-      content_status_flags = previous_entry->GetSSL().content_status;
+      add_content_status_flags = previous_entry->GetSSL().content_status;
     }
+  } else if (!details.is_same_document) {
+    // For main-frame non-same-page navigations, clear content status
+    // flags. These flags are set based on the content on the page, and thus
+    // should reflect the current content, even if the navigation was to an
+    // existing entry that already had content status flags set.
+    remove_content_status_flags = ~0;
+    // Also clear any UserData from the SSLStatus.
+    if (entry)
+      entry->GetSSL().user_data = nullptr;
   }
-  UpdateEntry(entry, content_status_flags, 0);
-  // Always notify the WebContents that the SSL state changed when a
-  // load is committed, in case the active navigation entry has changed.
-  NotifyDidChangeVisibleSSLState();
+
+  if (!UpdateEntry(entry, add_content_status_flags,
+                   remove_content_status_flags)) {
+    // Ensure the WebContents is notified that the SSL state changed when a
+    // load is committed, in case the active navigation entry has changed.
+    NotifyDidChangeVisibleSSLState();
+  }
 }
 
 void SSLManager::DidDisplayMixedContent() {
@@ -287,51 +306,13 @@ void SSLManager::OnCertError(std::unique_ptr<SSLErrorHandler> handler) {
     return;
   }
 
-  // For all other hosts, which must be DENIED, a blocking page is shown to the
-  // user every time they come back to the page.
-  int options_mask = 0;
-  switch (handler->cert_error()) {
-    case net::ERR_CERT_COMMON_NAME_INVALID:
-    case net::ERR_CERT_DATE_INVALID:
-    case net::ERR_CERT_AUTHORITY_INVALID:
-    case net::ERR_CERT_WEAK_SIGNATURE_ALGORITHM:
-    case net::ERR_CERT_WEAK_KEY:
-    case net::ERR_CERT_NAME_CONSTRAINT_VIOLATION:
-    case net::ERR_CERT_VALIDITY_TOO_LONG:
-    case net::ERR_CERTIFICATE_TRANSPARENCY_REQUIRED:
-      if (!handler->fatal())
-        options_mask |= OVERRIDABLE;
-      else
-        options_mask |= STRICT_ENFORCEMENT;
-      if (expired_previous_decision)
-        options_mask |= EXPIRED_PREVIOUS_DECISION;
-      OnCertErrorInternal(std::move(handler), options_mask);
-      break;
-    case net::ERR_CERT_NO_REVOCATION_MECHANISM:
-      // Ignore this error.
-      handler->ContinueRequest();
-      break;
-    case net::ERR_CERT_UNABLE_TO_CHECK_REVOCATION:
-      // We ignore this error but will show a warning status in the location
-      // bar.
-      handler->ContinueRequest();
-      break;
-    case net::ERR_CERT_CONTAINS_ERRORS:
-    case net::ERR_CERT_REVOKED:
-    case net::ERR_CERT_INVALID:
-    case net::ERR_SSL_WEAK_SERVER_EPHEMERAL_DH_KEY:
-    case net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN:
-      if (handler->fatal())
-        options_mask |= STRICT_ENFORCEMENT;
-      if (expired_previous_decision)
-        options_mask |= EXPIRED_PREVIOUS_DECISION;
-      OnCertErrorInternal(std::move(handler), options_mask);
-      break;
-    default:
-      NOTREACHED();
-      handler->CancelRequest();
-      break;
+  DCHECK(net::IsCertificateError(handler->cert_error()));
+  if (handler->cert_error() == net::ERR_CERT_NO_REVOCATION_MECHANISM ||
+      handler->cert_error() == net::ERR_CERT_UNABLE_TO_CHECK_REVOCATION) {
+    handler->ContinueRequest();
+    return;
   }
+  OnCertErrorInternal(std::move(handler), expired_previous_decision);
 }
 
 void SSLManager::DidStartResourceResponse(const GURL& url,
@@ -361,17 +342,13 @@ void SSLManager::DidStartResourceResponse(const GURL& url,
 }
 
 void SSLManager::OnCertErrorInternal(std::unique_ptr<SSLErrorHandler> handler,
-                                     int options_mask) {
-  bool overridable = (options_mask & OVERRIDABLE) != 0;
-  bool strict_enforcement = (options_mask & STRICT_ENFORCEMENT) != 0;
-  bool expired_previous_decision =
-      (options_mask & EXPIRED_PREVIOUS_DECISION) != 0;
-
+                                     bool expired_previous_decision) {
   WebContents* web_contents = handler->web_contents();
   int cert_error = handler->cert_error();
   const net::SSLInfo& ssl_info = handler->ssl_info();
   const GURL& request_url = handler->request_url();
   ResourceType resource_type = handler->resource_type();
+  bool fatal = handler->fatal();
 
   base::Callback<void(bool, content::CertificateRequestResultType)> callback =
       base::Bind(&OnAllowCertificate, base::Owned(handler.release()),
@@ -379,31 +356,36 @@ void SSLManager::OnCertErrorInternal(std::unique_ptr<SSLErrorHandler> handler,
 
   DevToolsAgentHostImpl* agent_host = static_cast<DevToolsAgentHostImpl*>(
       DevToolsAgentHost::GetOrCreateFor(web_contents).get());
-  protocol::SecurityHandler* security_handler =
-      protocol::SecurityHandler::FromAgentHost(agent_host);
-  if (!security_handler ||
-      !security_handler->NotifyCertificateError(
-          cert_error, request_url,
-          base::Bind(&OnAllowCertificateWithRecordDecision, false, callback))) {
-    GetContentClient()->browser()->AllowCertificateError(
-        web_contents, cert_error, ssl_info, request_url, resource_type,
-        overridable, strict_enforcement, expired_previous_decision,
-        base::Bind(&OnAllowCertificateWithRecordDecision, true, callback));
+  if (agent_host) {
+    for (auto* security_handler :
+         protocol::SecurityHandler::ForAgentHost(agent_host)) {
+      if (security_handler->NotifyCertificateError(
+              cert_error, request_url,
+              base::Bind(&OnAllowCertificateWithRecordDecision, false,
+                         callback))) {
+        return;
+      }
+    }
   }
+
+  GetContentClient()->browser()->AllowCertificateError(
+      web_contents, cert_error, ssl_info, request_url, resource_type, fatal,
+      expired_previous_decision,
+      base::Bind(&OnAllowCertificateWithRecordDecision, true, callback));
 }
 
-void SSLManager::UpdateEntry(NavigationEntryImpl* entry,
+bool SSLManager::UpdateEntry(NavigationEntryImpl* entry,
                              int add_content_status_flags,
                              int remove_content_status_flags) {
   // We don't always have a navigation entry to update, for example in the
   // case of the Web Inspector.
   if (!entry)
-    return;
+    return false;
 
   SSLStatus original_ssl_status = entry->GetSSL();  // Copy!
   entry->GetSSL().initialized = true;
-  entry->GetSSL().content_status |= add_content_status_flags;
   entry->GetSSL().content_status &= ~remove_content_status_flags;
+  entry->GetSSL().content_status |= add_content_status_flags;
 
   SiteInstance* site_instance = entry->site_instance();
   // Note that |site_instance| can be NULL here because NavigationEntries don't
@@ -427,8 +409,13 @@ void SSLManager::UpdateEntry(NavigationEntryImpl* entry,
     }
   }
 
-  if (!entry->GetSSL().Equals(original_ssl_status))
+  if (entry->GetSSL().initialized != original_ssl_status.initialized ||
+      entry->GetSSL().content_status != original_ssl_status.content_status) {
     NotifyDidChangeVisibleSSLState();
+    return true;
+  }
+
+  return false;
 }
 
 void SSLManager::UpdateLastCommittedEntry(int add_content_status_flags,

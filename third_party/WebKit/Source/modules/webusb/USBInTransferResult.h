@@ -5,9 +5,9 @@
 #ifndef USBInTransferResult_h
 #define USBInTransferResult_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMDataView.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMDataView.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
@@ -21,12 +21,9 @@ class USBInTransferResult final
 
  public:
   static USBInTransferResult* Create(const String& status,
-                                     const Optional<Vector<uint8_t>>& data) {
-    DOMDataView* data_view = nullptr;
-    if (data) {
-      data_view = DOMDataView::Create(
-          DOMArrayBuffer::Create(data->Data(), data->size()), 0, data->size());
-    }
+                                     const Vector<uint8_t>& data) {
+    DOMDataView* data_view = DOMDataView::Create(
+        DOMArrayBuffer::Create(data.data(), data.size()), 0, data.size());
     return new USBInTransferResult(status, data_view);
   }
 

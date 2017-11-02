@@ -10,9 +10,9 @@
 
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
+#include "components/viz/common/switches.h"
 #include "content/child/feature_policy/feature_policy_platform.h"
 #include "content/child/web_url_request_util.h"
-#include "content/child/webmessageportchannel_impl.h"
 #include "content/common/content_switches_internal.h"
 #include "content/common/frame_messages.h"
 #include "content/common/frame_owner_properties.h"
@@ -22,8 +22,10 @@
 #include "content/common/site_isolation_policy.h"
 #include "content/common/swapped_out_messages.h"
 #include "content/common/view_messages.h"
+#include "content/public/common/content_switches.h"
 #include "content/renderer/child_frame_compositing_helper.h"
 #include "content/renderer/frame_owner_properties.h"
+#include "content/renderer/mash_util.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/render_view_impl.h"
@@ -34,8 +36,13 @@
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/WebKit/public/web/WebTriggeringEventInfo.h"
 #include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
 #include "third_party/WebKit/public/web/WebView.h"
+
+#if defined(USE_AURA)
+#include "content/renderer/mus/renderer_window_tree_client.h"
+#endif
 
 namespace content {
 
@@ -46,8 +53,8 @@ typedef std::map<int, RenderFrameProxy*> RoutingIDProxyMap;
 static base::LazyInstance<RoutingIDProxyMap>::DestructorAtExit
     g_routing_id_proxy_map = LAZY_INSTANCE_INITIALIZER;
 
-// Facilitates lookup of RenderFrameProxy by WebFrame.
-typedef std::map<blink::WebFrame*, RenderFrameProxy*> FrameMap;
+// Facilitates lookup of RenderFrameProxy by WebRemoteFrame.
+typedef std::map<blink::WebRemoteFrame*, RenderFrameProxy*> FrameMap;
 base::LazyInstance<FrameMap>::DestructorAtExit g_frame_map =
     LAZY_INSTANCE_INITIALIZER;
 
@@ -77,7 +84,7 @@ RenderFrameProxy* RenderFrameProxy::CreateProxyToReplaceFrame(
        frame_to_replace->GetWebFrame()->Parent()->IsWebLocalFrame())
           ? frame_to_replace->GetRenderWidget()
           : RenderFrameProxy::FromWebFrame(
-                frame_to_replace->GetWebFrame()->Parent())
+                frame_to_replace->GetWebFrame()->Parent()->ToWebRemoteFrame())
                 ->render_widget();
   proxy->Init(web_frame, frame_to_replace->render_view(), widget);
   return proxy.release();
@@ -107,9 +114,8 @@ RenderFrameProxy* RenderFrameProxy::CreateFrameProxy(
   if (!parent) {
     // Create a top level WebRemoteFrame.
     render_view = RenderViewImpl::FromRoutingID(render_view_routing_id);
-    web_frame = blink::WebRemoteFrame::Create(replicated_state.scope,
-                                              proxy.get(), opener);
-    render_view->webview()->SetMainFrame(web_frame);
+    web_frame = blink::WebRemoteFrame::CreateMainFrame(
+        render_view->GetWebView(), proxy.get(), opener);
     render_widget = render_view->GetWidget();
 
     // If the RenderView is reused by this proxy after having been used for a
@@ -127,7 +133,9 @@ RenderFrameProxy* RenderFrameProxy::CreateFrameProxy(
     web_frame = parent->web_frame()->CreateRemoteChild(
         replicated_state.scope,
         blink::WebString::FromUTF8(replicated_state.name),
-        replicated_state.sandbox_flags, proxy.get(), opener);
+        replicated_state.sandbox_flags,
+        FeaturePolicyHeaderToWeb(replicated_state.container_policy),
+        proxy.get(), opener);
     proxy->unique_name_ = replicated_state.unique_name;
     render_view = parent->render_view();
     render_widget = parent->render_widget();
@@ -155,13 +163,21 @@ RenderFrameProxy* RenderFrameProxy::FromRoutingID(int32_t routing_id) {
 }
 
 // static
-RenderFrameProxy* RenderFrameProxy::FromWebFrame(blink::WebFrame* web_frame) {
+RenderFrameProxy* RenderFrameProxy::FromWebFrame(
+    blink::WebRemoteFrame* web_frame) {
+  // TODO(dcheng): Turn this into a DCHECK() if it doesn't crash on canary.
+  CHECK(web_frame);
   FrameMap::iterator iter = g_frame_map.Get().find(web_frame);
   if (iter != g_frame_map.Get().end()) {
     RenderFrameProxy* proxy = iter->second;
     DCHECK_EQ(web_frame, proxy->web_frame());
     return proxy;
   }
+  // Reaching this is not expected: this implies that the |web_frame| in
+  // question is not managed by the content API, or the associated
+  // RenderFrameProxy is already deleted--in which case, it's not safe to touch
+  // |web_frame|.
+  NOTREACHED();
   return NULL;
 }
 
@@ -201,10 +217,38 @@ void RenderFrameProxy::Init(blink::WebRemoteFrame* web_frame,
   std::pair<FrameMap::iterator, bool> result =
       g_frame_map.Get().insert(std::make_pair(web_frame_, this));
   CHECK(result.second) << "Inserted a duplicate item.";
+
+  const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+  enable_surface_synchronization_ =
+      command_line.HasSwitch(switches::kEnableSurfaceSynchronization);
+
+  compositing_helper_.reset(
+      ChildFrameCompositingHelper::CreateForRenderFrameProxy(this));
+
+#if defined(USE_AURA)
+  if (IsRunningInMash()) {
+    RendererWindowTreeClient* renderer_window_tree_client =
+        RendererWindowTreeClient::Get(render_widget_->routing_id());
+    // It's possible a MusEmbeddedFrame has already been scheduled for creation
+    // (that is, RendererWindowTreeClient::Embed() was called). Call to
+    // OnRenderFrameProxyCreated() to potentially get the MusEmbeddedFrame.
+    // OnRenderFrameProxyCreated() returns null if Embed() was not called.
+    mus_embedded_frame_ =
+        renderer_window_tree_client->OnRenderFrameProxyCreated(this);
+  }
+#endif
+}
+
+void RenderFrameProxy::ResendFrameRects() {
+  // Reset |frame_rect_| in order to allocate a new viz::LocalSurfaceId.
+  gfx::Rect rect = frame_rect_;
+  frame_rect_ = gfx::Rect();
+  FrameRectsChanged(rect);
 }
 
 void RenderFrameProxy::WillBeginCompositorFrame() {
-  if (compositing_helper_) {
+  if (compositing_helper_->surface_id().is_valid()) {
     FrameHostMsg_HittestData_Params params;
     params.surface_id = compositing_helper_->surface_id();
     params.ignored_for_hittest = web_frame_->IsIgnoredForHitTest();
@@ -235,7 +279,7 @@ void RenderFrameProxy::SetReplicatedState(const FrameReplicationState& state) {
 }
 
 // Update the proxy's SecurityContext and FrameOwner with new sandbox flags
-// that were set by its parent in another process.
+// and container policy that were set by its parent in another process.
 //
 // Normally, when a frame's sandbox attribute is changed dynamically, the
 // frame's FrameOwner is updated with the new sandbox flags right away, while
@@ -250,9 +294,25 @@ void RenderFrameProxy::SetReplicatedState(const FrameReplicationState& state) {
 // properly if this proxy ever parents a local frame.  The proxy's FrameOwner
 // flags are also updated here with the caveat that the FrameOwner won't learn
 // about updates to its flags until they take effect.
-void RenderFrameProxy::OnDidUpdateSandboxFlags(blink::WebSandboxFlags flags) {
+void RenderFrameProxy::OnDidUpdateFramePolicy(
+    blink::WebSandboxFlags flags,
+    const ParsedFeaturePolicyHeader& container_policy) {
   web_frame_->SetReplicatedSandboxFlags(flags);
-  web_frame_->SetFrameOwnerSandboxFlags(flags);
+  web_frame_->SetFrameOwnerPolicy(flags,
+                                  FeaturePolicyHeaderToWeb(container_policy));
+}
+
+void RenderFrameProxy::MaybeUpdateCompositingHelper() {
+  if (!frame_sink_id_.is_valid() || !local_surface_id_.is_valid())
+    return;
+
+  float device_scale_factor = render_widget_->GetOriginalDeviceScaleFactor();
+  viz::SurfaceInfo surface_info(
+      viz::SurfaceId(frame_sink_id_, local_surface_id_), device_scale_factor,
+      gfx::ScaleToCeiledSize(frame_rect_.size(), device_scale_factor));
+
+  if (enable_surface_synchronization_)
+    compositing_helper_->SetPrimarySurfaceInfo(surface_info);
 }
 
 bool RenderFrameProxy::OnMessageReceived(const IPC::Message& msg) {
@@ -270,10 +330,12 @@ bool RenderFrameProxy::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER(FrameMsg_ChildFrameProcessGone, OnChildFrameProcessGone)
     IPC_MESSAGE_HANDLER(FrameMsg_SetChildFrameSurface, OnSetChildFrameSurface)
     IPC_MESSAGE_HANDLER(FrameMsg_UpdateOpener, OnUpdateOpener)
+    IPC_MESSAGE_HANDLER(FrameMsg_ViewChanged, OnViewChanged)
     IPC_MESSAGE_HANDLER(FrameMsg_DidStartLoading, OnDidStartLoading)
     IPC_MESSAGE_HANDLER(FrameMsg_DidStopLoading, OnDidStopLoading)
-    IPC_MESSAGE_HANDLER(FrameMsg_DidUpdateSandboxFlags, OnDidUpdateSandboxFlags)
+    IPC_MESSAGE_HANDLER(FrameMsg_DidUpdateFramePolicy, OnDidUpdateFramePolicy)
     IPC_MESSAGE_HANDLER(FrameMsg_DispatchLoad, OnDispatchLoad)
+    IPC_MESSAGE_HANDLER(FrameMsg_Collapse, OnCollapse)
     IPC_MESSAGE_HANDLER(FrameMsg_DidUpdateName, OnDidUpdateName)
     IPC_MESSAGE_HANDLER(FrameMsg_AddContentSecurityPolicies,
                         OnAddContentSecurityPolicies)
@@ -306,13 +368,12 @@ void RenderFrameProxy::OnDeleteProxy() {
 }
 
 void RenderFrameProxy::OnChildFrameProcessGone() {
-  if (compositing_helper_.get())
-    compositing_helper_->ChildFrameGone();
+  compositing_helper_->ChildFrameGone();
 }
 
 void RenderFrameProxy::OnSetChildFrameSurface(
-    const cc::SurfaceInfo& surface_info,
-    const cc::SurfaceSequence& sequence) {
+    const viz::SurfaceInfo& surface_info,
+    const viz::SurfaceSequence& sequence) {
   // If this WebFrame has already been detached, its parent will be null. This
   // can happen when swapping a WebRemoteFrame with a WebLocalFrame, where this
   // message may arrive after the frame was removed from the frame tree, but
@@ -320,11 +381,9 @@ void RenderFrameProxy::OnSetChildFrameSurface(
   if (!web_frame()->Parent())
     return;
 
-  if (!compositing_helper_.get()) {
-    compositing_helper_ =
-        ChildFrameCompositingHelper::CreateForRenderFrameProxy(this);
-  }
-  compositing_helper_->OnSetSurface(surface_info, sequence);
+  if (!enable_surface_synchronization_)
+    compositing_helper_->SetPrimarySurfaceInfo(surface_info);
+  compositing_helper_->SetFallbackSurfaceInfo(surface_info, sequence);
 }
 
 void RenderFrameProxy::OnUpdateOpener(int opener_routing_id) {
@@ -336,12 +395,26 @@ void RenderFrameProxy::OnDidStartLoading() {
   web_frame_->DidStartLoading();
 }
 
+void RenderFrameProxy::OnViewChanged(const viz::FrameSinkId& frame_sink_id) {
+  // In mash the FrameSinkId comes from RendererWindowTreeClient.
+  if (!IsRunningInMash())
+    frame_sink_id_ = frame_sink_id;
+
+  // Resend the FrameRects and allocate a new viz::LocalSurfaceId when the view
+  // changes.
+  ResendFrameRects();
+}
+
 void RenderFrameProxy::OnDidStopLoading() {
   web_frame_->DidStopLoading();
 }
 
 void RenderFrameProxy::OnDispatchLoad() {
   web_frame_->DispatchLoadEventOnFrameOwner();
+}
+
+void RenderFrameProxy::OnCollapse(bool collapsed) {
+  web_frame_->Collapse(collapsed);
 }
 
 void RenderFrameProxy::OnDidUpdateName(const std::string& name,
@@ -400,10 +473,28 @@ void RenderFrameProxy::OnSetHasReceivedUserGesture() {
   web_frame_->SetHasReceivedUserGesture();
 }
 
-void RenderFrameProxy::FrameDetached(DetachType type) {
-  if (type == DetachType::kRemove && web_frame_->Parent()) {
-    web_frame_->Parent()->RemoveChild(web_frame_);
+#if defined(USE_AURA)
+void RenderFrameProxy::OnMusFrameSinkIdAllocated(
+    const viz::FrameSinkId& frame_sink_id) {
+  frame_sink_id_ = frame_sink_id;
+  MaybeUpdateCompositingHelper();
+  // Resend the FrameRects and allocate a new viz::LocalSurfaceId when the view
+  // changes.
+  ResendFrameRects();
+}
 
+void RenderFrameProxy::SetMusEmbeddedFrame(
+    std::unique_ptr<MusEmbeddedFrame> mus_embedded_frame) {
+  mus_embedded_frame_ = std::move(mus_embedded_frame);
+}
+#endif
+
+void RenderFrameProxy::FrameDetached(DetachType type) {
+#if defined(USE_AURA)
+  mus_embedded_frame_.reset();
+#endif
+
+  if (type == DetachType::kRemove && web_frame_->Parent()) {
     // Let the browser process know this subframe is removed, so that it is
     // destroyed in its current process.
     Send(new FrameHostMsg_Detach(routing_id_));
@@ -451,8 +542,7 @@ void RenderFrameProxy::ForwardPostMessage(
   if (!target_origin.IsNull())
     params.target_origin = target_origin.ToString().Utf16();
 
-  params.message_ports =
-      WebMessagePortChannelImpl::ExtractMessagePorts(event.ReleaseChannels());
+  params.message_ports = event.ReleaseChannels().ReleaseVector();
 
   // Include the routing ID for the source frame (if one exists), which the
   // browser process will translate into the routing ID for the equivalent
@@ -474,23 +564,42 @@ void RenderFrameProxy::Navigate(const blink::WebURLRequest& request,
   params.url = request.Url();
   params.uses_post = request.HttpMethod().Utf8() == "POST";
   params.resource_request_body = GetRequestBodyForWebURLRequest(request);
-  params.extra_headers = GetWebURLRequestHeaders(request);
+  params.extra_headers = GetWebURLRequestHeadersAsString(request);
   params.referrer = Referrer(blink::WebStringToGURL(request.HttpHeaderField(
                                  blink::WebString::FromUTF8("Referer"))),
                              request.GetReferrerPolicy());
   params.disposition = WindowOpenDisposition::CURRENT_TAB;
   params.should_replace_current_entry = should_replace_current_entry;
   params.user_gesture = request.HasUserGesture();
+  params.triggering_event_info = blink::WebTriggeringEventInfo::kUnknown;
   Send(new FrameHostMsg_OpenURL(routing_id_, params));
 }
 
 void RenderFrameProxy::FrameRectsChanged(const blink::WebRect& frame_rect) {
   gfx::Rect rect = frame_rect;
+  const bool did_size_change = frame_rect_.size() != rect.size();
+#if defined(USE_AURA)
+  const bool did_rect_change = did_size_change || frame_rect_ != rect;
+#endif
+
+  frame_rect_ = rect;
+
+  if (did_size_change || !local_surface_id_.is_valid()) {
+    local_surface_id_ = local_surface_id_allocator_.GenerateId();
+    MaybeUpdateCompositingHelper();
+  }
+
+#if defined(USE_AURA)
+  if (did_rect_change && mus_embedded_frame_)
+    mus_embedded_frame_->SetWindowBounds(local_surface_id_, rect);
+#endif
+
   if (IsUseZoomForDSFEnabled()) {
     rect = gfx::ScaleToEnclosingRect(
         rect, 1.f / render_widget_->GetOriginalDeviceScaleFactor());
   }
-  Send(new FrameHostMsg_FrameRectChanged(routing_id_, rect));
+
+  Send(new FrameHostMsg_FrameRectChanged(routing_id_, rect, local_surface_id_));
 }
 
 void RenderFrameProxy::UpdateRemoteViewportIntersection(
@@ -501,6 +610,10 @@ void RenderFrameProxy::UpdateRemoteViewportIntersection(
 
 void RenderFrameProxy::VisibilityChanged(bool visible) {
   Send(new FrameHostMsg_VisibilityChanged(routing_id_, visible));
+}
+
+void RenderFrameProxy::SetIsInert(bool inert) {
+  Send(new FrameHostMsg_SetIsInert(routing_id_, inert));
 }
 
 void RenderFrameProxy::DidChangeOpener(blink::WebFrame* opener) {

@@ -17,8 +17,13 @@
 
 namespace extensions {
 
+// Test that we can load an extension.
+IN_PROC_BROWSER_TEST_F(ShellApiTest, LoadExtension) {
+  ASSERT_TRUE(RunExtensionTest("extension")) << message_;
+}
+
 // Test that we can open an app window and wait for it to load.
-IN_PROC_BROWSER_TEST_F(ShellApiTest, Basic) {
+IN_PROC_BROWSER_TEST_F(ShellApiTest, LoadApp) {
   ASSERT_TRUE(RunAppTest("platform_app")) << message_;
 
   // A window was created.
@@ -26,7 +31,7 @@ IN_PROC_BROWSER_TEST_F(ShellApiTest, Basic) {
       AppWindowRegistry::Get(browser_context())->app_windows().front();
   ASSERT_TRUE(app_window);
 
-  // TOOD(yoz): Test for focus on Cocoa.
+  // TODO(yoz): Test for focus on Cocoa.
   // app_window->GetBaseWindow()->IsActive() is possible, although on Mac,
   // focus changes are asynchronous, so interactive_ui_tests are required.
 #if defined(USE_AURA)

@@ -20,11 +20,11 @@
 
 #include "core/svg/SVGURIReference.h"
 
-#include "core/XLinkNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/IdTargetObserver.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/svg/SVGElement.h"
+#include "core/xlink_names.h"
 #include "platform/weborigin/KURL.h"
 
 namespace blink {
@@ -35,13 +35,13 @@ class SVGElementReferenceObserver : public IdTargetObserver {
  public:
   SVGElementReferenceObserver(TreeScope& tree_scope,
                               const AtomicString& id,
-                              std::unique_ptr<WTF::Closure> closure)
+                              WTF::Closure closure)
       : IdTargetObserver(tree_scope.GetIdTargetObserverRegistry(), id),
         closure_(std::move(closure)) {}
 
  private:
-  void IdTargetChanged() override { (*closure_)(); }
-  std::unique_ptr<WTF::Closure> closure_;
+  void IdTargetChanged() override { closure_(); }
+  WTF::Closure closure_;
 };
 }
 
@@ -113,7 +113,7 @@ Element* SVGURIReference::TargetElementFromIRIString(
     return nullptr;
   if (fragment_identifier)
     *fragment_identifier = id;
-  return tree_scope.GetElementById(id);
+  return tree_scope.getElementById(id);
 }
 
 Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
@@ -134,13 +134,13 @@ Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
 Element* SVGURIReference::ObserveTarget(Member<IdTargetObserver>& observer,
                                         TreeScope& tree_scope,
                                         const AtomicString& id,
-                                        std::unique_ptr<WTF::Closure> closure) {
+                                        WTF::Closure closure) {
   DCHECK(!observer);
   if (id.IsEmpty())
     return nullptr;
   observer =
       new SVGElementReferenceObserver(tree_scope, id, std::move(closure));
-  return tree_scope.GetElementById(id);
+  return tree_scope.getElementById(id);
 }
 
 void SVGURIReference::UnobserveTarget(Member<IdTargetObserver>& observer) {

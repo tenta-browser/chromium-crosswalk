@@ -7,12 +7,11 @@
 
 #include <memory>
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/testing/NullExecutionContext.h"
 #include "gin/public/isolate_holder.h"
-#include "platform/CrossThreadFunctional.h"
 #include "platform/WaitableEvent.h"
 #include "platform/WebThreadSupportingGC.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Deque.h"
 #include "platform/wtf/Locker.h"
@@ -63,7 +62,7 @@ class DataConsumerHandleTestUtil {
 
     WebThreadSupportingGC* GetThread() { return thread_.get(); }
     ExecutionContext* GetExecutionContext() { return execution_context_.Get(); }
-    ScriptState* GetScriptState() { return script_state_.Get(); }
+    ScriptState* GetScriptState() { return script_state_.get(); }
     v8::Isolate* GetIsolate() { return isolate_holder_->isolate(); }
 
    private:
@@ -86,7 +85,7 @@ class DataConsumerHandleTestUtil {
 
     class Context : public ThreadSafeRefCounted<Context> {
      public:
-      static PassRefPtr<Context> Create() { return AdoptRef(new Context); }
+      static RefPtr<Context> Create() { return WTF::AdoptRef(new Context); }
       void RecordAttach(const String& handle) {
         MutexLocker locker(logging_mutex_);
         result_.Append("A reader is attached to ");
@@ -111,24 +110,24 @@ class DataConsumerHandleTestUtil {
 
       void RegisterThreadHolder(ThreadHolder* holder) {
         MutexLocker locker(holder_mutex_);
-        ASSERT(!holder_);
+        DCHECK(!holder_);
         holder_ = holder;
       }
       void UnregisterThreadHolder() {
         MutexLocker locker(holder_mutex_);
-        ASSERT(holder_);
+        DCHECK(holder_);
         holder_ = nullptr;
       }
       void PostTaskToReadingThread(const WebTraceLocation& location,
-                                   std::unique_ptr<CrossThreadClosure> task) {
+                                   CrossThreadClosure task) {
         MutexLocker locker(holder_mutex_);
-        ASSERT(holder_);
+        DCHECK(holder_);
         holder_->ReadingThread()->PostTask(location, std::move(task));
       }
       void PostTaskToUpdatingThread(const WebTraceLocation& location,
-                                    std::unique_ptr<CrossThreadClosure> task) {
+                                    CrossThreadClosure task) {
         MutexLocker locker(holder_mutex_);
-        ASSERT(holder_);
+        DCHECK(holder_);
         holder_->UpdatingThread()->PostTask(location, std::move(task));
       }
 
@@ -186,8 +185,8 @@ class DataConsumerHandleTestUtil {
       USING_FAST_MALLOC(ReaderImpl);
 
      public:
-      ReaderImpl(const String& name, PassRefPtr<Context> context)
-          : name_(name.IsolatedCopy()), context_(context) {
+      ReaderImpl(const String& name, RefPtr<Context> context)
+          : name_(name.IsolatedCopy()), context_(std::move(context)) {
         context_->RecordAttach(name_.IsolatedCopy());
       }
       ~ReaderImpl() override { context_->RecordDetach(name_.IsolatedCopy()); }
@@ -211,14 +210,14 @@ class DataConsumerHandleTestUtil {
      public:
       static std::unique_ptr<WebDataConsumerHandle> Create(
           const String& name,
-          PassRefPtr<Context> context) {
+          RefPtr<Context> context) {
         return WTF::WrapUnique(
             new DataConsumerHandle(name, std::move(context)));
       }
 
      private:
-      DataConsumerHandle(const String& name, PassRefPtr<Context> context)
-          : name_(name.IsolatedCopy()), context_(context) {}
+      DataConsumerHandle(const String& name, RefPtr<Context> context)
+          : name_(name.IsolatedCopy()), context_(std::move(context)) {}
 
       std::unique_ptr<Reader> ObtainReader(Client*) {
         return WTF::MakeUnique<ReaderImpl>(name_, context_);
@@ -235,22 +234,20 @@ class DataConsumerHandleTestUtil {
     void SignalDone() { waitable_event_->Signal(); }
     String Result() { return context_->Result(); }
     void PostTaskToReadingThread(const WebTraceLocation& location,
-                                 std::unique_ptr<CrossThreadClosure> task) {
+                                 CrossThreadClosure task) {
       context_->PostTaskToReadingThread(location, std::move(task));
     }
     void PostTaskToUpdatingThread(const WebTraceLocation& location,
-                                  std::unique_ptr<CrossThreadClosure> task) {
+                                  CrossThreadClosure task) {
       context_->PostTaskToUpdatingThread(location, std::move(task));
     }
-    void PostTaskToReadingThreadAndWait(
-        const WebTraceLocation& location,
-        std::unique_ptr<CrossThreadClosure> task) {
+    void PostTaskToReadingThreadAndWait(const WebTraceLocation& location,
+                                        CrossThreadClosure task) {
       PostTaskToReadingThread(location, std::move(task));
       waitable_event_->Wait();
     }
-    void PostTaskToUpdatingThreadAndWait(
-        const WebTraceLocation& location,
-        std::unique_ptr<CrossThreadClosure> task) {
+    void PostTaskToUpdatingThreadAndWait(const WebTraceLocation& location,
+                                         CrossThreadClosure task) {
       PostTaskToUpdatingThread(location, std::move(task));
       waitable_event_->Wait();
     }
@@ -268,7 +265,7 @@ class DataConsumerHandleTestUtil {
                                           public WebDataConsumerHandle::Client {
    public:
     using Self = ThreadingHandleNotificationTest;
-    static PassRefPtr<Self> Create() { return AdoptRef(new Self); }
+    static RefPtr<Self> Create() { return WTF::AdoptRef(new Self); }
 
     void Run(std::unique_ptr<WebDataConsumerHandle> handle) {
       ThreadHolder holder(this);
@@ -277,7 +274,7 @@ class DataConsumerHandleTestUtil {
 
       PostTaskToReadingThreadAndWait(
           BLINK_FROM_HERE,
-          CrossThreadBind(&Self::ObtainReader, WrapPassRefPtr(this)));
+          CrossThreadBind(&Self::ObtainReader, WrapRefPtr(this)));
     }
 
    private:
@@ -286,10 +283,10 @@ class DataConsumerHandleTestUtil {
     void DidGetReadable() override {
       PostTaskToReadingThread(
           BLINK_FROM_HERE,
-          CrossThreadBind(&Self::ResetReader, WrapPassRefPtr(this)));
+          CrossThreadBind(&Self::ResetReader, WrapRefPtr(this)));
       PostTaskToReadingThread(
           BLINK_FROM_HERE,
-          CrossThreadBind(&Self::SignalDone, WrapPassRefPtr(this)));
+          CrossThreadBind(&Self::SignalDone, WrapRefPtr(this)));
     }
 
     std::unique_ptr<WebDataConsumerHandle> handle_;
@@ -300,7 +297,7 @@ class DataConsumerHandleTestUtil {
         public WebDataConsumerHandle::Client {
    public:
     using Self = ThreadingHandleNoNotificationTest;
-    static PassRefPtr<Self> Create() { return AdoptRef(new Self); }
+    static RefPtr<Self> Create() { return WTF::AdoptRef(new Self); }
 
     void Run(std::unique_ptr<WebDataConsumerHandle> handle) {
       ThreadHolder holder(this);
@@ -309,7 +306,7 @@ class DataConsumerHandleTestUtil {
 
       PostTaskToReadingThreadAndWait(
           BLINK_FROM_HERE,
-          CrossThreadBind(&Self::ObtainReader, WrapPassRefPtr(this)));
+          CrossThreadBind(&Self::ObtainReader, WrapRefPtr(this)));
     }
 
    private:
@@ -319,9 +316,9 @@ class DataConsumerHandleTestUtil {
       reader_ = nullptr;
       PostTaskToReadingThread(
           BLINK_FROM_HERE,
-          CrossThreadBind(&Self::SignalDone, WrapPassRefPtr(this)));
+          CrossThreadBind(&Self::SignalDone, WrapRefPtr(this)));
     }
-    void DidGetReadable() override { ASSERT_NOT_REACHED(); }
+    void DidGetReadable() override { NOTREACHED(); }
 
     std::unique_ptr<WebDataConsumerHandle> handle_;
   };
@@ -369,7 +366,7 @@ class DataConsumerHandleTestUtil {
 
     class Context final : public ThreadSafeRefCounted<Context> {
      public:
-      static PassRefPtr<Context> Create() { return AdoptRef(new Context); }
+      static RefPtr<Context> Create() { return WTF::AdoptRef(new Context); }
 
       // This function cannot be called after creating a tee.
       void Add(const Command&);
@@ -399,7 +396,7 @@ class DataConsumerHandleTestUtil {
       std::unique_ptr<WaitableEvent> detached_;
     };
 
-    Context* GetContext() { return context_.Get(); }
+    Context* GetContext() { return context_.get(); }
     std::unique_ptr<Reader> ObtainReader(Client*) override;
 
    private:
@@ -409,111 +406,6 @@ class DataConsumerHandleTestUtil {
     const char* DebugName() const override { return "ReplayingHandle"; }
 
     RefPtr<Context> context_;
-  };
-
-  class HandleReadResult final {
-    USING_FAST_MALLOC(HandleReadResult);
-
-   public:
-    HandleReadResult(WebDataConsumerHandle::Result result,
-                     const Vector<char>& data)
-        : result_(result), data_(data) {}
-    WebDataConsumerHandle::Result GetResult() const { return result_; }
-    const Vector<char>& Data() const { return data_; }
-
-   private:
-    const WebDataConsumerHandle::Result result_;
-    const Vector<char> data_;
-  };
-
-  // HandleReader reads all data from the given WebDataConsumerHandle using
-  // Reader::read on the thread on which it is created. When reading is done
-  // or failed, it calls the given callback with the result.
-  class HandleReader final : public WebDataConsumerHandle::Client {
-    USING_FAST_MALLOC(HandleReader);
-
-   public:
-    using OnFinishedReading =
-        WTF::Function<void(std::unique_ptr<HandleReadResult>)>;
-
-    HandleReader(std::unique_ptr<WebDataConsumerHandle>,
-                 std::unique_ptr<OnFinishedReading>);
-    void DidGetReadable() override;
-
-   private:
-    void RunOnFinishedReading(std::unique_ptr<HandleReadResult>);
-
-    std::unique_ptr<WebDataConsumerHandle::Reader> reader_;
-    std::unique_ptr<OnFinishedReading> on_finished_reading_;
-    Vector<char> data_;
-  };
-
-  // HandleTwoPhaseReader does the same as HandleReader, but it uses
-  // |beginRead| / |endRead| instead of |read|.
-  class HandleTwoPhaseReader final : public WebDataConsumerHandle::Client {
-    USING_FAST_MALLOC(HandleTwoPhaseReader);
-
-   public:
-    using OnFinishedReading =
-        WTF::Function<void(std::unique_ptr<HandleReadResult>)>;
-
-    HandleTwoPhaseReader(std::unique_ptr<WebDataConsumerHandle>,
-                         std::unique_ptr<OnFinishedReading>);
-    void DidGetReadable() override;
-
-   private:
-    void RunOnFinishedReading(std::unique_ptr<HandleReadResult>);
-
-    std::unique_ptr<WebDataConsumerHandle::Reader> reader_;
-    std::unique_ptr<OnFinishedReading> on_finished_reading_;
-    Vector<char> data_;
-  };
-
-  // HandleReaderRunner<T> creates a dedicated thread and run T on the thread
-  // where T is one of HandleReader and HandleTwophaseReader.
-  template <typename T>
-  class HandleReaderRunner final {
-    STACK_ALLOCATED();
-
-   public:
-    explicit HandleReaderRunner(std::unique_ptr<WebDataConsumerHandle> handle)
-        : thread_(WTF::WrapUnique(new Thread("reading thread"))),
-          event_(WTF::MakeUnique<WaitableEvent>()),
-          is_done_(false) {
-      thread_->GetThread()->PostTask(
-          BLINK_FROM_HERE, CrossThreadBind(&HandleReaderRunner::Start,
-                                           crossThreadUnretained(this),
-                                           WTF::Passed(std::move(handle))));
-    }
-    ~HandleReaderRunner() { Wait(); }
-
-    std::unique_ptr<HandleReadResult> Wait() {
-      if (is_done_)
-        return nullptr;
-      event_->Wait();
-      is_done_ = true;
-      return std::move(result_);
-    }
-
-   private:
-    void Start(std::unique_ptr<WebDataConsumerHandle> handle) {
-      handle_reader_ = WTF::WrapUnique(new T(
-          std::move(handle),
-          WTF::Bind(&HandleReaderRunner::OnFinished, WTF::Unretained(this))));
-    }
-
-    void OnFinished(std::unique_ptr<HandleReadResult> result) {
-      handle_reader_ = nullptr;
-      result_ = std::move(result);
-      event_->Signal();
-    }
-
-    std::unique_ptr<Thread> thread_;
-    std::unique_ptr<WaitableEvent> event_;
-    std::unique_ptr<HandleReadResult> result_;
-    bool is_done_;
-
-    std::unique_ptr<T> handle_reader_;
   };
 
   static std::unique_ptr<WebDataConsumerHandle>

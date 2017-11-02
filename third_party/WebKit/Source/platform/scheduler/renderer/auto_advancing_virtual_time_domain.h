@@ -20,7 +20,7 @@ namespace scheduler {
 //
 // |ABCDE                       (Execution with AutoAdvancingVirtualTimeDomain)
 // |-----------------------------> time
-class BLINK_PLATFORM_EXPORT AutoAdvancingVirtualTimeDomain
+class PLATFORM_EXPORT AutoAdvancingVirtualTimeDomain
     : public VirtualTimeDomain {
  public:
   explicit AutoAdvancingVirtualTimeDomain(base::TimeTicks initial_time);
@@ -32,12 +32,26 @@ class BLINK_PLATFORM_EXPORT AutoAdvancingVirtualTimeDomain
   void CancelWakeUpAt(base::TimeTicks run_time) override;
   const char* GetName() const override;
 
+  class PLATFORM_EXPORT Observer {
+   public:
+    Observer();
+    virtual ~Observer();
+
+    // Notification received when the virtual time advances.
+    virtual void OnVirtualTimeAdvanced() = 0;
+  };
+
+  // Note its assumed that |observer| will either remove itself or last at least
+  // as long as this AutoAdvancingVirtualTimeDomain.
+  void SetObserver(Observer* observer);
+
   // Controls whether or not virtual time is allowed to advance, when the
   // TaskQueueManager runs out of immediate work to do.
   void SetCanAdvanceVirtualTime(bool can_advance_virtual_time);
 
  private:
   bool can_advance_virtual_time_;
+  Observer* observer_;  // NOT OWNED
 
   DISALLOW_COPY_AND_ASSIGN(AutoAdvancingVirtualTimeDomain);
 };

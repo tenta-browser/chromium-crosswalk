@@ -8,6 +8,7 @@
 #include "cc/animation/animation_events.h"
 #include "cc/animation/animation_id_provider.h"
 #include "cc/animation/animation_player.h"
+#include "cc/animation/animation_ticker.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/animation/element_animations.h"
 #include "cc/base/filter_operation.h"
@@ -316,7 +317,7 @@ TestAnimationDelegate::TestAnimationDelegate()
 
 void TestAnimationDelegate::NotifyAnimationStarted(
     base::TimeTicks monotonic_time,
-    TargetProperty::Type target_property,
+    int target_property,
     int group) {
   started_ = true;
   start_time_ = monotonic_time;
@@ -324,22 +325,22 @@ void TestAnimationDelegate::NotifyAnimationStarted(
 
 void TestAnimationDelegate::NotifyAnimationFinished(
     base::TimeTicks monotonic_time,
-    TargetProperty::Type target_property,
+    int target_property,
     int group) {
   finished_ = true;
 }
 
 void TestAnimationDelegate::NotifyAnimationAborted(
     base::TimeTicks monotonic_time,
-    TargetProperty::Type target_property,
+    int target_property,
     int group) {
   aborted_ = true;
 }
 
 void TestAnimationDelegate::NotifyAnimationTakeover(
     base::TimeTicks monotonic_time,
-    TargetProperty::Type target_property,
-    double animation_start_time,
+    int target_property,
+    base::TimeTicks animation_start_time,
     std::unique_ptr<AnimationCurve> curve) {
   takeover_ = true;
 }
@@ -355,7 +356,7 @@ AnimationTimelinesTest::AnimationTimelinesTest()
   host_ = client_.host();
   host_impl_ = client_impl_.host();
 
-  element_id_ = ElementId(NextTestLayerId(), 0);
+  element_id_ = ElementId(NextTestLayerId());
 }
 
 AnimationTimelinesTest::~AnimationTimelinesTest() {
@@ -440,19 +441,19 @@ void AnimationTimelinesTest::TickAnimationsTransferEvents(
   host_->SetAnimationEvents(std::move(events));
 }
 
-AnimationPlayer* AnimationTimelinesTest::GetPlayerForElementId(
+AnimationTicker* AnimationTimelinesTest::GetTickerForElementId(
     ElementId element_id) {
   const scoped_refptr<ElementAnimations> element_animations =
       host_->GetElementAnimationsForElementId(element_id);
-  return element_animations ? &*element_animations->players_list().begin()
+  return element_animations ? &*element_animations->tickers_list().begin()
                             : nullptr;
 }
 
-AnimationPlayer* AnimationTimelinesTest::GetImplPlayerForLayerId(
+AnimationTicker* AnimationTimelinesTest::GetImplTickerForLayerId(
     ElementId element_id) {
   const scoped_refptr<ElementAnimations> element_animations =
       host_impl_->GetElementAnimationsForElementId(element_id);
-  return element_animations ? &*element_animations->players_list().begin()
+  return element_animations ? &*element_animations->tickers_list().begin()
                             : nullptr;
 }
 
@@ -461,28 +462,21 @@ int AnimationTimelinesTest::NextTestLayerId() {
   return next_test_layer_id_;
 }
 
-bool AnimationTimelinesTest::CheckPlayerTimelineNeedsPushProperties(
+bool AnimationTimelinesTest::CheckTickerTimelineNeedsPushProperties(
     bool needs_push_properties) const {
   DCHECK(player_);
   DCHECK(timeline_);
 
   bool result = true;
 
-  if (player_->needs_push_properties() != needs_push_properties) {
-    ADD_FAILURE() << "player_->needs_push_properties() expected to be "
+  AnimationTicker* ticker = player_->animation_ticker();
+  if (ticker->needs_push_properties() != needs_push_properties) {
+    ADD_FAILURE() << "ticker->needs_push_properties() expected to be "
                   << needs_push_properties;
     result = false;
   }
   if (timeline_->needs_push_properties() != needs_push_properties) {
     ADD_FAILURE() << "timeline_->needs_push_properties() expected to be "
-                  << needs_push_properties;
-    result = false;
-  }
-  if (player_->element_animations() &&
-      player_->element_animations()->needs_push_properties() !=
-          needs_push_properties) {
-    ADD_FAILURE() << "player_->element_animations()->needs_push_properties() "
-                     "expected to be "
                   << needs_push_properties;
     result = false;
   }

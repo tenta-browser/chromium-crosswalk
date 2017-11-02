@@ -19,6 +19,7 @@
 #include "content/public/browser/stream_handle.h"
 #include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/url_constants.h"
+#include "content/public/common/url_utils.h"
 #include "content/public/test/browser_side_navigation_test_utils.h"
 #include "content/test/test_navigation_url_loader.h"
 #include "content/test/test_render_view_host.h"
@@ -96,7 +97,8 @@ TestRenderFrameHost* TestRenderFrameHost::AppendChild(
   std::string frame_unique_name = base::GenerateGUID();
   OnCreateChildFrame(GetProcess()->GetNextRoutingID(),
                      blink::WebTreeScopeType::kDocument, frame_name,
-                     frame_unique_name, blink::WebSandboxFlags::kNone,
+                     frame_unique_name, base::UnguessableToken::Create(),
+                     blink::WebSandboxFlags::kNone, ParsedFeaturePolicyHeader(),
                      FrameOwnerProperties());
   return static_cast<TestRenderFrameHost*>(
       child_creation_observer_.last_created_frame());
@@ -267,6 +269,16 @@ void TestRenderFrameHost::NavigateAndCommitRendererInitiated(
   SendNavigate(0, did_create_new_entry, url);
 }
 
+void TestRenderFrameHost::SimulateFeaturePolicyHeader(
+    blink::WebFeaturePolicyFeature feature,
+    const std::vector<url::Origin>& whitelist) {
+  content::ParsedFeaturePolicyHeader header(1);
+  header[0].feature = feature;
+  header[0].matches_all_origins = false;
+  header[0].origins = whitelist;
+  OnDidSetFeaturePolicyHeader(header);
+}
+
 void TestRenderFrameHost::SendNavigate(int nav_entry_id,
                                        bool did_create_new_entry,
                                        const GURL& url) {
@@ -407,8 +419,8 @@ void TestRenderFrameHost::SendNavigateWithParams(
         std::string("Content-Type: ") + contents_mime_type_);
     navigation_handle()->set_response_headers_for_testing(response_headers);
   }
-  FrameHostMsg_DidCommitProvisionalLoad msg(GetRoutingID(), *params);
-  OnDidCommitProvisionalLoad(msg);
+  DidCommitProvisionalLoad(
+      base::MakeUnique<FrameHostMsg_DidCommitProvisionalLoad_Params>(*params));
   last_commit_was_error_page_ = params->url_is_unreachable;
 }
 
@@ -462,7 +474,7 @@ void TestRenderFrameHost::PrepareForCommitWithServerRedirect(
   NavigationRequest* request = frame_tree_node_->navigation_request();
   CHECK(request);
   bool have_to_make_network_request =
-      ShouldMakeNetworkRequestForURL(request->common_params().url) &&
+      IsURLHandledByNetworkStack(request->common_params().url) &&
       !FrameMsg_Navigate_Type::IsSameDocument(
           request->common_params().navigation_type);
 

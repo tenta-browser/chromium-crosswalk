@@ -23,7 +23,7 @@ import org.chromium.content.browser.ViewPositionObserver;
 public class ViewAnchoredTextBubble extends TextBubble
         implements PositionObserver.Listener, ViewTreeObserver.OnGlobalLayoutListener,
                    View.OnAttachStateChangeListener, OnPreDrawListener, OnDismissListener {
-    private final int[] mCachedScreenCoordinates = new int[2];
+    private final int[] mCachedWindowCoordinates = new int[2];
     private final Rect mAnchorRect = new Rect();
     private final Rect mInsetRect = new Rect();
     private final View mAnchorView;
@@ -38,9 +38,11 @@ public class ViewAnchoredTextBubble extends TextBubble
      * @param context    Context to draw resources from.
      * @param anchorView The {@link View} to anchor to.
      * @param stringId The id of the string resource for the text that should be shown.
+     * @param accessibilityStringId The id of the string resource of the accessibility text.
      */
-    public ViewAnchoredTextBubble(Context context, View anchorView, @StringRes int stringId) {
-        super(context, anchorView.getRootView(), stringId);
+    public ViewAnchoredTextBubble(Context context, View anchorView, @StringRes int stringId,
+            @StringRes int accessibilityStringId) {
+        super(context, anchorView.getRootView(), stringId, accessibilityStringId);
         mAnchorView = anchorView;
 
         mViewPositionObserver = new ViewPositionObserver(mAnchorView);
@@ -109,11 +111,18 @@ public class ViewAnchoredTextBubble extends TextBubble
     }
 
     private void refreshAnchorBounds() {
-        mAnchorView.getLocationOnScreen(mCachedScreenCoordinates);
-        mAnchorRect.left = mCachedScreenCoordinates[0] + mInsetRect.left;
-        mAnchorRect.top = mCachedScreenCoordinates[1] + mInsetRect.top;
-        mAnchorRect.right = mAnchorRect.left + mAnchorView.getWidth() - mInsetRect.right;
-        mAnchorRect.bottom = mAnchorRect.top + mAnchorView.getHeight() - mInsetRect.bottom;
+        mAnchorView.getLocationInWindow(mCachedWindowCoordinates);
+        if (mCachedWindowCoordinates[0] < 0 || mCachedWindowCoordinates[1] < 0) return;
+
+        mAnchorRect.left = mCachedWindowCoordinates[0];
+        mAnchorRect.top = mCachedWindowCoordinates[1];
+        mAnchorRect.right = mAnchorRect.left + mAnchorView.getWidth();
+        mAnchorRect.bottom = mAnchorRect.top + mAnchorView.getHeight();
+
+        mAnchorRect.left += mInsetRect.left;
+        mAnchorRect.top += mInsetRect.top;
+        mAnchorRect.right -= mInsetRect.right;
+        mAnchorRect.bottom -= mInsetRect.bottom;
 
         // Account for the padding.
         boolean isRtl = ApiCompatibilityUtils.isLayoutRtl(mAnchorView);

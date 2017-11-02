@@ -10,7 +10,7 @@ import org.chromium.chrome.browser.tab.Tab;
 
 /**
  * Delegate class for modal permission dialogs. Contains all of the data displayed in a prompt,
- * including the button strings, message text, link text, the icon, and whether or not to display
+ * including the button strings, message text, the icon, and whether or not to display
  * a persistence toggle.
  *
  * This class is also the interface to the native-side permissions code. When the user responds to
@@ -21,6 +21,9 @@ public class PermissionDialogDelegate {
     /** The native-side counterpart of this class */
     private long mNativeDelegatePtr;
 
+    /** The controller for this class */
+    private PermissionDialogController mDialogController;
+
     /** The tab for which to create the dialog. */
     private Tab mTab;
 
@@ -29,9 +32,6 @@ public class PermissionDialogDelegate {
 
     /** Text shown in the dialog. */
     private String mMessageText;
-
-    /** Text shown on the link, e.g. "Learn more". */
-    private String mLinkText;
 
     /** Text shown on the primary button, e.g. "Allow". */
     private String mPrimaryButtonText;
@@ -59,10 +59,6 @@ public class PermissionDialogDelegate {
 
     public String getMessageText() {
         return mMessageText;
-    }
-
-    public String getLinkText() {
-        return mLinkText;
     }
 
     public String getPrimaryButtonText() {
@@ -98,9 +94,16 @@ public class PermissionDialogDelegate {
         mNativeDelegatePtr = 0;
     }
 
-    public void onLinkClicked() {
-        assert mNativeDelegatePtr != 0;
-        nativeLinkClicked(mNativeDelegatePtr);
+    public void setDialogController(PermissionDialogController controller) {
+        mDialogController = controller;
+    }
+
+    /**
+     * Called from C++ by |nativeDelegatePtr| to destroy the dialog.
+     */
+    @CalledByNative
+    private void dismissFromNative() {
+        mDialogController.dismissFromNative(this);
     }
 
     /**
@@ -111,17 +114,16 @@ public class PermissionDialogDelegate {
      * @param contentSettingsTypes  The content settings types requested by this dialog.
      * @param iconResourceId        The id of the icon to display in the dialog.
      * @param message               The message to display in the dialog.
-     * @param linkText              The text to display in the link (if any).
      * @param primaryTextButton     The text to display on the primary button.
      * @param secondaryTextButton   The text to display on the primary button.
      * @param showPersistenceToggle Whether or not to display a persistence toggle.
      */
     @CalledByNative
     private static PermissionDialogDelegate create(long nativeDelegatePtr, Tab tab,
-            int[] contentSettingsTypes, int enumeratedIconId, String message, String linkText,
+            int[] contentSettingsTypes, int enumeratedIconId, String message,
             String primaryButtonText, String secondaryButtonText, boolean showPersistenceToggle) {
         return new PermissionDialogDelegate(nativeDelegatePtr, tab, contentSettingsTypes,
-                enumeratedIconId, message, linkText, primaryButtonText, secondaryButtonText,
+                enumeratedIconId, message, primaryButtonText, secondaryButtonText,
                 showPersistenceToggle);
     }
 
@@ -129,14 +131,13 @@ public class PermissionDialogDelegate {
      * Upon construction, this class takes ownership of the passed in native delegate.
      */
     private PermissionDialogDelegate(long nativeDelegatePtr, Tab tab, int[] contentSettingsTypes,
-            int enumeratedIconId, String message, String linkText, String primaryButtonText,
+            int enumeratedIconId, String message, String primaryButtonText,
             String secondaryButtonText, boolean showPersistenceToggle) {
         mNativeDelegatePtr = nativeDelegatePtr;
         mTab = tab;
         mContentSettingsTypes = contentSettingsTypes;
         mDrawableId = ResourceId.mapToDrawableId(enumeratedIconId);
         mMessageText = message;
-        mLinkText = linkText;
         mPrimaryButtonText = primaryButtonText;
         mSecondaryButtonText = secondaryButtonText;
         mShowPersistenceToggle = showPersistenceToggle;
@@ -145,6 +146,5 @@ public class PermissionDialogDelegate {
     private native void nativeAccept(long nativePermissionDialogDelegate, boolean persist);
     private native void nativeCancel(long nativePermissionDialogDelegate, boolean persist);
     private native void nativeDismissed(long nativePermissionDialogDelegate);
-    private native void nativeLinkClicked(long nativePermissionDialogDelegate);
     private native void nativeDestroy(long nativePermissionDialogDelegate);
 }

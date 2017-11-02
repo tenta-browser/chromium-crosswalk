@@ -4,8 +4,6 @@
 
 #include "components/payments/core/payment_address.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 
 namespace payments {
@@ -33,15 +31,14 @@ PaymentAddress::PaymentAddress(const PaymentAddress& other) = default;
 PaymentAddress::~PaymentAddress() = default;
 
 bool PaymentAddress::operator==(const PaymentAddress& other) const {
-  return this->country == other.country &&
-         this->address_line == other.address_line &&
-         this->region == other.region && this->city == other.city &&
-         this->dependent_locality == other.dependent_locality &&
-         this->postal_code == other.postal_code &&
-         this->sorting_code == other.sorting_code &&
-         this->language_code == other.language_code &&
-         this->organization == other.organization &&
-         this->recipient == other.recipient && this->phone == other.phone;
+  return country == other.country && address_line == other.address_line &&
+         region == other.region && city == other.city &&
+         dependent_locality == other.dependent_locality &&
+         postal_code == other.postal_code &&
+         sorting_code == other.sorting_code &&
+         language_code == other.language_code &&
+         organization == other.organization && recipient == other.recipient &&
+         phone == other.phone;
 }
 
 bool PaymentAddress::operator!=(const PaymentAddress& other) const {
@@ -50,39 +47,23 @@ bool PaymentAddress::operator!=(const PaymentAddress& other) const {
 
 std::unique_ptr<base::DictionaryValue> PaymentAddress::ToDictionaryValue()
     const {
-  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
-
-  if (!this->country.empty())
-    result->SetString(kAddressCountry, this->country);
-
-  if (!this->address_line.empty()) {
-    std::unique_ptr<base::ListValue> address_line =
-        base::MakeUnique<base::ListValue>();
-    for (const base::string16& address_line_string : this->address_line) {
-      if (!address_line_string.empty())
-        address_line->AppendString(address_line_string);
-    }
-    result->Set(kAddressAddressLine, std::move(address_line));
+  auto result = std::make_unique<base::DictionaryValue>();
+  result->SetString(kAddressCountry, country);
+  auto address_line_list = std::make_unique<base::ListValue>();
+  for (const base::string16& address_line_string : address_line) {
+    if (!address_line_string.empty())
+      address_line_list->AppendString(address_line_string);
   }
-
-  if (!this->region.empty())
-    result->SetString(kAddressRegion, this->region);
-  if (!this->city.empty())
-    result->SetString(kAddressCity, this->city);
-  if (!this->dependent_locality.empty())
-    result->SetString(kAddressDependentLocality, this->dependent_locality);
-  if (!this->postal_code.empty())
-    result->SetString(kAddressPostalCode, this->postal_code);
-  if (!this->sorting_code.empty())
-    result->SetString(kAddressSortingCode, this->sorting_code);
-  if (!this->language_code.empty())
-    result->SetString(kAddressLanguageCode, this->language_code);
-  if (!this->organization.empty())
-    result->SetString(kAddressOrganization, this->organization);
-  if (!this->recipient.empty())
-    result->SetString(kAddressRecipient, this->recipient);
-  if (!this->phone.empty())
-    result->SetString(kAddressPhone, this->phone);
+  result->Set(kAddressAddressLine, std::move(address_line_list));
+  result->SetString(kAddressRegion, region);
+  result->SetString(kAddressCity, city);
+  result->SetString(kAddressDependentLocality, dependent_locality);
+  result->SetString(kAddressPostalCode, postal_code);
+  result->SetString(kAddressSortingCode, sorting_code);
+  result->SetString(kAddressLanguageCode, language_code);
+  result->SetString(kAddressOrganization, organization);
+  result->SetString(kAddressRecipient, recipient);
+  result->SetString(kAddressPhone, phone);
 
   return result;
 }

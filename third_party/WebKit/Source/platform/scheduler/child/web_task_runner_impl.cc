@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
-#include "public/platform/scheduler/base/task_queue.h"
+#include "platform/scheduler/base/task_queue.h"
 #include "platform/scheduler/base/time_domain.h"
 #include "public/platform/WebTraceLocation.h"
 
@@ -18,20 +18,11 @@ namespace scheduler {
 
 RefPtr<WebTaskRunnerImpl> WebTaskRunnerImpl::Create(
     scoped_refptr<TaskQueue> task_queue) {
-  return AdoptRef(new WebTaskRunnerImpl(std::move(task_queue)));
+  return WTF::AdoptRef(new WebTaskRunnerImpl(std::move(task_queue)));
 }
 
-void WebTaskRunnerImpl::PostDelayedTask(const WebTraceLocation& location,
-                                        base::OnceClosure task,
-                                        double delay_ms) {
-  DCHECK_GE(delay_ms, 0.0) << location.function_name() << " "
-                           << location.file_name();
-  task_queue_->PostDelayedTask(location, std::move(task),
-                               base::TimeDelta::FromMillisecondsD(delay_ms));
-}
-
-bool WebTaskRunnerImpl::RunsTasksOnCurrentThread() {
-  return task_queue_->RunsTasksOnCurrentThread();
+bool WebTaskRunnerImpl::RunsTasksInCurrentSequence() {
+  return task_queue_->RunsTasksInCurrentSequence();
 }
 
 double WebTaskRunnerImpl::VirtualTimeSeconds() const {
@@ -57,8 +48,16 @@ base::TimeTicks WebTaskRunnerImpl::Now() const {
   return time_domain->Now();
 }
 
-base::SingleThreadTaskRunner* WebTaskRunnerImpl::ToSingleThreadTaskRunner() {
+scoped_refptr<base::SingleThreadTaskRunner>
+WebTaskRunnerImpl::ToSingleThreadTaskRunner() {
   return task_queue_.get();
+}
+
+bool WebTaskRunnerImpl::PostDelayedTask(const base::Location& location,
+                                        base::OnceClosure task,
+                                        base::TimeDelta delay) {
+  return task_queue_->PostTaskWithMetadata(
+      TaskQueue::PostedTask(std::move(task), location, delay));
 }
 
 }  // namespace scheduler

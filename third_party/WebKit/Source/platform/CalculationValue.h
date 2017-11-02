@@ -34,14 +34,15 @@
 #include "platform/Length.h"
 #include "platform/LengthFunctions.h"
 #include "platform/wtf/RefCounted.h"
+#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
 class PLATFORM_EXPORT CalculationValue : public RefCounted<CalculationValue> {
  public:
-  static PassRefPtr<CalculationValue> Create(PixelsAndPercent value,
-                                             ValueRange range) {
-    return AdoptRef(new CalculationValue(value, range));
+  static RefPtr<CalculationValue> Create(PixelsAndPercent value,
+                                         ValueRange range) {
+    return WTF::AdoptRef(new CalculationValue(value, range));
   }
 
   float Evaluate(float max_value) const {

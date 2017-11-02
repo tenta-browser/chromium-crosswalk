@@ -17,18 +17,14 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/sync_file_system/drive_backend/task_dependency_manager.h"
 #include "chrome/browser/sync_file_system/sync_callbacks.h"
 #include "chrome/browser/sync_file_system/sync_status_code.h"
 #include "chrome/browser/sync_file_system/task_logger.h"
 
 namespace base {
-class SequencedTaskRunner;
-}
-
-namespace tracked_objects {
 class Location;
+class SequencedTaskRunner;
 }
 
 namespace sync_file_system {
@@ -77,8 +73,7 @@ class SyncTaskManager {
   // If |maximum_background_tasks| is zero, all task runs as foreground task.
   SyncTaskManager(base::WeakPtr<Client> client,
                   size_t maximum_background_task,
-                  const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-                  const scoped_refptr<base::SequencedWorkerPool>& worker_pool);
+                  const scoped_refptr<base::SequencedTaskRunner>& task_runner);
   virtual ~SyncTaskManager();
 
   // This needs to be called to start task scheduling.
@@ -87,21 +82,21 @@ class SyncTaskManager {
   void Initialize(SyncStatusCode status);
 
   // Schedules a task at the given priority.
-  void ScheduleTask(const tracked_objects::Location& from_here,
+  void ScheduleTask(const base::Location& from_here,
                     const Task& task,
                     Priority priority,
                     const SyncStatusCallback& callback);
-  void ScheduleSyncTask(const tracked_objects::Location& from_here,
+  void ScheduleSyncTask(const base::Location& from_here,
                         std::unique_ptr<SyncTask> task,
                         Priority priority,
                         const SyncStatusCallback& callback);
 
   // Runs the posted task only when we're idle.  Returns true if tha task is
   // scheduled.
-  bool ScheduleTaskIfIdle(const tracked_objects::Location& from_here,
+  bool ScheduleTaskIfIdle(const base::Location& from_here,
                           const Task& task,
                           const SyncStatusCallback& callback);
-  bool ScheduleSyncTaskIfIdle(const tracked_objects::Location& from_here,
+  bool ScheduleSyncTaskIfIdle(const base::Location& from_here,
                               std::unique_ptr<SyncTask> task,
                               const SyncStatusCallback& callback);
 
@@ -129,7 +124,6 @@ class SyncTaskManager {
   bool IsRunningTask(int64_t task_token_id) const;
 
   void DetachFromSequence();
-  bool ShouldTrackTaskToken() const;
 
  private:
   struct PendingTask {
@@ -161,12 +155,11 @@ class SyncTaskManager {
       const Continuation& continuation);
 
   // This should be called when an async task needs to get a task token.
-  std::unique_ptr<SyncTaskToken> GetToken(
-      const tracked_objects::Location& from_here,
-      const SyncStatusCallback& callback);
+  std::unique_ptr<SyncTaskToken> GetToken(const base::Location& from_here,
+                                          const SyncStatusCallback& callback);
 
   std::unique_ptr<SyncTaskToken> GetTokenForBackgroundTask(
-      const tracked_objects::Location& from_here,
+      const base::Location& from_here,
       const SyncStatusCallback& callback,
       std::unique_ptr<TaskBlocker> task_blocker);
 
@@ -209,7 +202,6 @@ class SyncTaskManager {
   TaskDependencyManager dependency_manager_;
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  scoped_refptr<base::SequencedWorkerPool> worker_pool_;
   base::SequenceChecker sequence_checker_;
 
   base::WeakPtrFactory<SyncTaskManager> weak_ptr_factory_;

@@ -11,6 +11,7 @@
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
+#include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
@@ -20,13 +21,14 @@
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "cc/base/switches.h"
 #include "chromecast/base/cast_constants.h"
+#include "chromecast/base/cast_features.h"
 #include "chromecast/base/cast_paths.h"
 #include "chromecast/base/cast_sys_info_util.h"
 #include "chromecast/base/chromecast_switches.h"
 #include "chromecast/base/metrics/cast_metrics_helper.h"
 #include "chromecast/base/metrics/grouped_histogram.h"
+#include "chromecast/base/pref_names.h"
 #include "chromecast/base/version.h"
 #include "chromecast/browser/cast_browser_context.h"
 #include "chromecast/browser/cast_browser_process.h"
@@ -63,20 +65,20 @@
 #include "gpu/command_buffer/service/gpu_switches.h"
 #include "media/base/media.h"
 #include "media/base/media_switches.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/gl/gl_switches.h"
 
-#if !defined(OS_ANDROID)
-#include <signal.h>
-#include <sys/prctl.h>
-#endif
 #if defined(OS_LINUX)
 #include <fontconfig/fontconfig.h>
+#include <signal.h>
+#include <sys/prctl.h>
 #endif
 
 #if defined(OS_ANDROID)
 #include "chromecast/app/android/crash_handler.h"
-#include "components/crash/content/browser/crash_dump_manager_android.h"
+#include "components/crash/content/browser/child_process_crash_observer_android.h"
+#include "components/crash/content/browser/crash_dump_observer_android.h"
 #include "net/android/network_change_notifier_factory_android.h"
 #else
 #include "chromecast/net/network_change_notifier_factory_cast.h"
@@ -86,6 +88,7 @@
 // gn check ignored on OverlayManagerCast as it's not a public ozone
 // header, but is exported to allow injecting the overlay-composited
 // callback.
+#include "chromecast/browser/cast_display_configurator.h"
 #include "chromecast/graphics/cast_screen.h"
 #include "ui/display/screen.h"
 #include "ui/ozone/platform/cast/overlay_manager_cast.h"  // nogncheck
@@ -93,7 +96,7 @@
 
 namespace {
 
-#if !defined(OS_ANDROID)
+#if !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 int kSignalsToRunClosure[] = { SIGTERM, SIGINT, };
 // Closure to run on SIGTERM and SIGINT.
 base::Closure* g_signal_closure = nullptr;
@@ -184,7 +187,7 @@ void DeregisterKillOnAlarm() {
   }
 }
 
-#endif  // !defined(OS_ANDROID)
+#endif  // !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 
 }  // namespace
 
@@ -214,59 +217,75 @@ struct DefaultCommandLineSwitch {
   const char* const switch_value;
 };
 
-DefaultCommandLineSwitch g_default_switches[] = {
+const DefaultCommandLineSwitch kDefaultSwitches[] = {
 #if defined(OS_ANDROID)
-  // Disables Chromecast-specific WiFi-related features on ATV for now.
-  { switches::kNoWifi, "" },
-  { switches::kDisableGestureRequirementForMediaPlayback, ""},
-  { switches::kDisableMediaSuspend, ""},
+    // TODO(714676): this should probably set the no restrictions autoplay
+    // policy instead.
+    {switches::kIgnoreAutoplayRestrictionsForTests, ""},
 #else
-  // GPU shader disk cache disabling is largely to conserve disk space.
-  { switches::kDisableGpuShaderDiskCache, "" },
-  // Enable media sessions by default (even on non-Android platforms).
-  { switches::kEnableDefaultMediaSession, "" },
+    // GPU shader disk cache disabling is largely to conserve disk space.
+    {switches::kDisableGpuShaderDiskCache, ""},
+    // Enable audio focus by default (even on non-Android platforms).
+    {switches::kEnableAudioFocus, ""},
 #endif
 #if BUILDFLAG(IS_CAST_AUDIO_ONLY)
+    {switches::kDisableGpu, ""},
 #if defined(OS_ANDROID)
-  { switches::kDisableGLDrawingForTests, "" },
-#else
-  { switches::kDisableGpu, "" },
+    {switches::kDisableGLDrawingForTests, ""},
+    {switches::kDisableGpuVsync, ""},
+    {switches::kSkipGpuDataLoading, ""},
+    {switches::kDisableGpuCompositing, ""},
 #endif  // defined(OS_ANDROID)
 #endif  // BUILDFLAG(IS_CAST_AUDIO_ONLY)
 #if defined(OS_LINUX)
 #if defined(ARCH_CPU_X86_FAMILY)
-  // This is needed for now to enable the x11 Ozone platform to work with
-  // current Linux/NVidia OpenGL drivers.
-  { switches::kIgnoreGpuBlacklist, ""},
+    // This is needed for now to enable the x11 Ozone platform to work with
+    // current Linux/NVidia OpenGL drivers.
+    {switches::kIgnoreGpuBlacklist, ""},
 #elif defined(ARCH_CPU_ARM_FAMILY)
 #if !BUILDFLAG(IS_CAST_AUDIO_ONLY)
-  {switches::kEnableHardwareOverlays, "cast"},
+    {switches::kEnableHardwareOverlays, "cast"},
 #endif
 #endif
 #endif  // defined(OS_LINUX)
-  // Needed so that our call to GpuDataManager::SetGLStrings doesn't race
-  // against GPU process creation (which is otherwise triggered from
-  // BrowserThreadsStarted).  The GPU process will be created as soon as a
-  // renderer needs it, which always happens after main loop starts.
-  { switches::kDisableGpuEarlyInit, "" },
-  // TODO(halliwell): Cast builds don't support ES3. Remove this switch when
-  // support is added (crbug.com/659395)
-  { switches::kDisableES3GLContext, "" },
-  // Enable navigator.connection API.
-  // TODO(derekjchow): Remove this switch when enabled by default.
-  { switches::kEnableNetworkInformation, "" },
-  // TODO(halliwell): Remove after fixing b/35422666.
-  { switches::kEnableUseZoomForDSF, "false" },
-  { NULL, NULL },  // Termination
+    // Needed so that our call to GpuDataManager::SetGLStrings doesn't race
+    // against GPU process creation (which is otherwise triggered from
+    // BrowserThreadsStarted).  The GPU process will be created as soon as a
+    // renderer needs it, which always happens after main loop starts.
+    {switches::kDisableGpuEarlyInit, ""},
+    // Enable navigator.connection API.
+    // TODO(derekjchow): Remove this switch when enabled by default.
+    {switches::kEnableNetworkInformationDownlinkMax, ""},
+    // TODO(halliwell): Remove after fixing b/35422666.
+    {switches::kEnableUseZoomForDSF, "false"},
+    // TODO(halliwell): Revert after fix for b/63101386.
+    {switches::kDisallowNonExactResourceReuse, ""},
+    {switches::kEnableMediaSuspend, ""},
+    // Enable autoplay without requiring any user gesture.
+    {switches::kAutoplayPolicy,
+     switches::autoplay::kNoUserGestureRequiredPolicy},
 };
 
 void AddDefaultCommandLineSwitches(base::CommandLine* command_line) {
-  int i = 0;
-  while (g_default_switches[i].switch_name != NULL) {
-    command_line->AppendSwitchASCII(
-        std::string(g_default_switches[i].switch_name),
-        std::string(g_default_switches[i].switch_value));
-    ++i;
+  for (const auto& default_switch : kDefaultSwitches) {
+    // Don't override existing command line switch values with these defaults.
+    // This could occur primarily (or only) on Android, where the command line
+    // is initialized in Java first.
+    std::string name(default_switch.switch_name);
+    if (!command_line->HasSwitch(name)) {
+      std::string value(default_switch.switch_value);
+      VLOG(2) << "Set default switch '" << name << "' = '" << value << "'";
+      command_line->AppendSwitchASCII(name, value);
+    } else {
+      VLOG(2) << "Skip setting default switch '" << name << "', already set";
+    }
+  }
+
+  // If browser-side navigation is not explicitly enabled or disabled, disable
+  // it.
+  if (!command_line->HasSwitch(switches::kDisableBrowserSideNavigation) &&
+      !command_line->HasSwitch(switches::kEnableBrowserSideNavigation)) {
+    command_line->AppendSwitch(switches::kDisableBrowserSideNavigation);
   }
 }
 
@@ -277,6 +296,7 @@ CastBrowserMainParts::CastBrowserMainParts(
     URLRequestContextFactory* url_request_context_factory)
     : BrowserMainParts(),
       cast_browser_process_(new CastBrowserProcess()),
+      field_trial_list_(nullptr),
       parameters_(parameters),
       url_request_context_factory_(url_request_context_factory),
       net_log_(new CastNetLog()),
@@ -361,10 +381,10 @@ void CastBrowserMainParts::PreMainMessageLoopStart() {
 #if defined(OS_ANDROID)
   net::NetworkChangeNotifier::SetFactory(
       new net::NetworkChangeNotifierFactoryAndroid());
-#else
+#elif !defined(OS_FUCHSIA)
   net::NetworkChangeNotifier::SetFactory(
       new NetworkChangeNotifierFactoryCast());
-#endif  // defined(OS_ANDROID)
+#endif  // !defined(OS_FUCHSIA)
 }
 
 void CastBrowserMainParts::PostMainMessageLoopStart() {
@@ -396,24 +416,22 @@ void CastBrowserMainParts::ToolkitInitialized() {
 
 int CastBrowserMainParts::PreCreateThreads() {
 #if defined(OS_ANDROID)
-  // GPU process is started immediately after threads are created, requiring
-  // CrashDumpManager to be initialized beforehand.
+  // GPU process is started immediately after threads are created,
+  // requiring ChildProcessCrashObserver to be initialized beforehand.
   base::FilePath crash_dumps_dir;
   if (!chromecast::CrashHandler::GetCrashDumpLocation(&crash_dumps_dir)) {
     LOG(ERROR) << "Could not find crash dump location.";
   }
   breakpad::CrashDumpObserver::Create();
   breakpad::CrashDumpObserver::GetInstance()->RegisterClient(
-      base::MakeUnique<breakpad::CrashDumpManager>(crash_dumps_dir,
-                                                   kAndroidMinidumpDescriptor));
+      base::MakeUnique<breakpad::ChildProcessCrashObserver>(
+          crash_dumps_dir, kAndroidMinidumpDescriptor,
+          base::Bind(&base::DoNothing)));
 #else
   base::FilePath home_dir;
   CHECK(PathService::Get(DIR_CAST_HOME, &home_dir));
   if (!base::CreateDirectory(home_dir))
     return 1;
-
-  // Hook for internal code
-  cast_browser_process_->browser_client()->PreCreateThreads();
 
   // Set GL strings so GPU config code can make correct feature blacklisting/
   // whitelisting decisions.
@@ -424,11 +442,36 @@ int CastBrowserMainParts::PreCreateThreads() {
       sys_info->GetGlVersion());
 #endif
 
+  scoped_refptr<PrefRegistrySimple> pref_registry(new PrefRegistrySimple());
+  metrics::RegisterPrefs(pref_registry.get());
+  PrefProxyConfigTrackerImpl::RegisterPrefs(pref_registry.get());
+  cast_browser_process_->SetPrefService(
+      PrefServiceHelper::CreatePrefService(pref_registry.get()));
+
+  // As soon as the PrefService is set, initialize the base::FeatureList, so
+  // objects initialized after this point can use features from
+  // base::FeatureList.
+  const auto* features_dict =
+      cast_browser_process_->pref_service()->GetDictionary(
+          prefs::kLatestDCSFeatures);
+  const auto* experiment_ids = cast_browser_process_->pref_service()->GetList(
+      prefs::kActiveDCSExperiments);
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  InitializeFeatureList(
+      *features_dict, *experiment_ids,
+      command_line->GetSwitchValueASCII(switches::kEnableFeatures),
+      command_line->GetSwitchValueASCII(switches::kDisableFeatures));
+
+  // Hook for internal code
+  cast_browser_process_->browser_client()->PreCreateThreads();
+
 #if defined(USE_AURA)
   cast_browser_process_->SetCastScreen(base::WrapUnique(new CastScreen()));
   DCHECK(!display::Screen::GetScreen());
   display::Screen::SetScreenInstance(cast_browser_process_->cast_screen());
-#endif
+  display_configurator_ = base::MakeUnique<CastDisplayConfigurator>(
+      cast_browser_process_->cast_screen());
+#endif  // defined(USE_AURA)
 
   content::ChildProcessSecurityPolicy::GetInstance()->RegisterWebSafeScheme(
       kChromeResourceScheme);
@@ -436,15 +479,9 @@ int CastBrowserMainParts::PreCreateThreads() {
 }
 
 void CastBrowserMainParts::PreMainMessageLoopRun() {
-  scoped_refptr<PrefRegistrySimple> pref_registry(new PrefRegistrySimple());
-  metrics::RegisterPrefs(pref_registry.get());
-  PrefProxyConfigTrackerImpl::RegisterPrefs(pref_registry.get());
-  cast_browser_process_->SetPrefService(
-      PrefServiceHelper::CreatePrefService(pref_registry.get()));
-
-#if !defined(OS_ANDROID)
+#if !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
   memory_pressure_monitor_.reset(new CastMemoryPressureMonitor());
-#endif  // defined(OS_ANDROID)
+#endif  // !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 
   cast_browser_process_->SetNetLog(net_log_.get());
   url_request_context_factory_->InitializeOnUIThread(net_log_.get());
@@ -457,13 +494,11 @@ void CastBrowserMainParts::PreMainMessageLoopRun() {
   cast_browser_process_->SetBrowserContext(
       base::MakeUnique<CastBrowserContext>(url_request_context_factory_));
   cast_browser_process_->SetMetricsServiceClient(
-      metrics::CastMetricsServiceClient::Create(
-          content::BrowserThread::GetBlockingPool(),
+      base::MakeUnique<metrics::CastMetricsServiceClient>(
           cast_browser_process_->pref_service(),
           content::BrowserContext::GetDefaultStoragePartition(
-              cast_browser_process_->browser_context())->
-                  GetURLRequestContext()));
-
+              cast_browser_process_->browser_context())
+              ->GetURLRequestContext()));
   cast_browser_process_->SetRemoteDebuggingServer(
       base::MakeUnique<RemoteDebuggingServer>(
           cast_browser_process_->browser_client()
@@ -490,11 +525,6 @@ void CastBrowserMainParts::PreMainMessageLoopRun() {
           cast_browser_process_->browser_context(),
           cast_browser_process_->pref_service(),
           url_request_context_factory_->GetSystemGetter(),
-          base::BindOnce(&URLRequestContextFactory::DisableQuic,
-                         // Safe since |url_request_context_factory_| is owned
-                         // by CastContentBrowserClient, which lives for the
-                         // entire lifetime of cast_shell.
-                         base::Unretained(url_request_context_factory_)),
           video_plane_controller_.get(), window_manager_.get()));
   cast_browser_process_->cast_service()->Initialize();
 
@@ -525,7 +555,11 @@ bool CastBrowserMainParts::MainMessageLoopRun(int* result_code) {
 #else
   base::RunLoop run_loop;
   base::Closure quit_closure(run_loop.QuitClosure());
+
+#if !defined(OS_FUCHSIA)
+  // Fuchsia doesn't have signals.
   RegisterClosureOnSignal(quit_closure);
+#endif  // !defined(OS_FUCHSIA)
 
   // If parameters_.ui_task is not NULL, we are running browser tests.
   if (parameters_.ui_task) {
@@ -536,11 +570,16 @@ bool CastBrowserMainParts::MainMessageLoopRun(int* result_code) {
 
   run_loop.Run();
 
+#if !defined(OS_FUCHSIA)
   // Once the main loop has stopped running, we give the browser process a few
   // seconds to stop cast service and finalize all resources. If a hang occurs
   // and cast services refuse to terminate successfully, then we SIGKILL the
-  // current process to avoid indefinte hangs.
+  // current process to avoid indefinite hangs.
+  //
+  // TODO(sergeyu): Fuchsia doesn't implement POSIX signals. Implement a
+  // different shutdown watchdog mechanism.
   RegisterKillOnAlarm(kKillOnAlarmTimeoutSec);
+#endif  // !defined(OS_FUCHSIA)
 
   cast_browser_process_->cast_service()->Stop();
   return true;
@@ -558,7 +597,9 @@ void CastBrowserMainParts::PostMainMessageLoopRun() {
   cast_browser_process_->metrics_service_client()->Finalize();
   cast_browser_process_.reset();
 
+#if !defined(OS_FUCHSIA)
   DeregisterKillOnAlarm();
+#endif  // !defined(OS_FUCHSIA)
 #endif
 }
 

@@ -9,6 +9,7 @@
 #include "core/CoreExport.h"
 #include "core/css/cssom/CSSStyleValue.h"
 #include "platform/geometry/IntSize.h"
+#include "platform/geometry/LayoutSize.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -16,7 +17,7 @@ namespace blink {
 class CSSSyntaxDescriptor;
 class Document;
 class Image;
-class LayoutObject;
+class ImageResourceObserver;
 
 // Produces a PaintGeneratedImage from a CSS Paint API callback.
 // https://drafts.css-houdini.org/css-paint-api/
@@ -35,22 +36,24 @@ class CORE_EXPORT CSSPaintImageGenerator
   };
 
   static CSSPaintImageGenerator* Create(const String& name,
-                                        Document&,
+                                        const Document&,
                                         Observer*);
   virtual ~CSSPaintImageGenerator();
 
   typedef CSSPaintImageGenerator* (*CSSPaintImageGeneratorCreateFunction)(
       const String&,
-      Document&,
+      const Document&,
       Observer*);
   static void Init(CSSPaintImageGeneratorCreateFunction);
 
   // Invokes the CSS Paint API 'paint' callback. May return a nullptr
   // representing an invalid image if an error occurred.
-  virtual PassRefPtr<Image> Paint(const LayoutObject&,
-                                  const IntSize&,
-                                  float zoom,
-                                  const CSSStyleValueVector*) = 0;
+  // The |container_size| is the container size with subpixel snapping, where
+  // the |logical_size| is without it. Both sizes include zoom.
+  virtual RefPtr<Image> Paint(const ImageResourceObserver&,
+                              const IntSize& container_size,
+                              const CSSStyleValueVector*,
+                              const LayoutSize* logical_size) = 0;
 
   virtual const Vector<CSSPropertyID>& NativeInvalidationProperties() const = 0;
   virtual const Vector<AtomicString>& CustomInvalidationProperties() const = 0;

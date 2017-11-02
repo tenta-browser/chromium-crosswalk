@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/media.h"
@@ -82,11 +83,12 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   auto profile =
       static_cast<VideoCodecProfile>(rng() % VIDEO_CODEC_PROFILE_MAX);
   auto color_space = static_cast<ColorSpace>(rng() % COLOR_SPACE_MAX);
+  auto rotation = static_cast<VideoRotation>(rng() % VIDEO_ROTATION_MAX);
   auto coded_size = gfx::Size(1 + (rng() % 127), 1 + (rng() % 127));
   auto visible_rect = gfx::Rect(coded_size);
   auto natural_size = gfx::Size(1 + (rng() % 127), 1 + (rng() % 127));
 
-  VideoDecoderConfig config(codec, profile, pixel_format, color_space,
+  VideoDecoderConfig config(codec, profile, pixel_format, color_space, rotation,
                             coded_size, visible_rect, natural_size,
                             EmptyExtraData(), Unencrypted());
 

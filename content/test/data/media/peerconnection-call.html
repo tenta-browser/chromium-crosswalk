@@ -614,6 +614,57 @@
     remoteVideo.src = remoteStreamUrl;
   }
 
+  // Check that applyConstraints() fails on remote tracks because there is
+  // currently no mechanism to make their video format known to the track, so
+  // it is impossible to enforce the user-provided constraints.
+  // TODO(guidou): Make the video format for remote sources known
+  // http://crbug.com/772400
+  function testApplyConstraints() {
+    createConnections(null);
+    navigator.mediaDevices.getUserMedia({audio: true, video: true})
+      .then(addStreamToBothConnectionsAndNegotiate)
+      .catch(printGetUserMediaError);
+
+    detectVideoPlaying('remote-view-1', () => {
+      var track = gFirstConnection.getRemoteStreams()[0].getVideoTracks()[0];
+      track.applyConstraints({width: {min: 1000}})
+        .then(()=>{
+          failTest('applyConstraints should fail for remote tracks');
+        })
+        .catch(e => {
+          assertEquals(e.name, 'OverconstrainedError');
+          reportTestSuccess();
+        });
+    });
+  }
+
+  // Makes a call between pc1 and pc2 and check that the remote video tracks
+  // do not report (incorrect) values for width or height.
+  // TODO(guidou): Make remote tracks able to report correct values.
+  // http://crbug.com/772400
+  function testGetSettingsWhenRemoteDimensionsUnknown() {
+    createConnections(null);
+    navigator.mediaDevices.getUserMedia({audio: true, video: true})
+      .then(addStreamToBothConnectionsAndNegotiate)
+      .catch(printGetUserMediaError);
+
+    detectVideoPlaying('remote-view-1', function() {
+      var settings1 = gFirstConnection.getRemoteStreams()[0].getVideoTracks()[0]
+          .getSettings();
+      assertTrue(settings1.width === undefined);
+      assertTrue(settings1.height === undefined);
+      assertTrue(settings1.frameRate === undefined);
+      detectVideoPlaying('remote-view-2', function() {
+        var settings2 = gSecondConnection.getRemoteStreams()[0]
+            .getVideoTracks()[0].getSettings();
+        assertTrue(settings2.width === undefined);
+        assertTrue(settings2.height === undefined);
+        assertTrue(settings2.frameRate === undefined);
+        reportTestSuccess();
+      });
+    });
+  }
+
   </script>
 </head>
 <body>

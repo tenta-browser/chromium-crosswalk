@@ -8,6 +8,7 @@
 
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/mac/foundation_util.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
@@ -18,16 +19,16 @@
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/experimental_flags.h"
-#include "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
+#include "ios/chrome/browser/ui/omnibox/location_bar_delegate.h"
+#include "ios/chrome/browser/ui/omnibox/omnibox_popup_view_ios.h"
 #import "ios/chrome/browser/ui/omnibox/omnibox_text_field_ios.h"
 #include "ios/chrome/browser/ui/omnibox/omnibox_view_ios.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
-#include "ios/shared/chrome/browser/ui/omnibox/location_bar_delegate.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
+#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 #include "ios/web/public/navigation_item.h"
 #include "ios/web/public/navigation_manager.h"
 #include "ios/web/public/ssl_status.h"
@@ -113,19 +114,41 @@ bool IsCurrentPageOffline(web::WebState* webState) {
 
 @end
 
+// An ObjC bridge class to map between a UIControl action and the
+// dispatcher command that displays the page info popup.
+@interface PageInfoBridge : NSObject
+
+// A method (in the form of a UIControl action) that invokes the command on the
+// dispatcher to open the page info popup.
+- (void)showPageInfoPopup:(id)sender;
+
+// The dispatcher to which commands invoked by the bridge will be sent.
+@property(nonatomic, weak) id<BrowserCommands> dispatcher;
+
+@end
+
+@implementation PageInfoBridge
+@synthesize dispatcher = _dispatcher;
+
+- (void)showPageInfoPopup:(id)sender {
+  UIView* view = base::mac::ObjCCastStrict<UIView>(sender);
+  CGPoint originPoint =
+      CGPointMake(CGRectGetMidX(view.bounds), CGRectGetMidY(view.bounds));
+  [self.dispatcher
+      showPageInfoForOriginPoint:[view convertPoint:originPoint toView:nil]];
+}
+
+@end
+
 LocationBarControllerImpl::LocationBarControllerImpl(
     OmniboxTextFieldIOS* field,
     ios::ChromeBrowserState* browser_state,
-    id<PreloadProvider> preloader,
-    id<OmniboxPopupPositioner> positioner,
-    id<LocationBarDelegate> delegate)
-    : edit_view_(base::MakeUnique<OmniboxViewIOS>(field,
-                                                  this,
-                                                  browser_state,
-                                                  preloader,
-                                                  positioner)),
+    id<LocationBarDelegate> delegate,
+    id<BrowserCommands> dispatcher)
+    : edit_view_(base::MakeUnique<OmniboxViewIOS>(field, this, browser_state)),
       field_(field),
-      delegate_(delegate) {
+      delegate_(delegate),
+      dispatcher_(dispatcher) {
   DCHECK([delegate_ toolbarModel]);
   show_hint_text_ = true;
 
@@ -134,6 +157,19 @@ LocationBarControllerImpl::LocationBarControllerImpl(
 }
 
 LocationBarControllerImpl::~LocationBarControllerImpl() {}
+
+std::unique_ptr<OmniboxPopupViewIOS> LocationBarControllerImpl::CreatePopupView(
+    id<OmniboxPopupPositioner> positioner) {
+  std::unique_ptr<OmniboxPopupViewIOS> popup_view =
+      base::MakeUnique<OmniboxPopupViewIOS>(edit_view_->browser_state(),
+                                            edit_view_->model(),
+                                            edit_view_.get(), positioner);
+
+  edit_view_->model()->set_popup_model(popup_view->model());
+  edit_view_->SetPopupProvider(popup_view.get());
+
+  return popup_view;
+}
 
 void LocationBarControllerImpl::HideKeyboardAndEndEditing() {
   edit_view_->HideKeyboardAndEndEditing();
@@ -193,7 +229,6 @@ void LocationBarControllerImpl::OnChanged() {
     }
   }
   UpdateRightDecorations();
-  [delegate_ locationBarChanged];
 
   NSString* placeholderText =
       show_hint_text_ ? l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT) : nil;
@@ -265,15 +300,16 @@ web::WebState* LocationBarControllerImpl::GetWebState() {
 }
 
 void LocationBarControllerImpl::InstallLocationIcon() {
+  page_info_bridge_ = [[PageInfoBridge alloc] init];
+  page_info_bridge_.dispatcher = dispatcher_;
   // Set the placeholder for empty omnibox.
   UIButton* button = [UIButton buttonWithType:UIButtonTypeCustom];
   UIImage* image = NativeImage(IDR_IOS_OMNIBOX_SEARCH);
   [button setImage:image forState:UIControlStateNormal];
   [button setFrame:CGRectMake(0, 0, image.size.width, image.size.height)];
-  [button addTarget:nil
-                action:@selector(chromeExecuteCommand:)
+  [button addTarget:page_info_bridge_
+                action:@selector(showPageInfoPopup:)
       forControlEvents:UIControlEventTouchUpInside];
-  [button setTag:IDC_SHOW_PAGE_INFO];
   SetA11yLabelAndUiAutomationName(
       button, IDS_IOS_PAGE_INFO_SECURITY_BUTTON_ACCESSIBILITY_LABEL,
       @"Page Security Info");
@@ -282,8 +318,7 @@ void LocationBarControllerImpl::InstallLocationIcon() {
   // Set chip text options.
   [button setTitleColor:[UIColor colorWithWhite:0.631 alpha:1]
                forState:UIControlStateNormal];
-  [button titleLabel].font =
-      [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:12];
+  [button titleLabel].font = [[MDCTypography fontLoader] regularFontOfSize:12];
   [field_ setLeftView:button];
 
   // The placeholder image is only shown when in edit mode on iPhone, and always
@@ -309,12 +344,12 @@ void LocationBarControllerImpl::CreateClearTextIcon(bool is_incognito) {
   frame.size = CGSizeMake(kClearTextButtonWidth, kClearTextButtonHeight);
   [button setFrame:frame];
 
-  clear_button_bridge_.reset(
-      [[OmniboxClearButtonBridge alloc] initWithOmniboxView:edit_view_.get()]);
+  clear_button_bridge_ =
+      [[OmniboxClearButtonBridge alloc] initWithOmniboxView:edit_view_.get()];
   [button addTarget:clear_button_bridge_
                 action:@selector(clearText)
       forControlEvents:UIControlEventTouchUpInside];
-  clear_text_button_.reset(button);
+  clear_text_button_ = button;
 
   SetA11yLabelAndUiAutomationName(clear_text_button_,
                                   IDS_IOS_ACCNAME_CLEAR_TEXT, @"Clear Text");
@@ -327,8 +362,7 @@ void LocationBarControllerImpl::UpdateRightDecorations() {
     // omnibox animation is completed.
     if (IsIPadIdiom())
       [field_ setRightView:nil];
-  } else if ([field_ displayedText].empty() &&
-             ![field_ isShowingQueryRefinementChip]) {
+  } else if ([field_ displayedText].empty()) {
     [field_ setRightView:nil];
   } else {
     [field_ setRightView:clear_text_button_];

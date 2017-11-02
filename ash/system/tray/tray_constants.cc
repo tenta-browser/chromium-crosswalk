@@ -22,6 +22,8 @@ const int kBubblePaddingHorizontalSide = 10;
 const int kBubblePaddingVerticalBottom = 3;
 const int kBubblePaddingVerticalSide = 15;
 
+const int kTrayTextFontSizeIncrease = 2;
+
 // Top inset of system tray bubble for bottom anchor alignment.
 const int kTrayBubbleAnchorTopInsetBottomAnchor = 3;
 
@@ -30,8 +32,6 @@ const int kTrayImageItemHorizontalPaddingVerticalAlignment = 1;
 // Size of tray items on the primary axis.
 const int kTrayItemSize = 32;
 
-const int kTrayImageItemPadding = 3;
-
 const int kTrayLabelItemHorizontalPaddingBottomAlignment = 7;
 
 // Vertical padding between status tray items when the shelf is vertical.
@@ -39,7 +39,7 @@ const int kTrayLabelItemVerticalPaddingVerticalAlignment = 4;
 
 const int kTrayMenuBottomRowPadding = 3;
 const int kTrayMenuBottomRowPaddingBetweenItems = -1;
-const int kTrayMenuMinimumWidth = 352;
+const int kTrayMenuWidth = 360;
 
 const int kTrayPopupAutoCloseDelayInSeconds = 2;
 const int kTrayPopupAutoCloseDelayForTextInSeconds = 5;
@@ -47,6 +47,7 @@ const int kTrayPopupPaddingHorizontal = 18;
 const int kTrayPopupPaddingBetweenItems = 10;
 const int kTrayPopupButtonEndMargin = 10;
 const int kTrayPopupLabelHorizontalPadding = 4;
+const int kTrayPopupSliderHorizontalPadding = 16;
 const int kTrayPopupItemMinHeight = 48;
 const int kTrayPopupItemMinStartWidth = 48;
 const int kTrayPopupItemMinEndWidth =
@@ -56,14 +57,11 @@ const int kTrayDetailedViewTransitionDelayMs = 100;
 
 const int kTrayPopupLabelRightPadding = 8;
 
-const int kTrayPopupDetailsIconWidth = 25;
-const int kTrayPopupDetailsLabelExtraLeftMargin = 8;
 const SkColor kTrayPopupHoverBackgroundColor = SkColorSetRGB(0xe4, 0xe4, 0xe4);
 const int kTrayRoundedBorderRadius = 2;
 
 const int kTrayToggleButtonWidth = 68;
 
-const SkColor kBackgroundColor = SK_ColorWHITE;
 const SkColor kPublicAccountUserCardTextColor = SkColorSetRGB(0x66, 0x66, 0x66);
 const SkColor kPublicAccountUserCardNameColor = SK_ColorBLACK;
 
@@ -71,6 +69,8 @@ const SkColor kHeaderBackgroundColor = SkColorSetRGB(0xf5, 0xf5, 0xf5);
 
 const SkColor kHeaderTextColorNormal = SkColorSetARGB(0x7f, 0, 0, 0);
 const SkColor kHeaderTextColorHover = SkColorSetARGB(0xd3, 0, 0, 0);
+
+const SkColor kMobileNotConnectedXIconColor = SkColorSetRGB(0xb2, 0xb2, 0xb2);
 
 const int kTrayPopupMinWidth = 300;
 const int kTrayPopupMaxWidth = 500;
@@ -81,7 +81,6 @@ const int kTrayNotificationContentsWidth =
                           (kTrayPopupPaddingHorizontal / 2) * 3);
 
 const int kTrayIconSize = 16;
-const int kTrayEdgePadding = 6;
 const SkColor kTrayIconColor = SK_ColorWHITE;
 const int kMenuIconSize = 20;
 const SkColor kMenuIconColor = gfx::kChromeIconGrey;

@@ -35,6 +35,10 @@ namespace translate {
 // Feature flag for "Translate UI 2016 Q2" project.
 extern const base::Feature kTranslateUI2016Q2;
 
+// Enables or disables the new improved language settings.
+// These settings support the new UI.
+extern const base::Feature kImprovedLanguageSettings;
+
 // The trial (study) name in finch study config.
 extern const char kTranslateUI2016Q2TrialName[];
 
@@ -87,6 +91,10 @@ class TranslatePrefs {
   static const char kPrefTranslateBlockedLanguages[];
   static const char kPrefTranslateLastDeniedTimeForLanguage[];
   static const char kPrefTranslateTooOftenDeniedForLanguage[];
+#if defined(OS_ANDROID)
+  static const char kPrefTranslateAutoAlwaysCount[];
+  static const char kPrefTranslateAutoNeverCount[];
+#endif
 
   // |preferred_languages_pref| is only used on Chrome OS, other platforms must
   // pass NULL.
@@ -94,8 +102,11 @@ class TranslatePrefs {
                  const char* accept_languages_pref,
                  const char* preferred_languages_pref);
 
+  // Checks if the translate feature is enabled.
+  bool IsEnabled() const;
+
   // Sets the country that the application is run in. Determined by the
-  // VariationsService, can be left empty. Used by TranslateExperiment.
+  // VariationsService, can be left empty. Used by the TranslateRanker.
   void SetCountry(const std::string& country);
   std::string GetCountry() const;
 
@@ -106,6 +117,16 @@ class TranslatePrefs {
   bool IsBlockedLanguage(const std::string& original_language) const;
   void BlockLanguage(const std::string& original_language);
   void UnblockLanguage(const std::string& original_language);
+
+  // Adds the language to the language list at chrome://settings/languages.
+  // If the param |force_blocked| is set to true, the language is added to the
+  // blocked list.
+  // If force_blocked is set to false, the language is added to the blocked list
+  // if the language list does not already contain another language with the
+  // same base language.
+  void AddToLanguageList(const std::string& language, bool force_blocked);
+  // Removes the language from the language list at chrome://settings/languages.
+  void RemoveFromLanguageList(const std::string& language);
 
   bool IsSiteBlacklisted(const std::string& site) const;
   void BlacklistSite(const std::string& site);
@@ -146,6 +167,20 @@ class TranslatePrefs {
   void IncrementTranslationAcceptedCount(const std::string& language);
   void ResetTranslationAcceptedCount(const std::string& language);
 
+#if defined(OS_ANDROID)
+  // These methods are used to track how many times the auto-always translation
+  // has been triggered for a specific language.
+  int GetTranslationAutoAlwaysCount(const std::string& language) const;
+  void IncrementTranslationAutoAlwaysCount(const std::string& language);
+  void ResetTranslationAutoAlwaysCount(const std::string& language);
+
+  // These methods are used to track how many times the auto-never translation
+  // has been triggered for a specific language.
+  int GetTranslationAutoNeverCount(const std::string& language) const;
+  void IncrementTranslationAutoNeverCount(const std::string& language);
+  void ResetTranslationAutoNeverCount(const std::string& language);
+#endif
+
   // Update the last time on closing the Translate UI without translation.
   void UpdateLastDeniedTime(const std::string& language);
 
@@ -182,6 +217,13 @@ class TranslatePrefs {
                                const char* accept_languages_pref);
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, BlockLanguage);
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, UnblockLanguage);
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, AddToLanguageList);
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, RemoveFromLanguageList);
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest, AddToLanguageListFeatureEnabled);
+  FRIEND_TEST_ALL_PREFIXES(TranslatePrefsTest,
+                           RemoveFromLanguageListFeatureEnabled);
   friend class TranslatePrefsTest;
 
   // Merges two language sets to migrate to the language setting UI.

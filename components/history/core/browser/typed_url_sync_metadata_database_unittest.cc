@@ -4,8 +4,10 @@
 
 #include "components/history/core/browser/typed_url_sync_metadata_database.h"
 
+#include "base/big_endian.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "components/history/core/browser/url_row.h"
 #include "components/sync/protocol/model_type_state.pb.h"
 #include "sql/statement.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -16,6 +18,16 @@ using syncer::EntityMetadataMap;
 using syncer::MetadataBatch;
 
 namespace history {
+
+namespace {
+
+std::string IntToStorageKey(int i) {
+  std::string storage_key(sizeof(URLID), 0);
+  base::WriteBigEndian<URLID>(&storage_key[0], i);
+  return storage_key;
+}
+
+}  // namespace
 
 class TypedURLSyncMetadataDatabaseTest : public testing::Test,
                                          public TypedURLSyncMetadataDatabase {
@@ -60,19 +72,19 @@ TEST_F(TypedURLSyncMetadataDatabaseTest, TypedURLNoMetadata) {
 
 TEST_F(TypedURLSyncMetadataDatabaseTest, TypedURLGetAllSyncMetadata) {
   EntityMetadata metadata;
-  std::string storage_key = "1";
-  std::string storage_key2 = "2";
+  std::string storage_key = IntToStorageKey(1);
+  std::string storage_key2 = IntToStorageKey(2);
   metadata.set_sequence_number(1);
 
-  EXPECT_TRUE(UpdateSyncMetadata(storage_key, metadata));
+  EXPECT_TRUE(UpdateSyncMetadata(syncer::TYPED_URLS, storage_key, metadata));
 
   ModelTypeState model_type_state;
   model_type_state.set_initial_sync_done(true);
 
-  EXPECT_TRUE(UpdateModelTypeState(model_type_state));
+  EXPECT_TRUE(UpdateModelTypeState(syncer::TYPED_URLS, model_type_state));
 
   metadata.set_sequence_number(2);
-  EXPECT_TRUE(UpdateSyncMetadata(storage_key2, metadata));
+  EXPECT_TRUE(UpdateSyncMetadata(syncer::TYPED_URLS, storage_key2, metadata));
 
   MetadataBatch metadata_batch;
   EXPECT_TRUE(GetAllSyncMetadata(&metadata_batch));
@@ -87,7 +99,7 @@ TEST_F(TypedURLSyncMetadataDatabaseTest, TypedURLGetAllSyncMetadata) {
 
   // Now check that a model type state update replaces the old value
   model_type_state.set_initial_sync_done(false);
-  EXPECT_TRUE(UpdateModelTypeState(model_type_state));
+  EXPECT_TRUE(UpdateModelTypeState(syncer::TYPED_URLS, model_type_state));
 
   EXPECT_TRUE(GetAllSyncMetadata(&metadata_batch));
   EXPECT_FALSE(metadata_batch.GetModelTypeState().initial_sync_done());
@@ -96,7 +108,7 @@ TEST_F(TypedURLSyncMetadataDatabaseTest, TypedURLGetAllSyncMetadata) {
 TEST_F(TypedURLSyncMetadataDatabaseTest, TypedURLWriteThenDeleteSyncMetadata) {
   EntityMetadata metadata;
   MetadataBatch metadata_batch;
-  std::string storage_key = "1";
+  std::string storage_key = IntToStorageKey(1);
   ModelTypeState model_type_state;
 
   model_type_state.set_initial_sync_done(true);
@@ -104,10 +116,10 @@ TEST_F(TypedURLSyncMetadataDatabaseTest, TypedURLWriteThenDeleteSyncMetadata) {
   metadata.set_client_tag_hash("client_hash");
 
   // Write the data into the store.
-  EXPECT_TRUE(UpdateSyncMetadata(storage_key, metadata));
-  EXPECT_TRUE(UpdateModelTypeState(model_type_state));
+  EXPECT_TRUE(UpdateSyncMetadata(syncer::TYPED_URLS, storage_key, metadata));
+  EXPECT_TRUE(UpdateModelTypeState(syncer::TYPED_URLS, model_type_state));
   // Delete the data we just wrote.
-  EXPECT_TRUE(ClearSyncMetadata(storage_key));
+  EXPECT_TRUE(ClearSyncMetadata(syncer::TYPED_URLS, storage_key));
   // It shouldn't be there any more.
   EXPECT_TRUE(GetAllSyncMetadata(&metadata_batch));
 
@@ -115,7 +127,7 @@ TEST_F(TypedURLSyncMetadataDatabaseTest, TypedURLWriteThenDeleteSyncMetadata) {
   EXPECT_EQ(metadata_records.size(), 0u);
 
   // Now delete the model type state.
-  EXPECT_TRUE(ClearModelTypeState());
+  EXPECT_TRUE(ClearModelTypeState(syncer::TYPED_URLS));
   EXPECT_TRUE(GetAllSyncMetadata(&metadata_batch));
   EXPECT_EQ(ModelTypeState().SerializeAsString(),
             metadata_batch.GetModelTypeState().SerializeAsString());

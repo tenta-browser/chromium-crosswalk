@@ -36,6 +36,7 @@
 #include "platform/PlatformExport.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/text/TextDirection.h"
+#include "platform/wtf/Forward.h"
 #include "platform/wtf/HashSet.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/RefCounted.h"
@@ -46,37 +47,58 @@ struct hb_buffer_t;
 namespace blink {
 
 class Font;
-class ShapeResultSpacing;
+template <typename TextContainerType>
+class PLATFORM_EXPORT ShapeResultSpacing;
 class SimpleFontData;
 class TextRun;
 
 class PLATFORM_EXPORT ShapeResult : public RefCounted<ShapeResult> {
  public:
-  static PassRefPtr<ShapeResult> Create(const Font* font,
-                                        unsigned num_characters,
-                                        TextDirection direction) {
-    return AdoptRef(new ShapeResult(font, num_characters, direction));
+  static RefPtr<ShapeResult> Create(const Font* font,
+                                    unsigned num_characters,
+                                    TextDirection direction) {
+    return WTF::AdoptRef(new ShapeResult(font, num_characters, direction));
   }
-  static PassRefPtr<ShapeResult> CreateForTabulationCharacters(
+  static RefPtr<ShapeResult> CreateForTabulationCharacters(
       const Font*,
       const TextRun&,
       float position_offset,
       unsigned count);
   ~ShapeResult();
 
+  // Returns a mutable unique instance. If |this| has more than 1 ref count,
+  // a clone is created.
+  RefPtr<ShapeResult> MutableUnique() const;
+
+  // The logical width of this result.
   float Width() const { return width_; }
   LayoutUnit SnappedWidth() const { return LayoutUnit::FromFloatCeil(width_); }
+  // The glyph bounding box, in logical coordinates, using alphabetic baseline
+  // even when the result is in vertical flow.
   const FloatRect& Bounds() const { return glyph_bounding_box_; }
   unsigned NumCharacters() const { return num_characters_; }
+  // The character start/end index of a range shape result.
+  unsigned StartIndexForResult() const;
+  unsigned EndIndexForResult() const;
   void FallbackFonts(HashSet<const SimpleFontData*>*) const;
   TextDirection Direction() const {
     return static_cast<TextDirection>(direction_);
   }
   bool Rtl() const { return Direction() == TextDirection::kRtl; }
+
+  // True if at least one glyph in this result has vertical offsets.
+  //
+  // Vertical result always has vertical offsets, but horizontal result may also
+  // have vertical offsets.
   bool HasVerticalOffsets() const { return has_vertical_offsets_; }
 
   // For memory reporting.
   size_t ByteSize() const;
+
+  // Returns the next or previous offsets respectively at which it is safe to
+  // break without reshaping.
+  unsigned NextSafeToBreakOffset(unsigned offset) const;
+  unsigned PreviousSafeToBreakOffset(unsigned offset) const;
 
   unsigned OffsetForPosition(float target_x, bool include_partial_glyphs) const;
   float PositionForOffset(unsigned offset) const;
@@ -87,10 +109,19 @@ class PLATFORM_EXPORT ShapeResult : public RefCounted<ShapeResult> {
     return LayoutUnit::FromFloatCeil(PositionForOffset(offset));
   }
 
-  PassRefPtr<ShapeResult> ApplySpacingToCopy(ShapeResultSpacing&,
-                                             const TextRun&) const;
+  // Apply spacings (letter-spacing, word-spacing, and justification) as
+  // configured to |ShapeResultSpacing|.
+  // |text_start_offset| adjusts the character index in the ShapeResult before
+  // giving it to |ShapeResultSpacing|. It can be negative if
+  // |StartIndexForResult()| is larger than the text in |ShapeResultSpacing|.
+  void ApplySpacing(ShapeResultSpacing<String>&, int text_start_offset = 0);
+  RefPtr<ShapeResult> ApplySpacingToCopy(ShapeResultSpacing<TextRun>&,
+                                         const TextRun&) const;
 
   void CopyRange(unsigned start, unsigned end, ShapeResult*) const;
+
+  String ToString() const;
+  void ToString(StringBuilder*) const;
 
  protected:
   struct RunInfo;
@@ -98,15 +129,24 @@ class PLATFORM_EXPORT ShapeResult : public RefCounted<ShapeResult> {
   ShapeResult(const Font*, unsigned num_characters, TextDirection);
   ShapeResult(const ShapeResult&);
 
-  static PassRefPtr<ShapeResult> Create(const ShapeResult& other) {
-    return AdoptRef(new ShapeResult(other));
+  static RefPtr<ShapeResult> Create(const ShapeResult& other) {
+    return WTF::AdoptRef(new ShapeResult(other));
   }
 
-  void ApplySpacing(ShapeResultSpacing&, const TextRun&);
+  template <typename TextContainerType>
+  void ApplySpacingImpl(ShapeResultSpacing<TextContainerType>&,
+                        int text_start_offset = 0);
+  template <bool is_horizontal_run>
+  void ComputeGlyphPositions(ShapeResult::RunInfo*,
+                             unsigned start_glyph,
+                             unsigned num_glyphs,
+                             hb_buffer_t*,
+                             FloatRect* glyph_bounding_box);
   void InsertRun(std::unique_ptr<ShapeResult::RunInfo>,
                  unsigned start_glyph,
                  unsigned num_glyphs,
                  hb_buffer_t*);
+  void ReorderRtlRuns(unsigned run_size_before);
 
   float width_;
   FloatRect glyph_bounding_box_;
@@ -126,6 +166,7 @@ class PLATFORM_EXPORT ShapeResult : public RefCounted<ShapeResult> {
 
   friend class HarfBuzzShaper;
   friend class ShapeResultBuffer;
+  friend class ShapeResultBloberizer;
 };
 
 }  // namespace blink

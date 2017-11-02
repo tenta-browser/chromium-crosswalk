@@ -116,16 +116,12 @@ void LoginManagerTest::SetUpCommandLine(base::CommandLine* command_line) {
   MixinBasedBrowserTest::SetUpCommandLine(command_line);
 }
 
-void LoginManagerTest::SetUpInProcessBrowserTestFixture() {
-  host_resolver()->AddRule("*", "127.0.0.1");
-  MixinBasedBrowserTest::SetUpInProcessBrowserTestFixture();
-}
-
 void LoginManagerTest::SetUpOnMainThread() {
   LoginDisplayHostImpl::DisableRestrictiveProxyCheckForTest();
 
   // Start the accept thread as the sandbox host process has already been
   // spawned.
+  host_resolver()->AddRule("*", "127.0.0.1");
   embedded_test_server()->StartAcceptingConnections();
 
   FakeGaia::AccessTokenInfo token_info;
@@ -143,7 +139,8 @@ void LoginManagerTest::SetUpOnMainThread() {
 
   content::WindowedNotificationObserver(
       chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
-      content::NotificationService::AllSources()).Wait();
+      content::NotificationService::AllSources())
+      .Wait();
   InitializeWebContents();
   test::UserSessionManagerTestApi session_manager_test_api(
       UserSessionManager::GetInstance());
@@ -189,8 +186,7 @@ bool LoginManagerTest::AddUserToSession(const UserContext& user_context) {
   const user_manager::UserList& logged_users =
       user_manager::UserManager::Get()->GetLoggedInUsers();
   for (user_manager::UserList::const_iterator it = logged_users.begin();
-       it != logged_users.end();
-       ++it) {
+       it != logged_users.end(); ++it) {
     if ((*it)->GetAccountId() == user_context.GetAccountId())
       return true;
   }

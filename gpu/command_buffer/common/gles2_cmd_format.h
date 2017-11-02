@@ -7,9 +7,6 @@
 #ifndef GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_FORMAT_H_
 #define GPU_COMMAND_BUFFER_COMMON_GLES2_CMD_FORMAT_H_
 
-
-#include <KHR/khrplatform.h>
-
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -20,33 +17,9 @@
 #include "gpu/command_buffer/common/bitfield_helpers.h"
 #include "gpu/command_buffer/common/cmd_buffer_common.h"
 #include "gpu/command_buffer/common/constants.h"
+#include "gpu/command_buffer/common/gl2_types.h"
 #include "gpu/command_buffer/common/gles2_cmd_ids.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
-
-// GL types are forward declared to avoid including the GL headers. The problem
-// is determining which GL headers to include from code that is common to the
-// client and service sides (GLES2 or one of several GL implementations).
-typedef unsigned int GLenum;
-typedef unsigned int GLbitfield;
-typedef unsigned int GLuint;
-typedef int GLint;
-typedef int GLsizei;
-typedef unsigned char GLboolean;
-typedef signed char GLbyte;
-typedef short GLshort;
-typedef unsigned char GLubyte;
-typedef unsigned short GLushort;
-typedef unsigned long GLulong;
-typedef float GLfloat;
-typedef float GLclampf;
-typedef double GLdouble;
-typedef double GLclampd;
-typedef void GLvoid;
-typedef khronos_intptr_t GLintptr;
-typedef khronos_ssize_t  GLsizeiptr;
-typedef struct __GLsync *GLsync;
-typedef int64_t GLint64;
-typedef uint64_t GLuint64;
 
 namespace gpu {
 namespace gles2 {
@@ -60,28 +33,47 @@ static_assert(GPU_COMMAND_BUFFER_ENTRY_ALIGNMENT == 4,
 namespace id_namespaces {
 
 // These are used when contexts share resources.
-enum IdNamespaces {
+enum class SharedIdNamespaces {
   kBuffers,
-  kFramebuffers,
   kProgramsAndShaders,
   kRenderbuffers,
   kTextures,
+  kSamplers,
+  kSyncs,
+  kNumSharedIdNamespaces
+};
+
+enum class IdNamespaces {
+  kFramebuffers,
   kQueries,
   kVertexArrays,
-  kSamplers,
   kTransformFeedbacks,
-  kSyncs,
   kNumIdNamespaces
 };
 
 enum RangeIdNamespaces { kPaths, kNumRangeIdNamespaces };
 
 // These numbers must not change
-static_assert(kBuffers == 0, "kBuffers should equal 0");
-static_assert(kFramebuffers == 1, "kFramebuffers should equal 1");
-static_assert(kProgramsAndShaders == 2, "kProgramsAndShaders should equal 2");
-static_assert(kRenderbuffers == 3, "kRenderbuffers should equal 3");
-static_assert(kTextures == 4, "kTextures should equal 4");
+static_assert(static_cast<int>(SharedIdNamespaces::kBuffers) == 0,
+              "kBuffers should equal 0");
+static_assert(static_cast<int>(SharedIdNamespaces::kProgramsAndShaders) == 1,
+              "kProgramsAndShaders should equal 1");
+static_assert(static_cast<int>(SharedIdNamespaces::kRenderbuffers) == 2,
+              "kRenderbuffers should equal 2");
+static_assert(static_cast<int>(SharedIdNamespaces::kTextures) == 3,
+              "kTextures should equal 3");
+static_assert(static_cast<int>(SharedIdNamespaces::kSamplers) == 4,
+              "kSamplers should equal 4");
+static_assert(static_cast<int>(SharedIdNamespaces::kSyncs) == 5,
+              "kProgramsAndShaders should equal 5");
+static_assert(static_cast<int>(IdNamespaces::kFramebuffers) == 0,
+              "kFramebuffers should equal 0");
+static_assert(static_cast<int>(IdNamespaces::kQueries) == 1,
+              "kQueries should equal 1");
+static_assert(static_cast<int>(IdNamespaces::kVertexArrays) == 2,
+              "kVertexArrays should equal 2");
+static_assert(static_cast<int>(IdNamespaces::kTransformFeedbacks) == 3,
+              "kTransformFeedbacks should equal 3");
 static_assert(kPaths == 0, "kPaths should equal 0");
 
 }  // namespace id_namespaces
@@ -289,7 +281,7 @@ static_assert(offsetof(UniformBlocksHeader, num_uniform_blocks) == 0,
 
 namespace cmds {
 
-#include "../common/gles2_cmd_format_autogen.h"
+#include "gpu/command_buffer/common/gles2_cmd_format_autogen.h"
 
 #pragma pack(pop)
 

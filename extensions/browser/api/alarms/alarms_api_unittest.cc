@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "base/json/json_reader.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/simple_test_clock.h"
 #include "base/values.h"
@@ -36,8 +37,8 @@ class AlarmDelegate : public AlarmManager::Delegate {
   ~AlarmDelegate() override {}
   void OnAlarm(const std::string& extension_id, const Alarm& alarm) override {
     alarms_seen.push_back(alarm.js_alarm->name);
-    if (base::MessageLoop::current()->is_running())
-      base::MessageLoop::current()->QuitWhenIdle();
+    if (base::RunLoop::IsRunningOnCurrentThread())
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   std::vector<std::string> alarms_seen;

@@ -15,7 +15,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/threading/thread_checker.h"
 #include "base/trace_event/memory_dump_provider.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
@@ -44,12 +44,11 @@ class HttpTransactionFactory;
 class HttpUserAgentSettings;
 class NetLog;
 class NetworkDelegate;
+class NetworkErrorLoggingDelegate;
 class NetworkQualityEstimator;
 class ReportingService;
-class SdchManager;
 class ProxyService;
 class URLRequest;
-class URLRequestBackoffManager;
 class URLRequestJobFactory;
 class URLRequestThrottlerManager;
 
@@ -60,8 +59,7 @@ class URLRequestThrottlerManager;
 // URLRequestContext rather than creating a new one, as guaranteeing that the
 // URLRequestContext is destroyed before its members can be difficult.
 class NET_EXPORT URLRequestContext
-    : NON_EXPORTED_BASE(public base::NonThreadSafe),
-      public base::trace_event::MemoryDumpProvider {
+    : public base::trace_event::MemoryDumpProvider {
  public:
   URLRequestContext();
   ~URLRequestContext() override;
@@ -72,6 +70,10 @@ class NET_EXPORT URLRequestContext
   // May return nullptr if this context doesn't have an associated network
   // session.
   const HttpNetworkSession::Params* GetNetworkSessionParams() const;
+
+  // May return nullptr if this context doesn't have an associated network
+  // session.
+  const HttpNetworkSession::Context* GetNetworkSessionContext() const;
 
   // This function should not be used in Chromium, please use the version with
   // NetworkTrafficAnnotationTag in the future.
@@ -207,28 +209,24 @@ class NET_EXPORT URLRequestContext
     throttler_manager_ = throttler_manager;
   }
 
-  // May return nullptr.
-  URLRequestBackoffManager* backoff_manager() const { return backoff_manager_; }
-  void set_backoff_manager(URLRequestBackoffManager* backoff_manager) {
-    backoff_manager_ = backoff_manager;
-  }
-
-  // May return nullptr.
-  SdchManager* sdch_manager() const { return sdch_manager_; }
-  void set_sdch_manager(SdchManager* sdch_manager) {
-    sdch_manager_ = sdch_manager;
-  }
-
   // Gets the URLRequest objects that hold a reference to this
   // URLRequestContext.
-  std::set<const URLRequest*>* url_requests() const {
-    return url_requests_.get();
+  const std::set<const URLRequest*>& url_requests() const {
+    return url_requests_;
   }
+
+  void InsertURLRequest(const URLRequest* request) const;
+
+  void RemoveURLRequest(const URLRequest* request) const;
 
   // CHECKs that no URLRequests using this context remain. Subclasses should
   // additionally call AssertNoURLRequests() within their own destructor,
   // prior to implicit destruction of subclass-owned state.
   void AssertNoURLRequests() const;
+
+  // CHECKs that the passed URLRequest is present on this context.
+  // Added for http://crbug.com/754704; remove when that bug is resolved.
+  void AssertURLRequestPresent(const URLRequest* request) const;
 
   // Get the underlying |HttpUserAgentSettings| implementation that provides
   // the HTTP Accept-Language and User-Agent header values.
@@ -236,7 +234,7 @@ class NET_EXPORT URLRequestContext
     return http_user_agent_settings_;
   }
   void set_http_user_agent_settings(
-      HttpUserAgentSettings* http_user_agent_settings) {
+      const HttpUserAgentSettings* http_user_agent_settings) {
     http_user_agent_settings_ = http_user_agent_settings;
   }
 
@@ -255,6 +253,14 @@ class NET_EXPORT URLRequestContext
     reporting_service_ = reporting_service;
   }
 
+  NetworkErrorLoggingDelegate* network_error_logging_delegate() const {
+    return network_error_logging_delegate_;
+  }
+  void set_network_error_logging_delegate(
+      NetworkErrorLoggingDelegate* network_error_logging_delegate) {
+    network_error_logging_delegate_ = network_error_logging_delegate;
+  }
+
   void set_enable_brotli(bool enable_brotli) { enable_brotli_ = enable_brotli; }
 
   bool enable_brotli() const { return enable_brotli_; }
@@ -271,11 +277,18 @@ class NET_EXPORT URLRequestContext
   // Sets a name for this URLRequestContext. Currently the name is used in
   // MemoryDumpProvier to annotate memory usage. The name does not need to be
   // unique.
-  void set_name(const char* name) { name_ = name; }
+  void set_name(const std::string& name) { name_ = name; }
+  const std::string& name() const { return name_; }
 
   // MemoryDumpProvider implementation:
+  // This is reported as
+  // "memory:chrome:all_processes:reported_by_chrome:net:effective_size_avg."
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
                     base::trace_event::ProcessMemoryDump* pmd) override;
+
+  void AssertCalledOnValidThread() {
+    DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  }
 
  private:
   // ---------------------------------------------------------------------------
@@ -294,7 +307,7 @@ class NET_EXPORT URLRequestContext
   scoped_refptr<SSLConfigService> ssl_config_service_;
   NetworkDelegate* network_delegate_;
   HttpServerProperties* http_server_properties_;
-  HttpUserAgentSettings* http_user_agent_settings_;
+  const HttpUserAgentSettings* http_user_agent_settings_;
   CookieStore* cookie_store_;
   TransportSecurityState* transport_security_state_;
   CTVerifier* cert_transparency_verifier_;
@@ -302,17 +315,16 @@ class NET_EXPORT URLRequestContext
   HttpTransactionFactory* http_transaction_factory_;
   const URLRequestJobFactory* job_factory_;
   URLRequestThrottlerManager* throttler_manager_;
-  URLRequestBackoffManager* backoff_manager_;
-  SdchManager* sdch_manager_;
   NetworkQualityEstimator* network_quality_estimator_;
   ReportingService* reporting_service_;
+  NetworkErrorLoggingDelegate* network_error_logging_delegate_;
 
   // ---------------------------------------------------------------------------
   // Important: When adding any new members below, consider whether they need to
   // be added to CopyFrom.
   // ---------------------------------------------------------------------------
 
-  std::unique_ptr<std::set<const URLRequest*>> url_requests_;
+  mutable std::set<const URLRequest*> url_requests_;
 
   // Enables Brotli Content-Encoding support.
   bool enable_brotli_;
@@ -323,7 +335,13 @@ class NET_EXPORT URLRequestContext
   // An optional name which can be set to describe this URLRequestContext.
   // Used in MemoryDumpProvier to annotate memory usage. The name does not need
   // to be unique.
-  const char* name_;
+  std::string name_;
+
+  // The largest number of outstanding URLRequests that have been created by
+  // |this| and are not yet destroyed. This doesn't need to be in CopyFrom.
+  mutable size_t largest_outstanding_requests_count_seen_;
+
+  THREAD_CHECKER(thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(URLRequestContext);
 };

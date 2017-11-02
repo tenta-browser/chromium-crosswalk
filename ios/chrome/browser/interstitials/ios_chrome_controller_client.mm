@@ -45,6 +45,10 @@ void IOSChromeControllerClient::GoBack() {
   web_interstitial_->DontProceed();
 }
 
+bool IOSChromeControllerClient::CanGoBack() {
+  return web_state_->GetNavigationManager()->CanGoBack();
+}
+
 void IOSChromeControllerClient::GoBackAfterNavigationCommitted() {
   NOTREACHED();
 }
@@ -62,6 +66,12 @@ void IOSChromeControllerClient::Reload() {
 void IOSChromeControllerClient::OpenUrlInCurrentTab(const GURL& url) {
   web_state_->OpenURL(web::WebState::OpenURLParams(
       url, web::Referrer(), WindowOpenDisposition::CURRENT_TAB,
+      ui::PAGE_TRANSITION_LINK, false));
+}
+
+void IOSChromeControllerClient::OpenUrlInNewForegroundTab(const GURL& url) {
+  web_state_->OpenURL(web::WebState::OpenURLParams(
+      url, web::Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui::PAGE_TRANSITION_LINK, false));
 }
 

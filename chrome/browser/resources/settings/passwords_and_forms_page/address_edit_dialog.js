@@ -50,9 +50,8 @@ Polymer({
 
   /** @override */
   attached: function() {
-    this.countryInfo =
-        settings.address.CountryDetailManagerImpl.getInstance();
-    this.countryInfo.getCountryList().then(function(countryList) {
+    this.countryInfo = settings.address.CountryDetailManagerImpl.getInstance();
+    this.countryInfo.getCountryList().then(countryList => {
       this.countries_ = countryList;
 
       this.title_ =
@@ -65,13 +64,13 @@ Polymer({
       this.email_ =
           this.address.emailAddresses ? this.address.emailAddresses[0] : '';
 
-      this.async(function() {
+      this.async(() => {
         if (this.countryCode_ == this.address.countryCode)
           this.updateAddressWrapper_();
         else
           this.countryCode_ = this.address.countryCode;
-      }.bind(this));
-    }.bind(this));
+      });
+    });
 
     // Open is called on the dialog after the address wrapper has been updated.
   },
@@ -92,12 +91,10 @@ Polymer({
   updateAddressWrapper_: function() {
     // Default to the last country used if no country code is provided.
     var countryCode = this.countryCode_ || this.countries_[0].countryCode;
-    this.countryInfo.getAddressFormat(countryCode).then(function(format) {
-      this.addressWrapper_ = format.components.map(function(component) {
-        return component.row.map(function(c) {
-          return new settings.address.AddressComponentUI(this.address, c);
-        }.bind(this));
-      }.bind(this));
+    this.countryInfo.getAddressFormat(countryCode).then(format => {
+      this.addressWrapper_ = format.components.map(
+          component => component.row.map(
+              c => new settings.address.AddressComponentUI(this.address, c)));
 
       // Flush dom before resize and savability updates.
       Polymer.dom.flush();
@@ -106,10 +103,10 @@ Polymer({
 
       this.fire('on-update-address-wrapper');  // For easier testing.
 
-      var dialog = /** @type {HTMLDialogElement} */(this.$.dialog);
+      var dialog = /** @type {HTMLDialogElement} */ (this.$.dialog);
       if (!dialog.open)
         dialog.showModal();
-    }.bind(this));
+    });
   },
 
   updateCanSave_: function() {
@@ -201,32 +198,33 @@ Polymer({
 cr.define('settings.address', function() {
   /**
    * Creates a wrapper against a single data member for an address.
-   * @param {!chrome.autofillPrivate.AddressEntry} address
-   * @param {!chrome.autofillPrivate.AddressComponent} component
-   * @constructor
    */
-  function AddressComponentUI(address, component) {
-    Object.defineProperty(this, 'value', {
-      get: function() {
-        return this.getValue_();
-      },
-      set: function(newValue) {
-        this.setValue_(newValue);
-      },
-    });
-    this.address_ = address;
-    this.component = component;
-    this.isTextArea =
-        component.field == chrome.autofillPrivate.AddressField.ADDRESS_LINES;
-  }
+  class AddressComponentUI {
+    /**
+     * @param {!chrome.autofillPrivate.AddressEntry} address
+     * @param {!chrome.autofillPrivate.AddressComponent} component
+     */
+    constructor(address, component) {
+      Object.defineProperty(this, 'value', {
+        get: function() {
+          return this.getValue_();
+        },
+        set: function(newValue) {
+          this.setValue_(newValue);
+        },
+      });
+      this.address_ = address;
+      this.component = component;
+      this.isTextArea =
+          component.field == chrome.autofillPrivate.AddressField.ADDRESS_LINES;
+    }
 
-  AddressComponentUI.prototype = {
     /**
      * Gets the value from the address that's associated with this component.
      * @return {string|undefined}
      * @private
      */
-    getValue_: function() {
+    getValue_() {
       var address = this.address_;
       switch (this.component.field) {
         case chrome.autofillPrivate.AddressField.FULL_NAME:
@@ -252,14 +250,14 @@ cr.define('settings.address', function() {
         default:
           assertNotReached();
       }
-    },
+    }
 
     /**
      * Sets the value in the address that's associated with this component.
      * @param {string} value
      * @private
      */
-    setValue_: function(value) {
+    setValue_(value) {
       var address = this.address_;
       switch (this.component.field) {
         case chrome.autofillPrivate.AddressField.FULL_NAME:
@@ -292,52 +290,48 @@ cr.define('settings.address', function() {
         default:
           assertNotReached();
       }
-    },
-  };
+    }
+  }
 
   /** @interface */
-  function CountryDetailManager() {}
-  CountryDetailManager.prototype = {
+  class CountryDetailManager {
     /**
      * Gets the list of available countries.
      * The default country will be first, followed by a separator, followed by
      * an alphabetized list of countries available.
      * @return {!Promise<!Array<!chrome.autofillPrivate.CountryEntry>>}
      */
-    getCountryList: assertNotReached,
+    getCountryList() {}
 
     /**
      * Gets the address format for a given country code.
      * @param {string} countryCode
      * @return {!Promise<!chrome.autofillPrivate.AddressComponents>}
      */
-    getAddressFormat: assertNotReached,
-  };
+    getAddressFormat(countryCode) {}
+  }
 
   /**
    * Default implementation. Override for testing.
    * @implements {settings.address.CountryDetailManager}
-   * @constructor
    */
-  function CountryDetailManagerImpl() {}
-  cr.addSingletonGetter(CountryDetailManagerImpl);
-  CountryDetailManagerImpl.prototype = {
-    __proto__: CountryDetailManager,
-
+  class CountryDetailManagerImpl {
     /** @override */
-    getCountryList: function() {
+    getCountryList() {
       return new Promise(function(callback) {
         chrome.autofillPrivate.getCountryList(callback);
       });
-    },
+    }
 
     /** @override */
-    getAddressFormat: function(countryCode) {
+    getAddressFormat(countryCode) {
       return new Promise(function(callback) {
         chrome.autofillPrivate.getAddressComponents(countryCode, callback);
       });
-    },
-  };
+    }
+  }
+
+  cr.addSingletonGetter(CountryDetailManagerImpl);
 
   return {
     AddressComponentUI: AddressComponentUI,

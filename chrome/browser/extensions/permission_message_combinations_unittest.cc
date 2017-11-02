@@ -202,7 +202,7 @@ class PermissionMessageCombinationsUnittest : public testing::Test {
   scoped_refptr<const Extension> app_;
   // Whitelist a known extension id so we can test all permissions. This ID
   // will be used for each test app.
-  extensions::SimpleFeature::ScopedWhitelistForTest whitelisted_extension_id_;
+  SimpleFeature::ScopedThreadUnsafeWhitelistForTest whitelisted_extension_id_;
 
   DISALLOW_COPY_AND_ASSIGN(PermissionMessageCombinationsUnittest);
 };
@@ -1185,6 +1185,19 @@ TEST_F(PermissionMessageCombinationsUnittest, ClipboardPermissionMessages) {
   CreateAndInstall(base::StringPrintf(kManifest, "'clipboardWrite'"));
   ASSERT_TRUE(
       CheckManifestProducesPermissions("Modify data you copy and paste"));
+}
+
+TEST_F(PermissionMessageCombinationsUnittest, NewTabPagePermissionMessages) {
+  const char kManifest[] =
+      "{"
+      "  'chrome_url_overrides': {"
+      "    'newtab': 'newtab.html'"
+      "  }"
+      "}";
+
+  CreateAndInstall(kManifest);
+  ASSERT_TRUE(CheckManifestProducesPermissions(
+      "Replace the page you see when opening a new tab"));
 }
 
 // TODO(sashab): Add a test that checks that messages are generated correctly

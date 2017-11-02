@@ -25,7 +25,7 @@ enum DocumentReadyState { "loading", "interactive", "complete" };
 
 
 // https://w3c.github.io/page-visibility/#visibility-states-and-the-visibilitystate-enum
-enum VisibilityState { "hidden", "visible", "prerender", "unloaded" };
+enum VisibilityState { "hidden", "visible", "prerender"};
 
 // https://wicg.github.io/cors-rfc1918/#feature-detect
 enum AddressSpace { "local", "private", "public" };
@@ -34,14 +34,16 @@ typedef (HTMLScriptElement or SVGScriptElement) HTMLOrSVGScriptElement;
 
 // https://dom.spec.whatwg.org/#interface-document
 
-// FIXME: Document should have a constructor. crbug.com/238234
-interface Document : Node {
+[
+    Constructor(),
+    ConstructorCallWith=Document
+] interface Document : Node {
     [SameObject] readonly attribute DOMImplementation implementation;
     [ImplementedAs=urlForBinding] readonly attribute DOMString URL;
     // FIXME: documentURI should not be nullable.
     [ImplementedAs=urlForBinding] readonly attribute DOMString? documentURI;
     [MeasureAs=DocumentOrigin] readonly attribute DOMString origin;
-    [RuntimeEnabled=suborigins] readonly attribute DOMString suborigin;
+    [RuntimeEnabled=Suborigins] readonly attribute DOMString suborigin;
     readonly attribute DOMString compatMode;
 
     readonly attribute DOMString characterSet;
@@ -93,11 +95,14 @@ interface Document : Node {
     [PutForwards=href, Unforgeable] readonly attribute Location? location;
     [RaisesException=Setter] attribute DOMString domain;
     readonly attribute DOMString referrer;
-    [RaisesException] attribute DOMString cookie;
+    [RaisesException, RuntimeCallStatsCounter=DocumentCookie] attribute DOMString cookie;
     readonly attribute DOMString lastModified;
     readonly attribute DocumentReadyState readyState;
 
     // DOM tree accessors
+    // Named getter is implemented without IDL code generation for better
+    // performance. See LocalWindowProxy.cpp.
+    // getter object (DOMString name);
     [CEReactions, CustomElementCallbacks] attribute DOMString title;
     [CEReactions, CustomElementCallbacks] attribute DOMString dir;
     [CEReactions, RaisesException=Setter, CustomElementCallbacks, PerWorldBindings] attribute HTMLElement? body;
@@ -118,8 +123,13 @@ interface Document : Node {
     [CallWith=EnteredWindow, CEReactions, CustomElementCallbacks, RaisesException] void write(DOMString... text);
     [CallWith=EnteredWindow, CEReactions, CustomElementCallbacks, RaisesException] void writeln(DOMString... text);
 
+    // TrustedTypes variants of the above.
+    // TODO(mkwst): Write a spec for this.
+    [RuntimeEnabled=TrustedDOMTypes, CallWith=EnteredWindow, CEReactions, CustomElementCallbacks, RaisesException] void write(TrustedHTML text);
+    [RuntimeEnabled=TrustedDOMTypes, CallWith=EnteredWindow, CEReactions, CustomElementCallbacks, RaisesException] void writeln(TrustedHTML text);
+
     // user interaction
-    [ImplementedAs=domWindow] readonly attribute Window? defaultView;
+    readonly attribute Window? defaultView;
     boolean hasFocus();
     [CEReactions, CustomElementCallbacks, MeasureAs=DocumentDesignMode] attribute DOMString designMode;
     [CEReactions, CustomElementCallbacks, RaisesException] boolean execCommand(DOMString commandId, optional boolean showUI = false, optional DOMString value = "");
@@ -142,7 +152,7 @@ interface Document : Node {
     // FIXME: clear(), captureEvents(), releaseEvents() and all are on HTMLDocument.
 
     // CSS Object Model (CSSOM)
-    // https://dev.w3.org/csswg/cssom/#extensions-to-the-document-interface
+    // https://drafts.csswg.org/cssom/#extensions-to-the-document-interface
     attribute DOMString? selectedStylesheetSet;
     readonly attribute DOMString? preferredStylesheetSet;
 
@@ -156,7 +166,7 @@ interface Document : Node {
 
     // Touch Events
     // https://w3c.github.io/touch-events/#extensions-to-the-document-interface
-    [RuntimeEnabled=TouchEventFeatureDetection, Measure, LegacyInterfaceTypeChecking, Custom=CallPrologue]
+    [OriginTrialEnabled=TouchEventFeatureDetection, Measure, LegacyInterfaceTypeChecking, Custom=CallPrologue]
     Touch createTouch(Window view,
                       EventTarget target,
                       long identifier,
@@ -168,7 +178,7 @@ interface Document : Node {
                       optional unrestricted double radiusY = 0,
                       optional unrestricted float rotationAngle = 0,
                       optional unrestricted float force = 0);
-    [RuntimeEnabled=TouchEventFeatureDetection] TouchList createTouchList(Touch... touches);
+    [OriginTrialEnabled=TouchEventFeatureDetection] TouchList createTouchList(Touch... touches);
 
     // Custom Elements
     // https://w3c.github.io/webcomponents/spec/custom/#extensions-to-document-interface-to-register
@@ -180,7 +190,7 @@ interface Document : Node {
     [CustomElementCallbacks, RaisesException] Element createElementNS(DOMString? namespaceURI, DOMString qualifiedName, (DOMString or Dictionary)? options);
 
     // Page Visibility
-    // https://www.w3.org/TR/page-visibility/#sec-document-interface
+    // https://w3c.github.io/page-visibility/#extensions-to-the-document-interface
     readonly attribute boolean hidden;
     readonly attribute VisibilityState visibilityState;
 
@@ -208,10 +218,11 @@ interface Document : Node {
     [RuntimeEnabled=ExperimentalContentSecurityPolicyFeatures] attribute EventHandler onsecuritypolicyviolation;
     attribute EventHandler onselectionchange;
     attribute EventHandler onselectstart;
-    attribute EventHandler onwheel;
+    attribute EventHandler onvisibilitychange;
 };
 
 Document implements GlobalEventHandlers;
 Document implements ParentNode;
 Document implements NonElementParentNode;
 Document implements DocumentOrShadowRoot;
+Document implements FontFaceSource;

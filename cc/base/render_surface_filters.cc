@@ -8,17 +8,19 @@
 
 #include <algorithm>
 
+#include "base/numerics/math_constants.h"
 #include "cc/base/filter_operation.h"
 #include "cc/base/filter_operations.h"
 #include "third_party/skia/include/core/SkImageFilter.h"
+#include "third_party/skia/include/core/SkRegion.h"
 #include "third_party/skia/include/effects/SkAlphaThresholdFilter.h"
-#include "third_party/skia/include/effects/SkBlurImageFilter.h"
 #include "third_party/skia/include/effects/SkColorFilterImageFilter.h"
 #include "third_party/skia/include/effects/SkColorMatrixFilter.h"
 #include "third_party/skia/include/effects/SkComposeImageFilter.h"
 #include "third_party/skia/include/effects/SkDropShadowImageFilter.h"
 #include "third_party/skia/include/effects/SkMagnifierImageFilter.h"
 #include "ui/gfx/geometry/size_f.h"
+#include "ui/gfx/skia_util.h"
 
 namespace cc {
 
@@ -68,10 +70,8 @@ void GetSaturateMatrix(float amount, SkScalar matrix[20]) {
 }
 
 void GetHueRotateMatrix(float hue, SkScalar matrix[20]) {
-  const float kPi = 3.1415926535897932384626433832795f;
-
-  float cos_hue = cosf(hue * kPi / 180.f);
-  float sin_hue = sinf(hue * kPi / 180.f);
+  float cos_hue = cosf(hue * base::kPiFloat / 180.f);
+  float sin_hue = sinf(hue * base::kPiFloat / 180.f);
   matrix[0] = 0.213f + cos_hue * 0.787f - sin_hue * 0.213f;
   matrix[1] = 0.715f - cos_hue * 0.715f - sin_hue * 0.715f;
   matrix[2] = 0.072f - cos_hue * 0.072f + sin_hue * 0.928f;
@@ -195,7 +195,8 @@ sk_sp<SkImageFilter> RenderSurfaceFilters::BuildImageFilter(
         break;
       case FilterOperation::BLUR:
         image_filter = SkBlurImageFilter::Make(op.amount(), op.amount(),
-                                               std::move(image_filter));
+                                               std::move(image_filter), nullptr,
+                                               op.blur_tile_mode());
         break;
       case FilterOperation::DROP_SHADOW:
         image_filter = SkDropShadowImageFilter::Make(
@@ -281,8 +282,11 @@ sk_sp<SkImageFilter> RenderSurfaceFilters::BuildImageFilter(
         break;
       }
       case FilterOperation::ALPHA_THRESHOLD: {
+        SkRegion region;
+        for (const gfx::Rect& rect : op.shape())
+          region.op(gfx::RectToSkIRect(rect), SkRegion::kUnion_Op);
         sk_sp<SkImageFilter> alpha_filter = SkAlphaThresholdFilter::Make(
-            op.region(), op.amount(), op.outer_threshold(), nullptr);
+            region, op.amount(), op.outer_threshold(), nullptr);
         if (image_filter) {
           image_filter = SkComposeImageFilter::Make(std::move(alpha_filter),
                                                     std::move(image_filter));

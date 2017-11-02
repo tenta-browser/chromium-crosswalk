@@ -14,6 +14,7 @@
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/app/chrome_main_delegate.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
@@ -23,11 +24,6 @@
 #include "extensions/common/constants.h"
 #include "media/base/media.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#if defined(OS_ANDROID)
-#include "base/android/jni_android.h"
-#include "chrome/browser/android/chrome_jni_registrar.h"
-#endif
 
 #if defined(OS_CHROMEOS)
 #include "base/process/process_metrics.h"
@@ -76,11 +72,6 @@ void ChromeTestSuite::Initialize() {
     PathService::Override(base::DIR_MODULE, browser_dir_);
   }
 
-#if defined(OS_ANDROID)
-  ASSERT_TRUE(
-      android::RegisterBrowserJNI(base::android::AttachCurrentThread()));
-#endif
-
   // Disable external libraries load if we are under python process in
   // ChromeOS.  That means we are autotest and, if ASAN is used,
   // external libraries load crashes.
@@ -91,8 +82,9 @@ void ChromeTestSuite::Initialize() {
   // values for DIR_EXE and DIR_MODULE.
   content::ContentTestSuiteBase::Initialize();
 
-  ContentSettingsPattern::SetNonWildcardDomainNonPortScheme(
-      extensions::kExtensionScheme);
+  ContentSettingsPattern::SetNonWildcardDomainNonPortSchemes(
+      ChromeMainDelegate::kNonWildcardDomainNonPortSchemes,
+      ChromeMainDelegate::kNonWildcardDomainNonPortSchemesSize);
 
 #if defined(OS_MACOSX)
   // Look in the framework bundle for resources.

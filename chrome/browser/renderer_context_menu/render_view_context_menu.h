@@ -76,6 +76,7 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
 
   // RenderViewContextMenuBase:
   bool IsCommandIdChecked(int command_id) const override;
+  bool IsCommandIdVisible(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
   void AddSpellCheckServiceItem(bool is_checked) override;
@@ -126,10 +127,15 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   // Gets the extension (if any) associated with the WebContents that we're in.
   const extensions::Extension* GetExtension() const;
 
+  // Queries the translate service to obtain the user's transate target
+  // language.
+  std::string GetTargetLanguage() const;
+
   void AppendDeveloperItems();
   void AppendDevtoolsForUnpackedExtensions();
   void AppendLinkItems();
   void AppendOpenWithLinkItems();
+  void AppendOpenInBookmarkAppLinkItems();
   void AppendImageItems();
   void AppendAudioItems();
   void AppendCanvasItems();
@@ -172,6 +178,7 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
 
   // Command execution functions.
   void ExecOpenLinkNewTab();
+  void ExecOpenBookmarkApp();
   void ExecProtocolHandler(int event_flags, int handler_index);
   void ExecOpenLinkInProfile(int profile_index);
   void ExecInspectElement();
@@ -218,8 +225,6 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   bool multiple_profiles_open_;
   ui::SimpleMenuModel protocol_handler_submenu_model_;
   ProtocolHandlerRegistry* protocol_handler_registry_;
-  // Whether the Save As text experiment is on.
-  bool save_as_text_experiement_enabled_;
 
   // An observer that handles spelling suggestions, "Add to dictionary", and
   // "Ask Google for suggestions" items.
@@ -232,8 +237,10 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
       spelling_options_submenu_observer_;
 #endif
 
+#if defined(OS_CHROMEOS)
   // An observer that handles "Open with <app>" items.
   std::unique_ptr<RenderViewContextMenuObserver> open_with_menu_observer_;
+#endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   // An observer that disables menu items when print preview is active.

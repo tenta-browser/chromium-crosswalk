@@ -41,14 +41,14 @@ class ScopedElapsedTimer {
 }  // namespace
 
 ContentVerifyJob::ContentVerifyJob(ContentHashReader* hash_reader,
-                                   const FailureCallback& failure_callback)
+                                   FailureCallback failure_callback)
     : done_reading_(false),
       hashes_ready_(false),
       total_bytes_read_(0),
       current_block_(0),
       current_hash_byte_count_(0),
       hash_reader_(hash_reader),
-      failure_callback_(failure_callback),
+      failure_callback_(std::move(failure_callback)),
       failed_(false) {
   // It's ok for this object to be constructed on a different thread from where
   // it's used.
@@ -66,9 +66,7 @@ void ContentVerifyJob::Start() {
     g_test_observer->JobStarted(hash_reader_->extension_id(),
                                 hash_reader_->relative_path());
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE,
-      base::TaskTraits().MayBlock().WithPriority(
-          base::TaskPriority::USER_VISIBLE),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::Bind(&ContentHashReader::Init, hash_reader_),
       base::Bind(&ContentVerifyJob::OnHashesReady, this));
 }
@@ -144,8 +142,13 @@ void ContentVerifyJob::DoneReading() {
 }
 
 bool ContentVerifyJob::FinishBlock() {
-  if (!done_reading_ && current_hash_byte_count_ == 0)
-    return true;
+  if (current_hash_byte_count_ == 0) {
+    if (!done_reading_ ||
+        // If we have checked all blocks already, then nothing else to do here.
+        current_block_ == hash_reader_->block_count()) {
+      return true;
+    }
+  }
   if (!current_hash_) {
     // This happens when we fail to read the resource. Compute empty content's
     // hash in this case.
@@ -227,8 +230,7 @@ void ContentVerifyJob::DispatchFailureCallback(FailureReason reason) {
     VLOG(1) << "job failed for " << hash_reader_->extension_id() << " "
             << hash_reader_->relative_path().MaybeAsASCII()
             << " reason:" << reason;
-    failure_callback_.Run(reason);
-    failure_callback_.Reset();
+    std::move(failure_callback_).Run(reason);
   }
   if (g_test_observer) {
     g_test_observer->JobFinished(hash_reader_->extension_id(),

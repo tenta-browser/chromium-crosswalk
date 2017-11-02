@@ -7,9 +7,9 @@
 #include <utility>
 
 #include "build/build_config.h"
-#include "cc/output/output_surface_client.h"
-#include "cc/output/output_surface_frame.h"
-#include "components/display_compositor/compositor_overlay_candidate_validator.h"
+#include "components/viz/service/display/output_surface_client.h"
+#include "components/viz/service/display/output_surface_frame.h"
+#include "components/viz/service/display_embedder/compositor_overlay_candidate_validator.h"
 #include "content/browser/compositor/reflector_impl.h"
 #include "content/browser/compositor/reflector_texture.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
@@ -17,13 +17,14 @@
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "gpu/ipc/client/command_buffer_proxy_impl.h"
 #include "services/ui/public/cpp/gpu/context_provider_command_buffer.h"
+#include "ui/gl/gl_utils.h"
 
 namespace content {
 
 GpuBrowserCompositorOutputSurface::GpuBrowserCompositorOutputSurface(
     scoped_refptr<ui::ContextProviderCommandBuffer> context,
     const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
-    std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
+    std::unique_ptr<viz::CompositorOverlayCandidateValidator>
         overlay_candidate_validator)
     : BrowserCompositorOutputSurface(std::move(context),
                                      update_vsync_parameters_callback,
@@ -69,7 +70,7 @@ void GpuBrowserCompositorOutputSurface::OnReflectorChanged() {
 }
 
 void GpuBrowserCompositorOutputSurface::BindToClient(
-    cc::OutputSurfaceClient* client) {
+    viz::OutputSurfaceClient* client) {
   DCHECK(client);
   DCHECK(!client_);
   client_ = client;
@@ -100,11 +101,12 @@ void GpuBrowserCompositorOutputSurface::Reshape(
   size_ = size;
   has_set_draw_rectangle_since_last_resize_ = false;
   context_provider()->ContextGL()->ResizeCHROMIUM(
-      size.width(), size.height(), device_scale_factor, has_alpha);
+      size.width(), size.height(), device_scale_factor,
+      gl::GetGLColorSpace(color_space), has_alpha);
 }
 
 void GpuBrowserCompositorOutputSurface::SwapBuffers(
-    cc::OutputSurfaceFrame frame) {
+    viz::OutputSurfaceFrame frame) {
   GetCommandBufferProxy()->AddLatencyInfo(frame.latency_info);
 
   gfx::Size surface_size = frame.size;
@@ -143,6 +145,11 @@ bool GpuBrowserCompositorOutputSurface::IsDisplayedAsOverlayPlane() const {
 
 unsigned GpuBrowserCompositorOutputSurface::GetOverlayTextureId() const {
   return 0;
+}
+
+gfx::BufferFormat GpuBrowserCompositorOutputSurface::GetOverlayBufferFormat()
+    const {
+  return gfx::BufferFormat::RGBX_8888;
 }
 
 bool GpuBrowserCompositorOutputSurface::SurfaceIsSuspendForRecycle() const {

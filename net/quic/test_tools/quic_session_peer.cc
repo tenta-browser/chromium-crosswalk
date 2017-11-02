@@ -35,8 +35,9 @@ void QuicSessionPeer::SetMaxOpenOutgoingStreams(QuicSession* session,
 }
 
 // static
-QuicCryptoStream* QuicSessionPeer::GetCryptoStream(QuicSession* session) {
-  return session->GetCryptoStream();
+QuicCryptoStream* QuicSessionPeer::GetMutableCryptoStream(
+    QuicSession* session) {
+  return session->GetMutableCryptoStream();
 }
 
 // static
@@ -70,7 +71,19 @@ QuicSession::DynamicStreamMap& QuicSessionPeer::dynamic_streams(
 }
 
 // static
-std::unordered_set<QuicStreamId>* QuicSessionPeer::GetDrainingStreams(
+const QuicSession::ClosedStreams& QuicSessionPeer::closed_streams(
+    QuicSession* session) {
+  return *session->closed_streams();
+}
+
+// static
+QuicSession::ZombieStreamMap& QuicSessionPeer::zombie_streams(
+    QuicSession* session) {
+  return session->zombie_streams_;
+}
+
+// static
+QuicUnorderedSet<QuicStreamId>* QuicSessionPeer::GetDrainingStreams(
     QuicSession* session) {
   return &session->draining_streams_;
 }
@@ -109,6 +122,11 @@ bool QuicSessionPeer::IsStreamUncreated(QuicSession* session, QuicStreamId id) {
     // peer-created stream.
     return id > session->largest_peer_created_stream_id_;
   }
+}
+
+// static
+QuicStream* QuicSessionPeer::GetStream(QuicSession* session, QuicStreamId id) {
+  return session->GetStream(id);
 }
 
 }  // namespace test

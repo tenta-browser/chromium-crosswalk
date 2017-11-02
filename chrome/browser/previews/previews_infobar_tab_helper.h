@@ -7,7 +7,6 @@
 
 #include "base/macros.h"
 #include "base/optional.h"
-#include "components/data_reduction_proxy/core/browser/data_reduction_proxy_pingback_client.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 
@@ -31,10 +30,11 @@ class PreviewsInfoBarTabHelper
     displayed_preview_infobar_ = displayed;
   }
 
-  // The data saver page identifier of the current page load.
-  const base::Optional<data_reduction_proxy::NavigationID>&
-  committed_data_saver_navigation_id() {
-    return committed_data_saver_navigation_id_;
+  // Sets whether the timestamp on the InfoBar for a preview has been shown for
+  // the page. |displayed_preview_timestamp_| is reset to false on
+  // DidStartProvisionalLoadForFrame for the main frame.
+  void set_displayed_preview_timestamp(bool displayed_preview_timestamp) {
+    displayed_preview_timestamp_ = displayed_preview_timestamp;
   }
 
  private:
@@ -43,22 +43,15 @@ class PreviewsInfoBarTabHelper
 
   explicit PreviewsInfoBarTabHelper(content::WebContents* web_contents);
 
-  // Clears the last navigation from this tab in the pingback client.
-  void ClearLastNavigationAsync() const;
-
   // Overridden from content::WebContentsObserver:
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
 
-  // Stored for use in the destructor.
-  content::BrowserContext* browser_context_;
-
   // True if the InfoBar for a preview has been shown for the page.
   bool displayed_preview_infobar_;
 
-  // The data saver page identifier of the current page load.
-  base::Optional<data_reduction_proxy::NavigationID>
-      committed_data_saver_navigation_id_;
+  // True if the InfoBar with a timestamp was shown for the page.
+  bool displayed_preview_timestamp_;
 
   DISALLOW_COPY_AND_ASSIGN(PreviewsInfoBarTabHelper);
 };

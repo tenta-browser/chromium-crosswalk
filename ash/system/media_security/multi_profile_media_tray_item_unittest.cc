@@ -10,18 +10,18 @@
 #include "ash/session/session_controller.h"
 #include "ash/shell.h"
 #include "ash/system/status_area_widget.h"
+#include "ash/system/status_area_widget_test_helper.h"
 #include "ash/system/tray/system_tray.h"
 #include "ash/system/tray/system_tray_bubble.h"
 #include "ash/system/tray/tray_item_view.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
-#include "ash/test/status_area_widget_test_helper.h"
-#include "ash/test/test_shell_delegate.h"
+#include "ash/test_shell_delegate.h"
 #include "ui/views/bubble/tray_bubble_view.h"
 
 namespace ash {
 
-class MultiProfileMediaTrayItemTest : public test::AshTestBase {
+class MultiProfileMediaTrayItemTest : public AshTestBase {
  public:
   MultiProfileMediaTrayItemTest() {}
   ~MultiProfileMediaTrayItemTest() override {}
@@ -45,7 +45,7 @@ TEST_F(MultiProfileMediaTrayItemTest, NotifyMediaCaptureChange) {
   GetSessionControllerClient()->CreatePredefinedUserSessions(2);
 
   SystemTray* system_tray = GetPrimarySystemTray();
-  system_tray->ShowDefaultView(BUBBLE_CREATE_NEW);
+  system_tray->ShowDefaultView(BUBBLE_CREATE_NEW, false /* show_by_click */);
   views::View* in_user_view =
       system_tray->GetSystemBubble()->bubble_view()->GetViewByID(
           VIEW_ID_USER_VIEW_MEDIA_INDICATOR);

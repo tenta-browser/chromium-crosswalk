@@ -7,9 +7,7 @@
 #include <utility>
 
 #include "ash/shell.h"
-#include "ash/wallpaper/wallpaper_controller.h"
 #include "base/memory/ptr_util.h"
-#include "base/rand_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/camera_detector.h"
 #include "chrome/browser/chromeos/login/error_screens_histogram_helper.h"
@@ -66,7 +64,8 @@ const char kRandomAvatarKey[] = "randomAvatar";
 const char kNameOfIntroScreen[] = "intro";
 const char kNameOfNewUserParametersScreen[] = "username";
 
-void ConfigureErrorScreen(ErrorScreen* screen,
+void ConfigureErrorScreen(
+    ErrorScreen* screen,
     const NetworkState* network,
     const NetworkPortalDetector::CaptivePortalStatus status) {
   switch (status) {
@@ -91,7 +90,7 @@ void ConfigureErrorScreen(ErrorScreen* screen,
   }
 }
 
-} // namespace
+}  // namespace
 
 // static
 SupervisedUserCreationScreen* SupervisedUserCreationScreen::Get(
@@ -152,7 +151,7 @@ void SupervisedUserCreationScreen::OnPageSelected(const std::string& page) {
 
 void SupervisedUserCreationScreen::OnPortalDetectionCompleted(
     const NetworkState* network,
-    const NetworkPortalDetector::CaptivePortalState& state)  {
+    const NetworkPortalDetector::CaptivePortalState& state) {
   if (state.status == NetworkPortalDetector::CAPTIVE_PORTAL_STATUS_ONLINE) {
     get_base_screen_delegate()->HideErrorScreen(this);
     histogram_helper_->OnErrorHide();
@@ -295,13 +294,8 @@ void SupervisedUserCreationScreen::ImportSupervisedUser(
                              !password_data->empty();
 
   if (password_right_here) {
-    controller_->StartImport(display_name,
-                             avatar_index,
-                             user_id,
-                             master_key,
-                             password_data,
-                             encryption_key,
-                             signature_key);
+    controller_->StartImport(display_name, avatar_index, user_id, master_key,
+                             password_data, encryption_key, signature_key);
   } else {
     NOTREACHED() << " Oops, no password";
   }
@@ -343,10 +337,7 @@ void SupervisedUserCreationScreen::ImportSupervisedUserWithPassword(
 
   SupervisedUserSyncService::GetAvatarIndex(avatar, &avatar_index);
 
-  controller_->StartImport(display_name,
-                           password,
-                           avatar_index,
-                           user_id,
+  controller_->StartImport(display_name, password, avatar_index, user_id,
                            master_key);
 }
 
@@ -363,9 +354,6 @@ void SupervisedUserCreationScreen::OnManagerFullyAuthenticated(
       ->NotifySupervisedUserCreationStarted();
   manager_signin_in_progress_ = false;
   DCHECK(controller_.get());
-  // For manager user, move wallpaper to locked container so that windows
-  // created during the user image picker step are below it.
-  ash::Shell::Get()->wallpaper_controller()->MoveToLockedContainer();
 
   controller_->SetManagerProfile(manager_profile);
   if (view_)
@@ -373,8 +361,8 @@ void SupervisedUserCreationScreen::OnManagerFullyAuthenticated(
 
   last_page_ = kNameOfNewUserParametersScreen;
   CHECK(!sync_service_);
-  sync_service_ = SupervisedUserSyncServiceFactory::GetForProfile(
-      manager_profile);
+  sync_service_ =
+      SupervisedUserSyncServiceFactory::GetForProfile(manager_profile);
   sync_service_->AddObserver(this);
   OnSupervisedUsersChanged();
 }
@@ -414,16 +402,16 @@ void SupervisedUserCreationScreen::OnCreationError(
     case SupervisedUserCreationController::CRYPTOHOME_NO_MOUNT:
     case SupervisedUserCreationController::CRYPTOHOME_FAILED_MOUNT:
     case SupervisedUserCreationController::CRYPTOHOME_FAILED_TPM:
-      ::login::GetSecureModuleUsed(
-          base::Bind(&SupervisedUserCreationScreen::UpdateSecureModuleMessages,
-                     weak_factory_.GetWeakPtr()));
+      ::login::GetSecureModuleUsed(base::BindOnce(
+          &SupervisedUserCreationScreen::UpdateSecureModuleMessages,
+          weak_factory_.GetWeakPtr()));
       return;
     case SupervisedUserCreationController::CLOUD_SERVER_ERROR:
     case SupervisedUserCreationController::TOKEN_WRITE_FAILED:
       title = l10n_util::GetStringUTF16(
           IDS_CREATE_SUPERVISED_USER_GENERIC_ERROR_TITLE);
-      message = l10n_util::GetStringUTF16(
-          IDS_CREATE_SUPERVISED_USER_GENERIC_ERROR);
+      message =
+          l10n_util::GetStringUTF16(IDS_CREATE_SUPERVISED_USER_GENERIC_ERROR);
       button = l10n_util::GetStringUTF16(
           IDS_CREATE_SUPERVISED_USER_GENERIC_ERROR_BUTTON);
       break;
@@ -454,7 +442,7 @@ void SupervisedUserCreationScreen::OnLongCreationWarning() {
 
 bool SupervisedUserCreationScreen::FindUserByDisplayName(
     const base::string16& display_name,
-    std::string *out_id) const {
+    std::string* out_id) const {
   if (!existing_users_.get())
     return false;
   for (base::DictionaryValue::Iterator it(*existing_users_.get());
@@ -496,8 +484,7 @@ void SupervisedUserCreationScreen::ApplyPicture() {
       NOTREACHED() << "Supervised users have no profile pictures";
       break;
     default:
-      DCHECK(selected_image_ >= 0 &&
-             selected_image_ < default_user_image::kDefaultImagesCount);
+      DCHECK(default_user_image::IsValidIndex(selected_image_));
       image_manager->SaveUserDefaultImageIndex(selected_image_);
       break;
   }
@@ -539,16 +526,14 @@ void SupervisedUserCreationScreen::OnGetSupervisedUsers(
     if (local_copy->GetString(SupervisedUserSyncService::kChromeOsAvatar,
                               &chromeos_avatar) &&
         !chromeos_avatar.empty() &&
-        SupervisedUserSyncService::GetAvatarIndex(
-            chromeos_avatar, &avatar_index)) {
+        SupervisedUserSyncService::GetAvatarIndex(chromeos_avatar,
+                                                  &avatar_index)) {
       ui_copy->SetString(kAvatarURLKey,
                          default_user_image::GetDefaultImageUrl(avatar_index));
     } else {
-      int i = base::RandInt(default_user_image::kFirstDefaultImageIndex,
-                            default_user_image::kDefaultImagesCount - 1);
-      local_copy->SetString(
-          SupervisedUserSyncService::kChromeOsAvatar,
-          SupervisedUserSyncService::BuildAvatarString(i));
+      int i = default_user_image::GetRandomDefaultImageIndex();
+      local_copy->SetString(SupervisedUserSyncService::kChromeOsAvatar,
+                            SupervisedUserSyncService::BuildAvatarString(i));
       local_copy->SetBoolean(kRandomAvatarKey, true);
       ui_copy->SetString(kAvatarURLKey,
                          default_user_image::GetDefaultImageUrl(i));
@@ -618,8 +603,7 @@ void SupervisedUserCreationScreen::UpdateSecureModuleMessages(
     view_->ShowErrorPage(title, message, button);
 }
 
-void SupervisedUserCreationScreen::OnPhotoTaken(
-    const std::string& raw_data) {
+void SupervisedUserCreationScreen::OnPhotoTaken(const std::string& raw_data) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   user_photo_ = gfx::ImageSkia();
   ImageDecoder::Cancel(this);
@@ -640,20 +624,21 @@ void SupervisedUserCreationScreen::OnDecodeImageFailed() {
 void SupervisedUserCreationScreen::OnImageSelected(
     const std::string& image_type,
     const std::string& image_url) {
-  if (image_url.empty())
-    return;
-  int user_image_index = user_manager::User::USER_IMAGE_INVALID;
-  if (image_type == "default" &&
-      default_user_image::IsDefaultImageUrl(image_url, &user_image_index)) {
+  if (image_type == "default") {
+    int user_image_index = user_manager::User::USER_IMAGE_INVALID;
+    if (image_url.empty() ||
+        !default_user_image::IsDefaultImageUrl(image_url, &user_image_index)) {
+      LOG(ERROR) << "Unexpected default image url: " << image_url;
+      return;
+    }
     selected_image_ = user_image_index;
-  } else if (image_type == "camera") {
+  } else if (image_type == "camera" || image_type == "old") {
     selected_image_ = user_manager::User::USER_IMAGE_EXTERNAL;
   } else {
     NOTREACHED() << "Unexpected image type: " << image_type;
   }
 }
 
-void SupervisedUserCreationScreen::OnImageAccepted() {
-}
+void SupervisedUserCreationScreen::OnImageAccepted() {}
 
 }  // namespace chromeos

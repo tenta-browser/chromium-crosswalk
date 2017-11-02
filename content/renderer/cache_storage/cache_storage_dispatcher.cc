@@ -18,18 +18,20 @@
 #include "base/threading/thread_local.h"
 #include "content/child/thread_safe_sender.h"
 #include "content/common/cache_storage/cache_storage_messages.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/referrer.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/renderer/service_worker/service_worker_type_util.h"
+#include "storage/common/blob_storage/blob_handle.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerCache.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerRequest.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerResponse.h"
 #include "url/origin.h"
 
-using base::TimeTicks;
 
 namespace content {
 
+using base::TimeTicks;
 using blink::WebServiceWorkerCacheError;
 using blink::WebServiceWorkerCacheStorage;
 using blink::WebServiceWorkerRequest;
@@ -104,9 +106,6 @@ CacheStorageCacheOperationType CacheOperationTypeFromWebCacheOperationType(
 
 CacheStorageBatchOperation BatchOperationFromWebBatchOperation(
     const blink::WebServiceWorkerCache::BatchOperation& web_operation) {
-  // We don't support streaming for cache.
-  DCHECK(web_operation.response.StreamURL().IsEmpty());
-
   CacheStorageBatchOperation operation;
   operation.operation_type =
       CacheOperationTypeFromWebCacheOperationType(web_operation.operation_type);
@@ -633,7 +632,7 @@ void CacheStorageDispatcher::PopulateWebResponseFromResponse(
   web_response->SetStatus(response.status_code);
   web_response->SetStatusText(WebString::FromASCII(response.status_text));
   web_response->SetResponseType(response.response_type);
-  web_response->SetResponseTime(response.response_time.ToInternalValue());
+  web_response->SetResponseTime(response.response_time);
   web_response->SetCacheStorageCacheName(
       response.is_in_cache_storage
           ? blink::WebString::FromUTF8(response.cache_storage_cache_name)
@@ -651,8 +650,12 @@ void CacheStorageDispatcher::PopulateWebResponseFromResponse(
   }
 
   if (!response.blob_uuid.empty()) {
+    DCHECK_EQ(response.blob != nullptr, features::IsMojoBlobsEnabled());
+    mojo::ScopedMessagePipeHandle blob_pipe;
+    if (response.blob)
+      blob_pipe = response.blob->Clone().PassInterface().PassHandle();
     web_response->SetBlob(blink::WebString::FromUTF8(response.blob_uuid),
-                          response.blob_size);
+                          response.blob_size, std::move(blob_pipe));
     // Let the host know that it can release its reference to the blob.
     Send(new CacheStorageHostMsg_BlobDataHandled(response.blob_uuid));
   }

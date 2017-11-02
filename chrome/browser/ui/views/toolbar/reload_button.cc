@@ -13,7 +13,7 @@
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
+#include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/simple_menu_model.h"
 #include "ui/base/theme_provider.h"
@@ -21,7 +21,6 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/metrics.h"
 #include "ui/views/widget/widget.h"
-
 
 namespace {
 
@@ -33,7 +32,6 @@ const int kReloadMenuItems[]  = {
 };
 
 }  // namespace
-
 
 // ReloadButton ---------------------------------------------------------------
 
@@ -47,42 +45,41 @@ ReloadButton::ReloadButton(Profile* profile, CommandUpdater* command_updater)
       visible_mode_(MODE_RELOAD),
       double_click_timer_delay_(
           base::TimeDelta::FromMilliseconds(views::GetDoubleClickInterval())),
-      stop_to_reload_timer_delay_(base::TimeDelta::FromMilliseconds(1350)),
+      mode_switch_timer_delay_(base::TimeDelta::FromMilliseconds(1350)),
       menu_enabled_(false),
       testing_mouse_hovered_(false),
       testing_reload_count_(0) {}
 
-ReloadButton::~ReloadButton() {
-}
+ReloadButton::~ReloadButton() {}
 
 void ReloadButton::ChangeMode(Mode mode, bool force) {
   intended_mode_ = mode;
 
-  // If the change is forced, or the user isn't hovering the icon, or it's safe
-  // to change it to the other image type, make the change immediately;
+  // If the change is forced, or the user isn't hovering the icon, or it's
+  // safe to change it to the other image type, make the change immediately;
   // otherwise we'll let it happen later.
   if (force || (!IsMouseHovered() && !testing_mouse_hovered_) ||
-      ((mode == MODE_STOP) ?
-      !double_click_timer_.IsRunning() : (visible_mode_ != MODE_STOP))) {
+      ((mode == MODE_STOP) ? !double_click_timer_.IsRunning()
+                           : (visible_mode_ != MODE_STOP))) {
     double_click_timer_.Stop();
-    stop_to_reload_timer_.Stop();
+    mode_switch_timer_.Stop();
     if (mode != visible_mode_)
       ChangeModeInternal(mode);
     SetEnabled(true);
 
-  // We want to disable the button if we're preventing a change from stop to
-  // reload due to hovering, but not if we're preventing a change from reload to
-  // stop due to the double-click timer running.  (Disabled reload state is only
-  // applicable when instant extended API is enabled and mode is NTP, which is
-  // handled just above.)
+    // We want to disable the button if we're preventing a change from stop to
+    // reload due to hovering, but not if we're preventing a change from
+    // reload to stop due to the double-click timer running.  (Disabled reload
+    // state is only applicable when instant extended API is enabled and mode
+    // is NTP, which is handled just above.)
   } else if (visible_mode_ != MODE_RELOAD) {
     SetEnabled(false);
 
-    // Go ahead and change to reload after a bit, which allows repeated reloads
-    // without moving the mouse.
-    if (!stop_to_reload_timer_.IsRunning()) {
-      stop_to_reload_timer_.Start(FROM_HERE, stop_to_reload_timer_delay_, this,
-                                  &ReloadButton::OnStopToReloadTimer);
+    // Go ahead and change to reload after a bit, which allows repeated
+    // reloads without moving the mouse.
+    if (!mode_switch_timer_.IsRunning()) {
+      mode_switch_timer_.Start(FROM_HERE, mode_switch_timer_delay_, this,
+                               &ReloadButton::OnStopToReloadTimer);
     }
   }
 }
@@ -118,7 +115,7 @@ void ReloadButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
   if (menu_enabled_)
     ToolbarButton::GetAccessibleNodeData(node_data);
   else
-    CustomButton::GetAccessibleNodeData(node_data);
+    Button::GetAccessibleNodeData(node_data);
 }
 
 bool ReloadButton::ShouldShowMenu() {
@@ -138,10 +135,13 @@ void ReloadButton::ButtonPressed(views::Button* /* button */,
     if (command_updater_)
       command_updater_->ExecuteCommandWithDisposition(
           IDC_STOP, WindowOpenDisposition::CURRENT_TAB);
-    // The user has clicked, so we can feel free to update the button,
-    // even if the mouse is still hovering.
+    // The user has clicked, so we can feel free to update the button, even if
+    // the mouse is still hovering.
     ChangeMode(MODE_RELOAD, true);
-  } else if (!double_click_timer_.IsRunning()) {
+    return;
+  }
+
+  if (!double_click_timer_.IsRunning()) {
     // Shift-clicking or ctrl-clicking the reload button means we should ignore
     // any cached content.
     int command;
@@ -231,7 +231,7 @@ void ReloadButton::ChangeModeInternal(Mode mode) {
   // |tp| can be NULL in unit tests.
   if (tp) {
     const gfx::VectorIcon& icon =
-        (mode == MODE_RELOAD) ? kNavigateReloadIcon : kNavigateStopIcon;
+        (mode == MODE_RELOAD) ? vector_icons::kReloadIcon : kNavigateStopIcon;
     const SkColor normal_color =
         tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
     const SkColor disabled_color =

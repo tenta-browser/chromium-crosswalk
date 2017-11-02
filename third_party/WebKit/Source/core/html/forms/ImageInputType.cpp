@@ -23,16 +23,18 @@
 
 #include "core/html/forms/ImageInputType.h"
 
-#include "core/HTMLNames.h"
-#include "core/InputTypeNames.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/SyncReattachContext.h"
 #include "core/events/MouseEvent.h"
-#include "core/html/FormData.h"
-#include "core/html/HTMLFormElement.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/HTMLImageFallbackHelper.h"
 #include "core/html/HTMLImageLoader.h"
-#include "core/html/HTMLInputElement.h"
+#include "core/html/forms/FormData.h"
+#include "core/html/forms/HTMLFormElement.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
+#include "core/html_names.h"
+#include "core/input_type_names.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutImage.h"
 #include "platform/wtf/text/StringBuilder.h"
@@ -71,8 +73,11 @@ void ImageInputType::AppendToFormData(FormData& form_data) const {
   form_data.append(name + dot_x_string, click_location_.X());
   form_data.append(name + dot_y_string, click_location_.Y());
 
-  if (!GetElement().value().IsEmpty())
+  if (!GetElement().value().IsEmpty()) {
+    UseCounter::Count(GetElement().GetDocument(),
+                      WebFeature::kImageInputTypeFormDataWithNonEmptyValue);
     form_data.append(name, GetElement().value());
+  }
 }
 
 String ImageInputType::ResultForDialogSubmit() const {
@@ -117,7 +122,7 @@ LayoutObject* ImageInputType::CreateLayoutObject(
 void ImageInputType::AltAttributeChanged() {
   if (GetElement().UserAgentShadowRoot()) {
     Element* text =
-        GetElement().UserAgentShadowRoot()->GetElementById("alttext");
+        GetElement().UserAgentShadowRoot()->getElementById("alttext");
     String value = GetElement().AltText();
     if (text && text->textContent() != value)
       text->setTextContent(GetElement().AltText());
@@ -251,12 +256,14 @@ void ImageInputType::EnsurePrimaryContent() {
 }
 
 void ImageInputType::ReattachFallbackContent() {
-  // This can happen inside of attachLayoutTree() in the middle of a recalcStyle
-  // so we need to reattach synchronously here.
-  if (GetElement().GetDocument().InStyleRecalc())
-    GetElement().ReattachLayoutTree();
-  else
+  if (GetElement().GetDocument().InStyleRecalc()) {
+    // This can happen inside of AttachLayoutTree() in the middle of a
+    // RebuildLayoutTree, so we need to reattach synchronously here.
+    GetElement().ReattachLayoutTree(
+        SyncReattachContext::CurrentAttachContext());
+  } else {
     GetElement().LazyReattachIfAttached();
+  }
 }
 
 void ImageInputType::CreateShadowSubtree() {
@@ -267,8 +274,8 @@ void ImageInputType::CreateShadowSubtree() {
   HTMLImageFallbackHelper::CreateAltTextShadowTree(GetElement());
 }
 
-PassRefPtr<ComputedStyle> ImageInputType::CustomStyleForLayoutObject(
-    PassRefPtr<ComputedStyle> new_style) {
+RefPtr<ComputedStyle> ImageInputType::CustomStyleForLayoutObject(
+    RefPtr<ComputedStyle> new_style) {
   if (!use_fallback_content_)
     return new_style;
 

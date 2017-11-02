@@ -8,16 +8,16 @@
 
 #include <memory>
 
-#include "ash/test/ash_test_base.h"
-#include "base/memory/ptr_util.h"
-#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/login/users/mock_user_manager.h"
+#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_ui_manager.h"
 #include "chrome/browser/sync/profile_sync_test_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
+#include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -26,23 +26,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/message_center/notification.h"
 
-#if defined(OS_WIN)
-#include "ui/aura/test/test_screen.h"
-#include "ui/display/screen.h"
-#endif
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/login/users/mock_user_manager.h"
-#include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
-#endif
-
 using ::testing::NiceMock;
 using ::testing::Return;
 using ::testing::ReturnRef;
 using ::testing::_;
-
-namespace ash {
-namespace test {
 
 namespace {
 
@@ -74,10 +61,10 @@ class FakeLoginUI : public LoginUIService::LoginUI {
 
 std::unique_ptr<KeyedService> BuildMockLoginUIService(
     content::BrowserContext* profile) {
-  return base::MakeUnique<FakeLoginUIService>();
+  return std::make_unique<FakeLoginUIService>();
 }
 
-class SyncErrorNotifierTest : public AshTestBase  {
+class SyncErrorNotifierTest : public BrowserWithTestWindowTest {
  public:
   SyncErrorNotifierTest() {}
   ~SyncErrorNotifierTest() override {}
@@ -85,22 +72,15 @@ class SyncErrorNotifierTest : public AshTestBase  {
   void SetUp() override {
     DCHECK(TestingBrowserProcess::GetGlobal());
 
-    // Set up a desktop screen for Windows to hold native widgets, used when
-    // adding desktop widgets (i.e., message center notifications).
-#if defined(OS_WIN)
-    test_screen_ = base::MakeUnique<aura::TestScreen::Create>(gfx::Size());
-    display::Screen::SetScreenInstance(test_screen_.get());
-#endif
+    BrowserWithTestWindowTest::SetUp();
 
-    AshTestBase::SetUp();
-
-    profile_manager_ = base::MakeUnique<TestingProfileManager>(
+    profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
     ASSERT_TRUE(profile_manager_->SetUp());
 
     profile_ = profile_manager_->CreateTestingProfile(kTestAccountId);
 
-    service_ = base::MakeUnique<browser_sync::ProfileSyncServiceMock>(
+    service_ = std::make_unique<browser_sync::ProfileSyncServiceMock>(
         CreateProfileSyncServiceParamsForTest(profile_));
 
     FakeLoginUIService* login_ui_service = static_cast<FakeLoginUIService*>(
@@ -109,9 +89,9 @@ class SyncErrorNotifierTest : public AshTestBase  {
     login_ui_service->SetLoginUI(&login_ui_);
 
     error_controller_ =
-        base::MakeUnique<syncer::SyncErrorController>(service_.get());
+        std::make_unique<syncer::SyncErrorController>(service_.get());
     error_notifier_ =
-        base::MakeUnique<SyncErrorNotifier>(error_controller_.get(), profile_);
+        std::make_unique<SyncErrorNotifier>(error_controller_.get(), profile_);
 
     notification_ui_manager_ = g_browser_process->notification_ui_manager();
   }
@@ -121,12 +101,7 @@ class SyncErrorNotifierTest : public AshTestBase  {
     service_.reset();
     profile_manager_.reset();
 
-    AshTestBase::TearDown();
-
-#if defined(OS_WIN)
-    display::Screen::SetScreenInstance(nullptr);
-    test_screen_.reset();
-#endif
+    BrowserWithTestWindowTest::TearDown();
   }
 
  protected:
@@ -158,9 +133,6 @@ class SyncErrorNotifierTest : public AshTestBase  {
     }
   }
 
-#if defined(OS_WIN)
-  std::unique_ptr<display::Screen> test_screen_;
-#endif
   std::unique_ptr<TestingProfileManager> profile_manager_;
   std::unique_ptr<syncer::SyncErrorController> error_controller_;
   std::unique_ptr<SyncErrorNotifier> error_notifier_;
@@ -173,21 +145,11 @@ class SyncErrorNotifierTest : public AshTestBase  {
   DISALLOW_COPY_AND_ASSIGN(SyncErrorNotifierTest);
 };
 
-}  // namespace
-
 // Test that SyncErrorNotifier shows an notification if a passphrase is
 // required.
-// Disabled on Windows: http://crbug.com/373238
-#if defined(OS_WIN)
-#define MAYBE_PassphraseNotification DISABLED_PassphraseNotification
-#else
-#define MAYBE_PassphraseNotification PassphraseNotification
-#endif
-TEST_F(SyncErrorNotifierTest, MAYBE_PassphraseNotification) {
-#if defined(OS_CHROMEOS)
+TEST_F(SyncErrorNotifierTest, PassphraseNotification) {
   chromeos::ScopedUserManagerEnabler scoped_enabler(
       new chromeos::MockUserManager());
-#endif
   ASSERT_FALSE(notification_ui_manager_->FindById(
       kNotificationId, NotificationUIManager::GetProfileID(profile_)));
 
@@ -242,5 +204,4 @@ TEST_F(SyncErrorNotifierTest, MAYBE_PassphraseNotification) {
   }
 }
 
-}  // namespace test
-}  // namespace ash
+}  // namespace

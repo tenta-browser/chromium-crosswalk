@@ -36,7 +36,11 @@ class AutofillField : public FormFieldData {
 
   const std::string& section() const { return section_; }
   ServerFieldType heuristic_type() const { return heuristic_type_; }
-  ServerFieldType server_type() const { return server_type_; }
+  ServerFieldType overall_server_type() const { return overall_server_type_; }
+  const std::vector<AutofillQueryResponseContents::Field::FieldPrediction>&
+  server_predictions() const {
+    return server_predictions_;
+  }
   HtmlFieldType html_type() const { return html_type_; }
   HtmlFieldMode html_mode() const { return html_mode_; }
   const ServerFieldTypeSet& possible_types() const { return possible_types_; }
@@ -47,7 +51,12 @@ class AutofillField : public FormFieldData {
   // Setters for the detected type and section for this field.
   void set_section(const std::string& section) { section_ = section; }
   void set_heuristic_type(ServerFieldType type);
-  void set_server_type(ServerFieldType type);
+  void set_overall_server_type(ServerFieldType type);
+  void set_server_predictions(
+      const std::vector<AutofillQueryResponseContents::Field::FieldPrediction>
+          predictions) {
+    server_predictions_ = std::move(predictions);
+  }
   void set_possible_types(const ServerFieldTypeSet& possible_types) {
     possible_types_ = possible_types;
   }
@@ -58,6 +67,10 @@ class AutofillField : public FormFieldData {
   void set_parseable_name(const base::string16& parseable_name) {
     parseable_name_ = parseable_name;
   }
+
+  // Set the heuristic or server type, depending on whichever is currently
+  // assigned, to |type|.
+  void SetTypeTo(ServerFieldType type);
 
   // This function automatically chooses between server and heuristic autofill
   // type, depending on the data available.
@@ -96,6 +109,13 @@ class AutofillField : public FormFieldData {
     return generation_type_;
   }
 
+  void set_generated_password_changed(bool generated_password_changed) {
+    generated_password_changed_ = generated_password_changed;
+  }
+  bool generated_password_changed() const {
+    return generated_password_changed_;
+  }
+
   void set_form_classifier_outcome(
       AutofillUploadContents::Field::FormClassifierOutcome outcome) {
     form_classifier_outcome_ = outcome;
@@ -103,6 +123,14 @@ class AutofillField : public FormFieldData {
   AutofillUploadContents::Field::FormClassifierOutcome form_classifier_outcome()
       const {
     return form_classifier_outcome_;
+  }
+
+  void set_username_vote_type(
+      AutofillUploadContents::Field::UsernameVoteType type) {
+    username_vote_type_ = type;
+  }
+  AutofillUploadContents::Field::UsernameVoteType username_vote_type() const {
+    return username_vote_type_;
   }
 
   // Set |field_data|'s value to |value|. Uses |field|, |address_language_code|,
@@ -140,7 +168,12 @@ class AutofillField : public FormFieldData {
   std::string section_;
 
   // The type of the field, as determined by the Autofill server.
-  ServerFieldType server_type_;
+  ServerFieldType overall_server_type_;
+
+  // The possible types of the field, as determined by the Autofill server,
+  // including |overall_server_type_| as the first item.
+  std::vector<AutofillQueryResponseContents::Field::FieldPrediction>
+      server_predictions_;
 
   // The type of the field, as determined by the local heuristics.
   ServerFieldType heuristic_type_;
@@ -176,8 +209,15 @@ class AutofillField : public FormFieldData {
   // The type of password generation event, if it happened.
   AutofillUploadContents::Field::PasswordGenerationType generation_type_;
 
+  // Whether the generated password was changed by user.
+  bool generated_password_changed_;
+
   // The outcome of HTML parsing based form classifier.
   AutofillUploadContents::Field::FormClassifierOutcome form_classifier_outcome_;
+
+  // The username vote type, if the autofill type is USERNAME. Otherwise, the
+  // field is ignored.
+  AutofillUploadContents::Field::UsernameVoteType username_vote_type_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillField);
 };

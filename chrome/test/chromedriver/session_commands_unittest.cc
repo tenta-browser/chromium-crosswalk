@@ -21,7 +21,52 @@
 #include "chrome/test/chromedriver/session.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-TEST(SessionCommandTest, FileUpload) {
+TEST(SessionCommandsTest, ExecuteGetTimeouts) {
+  Session session("id");
+  base::DictionaryValue params;
+  std::unique_ptr<base::Value> value;
+
+  Status status = ExecuteGetTimeouts(&session, params, &value);
+  ASSERT_EQ(kOk, status.code());
+  base::DictionaryValue* response;
+  ASSERT_TRUE(value->GetAsDictionary(&response));
+
+  int script;
+  ASSERT_TRUE(response->GetInteger("script", &script));
+  ASSERT_EQ(script, 30000);
+  int page_load;
+  ASSERT_TRUE(response->GetInteger("pageLoad", &page_load));
+  ASSERT_EQ(page_load, 300000);
+  int implicit;
+  ASSERT_TRUE(response->GetInteger("implicit", &implicit));
+  ASSERT_EQ(implicit, 0);
+}
+
+TEST(SessionCommandsTest, MergeCapabilities) {
+  base::DictionaryValue primary;
+  primary.SetString("strawberry", "velociraptor");
+  primary.SetString("pear", "unicorn");
+
+  base::DictionaryValue secondary;
+  secondary.SetString("broccoli", "giraffe");
+  secondary.SetString("celery", "hippo");
+  secondary.SetString("eggplant", "elephant");
+
+  base::DictionaryValue merged;
+
+  // key collision should return false
+  ASSERT_FALSE(MergeCapabilities(&primary, &primary, &merged));
+  // non key collision should return true
+  ASSERT_TRUE(MergeCapabilities(&primary, &secondary, &merged));
+
+  merged.Clear();
+  MergeCapabilities(&primary, &secondary, &merged);
+  primary.MergeDictionary(&secondary);
+
+  ASSERT_EQ(primary, merged);
+}
+
+TEST(SessionCommandsTest, FileUpload) {
   Session session("id");
   base::DictionaryValue params;
   std::unique_ptr<base::Value> value;
@@ -59,6 +104,18 @@ class DetachChrome : public StubChrome {
 };
 
 }  // namespace
+
+TEST(SessionCommandsTest, MatchCapabilities) {
+  base::DictionaryValue merged;
+  merged.SetString("browserName", "not chrome");
+
+  ASSERT_FALSE(MatchCapabilities(&merged));
+
+  merged.Clear();
+  merged.SetString("browserName", "chrome");
+
+  ASSERT_TRUE(MatchCapabilities(&merged));
+}
 
 TEST(SessionCommandsTest, Quit) {
   DetachChrome* chrome = new DetachChrome();

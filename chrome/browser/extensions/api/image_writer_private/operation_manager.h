@@ -52,22 +52,22 @@ class OperationManager : public BrowserContextKeyedAPI,
                          GURL url,
                          const std::string& hash,
                          const std::string& device_path,
-                         const Operation::StartWriteCallback& callback);
+                         Operation::StartWriteCallback callback);
 
   // Starts a WriteFromFile operation.
   void StartWriteFromFile(const ExtensionId& extension_id,
                           const base::FilePath& path,
                           const std::string& device_path,
-                          const Operation::StartWriteCallback& callback);
+                          Operation::StartWriteCallback callback);
 
   // Cancels the extensions current operation if any.
   void CancelWrite(const ExtensionId& extension_id,
-                   const Operation::CancelWriteCallback& callback);
+                   Operation::CancelWriteCallback callback);
 
   // Starts a write that removes the partition table.
   void DestroyPartitions(const ExtensionId& extension_id,
                          const std::string& device_path,
-                         const Operation::StartWriteCallback& callback);
+                         Operation::StartWriteCallback callback);
 
   // Callback for progress events.
   virtual void OnProgress(const ExtensionId& extension_id,
@@ -99,7 +99,7 @@ class OperationManager : public BrowserContextKeyedAPI,
   // ExtensionRegistryObserver implementation.
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override;
+                           UnloadedExtensionReason reason) override;
 
   Operation* GetOperation(const ExtensionId& extension_id);
   void DeleteOperation(const ExtensionId& extension_id);

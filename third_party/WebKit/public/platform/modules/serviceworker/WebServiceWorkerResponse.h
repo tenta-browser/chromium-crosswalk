@@ -5,18 +5,21 @@
 #ifndef WebServiceWorkerResponse_h
 #define WebServiceWorkerResponse_h
 
+#include "base/time/time.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "public/platform/WebCommon.h"
 #include "public/platform/WebPrivatePtr.h"
 #include "public/platform/WebString.h"
 #include "public/platform/WebURL.h"
 #include "public/platform/WebVector.h"
+#include "public/platform/modules/fetch/fetch_api_request.mojom-shared.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerResponseError.h"
-#include "public/platform/modules/serviceworker/WebServiceWorkerResponseType.h"
+#include "services/network/public/interfaces/fetch_api.mojom-shared.h"
 
 #if INSIDE_BLINK
-#include "wtf/Forward.h"
-#include "wtf/HashMap.h"
-#include "wtf/text/StringHash.h"
+#include "platform/wtf/Forward.h"
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/text/StringHash.h"
 #endif
 
 namespace blink {
@@ -53,8 +56,8 @@ class BLINK_PLATFORM_EXPORT WebServiceWorkerResponse {
   void SetStatusText(const WebString&);
   const WebString& StatusText() const;
 
-  void SetResponseType(WebServiceWorkerResponseType);
-  WebServiceWorkerResponseType ResponseType() const;
+  void SetResponseType(network::mojom::FetchResponseType);
+  network::mojom::FetchResponseType ResponseType() const;
 
   void SetHeader(const WebString& key, const WebString& value);
 
@@ -66,19 +69,20 @@ class BLINK_PLATFORM_EXPORT WebServiceWorkerResponse {
   WebString GetHeader(const WebString& key) const;
   void VisitHTTPHeaderFields(WebHTTPHeaderVisitor*) const;
 
-  void SetBlob(const WebString& uuid, uint64_t size);
+  void SetBlob(const WebString& uuid,
+               uint64_t size,
+               mojo::ScopedMessagePipeHandle);
   WebString BlobUUID() const;
   uint64_t BlobSize() const;
 
-  void SetStreamURL(const WebURL&);
-  const WebURL& StreamURL() const;
+  mojo::ScopedMessagePipeHandle CloneBlobPtr() const;
 
   // Provides a more detailed error when status() is zero.
   void SetError(WebServiceWorkerResponseError);
   WebServiceWorkerResponseError GetError() const;
 
-  void SetResponseTime(int64_t);
-  int64_t ResponseTime() const;
+  void SetResponseTime(base::Time);
+  base::Time ResponseTime() const;
 
   void SetCacheStorageCacheName(const WebString&);
   const WebString& CacheStorageCacheName() const;
@@ -89,8 +93,8 @@ class BLINK_PLATFORM_EXPORT WebServiceWorkerResponse {
 #if INSIDE_BLINK
   const HTTPHeaderMap& Headers() const;
 
-  void SetBlobDataHandle(PassRefPtr<BlobDataHandle>);
-  PassRefPtr<BlobDataHandle> GetBlobDataHandle() const;
+  void SetBlobDataHandle(RefPtr<BlobDataHandle>);
+  RefPtr<BlobDataHandle> GetBlobDataHandle() const;
 #endif
 
  private:

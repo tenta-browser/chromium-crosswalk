@@ -35,8 +35,8 @@ ui::PlatformCursor WebCursor::GetPlatformCursor() {
   ui::ScaleAndRotateCursorBitmapAndHotpoint(scale, rotation_, &bitmap,
                                             &hotspot);
 
-  platform_cursor_ =
-      ui::CursorFactoryOzone::GetInstance()->CreateImageCursor(bitmap, hotspot);
+  platform_cursor_ = ui::CursorFactoryOzone::GetInstance()->CreateImageCursor(
+      bitmap, hotspot, scale);
   return platform_cursor_;
 }
 
@@ -67,14 +67,6 @@ void WebCursor::InitPlatformData() {
   rotation_ = display::Display::ROTATE_0;
   maximum_cursor_size_ =
       gfx::Size(kDefaultMaxCursorWidth, kDefaultMaxCursorHeight);
-}
-
-bool WebCursor::SerializePlatformData(base::Pickle* pickle) const {
-  return true;
-}
-
-bool WebCursor::DeserializePlatformData(base::PickleIterator* iter) {
-  return true;
 }
 
 bool WebCursor::IsPlatformDataEqual(const WebCursor& other) const {

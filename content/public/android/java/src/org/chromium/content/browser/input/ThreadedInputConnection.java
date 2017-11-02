@@ -88,6 +88,8 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
     private final BlockingQueue<TextInputState> mQueue = new LinkedBlockingQueue<>();
     private int mPendingAccent;
     private TextInputState mCachedTextInputState;
+    private int mCurrentExtractedTextRequestToken;
+    private boolean mShouldUpdateExtractedText;
 
     ThreadedInputConnection(View view, ImeAdapter imeAdapter, Handler handler) {
         super(view, true);
@@ -99,8 +101,16 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
 
     void resetOnUiThread() {
         ImeUtils.checkOnUiThread();
-        mNumNestedBatchEdits = 0;
-        mPendingAccent = 0;
+
+        mHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                mNumNestedBatchEdits = 0;
+                mPendingAccent = 0;
+                mCurrentExtractedTextRequestToken = 0;
+                mShouldUpdateExtractedText = false;
+            }
+        });
     }
 
     @Override
@@ -183,6 +193,16 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
         if (mNumNestedBatchEdits != 0) return;
         Range selection = textInputState.selection();
         Range composition = textInputState.composition();
+        // As per Guidelines in
+        // https://developer.android.com/reference/android/view/inputmethod/InputConnection.html
+        // #getExtractedText(android.view.inputmethod.ExtractedTextRequest,%20int)
+        // States that if the GET_EXTRACTED_TEXT_MONITOR flag is set,
+        // you should be calling updateExtractedText(View, int, ExtractedText)
+        // whenever you call updateSelection(View, int, int, int, int).
+        if (mShouldUpdateExtractedText) {
+            final ExtractedText extractedText = convertToExtractedText(textInputState);
+            mImeAdapter.updateExtractedText(mCurrentExtractedTextRequestToken, extractedText);
+        }
         mImeAdapter.updateSelection(
                 selection.start(), selection.end(), composition.start(), composition.end());
     }
@@ -306,12 +326,16 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
         ThreadUtils.postOnUiThread(new Runnable() {
             @Override
             public void run() {
-                cancelCombiningAccentOnUiThread();
-                mImeAdapter.sendCompositionToNative(text, newCursorPosition, true, 0);
+                commitTextOnUiThread(text, newCursorPosition);
             }
         });
         notifyUserAction();
         return true;
+    }
+
+    private void commitTextOnUiThread(final CharSequence text, final int newCursorPosition) {
+        cancelCombiningAccentOnUiThread();
+        mImeAdapter.sendCompositionToNative(text, newCursorPosition, true, 0);
     }
 
     /**
@@ -350,11 +374,23 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
     @Override
     public ExtractedText getExtractedText(ExtractedTextRequest request, int flags) {
         if (DEBUG_LOGS) Log.i(TAG, "getExtractedText");
+        assertOnImeThread();
+        mShouldUpdateExtractedText = (flags & GET_EXTRACTED_TEXT_MONITOR) > 0;
+        if (mShouldUpdateExtractedText) {
+            mCurrentExtractedTextRequestToken = request != null ? request.token : 0;
+        }
         TextInputState textInputState = requestAndWaitForTextInputState();
+        return convertToExtractedText(textInputState);
+    }
+
+    private ExtractedText convertToExtractedText(TextInputState textInputState) {
         if (textInputState == null) return null;
         ExtractedText extractedText = new ExtractedText();
         extractedText.text = textInputState.text();
         extractedText.partialEndOffset = textInputState.text().length();
+        // Set the partial start offset to -1 because the content is the full text.
+        // See: Android documentation for ExtractedText#partialStartOffset
+        extractedText.partialStartOffset = -1;
         extractedText.selectionStart = textInputState.selection().start();
         extractedText.selectionEnd = textInputState.selection().end();
         extractedText.flags = textInputState.singleLine() ? ExtractedText.FLAG_SINGLE_LINE : 0;
@@ -444,6 +480,14 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
         return true;
     }
 
+    private void commitCodePointOnUiThread(int codePoint, int pendingAccentToSet) {
+        StringBuilder builder = new StringBuilder();
+        builder.appendCodePoint(codePoint);
+        String text = builder.toString();
+        mImeAdapter.sendCompositionToNative(text, 1, true, 0);
+        setCombiningAccentOnUiThread(pendingAccentToSet);
+    }
+
     private boolean handleCombiningAccentOnUiThread(final KeyEvent event) {
         // TODO(changwan): this will break the current composition. check if we can
         // implement it in the renderer instead.
@@ -451,24 +495,40 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
         int unicodeChar = event.getUnicodeChar();
 
         if (action != KeyEvent.ACTION_DOWN) return false;
+
+        if (event.getKeyCode() == KeyEvent.KEYCODE_DEL) {
+            // We clear the pending accent on receiving a backspace key event (and also delete the
+            // preceding character).
+            setCombiningAccentOnUiThread(0);
+            return false;
+        }
+
         if ((unicodeChar & KeyCharacterMap.COMBINING_ACCENT) != 0) {
-            int pendingAccent = unicodeChar & KeyCharacterMap.COMBINING_ACCENT_MASK;
-            StringBuilder builder = new StringBuilder();
-            builder.appendCodePoint(pendingAccent);
-            updateComposingTextOnUiThread(builder.toString(), 1, true);
-            setCombiningAccentOnUiThread(pendingAccent);
+            int newPendingAccent = unicodeChar & KeyCharacterMap.COMBINING_ACCENT_MASK;
+            if (mPendingAccent != 0) {
+                // Already have an accent pending. Commit the previous accent. If the newly-typed
+                // accent is not the same as the previous one, set it as pending.
+                if (newPendingAccent == mPendingAccent) {
+                    commitCodePointOnUiThread(mPendingAccent, 0);
+                } else {
+                    commitCodePointOnUiThread(mPendingAccent, newPendingAccent);
+                }
+                return true;
+            }
+
+            // No accent currently pending. Just set the new accent as the pending accent and
+            // return.
+            setCombiningAccentOnUiThread(newPendingAccent);
             return true;
         } else if (mPendingAccent != 0 && unicodeChar != 0) {
             int combined = KeyEvent.getDeadChar(mPendingAccent, unicodeChar);
             if (combined != 0) {
-                StringBuilder builder = new StringBuilder();
-                builder.appendCodePoint(combined);
-                String text = builder.toString();
-                mImeAdapter.sendCompositionToNative(text, 1, text.length() > 0, 0);
+                commitCodePointOnUiThread(combined, 0);
                 return true;
             }
             // Noncombinable character; commit the accent character and fall through to sending
             // the key event for the character afterwards.
+            commitCodePointOnUiThread(mPendingAccent, 0);
             finishComposingTextOnUiThread();
         }
         return false;
@@ -496,7 +556,6 @@ class ThreadedInputConnection extends BaseInputConnection implements ChromiumBas
     }
 
     private void finishComposingTextOnUiThread() {
-        cancelCombiningAccentOnUiThread();
         mImeAdapter.finishComposingText();
     }
 

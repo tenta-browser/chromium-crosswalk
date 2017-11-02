@@ -36,15 +36,15 @@ struct IndentMode {
 
 class CSSTextIndentNonInterpolableValue : public NonInterpolableValue {
  public:
-  static PassRefPtr<CSSTextIndentNonInterpolableValue> Create(
-      PassRefPtr<NonInterpolableValue> length_non_interpolable_value,
+  static RefPtr<CSSTextIndentNonInterpolableValue> Create(
+      RefPtr<NonInterpolableValue> length_non_interpolable_value,
       const IndentMode& mode) {
-    return AdoptRef(new CSSTextIndentNonInterpolableValue(
+    return WTF::AdoptRef(new CSSTextIndentNonInterpolableValue(
         std::move(length_non_interpolable_value), mode));
   }
 
   const NonInterpolableValue* LengthNonInterpolableValue() const {
-    return length_non_interpolable_value_.Get();
+    return length_non_interpolable_value_.get();
   }
   RefPtr<NonInterpolableValue>& LengthNonInterpolableValue() {
     return length_non_interpolable_value_;
@@ -55,7 +55,7 @@ class CSSTextIndentNonInterpolableValue : public NonInterpolableValue {
 
  private:
   CSSTextIndentNonInterpolableValue(
-      PassRefPtr<NonInterpolableValue> length_non_interpolable_value,
+      RefPtr<NonInterpolableValue> length_non_interpolable_value,
       const IndentMode& mode)
       : length_non_interpolable_value_(
             std::move(length_non_interpolable_value)),
@@ -71,14 +71,14 @@ DEFINE_NON_INTERPOLABLE_VALUE_TYPE_CASTS(CSSTextIndentNonInterpolableValue);
 namespace {
 
 class UnderlyingIndentModeChecker
-    : public InterpolationType::ConversionChecker {
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<UnderlyingIndentModeChecker> Create(
       const IndentMode& mode) {
     return WTF::WrapUnique(new UnderlyingIndentModeChecker(mode));
   }
 
-  bool IsValid(const InterpolationEnvironment&,
+  bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     return mode_ == ToCSSTextIndentNonInterpolableValue(
                         *underlying.non_interpolable_value)
@@ -91,16 +91,17 @@ class UnderlyingIndentModeChecker
   const IndentMode mode_;
 };
 
-class InheritedIndentModeChecker : public InterpolationType::ConversionChecker {
+class InheritedIndentModeChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedIndentModeChecker> Create(
       const IndentMode& mode) {
     return WTF::WrapUnique(new InheritedIndentModeChecker(mode));
   }
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
-    return mode_ == IndentMode(*environment.GetState().ParentStyle());
+    return mode_ == IndentMode(*state.ParentStyle());
   }
 
  private:
@@ -162,10 +163,10 @@ InterpolationValue CSSTextIndentInterpolationType::MaybeConvertValue(
   for (const auto& item : ToCSSValueList(value)) {
     if (item->IsIdentifierValue() &&
         ToCSSIdentifierValue(*item).GetValueID() == CSSValueEachLine)
-      line = kTextIndentEachLine;
+      line = TextIndentLine::kEachLine;
     else if (item->IsIdentifierValue() &&
              ToCSSIdentifierValue(*item).GetValueID() == CSSValueHanging)
-      type = kTextIndentHanging;
+      type = TextIndentType::kHanging;
     else
       length = LengthInterpolationFunctions::MaybeConvertCSSValue(*item);
   }

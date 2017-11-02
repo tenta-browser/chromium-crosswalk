@@ -4,7 +4,7 @@
 <script src="../../../resources/bluetooth/bluetooth-helpers.js"></script>
 <script>
 'use strict';
-promise_test(() => {
+bluetooth_test(() => {
   return setBluetoothFakeAdapter('HeartRateAdapter')
     .then(() => requestDeviceWithKeyDown({
       filters: [{services: ['heart_rate']}],
@@ -17,7 +17,8 @@ promise_test(() => {
       let textEncoder = new TextEncoder();
       let newValue = textEncoder.encode('foo');
       return characteristic.writeValue(newValue).then(() => {
-        assert_array_equals(characteristic.value.buffer, newValue.buffer);
+        assert_array_equals(new Uint8Array(characteristic.value.buffer),
+                            new Uint8Array(newValue.buffer));
       });
     });
 }, 'A regular write request to a writable characteristic should update value.');

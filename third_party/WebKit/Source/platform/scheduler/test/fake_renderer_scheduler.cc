@@ -4,6 +4,8 @@
 
 #include "public/platform/scheduler/test/fake_renderer_scheduler.h"
 
+#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "public/platform/WebThread.h"
 
 namespace blink {
@@ -17,15 +19,18 @@ std::unique_ptr<blink::WebThread> FakeRendererScheduler::CreateMainThread() {
   return nullptr;
 }
 
-scoped_refptr<TaskQueue> FakeRendererScheduler::DefaultTaskRunner() {
+scoped_refptr<base::SingleThreadTaskRunner>
+FakeRendererScheduler::DefaultTaskRunner() {
   return nullptr;
 }
 
-scoped_refptr<TaskQueue> FakeRendererScheduler::CompositorTaskRunner() {
+scoped_refptr<base::SingleThreadTaskRunner>
+FakeRendererScheduler::CompositorTaskRunner() {
   return nullptr;
 }
 
-scoped_refptr<TaskQueue> FakeRendererScheduler::LoadingTaskRunner() {
+scoped_refptr<base::SingleThreadTaskRunner>
+FakeRendererScheduler::LoadingTaskRunner() {
   return nullptr;
 }
 
@@ -34,33 +39,17 @@ FakeRendererScheduler::IdleTaskRunner() {
   return nullptr;
 }
 
-scoped_refptr<TaskQueue> FakeRendererScheduler::TimerTaskRunner() {
-  return nullptr;
-}
-
-scoped_refptr<TaskQueue> FakeRendererScheduler::NewLoadingTaskRunner(
-    TaskQueue::QueueType queue_type) {
-  return nullptr;
-}
-
-scoped_refptr<TaskQueue> FakeRendererScheduler::NewTimerTaskRunner(
-    TaskQueue::QueueType queue_type) {
-  return nullptr;
-}
-
-scoped_refptr<TaskQueue> FakeRendererScheduler::NewUnthrottledTaskRunner(
-    TaskQueue::QueueType queue_type) {
-  return nullptr;
-}
-
 std::unique_ptr<RenderWidgetSchedulingState>
 FakeRendererScheduler::NewRenderWidgetSchedulingState() {
   return nullptr;
 }
 
-void FakeRendererScheduler::WillBeginFrame(const cc::BeginFrameArgs& args) {}
+void FakeRendererScheduler::WillBeginFrame(const viz::BeginFrameArgs& args) {}
 
 void FakeRendererScheduler::BeginFrameNotExpectedSoon() {}
+
+void FakeRendererScheduler::BeginMainFrameNotExpectedUntil(
+    base::TimeTicks time) {}
 
 void FakeRendererScheduler::DidCommitFrameToCompositor() {}
 
@@ -72,27 +61,28 @@ void FakeRendererScheduler::DidHandleInputEventOnMainThread(
     const blink::WebInputEvent& web_input_event,
     WebInputEventResult result) {}
 
+base::TimeDelta FakeRendererScheduler::MostRecentExpectedQueueingTime() {
+  return base::TimeDelta();
+}
+
 void FakeRendererScheduler::DidAnimateForInputOnCompositorThread() {}
 
 bool FakeRendererScheduler::IsHighPriorityWorkAnticipated() {
   return false;
 }
 
-void FakeRendererScheduler::OnRendererBackgrounded() {}
+void FakeRendererScheduler::SetRendererHidden(bool hidden) {}
 
-void FakeRendererScheduler::OnRendererForegrounded() {}
+void FakeRendererScheduler::SetRendererBackgrounded(bool backgrounded) {}
 
-void FakeRendererScheduler::SuspendRenderer() {}
+std::unique_ptr<FakeRendererScheduler::RendererPauseHandle>
+FakeRendererScheduler::PauseRenderer() {
+  return nullptr;
+}
 
-void FakeRendererScheduler::ResumeRenderer() {}
+void FakeRendererScheduler::AddPendingNavigation(NavigatingFrameType type) {}
 
-void FakeRendererScheduler::AddPendingNavigation(
-    blink::WebScheduler::NavigatingFrameType type) {}
-
-void FakeRendererScheduler::RemovePendingNavigation(
-    blink::WebScheduler::NavigatingFrameType type) {}
-
-void FakeRendererScheduler::OnNavigationStarted() {}
+void FakeRendererScheduler::RemovePendingNavigation(NavigatingFrameType type) {}
 
 bool FakeRendererScheduler::ShouldYieldForHighPriorityWork() {
   return false;
@@ -110,12 +100,11 @@ void FakeRendererScheduler::RemoveTaskObserver(
 
 void FakeRendererScheduler::Shutdown() {}
 
-void FakeRendererScheduler::SuspendTimerQueue() {}
+void FakeRendererScheduler::VirtualTimePaused() {}
 
-void FakeRendererScheduler::ResumeTimerQueue() {}
+void FakeRendererScheduler::VirtualTimeResumed() {}
 
-void FakeRendererScheduler::SetTimerQueueSuspensionWhenBackgroundedEnabled(
-    bool enabled) {}
+void FakeRendererScheduler::SetStoppingWhenBackgroundedEnabled(bool enabled) {}
 
 void FakeRendererScheduler::SetTopLevelBlameContext(
     base::trace_event::BlameContext* blame_context) {}
@@ -126,6 +115,8 @@ bool FakeRendererScheduler::MainThreadSeemsUnresponsive(
     base::TimeDelta main_thread_responsiveness_threshold) {
   return false;
 }
+
+void FakeRendererScheduler::SetRendererProcessType(RendererProcessType type) {}
 
 }  // namespace scheduler
 }  // namespace blink

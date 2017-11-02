@@ -4,6 +4,9 @@
 
 #include "content/common/service_worker/service_worker_types.h"
 
+#include "content/public/common/service_worker_modes.h"
+#include "storage/common/blob_storage/blob_handle.h"
+
 namespace content {
 
 const char kServiceWorkerRegisterErrorPrefix[] =
@@ -53,6 +56,9 @@ ServiceWorkerFetchRequest::ServiceWorkerFetchRequest(
 ServiceWorkerFetchRequest::ServiceWorkerFetchRequest(
     const ServiceWorkerFetchRequest& other) = default;
 
+ServiceWorkerFetchRequest& ServiceWorkerFetchRequest::operator=(
+    const ServiceWorkerFetchRequest& other) = default;
+
 ServiceWorkerFetchRequest::~ServiceWorkerFetchRequest() {}
 
 size_t ServiceWorkerFetchRequest::EstimatedStructSize() {
@@ -71,7 +77,7 @@ size_t ServiceWorkerFetchRequest::EstimatedStructSize() {
 
 ServiceWorkerResponse::ServiceWorkerResponse()
     : status_code(0),
-      response_type(blink::kWebServiceWorkerResponseTypeOpaque),
+      response_type(network::mojom::FetchResponseType::kOpaque),
       blob_size(0),
       error(blink::kWebServiceWorkerResponseErrorUnknown) {}
 
@@ -79,11 +85,11 @@ ServiceWorkerResponse::ServiceWorkerResponse(
     std::unique_ptr<std::vector<GURL>> url_list,
     int status_code,
     const std::string& status_text,
-    blink::WebServiceWorkerResponseType response_type,
+    network::mojom::FetchResponseType response_type,
     std::unique_ptr<ServiceWorkerHeaderMap> headers,
     const std::string& blob_uuid,
     uint64_t blob_size,
-    const GURL& stream_url,
+    scoped_refptr<storage::BlobHandle> blob,
     blink::WebServiceWorkerResponseError error,
     base::Time response_time,
     bool is_in_cache_storage,
@@ -94,7 +100,7 @@ ServiceWorkerResponse::ServiceWorkerResponse(
       response_type(response_type),
       blob_uuid(blob_uuid),
       blob_size(blob_size),
-      stream_url(stream_url),
+      blob(std::move(blob)),
       error(error),
       response_time(response_time),
       is_in_cache_storage(is_in_cache_storage),
@@ -107,6 +113,9 @@ ServiceWorkerResponse::ServiceWorkerResponse(
 ServiceWorkerResponse::ServiceWorkerResponse(
     const ServiceWorkerResponse& other) = default;
 
+ServiceWorkerResponse& ServiceWorkerResponse::operator=(
+    const ServiceWorkerResponse& other) = default;
+
 ServiceWorkerResponse::~ServiceWorkerResponse() {}
 
 size_t ServiceWorkerResponse::EstimatedStructSize() {
@@ -114,7 +123,6 @@ size_t ServiceWorkerResponse::EstimatedStructSize() {
   for (const auto& url : url_list)
     size += url.spec().size();
   size += blob_uuid.size();
-  size += stream_url.spec().size();
   size += cache_storage_cache_name.size();
   for (const auto& key_and_value : headers) {
     size += key_and_value.first.size();
@@ -127,17 +135,12 @@ size_t ServiceWorkerResponse::EstimatedStructSize() {
 
 ServiceWorkerObjectInfo::ServiceWorkerObjectInfo()
     : handle_id(kInvalidServiceWorkerHandleId),
-      state(blink::kWebServiceWorkerStateUnknown),
+      state(blink::mojom::ServiceWorkerState::kUnknown),
       version_id(kInvalidServiceWorkerVersionId) {}
 
 bool ServiceWorkerObjectInfo::IsValid() const {
   return handle_id != kInvalidServiceWorkerHandleId &&
          version_id != kInvalidServiceWorkerVersionId;
-}
-
-ServiceWorkerRegistrationObjectInfo::ServiceWorkerRegistrationObjectInfo()
-    : handle_id(kInvalidServiceWorkerRegistrationHandleId),
-      registration_id(kInvalidServiceWorkerRegistrationId) {
 }
 
 ServiceWorkerClientQueryOptions::ServiceWorkerClientQueryOptions()

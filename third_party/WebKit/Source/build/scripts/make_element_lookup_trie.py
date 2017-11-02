@@ -39,6 +39,7 @@ class ElementLookupTrieWriter(json5_generator.Writer):
     default_parameters = {
         'JSInterfaceName': {},
         'constructorNeedsCreatedByParser': {},
+        'interfaceHeaderDir': {},
         'interfaceName': {},
         'noConstructor': {},
         'runtimeEnabled': {},
@@ -59,20 +60,23 @@ class ElementLookupTrieWriter(json5_generator.Writer):
         for entry in self.json5_file.name_dictionaries:
             self._tags[entry['name']] = entry['name']
         self._namespace = self.json5_file.metadata['namespace'].strip('"')
+        basename = self._namespace.lower() + '_element_lookup_trie'
         self._outputs = {
-            (self._namespace + 'ElementLookupTrie.h'): self.generate_header,
-            (self._namespace + 'ElementLookupTrie.cpp'): self.generate_implementation,
+            (basename + '.h'): self.generate_header,
+            (basename + '.cc'): self.generate_implementation,
         }
 
-    @template_expander.use_jinja('ElementLookupTrie.h.tmpl')
+    @template_expander.use_jinja('templates/element_lookup_trie.h.tmpl')
     def generate_header(self):
         return {
+            'input_files': self._input_files,
             'namespace': self._namespace,
         }
 
-    @template_expander.use_jinja('ElementLookupTrie.cpp.tmpl')
+    @template_expander.use_jinja('templates/element_lookup_trie.cc.tmpl')
     def generate_implementation(self):
         return {
+            'input_files': self._input_files,
             'namespace': self._namespace,
             'length_tries': trie_builder.trie_list_by_str_length(self._tags)
         }

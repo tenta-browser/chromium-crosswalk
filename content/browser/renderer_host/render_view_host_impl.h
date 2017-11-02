@@ -20,9 +20,11 @@
 #include "base/macros.h"
 #include "base/process/kill.h"
 #include "build/build_config.h"
+#include "content/browser/renderer_host/input/input_device_change_observer.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_owner_delegate.h"
 #include "content/browser/site_instance_impl.h"
+#include "content/common/render_message_filter.mojom.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/render_process_host_observer.h"
 #include "content/public/browser/render_view_host.h"
@@ -113,7 +115,6 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   void SelectWordAroundCaret() override;
 
   // RenderProcessHostObserver implementation
-  void RenderProcessReady(RenderProcessHost* host) override;
   void RenderProcessExited(RenderProcessHost* host,
                            base::TerminationStatus status,
                            int exit_code) override;
@@ -131,11 +132,14 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // created with an opener. (The opener may have been closed since.)
   // The |proxy_route_id| is only used when creating a RenderView in swapped out
   // state.
+  // |devtools_frame_token| contains the devtools token for tagging requests and
+  // attributing them to the context frame.
   // |replicated_frame_state| contains replicated data for the top-level frame,
   // such as its name and sandbox flags.
   virtual bool CreateRenderView(
       int opener_frame_route_id,
       int proxy_route_id,
+      const base::UnguessableToken& devtools_frame_token,
       const FrameReplicationState& replicated_frame_state,
       bool window_was_created_with_opener);
 
@@ -158,6 +162,23 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // TODO(creis): Remove as part of http://crbug.com/418265.
   bool is_waiting_for_close_ack() const { return is_waiting_for_close_ack_; }
 
+  // Generate RenderViewCreated events for observers through the delegate.
+  // These events are only generated for active RenderViewHosts (which have a
+  // RenderFrameHost for the main frame) as well as inactive RenderViewHosts
+  // that have a pending main frame navigation; i.e., this is done only when
+  // GetMainFrame() is non-null.
+  //
+  // This function also ensures that a particular RenderViewHost never
+  // dispatches these events more than once.  For example, if a RenderViewHost
+  // transitions from active to inactive after a cross-process navigation
+  // (where it no longer has a main frame RenderFrameHost), and then back to
+  // active after another cross-process navigation, this function will filter
+  // out the second notification.
+  //
+  // TODO(alexmos): Deprecate RenderViewCreated and remove this.  See
+  // https://crbug.com/763548.
+  void DispatchRenderViewCreated();
+
   // Tells the renderer process to run the page's unload handler.
   // A ClosePage_ACK ack is sent back when the handler execution completes.
   void ClosePage();
@@ -177,10 +198,12 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
 
   // Creates a new RenderWidget with the given route id.  |popup_type| indicates
   // if this widget is a popup and what kind of popup it is (select, autofill).
-  void CreateNewWidget(int32_t route_id, blink::WebPopupType popup_type);
+  void CreateNewWidget(int32_t route_id,
+                       mojom::WidgetPtr widget,
+                       blink::WebPopupType popup_type);
 
   // Creates a full screen RenderWidget.
-  void CreateNewFullscreenWidget(int32_t route_id);
+  void CreateNewFullscreenWidget(int32_t route_id, mojom::WidgetPtr widget);
 
   // Send RenderViewReady to observers once the process is launched, but not
   // re-entrantly.
@@ -213,6 +236,7 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   void RenderWidgetDidInit() override;
   void RenderWidgetWillSetIsLoading(bool is_loading) override;
   void RenderWidgetGotFocus() override;
+  void RenderWidgetLostFocus() override;
   void RenderWidgetDidForwardMouseEvent(
       const blink::WebMouseEvent& mouse_event) override;
   bool MayRenderWidgetForwardKeyboardEvent(
@@ -290,8 +314,8 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
 
   // Tracks whether the main frame RenderFrameHost is swapped out.  Unlike
   // is_active_, this is false when the frame is pending swap out or deletion.
-  // TODO(creis): Remove this when we no longer use swappedout://.
-  // See http://crbug.com/357747.
+  // TODO(creis): Remove this when we no longer filter IPCs after swap out.
+  // See https://crbug.com/745091.
   bool is_swapped_out_;
 
   // Routing ID for the main frame's RenderFrameHost.
@@ -319,9 +343,17 @@ class CONTENT_EXPORT RenderViewHostImpl : public RenderViewHost,
   // closed.
   std::unique_ptr<TimeoutMonitor> close_timeout_;
 
+  // This monitors input changes so they can be reflected to the interaction MQ.
+  std::unique_ptr<InputDeviceChangeObserver> input_device_change_observer_;
+
   bool updating_web_preferences_;
 
-  bool render_view_ready_on_process_launch_;
+  // This tracks whether this RenderViewHost has notified observers about its
+  // creation with RenderViewCreated.  RenderViewHosts may transition from
+  // active (with a RenderFrameHost for the main frame) to inactive state and
+  // then back to active, and for the latter transition, this avoids firing
+  // duplicate RenderViewCreated events.
+  bool has_notified_about_creation_;
 
   base::WeakPtrFactory<RenderViewHostImpl> weak_factory_;
 

@@ -1,14 +1,17 @@
 # e.g. RolloverProtectedTickClock
 fun:*MutableInstance*
 
-# WTF allocators.
-fun:*allocate*Backing*
+# WTF allocators. See https://crbug.com/713293.
+fun:*Allocate*Backing*
 
 # WTF::ThreadSpecific
 fun:*ThreadSpecific*
 
 # Mesa contains several bad casts.
 src:*third_party/mesa*
+
+# LLVM's allocator
+src:*third_party/swiftshader/third_party/llvm-subzero/include/llvm/Support/Allocator.h*
 
 # Deliberate bad cast to derived class to hide functions.
 type:*BlockIUnknownMethods*
@@ -107,3 +110,6 @@ fun:*hasAspectRatio*
 fun:*nextBreakablePosition*
 fun:*supportsCachedOffsets*
 fun:*traceImpl*
+
+# b/64003142
+fun:*internal_default_instance*

@@ -14,13 +14,14 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_path_override.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/component_updater/supervised_user_whitelist_installer.h"
@@ -37,6 +38,7 @@
 #include "components/update_client/crx_update_item.h"
 #include "components/update_client/update_client.h"
 #include "components/update_client/utils.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -73,10 +75,6 @@ std::string JsonToString(const base::DictionaryValue& dict) {
 class MockComponentUpdateService : public ComponentUpdateService,
                                    public OnDemandUpdater {
  public:
-  MockComponentUpdateService(
-      const scoped_refptr<base::SequencedTaskRunner>& task_runner)
-      : task_runner_(task_runner), on_demand_update_called_(false) {}
-
   ~MockComponentUpdateService() override {}
 
   bool on_demand_update_called() const { return on_demand_update_called_; }
@@ -128,10 +126,6 @@ class MockComponentUpdateService : public ComponentUpdateService,
     ADD_FAILURE();
   }
 
-  scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner() override {
-    return task_runner_;
-  }
-
   bool GetComponentDetails(const std::string& component_id,
                            CrxUpdateItem* item) const override {
     ADD_FAILURE();
@@ -141,6 +135,10 @@ class MockComponentUpdateService : public ComponentUpdateService,
   std::unique_ptr<ComponentInfo> GetComponentForMimeType(
       const std::string& mime_type) const override {
     return nullptr;
+  }
+
+  std::vector<ComponentInfo> GetComponents() const override {
+    return std::vector<ComponentInfo>();
   }
 
   // OnDemandUpdater implementation:
@@ -157,10 +155,9 @@ class MockComponentUpdateService : public ComponentUpdateService,
   }
 
  private:
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
   std::unique_ptr<CrxComponent> component_;
   base::Closure registration_callback_;
-  bool on_demand_update_called_;
+  bool on_demand_update_called_ = false;
 };
 
 class WhitelistLoadObserver {
@@ -172,6 +169,7 @@ class WhitelistLoadObserver {
   }
 
   void Wait() { run_loop_.Run(); }
+  void Quit() { run_loop_.Quit(); }
 
   const base::FilePath& large_icon_path() const { return large_icon_path_; }
   const base::FilePath& whitelist_path() const { return whitelist_path_; }
@@ -185,7 +183,7 @@ class WhitelistLoadObserver {
     EXPECT_EQ(base::FilePath::StringType(), whitelist_path_.value());
     whitelist_path_ = whitelist_path;
     large_icon_path_ = large_icon_path;
-    run_loop_.Quit();
+    Quit();
   }
 
   base::FilePath large_icon_path_;
@@ -202,7 +200,7 @@ class SupervisedUserWhitelistInstallerTest : public testing::Test {
   SupervisedUserWhitelistInstallerTest()
       : testing_profile_manager_(TestingBrowserProcess::GetGlobal()),
         user_data_dir_override_(chrome::DIR_USER_DATA),
-        component_update_service_(base::ThreadTaskRunnerHandle::Get()) {}
+        manifest_(base::MakeUnique<base::DictionaryValue>()) {}
 
   ~SupervisedUserWhitelistInstallerTest() override {}
 
@@ -238,15 +236,15 @@ class SupervisedUserWhitelistInstallerTest : public testing::Test {
     std::unique_ptr<base::DictionaryValue> whitelist_dict(
         new base::DictionaryValue);
     whitelist_dict->SetString("sites", kWhitelistFile);
-    manifest_.Set("whitelisted_content", std::move(whitelist_dict));
+    manifest_->Set("whitelisted_content", std::move(whitelist_dict));
 
     large_icon_path_ = whitelist_version_directory_.AppendASCII(kLargeIconFile);
     std::unique_ptr<base::DictionaryValue> icons_dict(
         new base::DictionaryValue);
     icons_dict->SetString("128", kLargeIconFile);
-    manifest_.Set("icons", std::move(icons_dict));
+    manifest_->Set("icons", std::move(icons_dict));
 
-    manifest_.SetString("version", kVersion);
+    manifest_->SetString("version", kVersion);
 
     std::unique_ptr<base::DictionaryValue> crx_dict(new base::DictionaryValue);
     crx_dict->SetString("name", kName);
@@ -277,12 +275,13 @@ class SupervisedUserWhitelistInstallerTest : public testing::Test {
     PrepareWhitelistFile(whitelist_directory.AppendASCII(kWhitelistFile));
     base::FilePath manifest_file =
         whitelist_directory.AppendASCII("manifest.json");
-    ASSERT_TRUE(JSONFileValueSerializer(manifest_file).Serialize(manifest_));
+    ASSERT_TRUE(JSONFileValueSerializer(manifest_file).Serialize(*manifest_));
   }
 
   void RegisterExistingComponents() {
     local_state_.Set(prefs::kRegisteredSupervisedUserWhitelists, pref_);
     installer_->RegisterComponents();
+    scoped_task_environment_.RunUntilIdle();
     base::RunLoop().RunUntilIdle();
   }
 
@@ -295,11 +294,10 @@ class SupervisedUserWhitelistInstallerTest : public testing::Test {
     EXPECT_EQ(version, component->version.GetString());
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   TestingProfileManager testing_profile_manager_;
   base::ScopedPathOverride user_data_dir_override_;
   safe_json::TestingJsonParser::ScopedFactoryOverride json_parser_override_;
-  MockComponentUpdateService component_update_service_;
   TestingPrefServiceSimple local_state_;
   std::unique_ptr<SupervisedUserWhitelistInstaller> installer_;
   base::FilePath whitelist_base_directory_;
@@ -308,8 +306,9 @@ class SupervisedUserWhitelistInstallerTest : public testing::Test {
   base::FilePath installed_whitelist_directory_;
   base::FilePath whitelist_path_;
   base::FilePath large_icon_path_;
-  base::DictionaryValue manifest_;
+  std::unique_ptr<base::DictionaryValue> manifest_;
   base::DictionaryValue pref_;
+  MockComponentUpdateService component_update_service_;
 };
 
 TEST_F(SupervisedUserWhitelistInstallerTest, GetHashFromCrxId) {
@@ -353,9 +352,25 @@ TEST_F(SupervisedUserWhitelistInstallerTest, InstallNewWhitelist) {
   const CrxComponent* component =
       component_update_service_.registered_component();
   ASSERT_TRUE(component);
-  const auto result = component->installer->Install(manifest_, unpacked_path);
-  EXPECT_EQ(0, result.error);
-  EXPECT_EQ(0, result.extended_error);
+
+  // The lambda function argument below is called by the ComponentInstaller
+  // implementation of the SupervisedUserWhitelistInstaller. Quit the observer
+  // in case of errors to allow the test to continue, since the component
+  // installer only calls |ComponentReady| if the install of the component
+  // has succeeded.
+  component->installer->Install(
+      std::move(manifest_), unpacked_path,
+      base::Bind(
+          [](WhitelistLoadObserver* observer,
+             const update_client::CrxInstaller::Result& result) {
+            EXPECT_EQ(0, result.error);
+            EXPECT_EQ(0, result.extended_error);
+            if (result.error)
+              observer->Quit();
+          },
+          &observer));
+
+  scoped_task_environment_.RunUntilIdle();
 
   observer.Wait();
   EXPECT_EQ(whitelist_path_.value(), observer.whitelist_path().value());
@@ -413,6 +428,7 @@ TEST_F(SupervisedUserWhitelistInstallerTest,
   {
     base::RunLoop run_loop;
     installer_->UnregisterWhitelist(kClientId, kCrxId);
+    scoped_task_environment_.RunUntilIdle();
     run_loop.RunUntilIdle();
   }
   EXPECT_TRUE(component_update_service_.registered_component());
@@ -426,6 +442,7 @@ TEST_F(SupervisedUserWhitelistInstallerTest,
     // This does the same thing in our case as calling UnregisterWhitelist(),
     // but it exercises a different code path.
     profile_attributes_storage()->RemoveProfile(GetProfilePath(kOtherClientId));
+    scoped_task_environment_.RunUntilIdle();
     run_loop.RunUntilIdle();
   }
   EXPECT_FALSE(component_update_service_.registered_component());

@@ -65,9 +65,6 @@ class MockSyntheticPointerActionTarget : public SyntheticGestureTarget {
   MockSyntheticPointerActionTarget() {}
   ~MockSyntheticPointerActionTarget() override {}
 
-  // SyntheticGestureTarget:
-  void SetNeedsFlush() override { NOTIMPLEMENTED(); }
-
   base::TimeDelta PointerAssumedStoppedTime() const override {
     NOTIMPLEMENTED();
     return base::TimeDelta();
@@ -101,7 +98,7 @@ class MockSyntheticPointerTouchActionTarget
     type_ = touch_event.GetType();
     for (size_t i = 0; i < WebTouchEvent::kTouchesLengthCap; ++i) {
       indexes_[i] = touch_event.touches[i].id;
-      positions_[i] = gfx::PointF(touch_event.touches[i].position);
+      positions_[i] = gfx::PointF(touch_event.touches[i].PositionInWidget());
       states_[i] = touch_event.touches[i].state;
     }
     touch_length_ = touch_event.touches_length;
@@ -705,6 +702,15 @@ TEST_F(SyntheticPointerActionTest, PointerPenAction) {
   EXPECT_EQ(0, num_failure_);
   EXPECT_TRUE(pointer_pen_target->SyntheticMouseActionDispatchedCorrectly(
       param3, 1, buttons, SyntheticGestureParams::PEN_INPUT));
+}
+
+TEST_F(SyntheticPointerActionTest, EmptyParams) {
+  CreateSyntheticPointerActionTarget<MockSyntheticPointerPenActionTarget>();
+  pointer_action_.reset(new SyntheticPointerAction(params_));
+
+  ForwardSyntheticPointerAction();
+  EXPECT_EQ(1, num_success_);
+  EXPECT_EQ(0, num_failure_);
 }
 
 }  // namespace

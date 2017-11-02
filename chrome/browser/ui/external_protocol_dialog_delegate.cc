@@ -9,7 +9,6 @@
 #include "chrome/browser/tab_contents/tab_util.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/text_elider.h"
 
@@ -51,8 +50,7 @@ base::string16 ExternalProtocolDialogDelegate::GetMessageText() const {
 }
 
 base::string16 ExternalProtocolDialogDelegate::GetCheckboxText() const {
-  return l10n_util::GetStringFUTF16(IDS_EXTERNAL_PROTOCOL_CHECKBOX_TEXT,
-                                    ElideCommandName(program_name_));
+  return l10n_util::GetStringUTF16(IDS_EXTERNAL_PROTOCOL_CHECKBOX_TEXT);
 }
 
 base::string16 ExternalProtocolDialogDelegate::GetTitleText() const {
@@ -61,11 +59,11 @@ base::string16 ExternalProtocolDialogDelegate::GetTitleText() const {
 }
 
 void ExternalProtocolDialogDelegate::DoAccept(const GURL& url,
-                                              bool dont_block) const {
+                                              bool remember) const {
   content::WebContents* web_contents = tab_util::GetWebContentsByID(
       render_process_host_id_, render_view_routing_id_);
 
-  if (dont_block) {
+  if (remember) {
     Profile* profile =
         Profile::FromBrowserContext(web_contents->GetBrowserContext());
 
@@ -74,17 +72,4 @@ void ExternalProtocolDialogDelegate::DoAccept(const GURL& url,
   }
 
   ExternalProtocolHandler::LaunchUrlWithoutSecurityCheck(url, web_contents);
-}
-
-void ExternalProtocolDialogDelegate::DoCancel(const GURL& url,
-                                              bool dont_block) const {
-  if (dont_block) {
-    content::WebContents* web_contents = tab_util::GetWebContentsByID(
-        render_process_host_id_, render_view_routing_id_);
-    Profile* profile =
-        Profile::FromBrowserContext(web_contents->GetBrowserContext());
-
-    ExternalProtocolHandler::SetBlockState(
-        url.scheme(), ExternalProtocolHandler::BLOCK, profile);
-  }
 }

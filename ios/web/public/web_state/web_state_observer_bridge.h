@@ -9,25 +9,32 @@
 
 #include <string>
 
-#import "base/ios/weak_nsobject.h"
 #include "base/macros.h"
 #include "ios/web/public/web_state/web_state_observer.h"
-
-class GURL;
 
 // Observes page lifecyle events from Objective-C. To use as a
 // web::WebStateObserver, wrap in a web::WebStateObserverBridge.
 @protocol CRWWebStateObserver<NSObject>
 @optional
 
-// Invoked by WebStateObserverBridge::ProvisionalNavigationStarted.
+// Invoked by WebStateObserverBridge::WasShown.
+- (void)webStateWasShown:(web::WebState*)webState;
+
+// Invoked by WebStateObserverBridge::WasHidden.
+- (void)webStateWasHidden:(web::WebState*)webState;
+
+// Invoked by WebStateObserverBridge::NavigationItemsPruned.
 - (void)webState:(web::WebState*)webState
-    didStartProvisionalNavigationForURL:(const GURL&)URL;
+    didPruneNavigationItemsWithCount:(size_t)pruned_item_count;
 
 // Invoked by WebStateObserverBridge::NavigationItemCommitted.
 - (void)webState:(web::WebState*)webState
     didCommitNavigationWithDetails:
         (const web::LoadCommittedDetails&)load_details;
+
+// Invoked by WebStateObserverBridge::DidStartNavigation.
+- (void)webState:(web::WebState*)webState
+    didStartNavigation:(web::NavigationContext*)navigation;
 
 // Invoked by WebStateObserverBridge::DidFinishNavigation.
 - (void)webState:(web::WebState*)webState
@@ -101,9 +108,12 @@ class WebStateObserverBridge : public web::WebStateObserver {
   ~WebStateObserverBridge() override;
 
   // web::WebStateObserver methods.
-  void ProvisionalNavigationStarted(const GURL& url) override;
+  void WasShown() override;
+  void WasHidden() override;
+  void NavigationItemsPruned(size_t pruned_item_count) override;
   void NavigationItemCommitted(
       const LoadCommittedDetails& load_details) override;
+  void DidStartNavigation(NavigationContext* navigation_context) override;
   void DidFinishNavigation(NavigationContext* navigation_context) override;
   void PageLoaded(
       web::PageLoadCompletionStatus load_completion_status) override;
@@ -126,7 +136,7 @@ class WebStateObserverBridge : public web::WebStateObserver {
   void DidStopLoading() override;
 
  private:
-  base::WeakNSProtocol<id<CRWWebStateObserver>> observer_;
+  __weak id<CRWWebStateObserver> observer_ = nil;
   DISALLOW_COPY_AND_ASSIGN(WebStateObserverBridge);
 };
 

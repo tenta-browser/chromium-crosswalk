@@ -6,14 +6,16 @@
 #define MEDIA_CAPTURE_VIDEO_VIDEO_CAPTURE_DEVICE_FACTORY_H_
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
+#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "media/capture/video/video_capture_device.h"
 
 namespace media {
 
 // VideoCaptureDeviceFactory is the base class for creation of video capture
 // devices in the different platforms. VCDFs are created by MediaStreamManager
-// on IO thread and plugged into VideoCaptureManager, who owns and operates them
+// on UI thread and plugged into VideoCaptureManager, who owns and operates them
 // in Device Thread (a.k.a. Audio Thread).
 // Typical operation is to first call GetDeviceDescriptors() to obtain
 // information about available devices. The obtained descriptors can then be
@@ -26,7 +28,8 @@ namespace media {
 class CAPTURE_EXPORT VideoCaptureDeviceFactory {
  public:
   static std::unique_ptr<VideoCaptureDeviceFactory> CreateFactory(
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      gpu::GpuMemoryBufferManager* gpu_buffer_manager);
 
   VideoCaptureDeviceFactory();
   virtual ~VideoCaptureDeviceFactory();
@@ -55,7 +58,8 @@ class CAPTURE_EXPORT VideoCaptureDeviceFactory {
 
  private:
   static VideoCaptureDeviceFactory* CreateVideoCaptureDeviceFactory(
-      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
+      gpu::GpuMemoryBufferManager* gpu_buffer_manager);
 
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceFactory);
 };

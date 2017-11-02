@@ -8,6 +8,7 @@
 #include "platform/network/HTTPHeaderMap.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/RefCounted.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/WebHTTPHeaderVisitor.h"
 
 namespace blink {
@@ -17,24 +18,22 @@ class WebServiceWorkerResponsePrivate
  public:
   WebServiceWorkerResponsePrivate()
       : status(0),
-        response_type(kWebServiceWorkerResponseTypeDefault),
-        error(kWebServiceWorkerResponseErrorUnknown),
-        response_time(0) {}
+        response_type(network::mojom::FetchResponseType::kDefault),
+        error(kWebServiceWorkerResponseErrorUnknown) {}
   WebVector<WebURL> url_list;
   unsigned short status;
   WebString status_text;
-  WebServiceWorkerResponseType response_type;
+  network::mojom::FetchResponseType response_type;
   HTTPHeaderMap headers;
   RefPtr<BlobDataHandle> blob_data_handle;
-  WebURL stream_url;
   WebServiceWorkerResponseError error;
-  int64_t response_time;
+  Time response_time;
   WebString cache_storage_cache_name;
   WebVector<WebString> cors_exposed_header_names;
 };
 
 WebServiceWorkerResponse::WebServiceWorkerResponse()
-    : private_(AdoptRef(new WebServiceWorkerResponsePrivate)) {}
+    : private_(WTF::AdoptRef(new WebServiceWorkerResponsePrivate)) {}
 
 void WebServiceWorkerResponse::Reset() {
   private_.Reset();
@@ -69,11 +68,12 @@ const WebString& WebServiceWorkerResponse::StatusText() const {
 }
 
 void WebServiceWorkerResponse::SetResponseType(
-    WebServiceWorkerResponseType response_type) {
+    network::mojom::FetchResponseType response_type) {
   private_->response_type = response_type;
 }
 
-WebServiceWorkerResponseType WebServiceWorkerResponse::ResponseType() const {
+network::mojom::FetchResponseType WebServiceWorkerResponse::ResponseType()
+    const {
   return private_->response_type;
 }
 
@@ -112,8 +112,14 @@ void WebServiceWorkerResponse::VisitHTTPHeaderFields(
     header_visitor->VisitHeader(i->key, i->value);
 }
 
-void WebServiceWorkerResponse::SetBlob(const WebString& uuid, uint64_t size) {
-  private_->blob_data_handle = BlobDataHandle::Create(uuid, String(), size);
+void WebServiceWorkerResponse::SetBlob(
+    const WebString& uuid,
+    uint64_t size,
+    mojo::ScopedMessagePipeHandle blob_pipe) {
+  private_->blob_data_handle = BlobDataHandle::Create(
+      uuid, String(), size,
+      storage::mojom::blink::BlobPtrInfo(
+          std::move(blob_pipe), storage::mojom::blink::Blob::Version_));
 }
 
 WebString WebServiceWorkerResponse::BlobUUID() const {
@@ -128,12 +134,12 @@ uint64_t WebServiceWorkerResponse::BlobSize() const {
   return private_->blob_data_handle->size();
 }
 
-void WebServiceWorkerResponse::SetStreamURL(const WebURL& url) {
-  private_->stream_url = url;
-}
-
-const WebURL& WebServiceWorkerResponse::StreamURL() const {
-  return private_->stream_url;
+mojo::ScopedMessagePipeHandle WebServiceWorkerResponse::CloneBlobPtr() const {
+  if (!private_->blob_data_handle)
+    return mojo::ScopedMessagePipeHandle();
+  return private_->blob_data_handle->CloneBlobPtr()
+      .PassInterface()
+      .PassHandle();
 }
 
 void WebServiceWorkerResponse::SetError(WebServiceWorkerResponseError error) {
@@ -144,11 +150,11 @@ WebServiceWorkerResponseError WebServiceWorkerResponse::GetError() const {
   return private_->error;
 }
 
-void WebServiceWorkerResponse::SetResponseTime(int64_t time) {
+void WebServiceWorkerResponse::SetResponseTime(base::Time time) {
   private_->response_time = time;
 }
 
-int64_t WebServiceWorkerResponse::ResponseTime() const {
+base::Time WebServiceWorkerResponse::ResponseTime() const {
   return private_->response_time;
 }
 
@@ -176,11 +182,11 @@ const HTTPHeaderMap& WebServiceWorkerResponse::Headers() const {
 }
 
 void WebServiceWorkerResponse::SetBlobDataHandle(
-    PassRefPtr<BlobDataHandle> blob_data_handle) {
+    RefPtr<BlobDataHandle> blob_data_handle) {
   private_->blob_data_handle = std::move(blob_data_handle);
 }
 
-PassRefPtr<BlobDataHandle> WebServiceWorkerResponse::GetBlobDataHandle() const {
+RefPtr<BlobDataHandle> WebServiceWorkerResponse::GetBlobDataHandle() const {
   return private_->blob_data_handle;
 }
 

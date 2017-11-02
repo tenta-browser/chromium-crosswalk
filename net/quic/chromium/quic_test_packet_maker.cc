@@ -7,7 +7,6 @@
 #include <list>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "net/quic/chromium/quic_http_utils.h"
 #include "net/quic/core/quic_framer.h"
 #include "net/quic/core/quic_utils.h"
@@ -15,8 +14,17 @@
 
 namespace net {
 namespace test {
+namespace {
 
-QuicTestPacketMaker::QuicTestPacketMaker(QuicVersion version,
+QuicAckFrame MakeAckFrame(QuicPacketNumber largest_observed) {
+  QuicAckFrame ack;
+  ack.largest_observed = largest_observed;
+  return ack;
+}
+
+}  // namespace
+
+QuicTestPacketMaker::QuicTestPacketMaker(QuicTransportVersion version,
                                          QuicConnectionId connection_id,
                                          MockClock* clock,
                                          const std::string& host,
@@ -83,9 +91,24 @@ std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckAndRstPacket(
     QuicStreamId stream_id,
     QuicRstStreamErrorCode error_code,
     QuicPacketNumber largest_received,
-    QuicPacketNumber ack_least_unacked,
-    QuicPacketNumber stop_least_unacked,
+    QuicPacketNumber smallest_received,
+    QuicPacketNumber least_unacked,
     bool send_feedback) {
+  return MakeAckAndRstPacket(num, include_version, stream_id, error_code,
+                             largest_received, smallest_received, least_unacked,
+                             send_feedback, 0);
+}
+
+std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckAndRstPacket(
+    QuicPacketNumber num,
+    bool include_version,
+    QuicStreamId stream_id,
+    QuicRstStreamErrorCode error_code,
+    QuicPacketNumber largest_received,
+    QuicPacketNumber smallest_received,
+    QuicPacketNumber least_unacked,
+    bool send_feedback,
+    size_t bytes_written) {
   QuicPacketHeader header;
   header.public_header.connection_id = connection_id_;
   header.public_header.reset_flag = false;
@@ -95,26 +118,27 @@ std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckAndRstPacket(
 
   QuicAckFrame ack(MakeAckFrame(largest_received));
   ack.ack_delay_time = QuicTime::Delta::Zero();
-  for (QuicPacketNumber i = ack_least_unacked; i <= largest_received; ++i) {
+  for (QuicPacketNumber i = smallest_received; i <= largest_received; ++i) {
     ack.received_packet_times.push_back(std::make_pair(i, clock_->Now()));
   }
   if (largest_received > 0) {
-    ack.packets.Add(1, largest_received + 1);
+    ack.packets.AddRange(1, largest_received + 1);
   }
   QuicFrames frames;
   frames.push_back(QuicFrame(&ack));
   DVLOG(1) << "Adding frame: " << frames[0];
 
   QuicStopWaitingFrame stop_waiting;
-  stop_waiting.least_unacked = stop_least_unacked;
+  stop_waiting.least_unacked = least_unacked;
   frames.push_back(QuicFrame(&stop_waiting));
   DVLOG(1) << "Adding frame: " << frames[1];
 
-  QuicRstStreamFrame rst(stream_id, error_code, 0);
+  QuicRstStreamFrame rst(stream_id, error_code, bytes_written);
   frames.push_back(QuicFrame(&rst));
   DVLOG(1) << "Adding frame: " << frames[2];
 
-  QuicFramer framer(SupportedVersions(version_), clock_->Now(), perspective_);
+  QuicFramer framer(SupportedTransportVersions(version_), clock_->Now(),
+                    perspective_);
   std::unique_ptr<QuicPacket> packet(
       BuildUnsizedDataPacket(&framer, header, frames));
   char buffer[kMaxPacketSize];
@@ -131,6 +155,7 @@ QuicTestPacketMaker::MakeAckAndConnectionClosePacket(
     bool include_version,
     QuicTime::Delta ack_delay_time,
     QuicPacketNumber largest_received,
+    QuicPacketNumber smallest_received,
     QuicPacketNumber least_unacked,
     QuicErrorCode quic_error,
     const std::string& quic_error_details) {
@@ -143,11 +168,11 @@ QuicTestPacketMaker::MakeAckAndConnectionClosePacket(
 
   QuicAckFrame ack(MakeAckFrame(largest_received));
   ack.ack_delay_time = ack_delay_time;
-  for (QuicPacketNumber i = least_unacked; i <= largest_received; ++i) {
+  for (QuicPacketNumber i = smallest_received; i <= largest_received; ++i) {
     ack.received_packet_times.push_back(std::make_pair(i, clock_->Now()));
   }
   if (largest_received > 0) {
-    ack.packets.Add(1, largest_received + 1);
+    ack.packets.AddRange(1, largest_received + 1);
   }
   QuicFrames frames;
   frames.push_back(QuicFrame(&ack));
@@ -165,7 +190,8 @@ QuicTestPacketMaker::MakeAckAndConnectionClosePacket(
   frames.push_back(QuicFrame(&close));
   DVLOG(1) << "Adding frame: " << frames[2];
 
-  QuicFramer framer(SupportedVersions(version_), clock_->Now(), perspective_);
+  QuicFramer framer(SupportedTransportVersions(version_), clock_->Now(),
+                    perspective_);
   std::unique_ptr<QuicPacket> packet(
       BuildUnsizedDataPacket(&framer, header, frames));
   char buffer[kMaxPacketSize];
@@ -211,33 +237,21 @@ std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeGoAwayPacket(
       MakePacket(header, QuicFrame(&goaway)));
 }
 
-// Sets both least_unacked fields in stop waiting frame and ack frame
-// to be |least_unacked|.
 std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckPacket(
     QuicPacketNumber packet_number,
     QuicPacketNumber largest_received,
+    QuicPacketNumber smallest_received,
     QuicPacketNumber least_unacked,
     bool send_feedback) {
-  return MakeAckPacket(packet_number, largest_received, least_unacked,
-                       least_unacked, send_feedback);
+  return MakeAckPacket(packet_number, largest_received, smallest_received,
+                       least_unacked, send_feedback, QuicTime::Delta::Zero());
 }
 
 std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckPacket(
     QuicPacketNumber packet_number,
     QuicPacketNumber largest_received,
-    QuicPacketNumber ack_least_unacked,
-    QuicPacketNumber stop_least_unacked,
-    bool send_feedback) {
-  return MakeAckPacket(packet_number, largest_received, ack_least_unacked,
-                       stop_least_unacked, send_feedback,
-                       QuicTime::Delta::Zero());
-}
-
-std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckPacket(
-    QuicPacketNumber packet_number,
-    QuicPacketNumber largest_received,
-    QuicPacketNumber ack_least_unacked,
-    QuicPacketNumber stop_least_unacked,
+    QuicPacketNumber smallest_received,
+    QuicPacketNumber least_unacked,
     bool send_feedback,
     QuicTime::Delta ack_delay_time) {
   QuicPacketHeader header;
@@ -249,21 +263,22 @@ std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckPacket(
 
   QuicAckFrame ack(MakeAckFrame(largest_received));
   ack.ack_delay_time = ack_delay_time;
-  for (QuicPacketNumber i = ack_least_unacked; i <= largest_received; ++i) {
+  for (QuicPacketNumber i = smallest_received; i <= largest_received; ++i) {
     ack.received_packet_times.push_back(std::make_pair(i, clock_->Now()));
   }
   if (largest_received > 0) {
-    ack.packets.Add(1, largest_received + 1);
+    ack.packets.AddRange(1, largest_received + 1);
   }
 
-  QuicFramer framer(SupportedVersions(version_), clock_->Now(), perspective_);
+  QuicFramer framer(SupportedTransportVersions(version_), clock_->Now(),
+                    perspective_);
   QuicFrames frames;
   QuicFrame ack_frame(&ack);
   DVLOG(1) << "Adding frame: " << ack_frame;
   frames.push_back(ack_frame);
 
   QuicStopWaitingFrame stop_waiting;
-  stop_waiting.least_unacked = stop_least_unacked;
+  stop_waiting.least_unacked = least_unacked;
   frames.push_back(QuicFrame(&stop_waiting));
 
   std::unique_ptr<QuicPacket> packet(
@@ -305,7 +320,7 @@ QuicTestPacketMaker::MakeMultipleDataFramesPacket(
   std::vector<std::unique_ptr<QuicStreamFrame>> stream_frames;
   for (size_t i = 0; i < data_writes.size(); ++i) {
     bool is_fin = fin && (i == data_writes.size() - 1);
-    stream_frames.push_back(base::MakeUnique<QuicStreamFrame>(
+    stream_frames.push_back(std::make_unique<QuicStreamFrame>(
         stream_id, is_fin, offset, QuicStringPiece(data_writes[i])));
     offset += data_writes[i].length();
   }
@@ -322,6 +337,7 @@ std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckAndDataPacket(
     bool include_version,
     QuicStreamId stream_id,
     QuicPacketNumber largest_received,
+    QuicPacketNumber smallest_received,
     QuicPacketNumber least_unacked,
     bool fin,
     QuicStreamOffset offset,
@@ -330,11 +346,11 @@ std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeAckAndDataPacket(
 
   QuicAckFrame ack(MakeAckFrame(largest_received));
   ack.ack_delay_time = QuicTime::Delta::Zero();
-  for (QuicPacketNumber i = least_unacked; i <= largest_received; ++i) {
+  for (QuicPacketNumber i = smallest_received; i <= largest_received; ++i) {
     ack.received_packet_times.push_back(std::make_pair(i, clock_->Now()));
   }
   if (largest_received > 0) {
-    ack.packets.Add(1, largest_received + 1);
+    ack.packets.AddRange(1, largest_received + 1);
   }
   QuicFrames frames;
   frames.push_back(QuicFrame(&ack));
@@ -387,7 +403,7 @@ QuicTestPacketMaker::MakeRequestHeadersAndMultipleDataFramesPacket(
   std::vector<std::unique_ptr<QuicStreamFrame>> stream_frames;
   for (size_t i = 0; i < data_writes.size(); ++i) {
     bool is_fin = fin && (i == data_writes.size() - 1);
-    stream_frames.push_back(base::MakeUnique<QuicStreamFrame>(
+    stream_frames.push_back(std::make_unique<QuicStreamFrame>(
         stream_id, is_fin, offset, QuicStringPiece(data_writes[i])));
     offset += data_writes[i].length();
   }
@@ -641,7 +657,8 @@ std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakePacket(
 std::unique_ptr<QuicReceivedPacket>
 QuicTestPacketMaker::MakeMultipleFramesPacket(const QuicPacketHeader& header,
                                               const QuicFrames& frames) {
-  QuicFramer framer(SupportedVersions(version_), clock_->Now(), perspective_);
+  QuicFramer framer(SupportedTransportVersions(version_), clock_->Now(),
+                    perspective_);
   std::unique_ptr<QuicPacket> packet(
       BuildUnsizedDataPacket(&framer, header, frames));
   char buffer[kMaxPacketSize];
@@ -661,30 +678,25 @@ void QuicTestPacketMaker::InitializeHeader(QuicPacketNumber packet_number,
   header_.packet_number = packet_number;
 }
 
-std::unique_ptr<QuicReceivedPacket> QuicTestPacketMaker::MakeSettingsPacket(
-    QuicPacketNumber packet_number,
-    SpdySettingsIds id,
-    size_t value,
-    bool should_include_version,
-    QuicStreamOffset* offset) {
+std::unique_ptr<QuicReceivedPacket>
+QuicTestPacketMaker::MakeInitialSettingsPacket(QuicPacketNumber packet_number,
+                                               QuicStreamOffset* offset) {
   std::string unused_data;
-  return MakeSettingsPacketAndSaveData(
-      packet_number, id, value, should_include_version, offset, &unused_data);
+  return MakeInitialSettingsPacketAndSaveData(packet_number, offset,
+                                              &unused_data);
 }
 
 std::unique_ptr<QuicReceivedPacket>
-QuicTestPacketMaker::MakeSettingsPacketAndSaveData(
+QuicTestPacketMaker::MakeInitialSettingsPacketAndSaveData(
     QuicPacketNumber packet_number,
-    SpdySettingsIds id,
-    size_t value,
-    bool should_include_version,
     QuicStreamOffset* offset,
     std::string* stream_data) {
   SpdySettingsIR settings_frame;
-  settings_frame.AddSetting(id, value);
+  settings_frame.AddSetting(SETTINGS_MAX_HEADER_LIST_SIZE,
+                            kDefaultMaxUncompressedHeaderSize);
   SpdySerializedFrame spdy_frame(
       spdy_request_framer_.SerializeFrame(settings_frame));
-  InitializeHeader(packet_number, should_include_version);
+  InitializeHeader(packet_number, /*should_include_version*/ true);
   *stream_data = std::string(spdy_frame.data(), spdy_frame.size());
   if (offset != nullptr) {
     QuicStreamFrame quic_frame(

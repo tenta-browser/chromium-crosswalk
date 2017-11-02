@@ -30,7 +30,7 @@ class WebURLLoaderMock : public WebURLLoader {
  public:
   // This object becomes the owner of |default_loader|.
   WebURLLoaderMock(WebURLLoaderMockFactoryImpl* factory,
-                   WebURLLoader* default_loader);
+                   std::unique_ptr<WebURLLoader> default_loader);
   ~WebURLLoaderMock() override;
 
   // Simulates the asynchronous request being served.
@@ -40,8 +40,8 @@ class WebURLLoaderMock : public WebURLLoader {
                                 const WebURLError& error);
 
   // Simulates the redirect being served.
-  WebURLRequest ServeRedirect(const WebURLRequest& request,
-                              const WebURLResponse& redirect_response);
+  WebURL ServeRedirect(const WebURLRequest& request,
+                       const WebURLResponse& redirect_response);
 
   // WebURLLoader methods:
   void LoadSynchronously(const WebURLRequest& request,
@@ -54,7 +54,8 @@ class WebURLLoaderMock : public WebURLLoader {
                           WebURLLoaderClient* client) override;
   void Cancel() override;
   void SetDefersLoading(bool defer) override;
-  void SetLoadingTaskRunner(base::SingleThreadTaskRunner*) override;
+  void DidChangePriority(WebURLRequest::Priority new_priority,
+                         int intra_priority_value) override;
 
   bool is_deferred() { return is_deferred_; }
   bool is_cancelled() { return !client_; }

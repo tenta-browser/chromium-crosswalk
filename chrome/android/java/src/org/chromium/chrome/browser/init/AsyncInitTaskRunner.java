@@ -16,7 +16,7 @@ import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.chrome.browser.ChromeActivitySessionTracker;
 import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.components.variations.firstrun.VariationsSeedFetcher;
-import org.chromium.content.browser.ChildProcessLauncher;
+import org.chromium.content.browser.ChildProcessLauncherHelper;
 
 import java.util.concurrent.Executor;
 
@@ -38,9 +38,9 @@ public abstract class AsyncInitTaskRunner {
         return ChromeVersionInfo.isOfficialBuild();
     }
 
-    private class LoadTask extends AsyncTask<Boolean, Void, Boolean> {
+    private class LoadTask extends AsyncTask<Void, Void, Boolean> {
         @Override
-        protected Boolean doInBackground(Boolean... allocateChildConnection) {
+        protected Boolean doInBackground(Void... params) {
             try {
                 LibraryLoader libraryLoader = LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER);
                 libraryLoader.ensureInitialized();
@@ -57,9 +57,6 @@ public abstract class AsyncInitTaskRunner {
                 libraryLoader.asyncPrefetchLibrariesToMemory();
             } catch (ProcessInitException e) {
                 return false;
-            }
-            if (allocateChildConnection[0]) {
-                ChildProcessLauncher.warmUp(ContextUtils.getApplicationContext());
             }
             return true;
         }
@@ -103,6 +100,10 @@ public abstract class AsyncInitTaskRunner {
         assert mLoadTask == null;
         if (fetchVariationSeed && shouldFetchVariationsSeedDuringFirstRun()) {
             mFetchingVariations = true;
+
+            // Fetching variations restrict mode requires AccountManagerFacade to be initialized.
+            ProcessInitializationHandler.getInstance().initializePreNative();
+
             ChromeActivitySessionTracker sessionTracker =
                     ChromeActivitySessionTracker.getInstance();
             sessionTracker.getVariationsRestrictModeValue(new Callback<String>() {
@@ -114,8 +115,11 @@ public abstract class AsyncInitTaskRunner {
             });
         }
 
+        if (allocateChildConnection) {
+            ChildProcessLauncherHelper.warmUp(ContextUtils.getApplicationContext());
+        }
         mLoadTask = new LoadTask();
-        mLoadTask.executeOnExecutor(getExecutor(), allocateChildConnection);
+        mLoadTask.executeOnExecutor(getExecutor());
     }
 
     private void tasksPossiblyComplete(boolean result) {

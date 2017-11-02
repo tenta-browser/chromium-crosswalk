@@ -14,16 +14,28 @@
 
 namespace blink {
 
-// TODO(alancutter): This class will replace *StyleInterpolation and
-// Interpolation. For now it needs to distinguish itself during the refactor and
-// temporarily has an ugly name.
+// See the documentation of Interpolation for general information about this
+// class hierarchy.
+//
+// The InvalidatableInterpolation subclass stores the start and end keyframes as
+// PropertySpecificKeyframe objects.
+//
+// InvalidatableInterpolation uses conversion checkers and the interpolation
+// environment to respond to changes to the underlying property value during
+// interpolation.
+//
+// InvalidatableInterpolation is used to implement additive animations. During
+// the effect application phase of animation computation, the current animated
+// value of the property is applied to the element by calling the static
+// ApplyStack function with an ordered list of InvalidatableInterpolation
+// objects.
 class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
  public:
-  static PassRefPtr<InvalidatableInterpolation> Create(
+  static RefPtr<InvalidatableInterpolation> Create(
       const PropertyHandle& property,
-      PassRefPtr<PropertySpecificKeyframe> start_keyframe,
-      PassRefPtr<PropertySpecificKeyframe> end_keyframe) {
-    return AdoptRef(new InvalidatableInterpolation(
+      RefPtr<PropertySpecificKeyframe> start_keyframe,
+      RefPtr<PropertySpecificKeyframe> end_keyframe) {
+    return WTF::AdoptRef(new InvalidatableInterpolation(
         property, std::move(start_keyframe), std::move(end_keyframe)));
   }
 
@@ -36,10 +48,9 @@ class CORE_EXPORT InvalidatableInterpolation : public Interpolation {
   virtual bool IsInvalidatableInterpolation() const { return true; }
 
  private:
-  InvalidatableInterpolation(
-      const PropertyHandle& property,
-      PassRefPtr<PropertySpecificKeyframe> start_keyframe,
-      PassRefPtr<PropertySpecificKeyframe> end_keyframe)
+  InvalidatableInterpolation(const PropertyHandle& property,
+                             RefPtr<PropertySpecificKeyframe> start_keyframe,
+                             RefPtr<PropertySpecificKeyframe> end_keyframe)
       : Interpolation(),
         property_(property),
         interpolation_types_(nullptr),

@@ -4,7 +4,6 @@
 
 #include "modules/fetch/BlobBytesConsumer.h"
 
-#include "core/dom/Document.h"
 #include "core/loader/ThreadableLoader.h"
 #include "core/testing/DummyPageHolder.h"
 #include "modules/fetch/BytesConsumerTestUtil.h"
@@ -22,14 +21,10 @@ namespace blink {
 
 namespace {
 
-using Command = DataConsumerHandleTestUtil::Command;
+using DataConsumerCommand = DataConsumerHandleTestUtil::Command;
 using PublicState = BytesConsumer::PublicState;
 using ReplayingHandle = DataConsumerHandleTestUtil::ReplayingHandle;
 using Result = BytesConsumer::Result;
-
-String ToString(const Vector<char>& v) {
-  return String(v.Data(), v.size());
-}
 
 class TestThreadableLoader : public ThreadableLoader {
  public:
@@ -114,12 +109,14 @@ class SyncErrorTestThreadableLoader : public ThreadableLoader {
   ThreadableLoaderClient* client_ = nullptr;
 };
 
-class TestClient final : public GarbageCollectedFinalized<TestClient>,
-                         public BytesConsumer::Client {
-  USING_GARBAGE_COLLECTED_MIXIN(TestClient);
+class BlobBytesConsumerTestClient final
+    : public GarbageCollectedFinalized<BlobBytesConsumerTestClient>,
+      public BytesConsumer::Client {
+  USING_GARBAGE_COLLECTED_MIXIN(BlobBytesConsumerTestClient);
 
  public:
   void OnStateChange() override { ++num_on_state_change_called_; }
+  String DebugName() const override { return "BlobBytesConsumerTestClient"; }
   int NumOnStateChangeCalled() const { return num_on_state_change_called_; }
 
  private:
@@ -144,10 +141,10 @@ TEST_F(BlobBytesConsumerTest, TwoPhaseRead) {
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
   std::unique_ptr<ReplayingHandle> src = ReplayingHandle::Create();
-  src->Add(Command(Command::kData, "hello, "));
-  src->Add(Command(Command::kWait));
-  src->Add(Command(Command::kData, "world"));
-  src->Add(Command(Command::kDone));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kData, "hello, "));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kWait));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kData, "world"));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kDone));
 
   EXPECT_EQ(PublicState::kReadableOrWaiting, consumer->GetPublicState());
   EXPECT_FALSE(loader->IsStarted());
@@ -166,7 +163,8 @@ TEST_F(BlobBytesConsumerTest, TwoPhaseRead) {
 
   auto result = (new BytesConsumerTestUtil::TwoPhaseReader(consumer))->Run();
   EXPECT_EQ(Result::kDone, result.first);
-  EXPECT_EQ("hello, world", ToString(result.second));
+  EXPECT_EQ("hello, world",
+            BytesConsumerTestUtil::CharVectorToString(result.second));
 }
 
 TEST_F(BlobBytesConsumerTest, FailLoading) {
@@ -175,7 +173,7 @@ TEST_F(BlobBytesConsumerTest, FailLoading) {
   TestThreadableLoader* loader = new TestThreadableLoader();
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
 
   const char* buffer = nullptr;
@@ -198,7 +196,7 @@ TEST_F(BlobBytesConsumerTest, FailLoadingAfterResponseReceived) {
   TestThreadableLoader* loader = new TestThreadableLoader();
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
 
   const char* buffer = nullptr;
@@ -227,7 +225,7 @@ TEST_F(BlobBytesConsumerTest, FailAccessControlCheck) {
   TestThreadableLoader* loader = new TestThreadableLoader();
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
 
   const char* buffer = nullptr;
@@ -237,7 +235,7 @@ TEST_F(BlobBytesConsumerTest, FailAccessControlCheck) {
   EXPECT_EQ(PublicState::kReadableOrWaiting, consumer->GetPublicState());
 
   int num_on_state_change_called = client->NumOnStateChangeCalled();
-  consumer->DidFailAccessControlCheck(ResourceError());
+  consumer->DidFail(ResourceError());
   EXPECT_EQ(num_on_state_change_called + 1, client->NumOnStateChangeCalled());
 
   EXPECT_EQ(PublicState::kErrored, consumer->GetPublicState());
@@ -250,7 +248,7 @@ TEST_F(BlobBytesConsumerTest, CancelBeforeStarting) {
   TestThreadableLoader* loader = new TestThreadableLoader();
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
 
   consumer->Cancel();
@@ -272,7 +270,7 @@ TEST_F(BlobBytesConsumerTest, CancelAfterStarting) {
   TestThreadableLoader* loader = new TestThreadableLoader();
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
 
   const char* buffer = nullptr;
@@ -295,11 +293,11 @@ TEST_F(BlobBytesConsumerTest, ReadLastChunkBeforeDidFinishLoadingArrives) {
   TestThreadableLoader* loader = new TestThreadableLoader();
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
   std::unique_ptr<ReplayingHandle> src = ReplayingHandle::Create();
-  src->Add(Command(Command::kData, "hello"));
-  src->Add(Command(Command::kDone));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kData, "hello"));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kDone));
 
   EXPECT_EQ(PublicState::kReadableOrWaiting, consumer->GetPublicState());
   EXPECT_FALSE(loader->IsStarted());
@@ -338,11 +336,11 @@ TEST_F(BlobBytesConsumerTest, ReadLastChunkAfterDidFinishLoadingArrives) {
   TestThreadableLoader* loader = new TestThreadableLoader();
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
   std::unique_ptr<ReplayingHandle> src = ReplayingHandle::Create();
-  src->Add(Command(Command::kData, "hello"));
-  src->Add(Command(Command::kDone));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kData, "hello"));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kDone));
 
   EXPECT_EQ(PublicState::kReadableOrWaiting, consumer->GetPublicState());
   EXPECT_FALSE(loader->IsStarted());
@@ -475,7 +473,7 @@ TEST_F(BlobBytesConsumerTest, SyncErrorDispatch) {
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
   loader->SetClient(consumer);
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
 
   const char* buffer = nullptr;
@@ -495,13 +493,13 @@ TEST_F(BlobBytesConsumerTest, SyncLoading) {
   BlobBytesConsumer* consumer = BlobBytesConsumer::CreateForTesting(
       &GetDocument(), blob_data_handle, loader);
   std::unique_ptr<ReplayingHandle> src = ReplayingHandle::Create();
-  src->Add(Command(Command::kData, "hello, "));
-  src->Add(Command(Command::kWait));
-  src->Add(Command(Command::kData, "world"));
-  src->Add(Command(Command::kDone));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kData, "hello, "));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kWait));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kData, "world"));
+  src->Add(DataConsumerCommand(DataConsumerCommand::kDone));
   loader->SetClient(consumer);
   loader->SetHandle(std::move(src));
-  TestClient* client = new TestClient();
+  BlobBytesConsumerTestClient* client = new BlobBytesConsumerTestClient();
   consumer->SetClient(client);
 
   const char* buffer = nullptr;

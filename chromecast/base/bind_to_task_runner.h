@@ -13,19 +13,19 @@
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 
 // This is a helper utility for Bind()ing callbacks to a given TaskRunner.
 // The typical use is when |a| (of class |A|) wants to hand a callback such as
-// base::Bind(&A::AMethod, a) to |b|, but needs to ensure that when |b| executes
-// the callback, it does so on a specific TaskRunner (for example, |a|'s current
-// MessageLoop).
+// base::BindOnce(&A::AMethod, a) to |b|, but needs to ensure that when |b|
+// executes the callback, it does so on a specific TaskRunner (for example,
+// |a|'s current MessageLoop).
 //
 // Typical usage: request to be called back on the current thread:
 // other->StartAsyncProcessAndCallMeBack(
-//    BindToTaskRunner(my_task_runner_, base::Bind(&MyClass::MyMethod, this)));
+//    BindToTaskRunner(my_task_runner_,
+//                     base::BindOnce(&MyClass::MyMethod, this)));
 //
 // Note that the callback is always posted to the target TaskRunner.
 //
@@ -35,64 +35,17 @@
 namespace chromecast {
 namespace bind_helpers {
 
-// Used to wrap a OnceClosure in a RepeatingClosure to pass to a task runner.
-inline void RunOnceClosure(base::OnceClosure&& callback) {
-  std::move(callback).Run();
-}
-
-template <typename T>
-T& TrampolineForward(T& t) {
-  return t;
-}
-
-template <typename T, typename R>
-base::internal::PassedWrapper<std::unique_ptr<T, R>> TrampolineForward(
-    std::unique_ptr<T, R>& p) {
-  return base::Passed(&p);
-}
-
-template <typename T>
-base::internal::PassedWrapper<ScopedVector<T>> TrampolineForward(
-    ScopedVector<T>& p) {
-  return base::Passed(&p);
-}
-
 template <typename Sig>
 struct BindToTaskRunnerTrampoline;
 
-template <>
-struct BindToTaskRunnerTrampoline<void()> {
-  static void RunOnce(base::TaskRunner* task_runner,
-                      base::OnceClosure&& callback) {
-    task_runner->PostTask(
-        FROM_HERE,
-        base::Bind(&RunOnceClosure, base::Passed(std::move(callback))));
-  }
-
-  static void RunRepeating(base::TaskRunner* task_runner,
-                           const base::RepeatingClosure& callback) {
-    task_runner->PostTask(FROM_HERE, callback);
-  }
-};
-
 template <typename... Args>
 struct BindToTaskRunnerTrampoline<void(Args...)> {
-  static void RunOnce(base::TaskRunner* task_runner,
-                      base::OnceCallback<void(Args...)>&& callback,
-                      Args... args) {
+  static void Run(base::TaskRunner* task_runner,
+                  base::OnceCallback<void(Args...)> callback,
+                  Args... args) {
     task_runner->PostTask(
         FROM_HERE,
-        base::Bind(&RunOnceClosure,
-                   base::Passed(base::BindOnce(std::move(callback),
-                                               std::forward<Args>(args)...))));
-  }
-
-  static void RunRepeating(
-      base::TaskRunner* task_runner,
-      const base::RepeatingCallback<void(Args...)>& callback,
-      Args... args) {
-    task_runner->PostTask(FROM_HERE,
-                          base::Bind(callback, TrampolineForward(args)...));
+        base::BindOnce(std::move(callback), std::forward<Args>(args)...));
   }
 };
 
@@ -101,8 +54,8 @@ struct BindToTaskRunnerTrampoline<void(Args...)> {
 template <typename T>
 base::OnceCallback<T> BindToTaskRunner(
     scoped_refptr<base::TaskRunner> task_runner,
-    base::OnceCallback<T>&& callback) {
-  return base::BindOnce(&bind_helpers::BindToTaskRunnerTrampoline<T>::RunOnce,
+    base::OnceCallback<T> callback) {
+  return base::BindOnce(&bind_helpers::BindToTaskRunnerTrampoline<T>::Run,
                         base::RetainedRef(std::move(task_runner)),
                         std::move(callback));
 }
@@ -110,22 +63,23 @@ base::OnceCallback<T> BindToTaskRunner(
 template <typename T>
 base::RepeatingCallback<T> BindToTaskRunner(
     scoped_refptr<base::TaskRunner> task_runner,
-    const base::RepeatingCallback<T>& callback) {
-  return base::BindRepeating(
-      &bind_helpers::BindToTaskRunnerTrampoline<T>::RunRepeating,
-      base::RetainedRef(std::move(task_runner)), callback);
+    base::RepeatingCallback<T> callback) {
+  return base::BindRepeating(&bind_helpers::BindToTaskRunnerTrampoline<T>::Run,
+                             base::RetainedRef(std::move(task_runner)),
+                             std::move(callback));
 }
 
 template <typename T>
-base::OnceCallback<T> BindToCurrentThread(base::OnceCallback<T>&& callback) {
+base::OnceCallback<T> BindToCurrentThread(base::OnceCallback<T> callback) {
   return BindToTaskRunner(base::ThreadTaskRunnerHandle::Get(),
                           std::move(callback));
 }
 
 template <typename T>
 base::RepeatingCallback<T> BindToCurrentThread(
-    const base::RepeatingCallback<T>& callback) {
-  return BindToTaskRunner(base::ThreadTaskRunnerHandle::Get(), callback);
+    base::RepeatingCallback<T> callback) {
+  return BindToTaskRunner(base::ThreadTaskRunnerHandle::Get(),
+                          std::move(callback));
 }
 
 }  // namespace chromecast

@@ -5,16 +5,21 @@
 #include "content/renderer/browser_plugin/browser_plugin.h"
 
 #include <stddef.h>
+
+#include <map>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/command_line.h"
+#include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/surfaces/surface.h"
-#include "cc/surfaces/surface_info.h"
+#include "components/viz/common/surfaces/surface_info.h"
+#include "components/viz/common/switches.h"
 #include "content/common/browser_plugin/browser_plugin_constants.h"
 #include "content/common/browser_plugin/browser_plugin_messages.h"
 #include "content/common/view_messages.h"
@@ -29,6 +34,7 @@
 #include "content/renderer/drop_data_builder.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/sad_plugin.h"
+#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
 #include "third_party/WebKit/public/platform/WebGestureEvent.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
@@ -48,10 +54,12 @@ using blink::WebURL;
 using blink::WebVector;
 
 namespace {
+
 using PluginContainerMap =
     std::map<blink::WebPluginContainer*, content::BrowserPlugin*>;
 static base::LazyInstance<PluginContainerMap>::DestructorAtExit
     g_plugin_container_map = LAZY_INSTANCE_INITIALIZER;
+
 }  // namespace
 
 namespace content {
@@ -86,13 +94,15 @@ BrowserPlugin::BrowserPlugin(
 
   if (delegate_)
     delegate_->SetElementInstanceID(browser_plugin_instance_id_);
+
+  const base::CommandLine& command_line =
+      *base::CommandLine::ForCurrentProcess();
+  enable_surface_synchronization_ =
+      command_line.HasSwitch(switches::kEnableSurfaceSynchronization);
 }
 
 BrowserPlugin::~BrowserPlugin() {
   Detach();
-
-  if (compositing_helper_.get())
-    compositing_helper_->OnContainerDestroy();
 
   if (delegate_) {
     delegate_->DidDestroyElement();
@@ -121,17 +131,17 @@ bool BrowserPlugin::OnMessageReceived(const IPC::Message& message) {
 
 void BrowserPlugin::OnSetChildFrameSurface(
     int browser_plugin_instance_id,
-    const cc::SurfaceInfo& surface_info,
-    const cc::SurfaceSequence& sequence) {
+    const viz::SurfaceInfo& surface_info,
+    const viz::SurfaceSequence& sequence) {
   if (!attached())
     return;
 
-  EnableCompositing(true);
-  DCHECK(compositing_helper_.get());
-  compositing_helper_->OnSetSurface(surface_info, sequence);
+  if (!enable_surface_synchronization_)
+    compositing_helper_->SetPrimarySurfaceInfo(surface_info);
+  compositing_helper_->SetFallbackSurfaceInfo(surface_info, sequence);
 }
 
-void BrowserPlugin::SendSatisfySequence(const cc::SurfaceSequence& sequence) {
+void BrowserPlugin::SendSatisfySequence(const viz::SurfaceSequence& sequence) {
   BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_SatisfySequence(
       render_frame_routing_id_, browser_plugin_instance_id_, sequence));
 }
@@ -158,7 +168,11 @@ void BrowserPlugin::Attach() {
     blink::WebLocalFrame* frame = Container()->GetDocument().GetFrame();
     attach_params.is_full_page_plugin =
         frame->View()->MainFrame()->IsWebLocalFrame() &&
-        frame->View()->MainFrame()->GetDocument().IsPluginDocument();
+        frame->View()
+            ->MainFrame()
+            ->ToWebLocalFrame()
+            ->GetDocument()
+            .IsPluginDocument();
   }
   BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_Attach(
       render_frame_routing_id_,
@@ -172,13 +186,15 @@ void BrowserPlugin::Attach() {
       RenderFrameImpl::FromRoutingID(render_frame_routing_id());
   if (render_frame && render_frame->render_accessibility() && Container()) {
     blink::WebElement element = Container()->GetElement();
-    blink::WebAXObject ax_element = element.AccessibilityObject();
+    blink::WebAXObject ax_element = blink::WebAXObject::FromWebNode(element);
     if (!ax_element.IsDetached()) {
       render_frame->render_accessibility()->HandleAXEvent(
           ax_element,
           ui::AX_EVENT_CHILDREN_CHANGED);
     }
   }
+
+  ViewRectsChanged(view_rect());
 }
 
 void BrowserPlugin::Detach() {
@@ -187,7 +203,7 @@ void BrowserPlugin::Detach() {
 
   attached_ = false;
   guest_crashed_ = false;
-  EnableCompositing(false);
+  compositing_helper_->OnContainerDestroy();
 
   BrowserPluginManager::Get()->Send(
       new BrowserPluginHostMsg_Detach(browser_plugin_instance_id_));
@@ -208,13 +224,19 @@ void BrowserPlugin::OnAdvanceFocus(int browser_plugin_instance_id,
 
 void BrowserPlugin::OnGuestGone(int browser_plugin_instance_id) {
   guest_crashed_ = true;
-
-  EnableCompositing(true);
   compositing_helper_->ChildFrameGone();
 }
 
-void BrowserPlugin::OnGuestReady(int browser_plugin_instance_id) {
+void BrowserPlugin::OnGuestReady(int browser_plugin_instance_id,
+                                 const viz::FrameSinkId& frame_sink_id) {
   guest_crashed_ = false;
+  frame_sink_id_ = frame_sink_id;
+  if (!view_rect_)
+    return;
+
+  gfx::Rect view_rect = *view_rect_;
+  view_rect_ = gfx::Rect();
+  ViewRectsChanged(view_rect);
 }
 
 void BrowserPlugin::OnSetCursor(int browser_plugin_instance_id,
@@ -268,6 +290,36 @@ void BrowserPlugin::UpdateInternalInstanceId() {
       base::UTF8ToUTF16(base::IntToString(browser_plugin_instance_id_)));
 }
 
+void BrowserPlugin::ViewRectsChanged(const gfx::Rect& view_rect) {
+  bool rect_size_changed =
+      !view_rect_ || view_rect_->size() != view_rect.size();
+  if (rect_size_changed || !local_surface_id_.is_valid()) {
+    local_surface_id_ = local_surface_id_allocator_.GenerateId();
+    if (enable_surface_synchronization_ && frame_sink_id_.is_valid()) {
+      RenderWidget* render_widget =
+          RenderFrameImpl::FromWebFrame(Container()->GetDocument().GetFrame())
+              ->GetRenderWidget();
+      float device_scale_factor = render_widget->GetOriginalDeviceScaleFactor();
+      viz::SurfaceInfo surface_info(
+          viz::SurfaceId(frame_sink_id_, local_surface_id_),
+          device_scale_factor,
+          gfx::ScaleToCeiledSize(view_rect.size(), device_scale_factor));
+      compositing_helper_->SetPrimarySurfaceInfo(surface_info);
+    }
+  }
+
+  view_rect_ = view_rect;
+
+  if (attached()) {
+    // Let the browser know about the updated view rect.
+    BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_UpdateGeometry(
+        browser_plugin_instance_id_, *view_rect_, local_surface_id_));
+  }
+
+  if (rect_size_changed && delegate_)
+    delegate_->DidResizeElement(view_rect_->size());
+}
+
 void BrowserPlugin::UpdateGuestFocusState(blink::WebFocusType focus_type) {
   if (!attached())
     return;
@@ -308,29 +360,13 @@ bool BrowserPlugin::Initialize(WebPluginContainer* container) {
   // Defer attach call so that if there's any pending browser plugin
   // destruction, then it can progress first.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&BrowserPlugin::UpdateInternalInstanceId,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&BrowserPlugin::UpdateInternalInstanceId,
+                                weak_ptr_factory_.GetWeakPtr()));
+
+  compositing_helper_.reset(ChildFrameCompositingHelper::CreateForBrowserPlugin(
+      weak_ptr_factory_.GetWeakPtr()));
+
   return true;
-}
-
-void BrowserPlugin::EnableCompositing(bool enable) {
-  bool enabled = !!compositing_helper_.get();
-  if (enabled == enable)
-    return;
-
-  if (enable) {
-    DCHECK(!compositing_helper_.get());
-    if (!compositing_helper_.get()) {
-      compositing_helper_ = ChildFrameCompositingHelper::CreateForBrowserPlugin(
-          weak_ptr_factory_.GetWeakPtr());
-    }
-  }
-
-  if (!enable) {
-    DCHECK(compositing_helper_.get());
-    compositing_helper_->OnContainerDestroy();
-    compositing_helper_ = nullptr;
-  }
 }
 
 void BrowserPlugin::Destroy() {
@@ -383,19 +419,18 @@ bool BrowserPlugin::ShouldForwardToBrowserPlugin(
 void BrowserPlugin::UpdateGeometry(const WebRect& plugin_rect_in_viewport,
                                    const WebRect& clip_rect,
                                    const WebRect& unobscured_rect,
-                                   const WebVector<WebRect>& cut_outs_rects,
                                    bool is_visible) {
-  gfx::Rect old_view_rect = view_rect_;
   // Convert the plugin_rect_in_viewport to window coordinates, which is css.
   WebRect rect_in_css(plugin_rect_in_viewport);
 
   // We will use the local root's RenderWidget to convert coordinates to Window.
   // If this local root belongs to an OOPIF, on the browser side we will have to
   // consider the displacement of the child frame in root window.
-  RenderFrameImpl::FromWebFrame(Container()->GetDocument().GetFrame())
-      ->GetRenderWidget()
-      ->ConvertViewportToWindow(&rect_in_css);
-  view_rect_ = rect_in_css;
+  RenderWidget* render_widget =
+      RenderFrameImpl::FromWebFrame(Container()->GetDocument().GetFrame())
+          ->GetRenderWidget();
+  render_widget->ConvertViewportToWindow(&rect_in_css);
+  gfx::Rect view_rect = rect_in_css;
 
   if (!ready_) {
     if (delegate_)
@@ -403,20 +438,7 @@ void BrowserPlugin::UpdateGeometry(const WebRect& plugin_rect_in_viewport,
     ready_ = true;
   }
 
-  bool rect_size_changed = view_rect_.size() != old_view_rect.size();
-  if (delegate_ && rect_size_changed)
-    delegate_->DidResizeElement(view_rect_.size());
-
-  if (!attached())
-    return;
-
-  if ((!delegate_ && rect_size_changed) ||
-      view_rect_.origin() != old_view_rect.origin()) {
-    // Let the browser know about the updated view rect.
-    BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_UpdateGeometry(
-        browser_plugin_instance_id_, view_rect_));
-    return;
-  }
+  ViewRectsChanged(view_rect);
 }
 
 void BrowserPlugin::UpdateFocus(bool focused, blink::WebFocusType focus_type) {
@@ -432,8 +454,7 @@ void BrowserPlugin::UpdateVisibility(bool visible) {
   if (!attached())
     return;
 
-  if (compositing_helper_.get())
-    compositing_helper_->UpdateVisibility(visible);
+  compositing_helper_->UpdateVisibility(visible);
 
   BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_SetVisibility(
       browser_plugin_instance_id_,
@@ -441,8 +462,9 @@ void BrowserPlugin::UpdateVisibility(bool visible) {
 }
 
 blink::WebInputEventResult BrowserPlugin::HandleInputEvent(
-    const blink::WebInputEvent& event,
+    const blink::WebCoalescedInputEvent& coalesced_event,
     blink::WebCursorInfo& cursor_info) {
+  const blink::WebInputEvent& event = coalesced_event.Event();
   if (guest_crashed_ || !attached())
     return blink::WebInputEventResult::kNotHandled;
 
@@ -543,7 +565,7 @@ bool BrowserPlugin::ExecuteEditCommand(const blink::WebString& name,
 
 bool BrowserPlugin::SetComposition(
     const blink::WebString& text,
-    const blink::WebVector<blink::WebCompositionUnderline>& underlines,
+    const blink::WebVector<blink::WebImeTextSpan>& ime_text_spans,
     const blink::WebRange& replacementRange,
     int selectionStart,
     int selectionEnd) {
@@ -552,8 +574,8 @@ bool BrowserPlugin::SetComposition(
 
   BrowserPluginHostMsg_SetComposition_Params params;
   params.text = text.Utf16();
-  for (size_t i = 0; i < underlines.size(); ++i) {
-    params.underlines.push_back(underlines[i]);
+  for (size_t i = 0; i < ime_text_spans.size(); ++i) {
+    params.ime_text_spans.push_back(ime_text_spans[i]);
   }
 
   params.replacement_range =
@@ -572,15 +594,15 @@ bool BrowserPlugin::SetComposition(
 
 bool BrowserPlugin::CommitText(
     const blink::WebString& text,
-    const blink::WebVector<blink::WebCompositionUnderline>& underlines,
+    const blink::WebVector<blink::WebImeTextSpan>& ime_text_spans,
     const blink::WebRange& replacementRange,
     int relative_cursor_pos) {
   if (!attached())
     return false;
 
-  std::vector<blink::WebCompositionUnderline> std_underlines;
-  for (size_t i = 0; i < underlines.size(); ++i) {
-    std_underlines.push_back(std_underlines[i]);
+  std::vector<blink::WebImeTextSpan> std_ime_text_spans;
+  for (size_t i = 0; i < ime_text_spans.size(); ++i) {
+    std_ime_text_spans.push_back(ime_text_spans[i]);
   }
   gfx::Range replacement_range =
       replacementRange.IsNull()
@@ -589,7 +611,7 @@ bool BrowserPlugin::CommitText(
                        static_cast<uint32_t>(replacementRange.EndOffset()));
 
   BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_ImeCommitText(
-      browser_plugin_instance_id_, text.Utf16(), std_underlines,
+      browser_plugin_instance_id_, text.Utf16(), std_ime_text_spans,
       replacement_range, relative_cursor_pos));
   // TODO(kochi): This assumes the IPC handling always succeeds.
   return true;
@@ -603,7 +625,8 @@ bool BrowserPlugin::FinishComposingText(
   bool keep_selection =
       (selection_behavior == blink::WebInputMethodController::kKeepSelection);
   BrowserPluginManager::Get()->Send(
-      new BrowserPluginHostMsg_ImeFinishComposingText(keep_selection));
+      new BrowserPluginHostMsg_ImeFinishComposingText(
+          browser_plugin_instance_id_, keep_selection));
   // TODO(kochi): This assumes the IPC handling always succeeds.
   return true;
 }

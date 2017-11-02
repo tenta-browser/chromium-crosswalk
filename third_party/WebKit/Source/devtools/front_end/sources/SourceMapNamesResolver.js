@@ -52,7 +52,8 @@ Sources.SourceMapNamesResolver._scopeIdentifiers = function(scope) {
     var scopeText = text.extract(scopeRange);
     var scopeStart = text.toSourceRange(scopeRange).offset;
     var prefix = 'function fui';
-    return Common.formatterWorkerPool.javaScriptIdentifiers(prefix + scopeText)
+    return Formatter.formatterWorkerPool()
+        .javaScriptIdentifiers(prefix + scopeText)
         .then(onIdentifiers.bind(null, text, scopeStart, prefix));
   }
 
@@ -151,8 +152,8 @@ Sources.SourceMapNamesResolver._resolveScope = function(scope) {
     var sourceTextRange = new TextUtils.TextRange(
         startEntry.sourceLineNumber, startEntry.sourceColumnNumber, endEntry.sourceLineNumber,
         endEntry.sourceColumnNumber);
-    var uiSourceCode =
-        Bindings.NetworkProject.uiSourceCodeForScriptURL(Workspace.workspace, startEntry.sourceURL, script);
+    var uiSourceCode = Bindings.debuggerWorkspaceBinding.uiSourceCodeForSourceMapSourceURL(
+        script.debuggerModel, startEntry.sourceURL, script.isContentScript());
     if (!uiSourceCode)
       return Promise.resolve(/** @type {?string} */ (null));
 
@@ -279,7 +280,7 @@ Sources.SourceMapNamesResolver._resolveExpression = function(
     var originalText = text.extract(textRange);
     if (!originalText)
       return Promise.resolve('');
-    return Common.formatterWorkerPool.evaluatableJavaScriptSubstring(originalText);
+    return Formatter.formatterWorkerPool().evaluatableJavaScriptSubstring(originalText);
   }
 };
 
@@ -305,20 +306,24 @@ Sources.SourceMapNamesResolver.resolveThisObject = function(callFrame) {
       return Promise.resolve(callFrame.thisObject());
 
     var thisMapping = thisMappings.valuesArray()[0];
-    var callback;
-    var promise = new Promise(fulfill => callback = fulfill);
-    callFrame.evaluate(thisMapping, 'backtrace', false, true, false, true, onEvaluated.bind(null, callback));
-    return promise;
+    return callFrame
+        .evaluate({
+          expression: thisMapping,
+          objectGroup: 'backtrace',
+          includeCommandLineAPI: false,
+          silent: true,
+          returnByValue: false,
+          generatePreview: true
+        })
+        .then(onEvaluated);
   }
 
   /**
-   * @param {function(!SDK.RemoteObject)} callback
-   * @param {?Protocol.Runtime.RemoteObject} evaluateResult
+   * @param {!SDK.RuntimeModel.EvaluationResult} result
+   * @return {?SDK.RemoteObject}
    */
-  function onEvaluated(callback, evaluateResult) {
-    var remoteObject = evaluateResult ? callFrame.debuggerModel.runtimeModel().createRemoteObject(evaluateResult) :
-                                        callFrame.thisObject();
-    callback(/** @type {!SDK.RemoteObject} */ (remoteObject));
+  function onEvaluated(result) {
+    return !result.exceptionDetails && result.object ? result.object : callFrame.thisObject();
   }
 };
 
@@ -476,31 +481,25 @@ Sources.SourceMapNamesResolver.RemoteObject = class extends SDK.RemoteObject {
    * @override
    * @param {string|!Protocol.Runtime.CallArgument} argumentName
    * @param {string} value
-   * @param {function(string=)} callback
+   * @return {!Promise<string|undefined>}
    */
-  setPropertyValue(argumentName, value, callback) {
-    Sources.SourceMapNamesResolver._resolveScope(this._scope).then(resolveName.bind(this));
+  async setPropertyValue(argumentName, value) {
+    var namesMapping = await Sources.SourceMapNamesResolver._resolveScope(this._scope);
 
-    /**
-     * @param {!Map<string, string>} namesMapping
-     * @this {Sources.SourceMapNamesResolver.RemoteObject}
-     */
-    function resolveName(namesMapping) {
-      var name;
-      if (typeof argumentName === 'string')
-        name = argumentName;
-      else
-        name = /** @type {string} */ (argumentName.value);
+    var name;
+    if (typeof argumentName === 'string')
+      name = argumentName;
+    else
+      name = /** @type {string} */ (argumentName.value);
 
-      var actualName = name;
-      for (var compiledName of namesMapping.keys()) {
-        if (namesMapping.get(compiledName) === name) {
-          actualName = compiledName;
-          break;
-        }
+    var actualName = name;
+    for (var compiledName of namesMapping.keys()) {
+      if (namesMapping.get(compiledName) === name) {
+        actualName = compiledName;
+        break;
       }
-      this._object.setPropertyValue(actualName, value, callback);
     }
+    return this._object.setPropertyValue(actualName, value);
   }
 
   /**
@@ -514,19 +513,11 @@ Sources.SourceMapNamesResolver.RemoteObject = class extends SDK.RemoteObject {
 
   /**
    * @override
-   * @return {!Promise<?Array<!SDK.EventListener>>}
-   */
-  eventListeners() {
-    return this._object.eventListeners();
-  }
-
-  /**
-   * @override
    * @param {!Protocol.Runtime.CallArgument} name
-   * @param {function(string=)} callback
+   * @return {!Promise<string|undefined>}
    */
-  deleteProperty(name, callback) {
-    this._object.deleteProperty(name, callback);
+  async deleteProperty(name) {
+    return this._object.deleteProperty(name);
   }
 
   /**

@@ -4,4 +4,16 @@
 
 #include "core/css/properties/CSSPropertyAPIFilter.h"
 
-namespace blink {}  // namespace blink
+#include "core/css/parser/CSSParserContext.h"
+#include "core/css/parser/CSSPropertyParserHelpers.h"
+
+namespace blink {
+
+const CSSValue* CSSPropertyAPIFilter::ParseSingleValue(
+    CSSParserTokenRange& range,
+    const CSSParserContext& context,
+    const CSSParserLocalContext&) const {
+  return CSSPropertyParserHelpers::ConsumeFilterFunctionList(range, context);
+}
+
+}  // namespace blink

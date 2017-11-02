@@ -7,11 +7,14 @@
 #import <QuartzCore/QuartzCore.h>
 
 #include "base/logging.h"
-#include "base/mac/objc_property_releaser.h"
-#include "base/mac/scoped_nsobject.h"
+#include "base/numerics/math_constants.h"
 #include "ios/chrome/browser/ui/rtl_geometry.h"
 #include "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 // Actions images.
@@ -129,12 +132,11 @@ enum class OverscrollViewState {
   CFTimeInterval _pullStartTimeInSeconds;
   // Tap gesture recognizer that allow the user to tap on an action to activate
   // it.
-  base::scoped_nsobject<UITapGestureRecognizer> _tapGesture;
+  UITapGestureRecognizer* _tapGesture;
   // Array of layers that will be centered vertically.
   // The array is built the first time the method -layersToCenterVertically is
   // called.
-  base::scoped_nsobject<NSArray> _layersToCenterVertically;
-  base::mac::ObjCPropertyReleaser _propertyReleaser_OverscrollActionsView;
+  NSArray* _layersToCenterVertically;
 }
 
 // Redefined to readwrite.
@@ -242,8 +244,6 @@ enum class OverscrollViewState {
 - (instancetype)initWithFrame:(CGRect)frame {
   self = [super initWithFrame:frame];
   if (self) {
-    _propertyReleaser_OverscrollActionsView.Init(self,
-                                                 [OverscrollActionsView class]);
     _deformationBehaviorEnabled = YES;
     self.autoresizingMask =
         UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -294,9 +294,9 @@ enum class OverscrollViewState {
     if (UseRTLLayout())
       [self setTransform:CGAffineTransformMakeScale(-1, 1)];
 
-    _tapGesture.reset([[UITapGestureRecognizer alloc]
-        initWithTarget:self
-                action:@selector(tapGesture:)]);
+    _tapGesture =
+        [[UITapGestureRecognizer alloc] initWithTarget:self
+                                                action:@selector(tapGesture:)];
     [_tapGesture setDelegate:self];
     [self addGestureRecognizer:_tapGesture];
   }
@@ -305,7 +305,7 @@ enum class OverscrollViewState {
 
 - (void)dealloc {
   [self.snapshotView removeFromSuperview];
-  [super dealloc];
+  ;
 }
 
 - (BOOL)selectionCroppingEnabled {
@@ -497,7 +497,8 @@ enum class OverscrollViewState {
   [UIView beginAnimations:@"transform" context:NULL];
   [UIView setAnimationDuration:0.1];
   CATransform3D rotation = CATransform3DMakeRotation(
-      MapValueToRange({kFullThreshold / 2.0, kFullThreshold}, {-M_PI_2, M_PI_4},
+      MapValueToRange({kFullThreshold / 2.0, kFullThreshold},
+                      {-base::kPiFloat / 2, base::kPiFloat / 4},
                       self.verticalOffset),
       0, 0, 1);
   self.refreshActionImageView.layer.transform = rotation;
@@ -695,16 +696,15 @@ enum class OverscrollViewState {
                selectedActionDidChange:self.selectedAction];
 }
 
-- (base::scoped_nsobject<NSArray>&)layersToCenterVertically {
+- (NSArray*)layersToCenterVertically {
   if (!_layersToCenterVertically) {
-    NSArray* layersToCenterVertically = @[
+    _layersToCenterVertically = @[
       _selectionCircleLayer, _selectionCircleMaskLayer,
       _addTabActionImageView.layer, _refreshActionImageView.layer,
       _closeTabActionImageView.layer, _addTabActionImageViewHighlighted.layer,
       _refreshActionImageViewHighlighted.layer,
       _closeTabActionImageViewHighlighted.layer, _backgroundView.layer
     ];
-    _layersToCenterVertically.reset([layersToCenterVertically retain]);
   }
   return _layersToCenterVertically;
 }
@@ -712,7 +712,7 @@ enum class OverscrollViewState {
 - (void)centerSubviewsVertically {
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
-  for (CALayer* layer in [self layersToCenterVertically].get()) {
+  for (CALayer* layer in self.layersToCenterVertically) {
     CGPoint position = layer.position;
     position.y = self.bounds.size.height / 2;
     layer.position = position;
@@ -808,7 +808,7 @@ enum class OverscrollViewState {
   CGFloat deformationDirection = dx > 0 ? 1 : -1;
   for (int i = 0; i < kBezierPathPointCount; i++) {
     CGPoint p;
-    float angle = i * 2 * M_PI / kBezierPathPointCount;
+    float angle = i * 2 * base::kPiFloat / kBezierPathPointCount;
 
     // Circle centered on 0.
     p.x = cos(angle) * radius;

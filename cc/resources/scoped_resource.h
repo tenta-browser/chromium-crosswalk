@@ -26,16 +26,20 @@ class CC_EXPORT ScopedResource : public Resource {
 
   void Allocate(const gfx::Size& size,
                 ResourceProvider::TextureHint hint,
-                ResourceFormat format,
+                viz::ResourceFormat format,
                 const gfx::ColorSpace& color_space);
   void AllocateWithGpuMemoryBuffer(const gfx::Size& size,
-                                   ResourceFormat format,
+                                   viz::ResourceFormat format,
                                    gfx::BufferUsage usage,
                                    const gfx::ColorSpace& color_space);
   void Free();
 
+  ResourceProvider::TextureHint hint() const { return hint_; }
+
  private:
   ResourceProvider* resource_provider_;
+  ResourceProvider::TextureHint hint_ =
+      ResourceProvider::TextureHint::TEXTURE_HINT_DEFAULT;
 
 #if DCHECK_IS_ON()
   base::PlatformThreadId allocate_thread_id_;

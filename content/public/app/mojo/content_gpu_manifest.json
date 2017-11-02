@@ -6,6 +6,8 @@
       "provides": {
         "browser": [
           "content::mojom::Child",
+          "content::mojom::ChildHistogramFetcher",
+          "content::mojom::ChildHistogramFetcherFactory",
           "IPC::mojom::ChannelBootstrap",
           "service_manager::mojom::ServiceFactory",
           "ui::mojom::GpuMain"
@@ -15,6 +17,7 @@
         ]
       },
       "requires": {
+        "*": [ "app" ],
         "content_browser": [ "gpu" ],
         "device": [ "device:power_monitor" ]
       }

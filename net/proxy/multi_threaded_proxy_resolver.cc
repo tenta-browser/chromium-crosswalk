@@ -4,19 +4,19 @@
 
 #include "net/proxy/multi_threaded_proxy_resolver.h"
 
-#include <deque>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/containers/circular_deque.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_checker.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "net/base/net_errors.h"
@@ -98,8 +98,7 @@ class Executor : public base::RefCountedThreadSafe<Executor> {
 };
 
 class MultiThreadedProxyResolver : public ProxyResolver,
-                                   public Executor::Coordinator,
-                                   public base::NonThreadSafe {
+                                   public Executor::Coordinator {
  public:
   // Creates an asynchronous ProxyResolver that runs requests on up to
   // |max_num_threads|.
@@ -127,8 +126,8 @@ class MultiThreadedProxyResolver : public ProxyResolver,
   class RequestImpl;
   // FIFO queue of pending jobs waiting to be started.
   // TODO(eroman): Make this priority queue.
-  typedef std::deque<scoped_refptr<Job>> PendingJobsQueue;
-  typedef std::vector<scoped_refptr<Executor>> ExecutorList;
+  using PendingJobsQueue = base::circular_deque<scoped_refptr<Job>>;
+  using ExecutorList = std::vector<scoped_refptr<Executor>>;
 
   // Returns an idle worker thread which is ready to receive GetProxyForURL()
   // requests. If all threads are occupied, returns NULL.
@@ -145,6 +144,8 @@ class MultiThreadedProxyResolver : public ProxyResolver,
   PendingJobsQueue pending_jobs_;
   ExecutorList executors_;
   scoped_refptr<ProxyResolverScriptData> script_data_;
+
+  THREAD_CHECKER(thread_checker_);
 };
 
 // Job ---------------------------------------------
@@ -447,7 +448,7 @@ MultiThreadedProxyResolver::MultiThreadedProxyResolver(
 }
 
 MultiThreadedProxyResolver::~MultiThreadedProxyResolver() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   // We will cancel all outstanding requests.
   pending_jobs_.clear();
 
@@ -462,7 +463,7 @@ int MultiThreadedProxyResolver::GetProxyForURL(
     const CompletionCallback& callback,
     std::unique_ptr<Request>* request,
     const NetLogWithSource& net_log) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!callback.is_null());
 
   scoped_refptr<GetProxyForURLJob> job(
@@ -495,7 +496,7 @@ int MultiThreadedProxyResolver::GetProxyForURL(
 }
 
 Executor* MultiThreadedProxyResolver::FindIdleExecutor() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   for (ExecutorList::iterator it = executors_.begin();
        it != executors_.end(); ++it) {
     Executor* executor = it->get();
@@ -506,18 +507,18 @@ Executor* MultiThreadedProxyResolver::FindIdleExecutor() {
 }
 
 void MultiThreadedProxyResolver::AddNewExecutor() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_LT(executors_.size(), max_num_threads_);
   // The "thread number" is used to give the thread a unique name.
   int thread_number = executors_.size();
   Executor* executor = new Executor(this, thread_number);
   executor->StartJob(
       new CreateResolverJob(script_data_, resolver_factory_.get()));
-  executors_.push_back(make_scoped_refptr(executor));
+  executors_.push_back(base::WrapRefCounted(executor));
 }
 
 void MultiThreadedProxyResolver::OnExecutorReady(Executor* executor) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   while (!pending_jobs_.empty()) {
     scoped_refptr<Job> job = pending_jobs_.front();
     pending_jobs_.pop_front();

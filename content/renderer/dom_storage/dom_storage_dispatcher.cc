@@ -114,10 +114,12 @@ class DomStorageDispatcher::ProxyImpl : public DOMStorageProxy {
   void SetItem(int connection_id,
                const base::string16& key,
                const base::string16& value,
+               const base::NullableString16& old_value,
                const GURL& page_url,
                const CompletionCallback& callback) override;
   void RemoveItem(int connection_id,
                   const base::string16& key,
+                  const base::NullableString16& old_value,
                   const GURL& page_url,
                   const CompletionCallback& callback) override;
   void ClearArea(int connection_id,
@@ -139,9 +141,17 @@ class DomStorageDispatcher::ProxyImpl : public DOMStorageProxy {
 
   ~ProxyImpl() override {}
 
-  // Sudden termination is disabled when there are callbacks pending
-  // to more reliably commit changes during shutdown.
   void PushPendingCallback(const CompletionCallback& callback) {
+    // Terminate the renderer if an excessive number of calls are made,
+    // This is indicative of script in an infinite loop or being malicious.
+    // It's better to crash intentionally than by running the system OOM
+    // and interfering with everything else running in the system.
+    const int kMaxPendingCompletionCallbacks = 1000000;
+    if (pending_callbacks_.size() > kMaxPendingCompletionCallbacks)
+      CHECK(false) << "Too many pending DOMStorage calls.";
+
+    // Sudden termination is disabled when there are callbacks pending
+    // to more reliably commit changes during shutdown.
     if (pending_callbacks_.empty())
       blink::Platform::Current()->SuddenTerminationChanged(false);
     pending_callbacks_.push_back(callback);
@@ -235,20 +245,26 @@ void DomStorageDispatcher::ProxyImpl::LoadArea(
 }
 
 void DomStorageDispatcher::ProxyImpl::SetItem(
-    int connection_id, const base::string16& key,
-    const base::string16& value, const GURL& page_url,
+    int connection_id,
+    const base::string16& key,
+    const base::string16& value,
+    const base::NullableString16& old_value,
+    const GURL& page_url,
     const CompletionCallback& callback) {
   PushPendingCallback(callback);
   throttling_filter_->SendThrottled(new DOMStorageHostMsg_SetItem(
-      connection_id, key, value, page_url));
+      connection_id, key, value, old_value, page_url));
 }
 
 void DomStorageDispatcher::ProxyImpl::RemoveItem(
-    int connection_id, const base::string16& key,  const GURL& page_url,
+    int connection_id,
+    const base::string16& key,
+    const base::NullableString16& old_value,
+    const GURL& page_url,
     const CompletionCallback& callback) {
   PushPendingCallback(callback);
   throttling_filter_->SendThrottled(new DOMStorageHostMsg_RemoveItem(
-      connection_id, key, page_url));
+      connection_id, key, old_value, page_url));
 }
 
 void DomStorageDispatcher::ProxyImpl::ClearArea(int connection_id,

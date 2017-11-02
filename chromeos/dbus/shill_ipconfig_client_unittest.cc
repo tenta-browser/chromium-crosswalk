@@ -4,6 +4,8 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/values.h"
@@ -105,9 +107,8 @@ TEST_F(ShillIPConfigClientTest, GetProperties) {
 
   // Create the expected value.
   base::DictionaryValue value;
-  value.SetWithoutPathExpansion(shill::kAddressProperty,
-                                new base::Value(kAddress));
-  value.SetWithoutPathExpansion(shill::kMtuProperty, new base::Value(kMtu));
+  value.SetKey(shill::kAddressProperty, base::Value(kAddress));
+  value.SetKey(shill::kMtuProperty, base::Value(kMtu));
 
   // Set expectations.
   PrepareForMethodCall(shill::kGetPropertiesFunction,

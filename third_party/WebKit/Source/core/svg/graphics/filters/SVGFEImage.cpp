@@ -42,13 +42,13 @@
 namespace blink {
 
 FEImage::FEImage(Filter* filter,
-                 PassRefPtr<Image> image,
+                 RefPtr<Image> image,
                  SVGPreserveAspectRatio* preserve_aspect_ratio)
     : FilterEffect(filter),
-      image_(image),
+      image_(std::move(image)),
       tree_scope_(nullptr),
       preserve_aspect_ratio_(preserve_aspect_ratio) {
-  FilterEffect::SetOperatingColorSpace(kColorSpaceDeviceRGB);
+  FilterEffect::SetOperatingInterpolationSpace(kInterpolationSpaceSRGB);
 }
 
 FEImage::FEImage(Filter* filter,
@@ -59,7 +59,7 @@ FEImage::FEImage(Filter* filter,
       tree_scope_(&tree_scope),
       href_(href),
       preserve_aspect_ratio_(preserve_aspect_ratio) {
-  FilterEffect::SetOperatingColorSpace(kColorSpaceDeviceRGB);
+  FilterEffect::SetOperatingInterpolationSpace(kInterpolationSpaceSRGB);
 }
 
 DEFINE_TRACE(FEImage) {
@@ -70,7 +70,7 @@ DEFINE_TRACE(FEImage) {
 
 FEImage* FEImage::CreateWithImage(
     Filter* filter,
-    PassRefPtr<Image> image,
+    RefPtr<Image> image,
     SVGPreserveAspectRatio* preserve_aspect_ratio) {
   return new FEImage(filter, std::move(image), preserve_aspect_ratio);
 }
@@ -191,14 +191,15 @@ sk_sp<SkImageFilter> FEImage::CreateImageFilterForLayoutObject(
   builder.EndRecording(*canvas);
 
   return SkPictureImageFilter::Make(
-      ToSkPicture(paint_recorder.finishRecordingAsPicture()), dst_rect);
+      ToSkPicture(paint_recorder.finishRecordingAsPicture(), dst_rect));
 }
 
 sk_sp<SkImageFilter> FEImage::CreateImageFilter() {
   if (auto* layout_object = ReferencedLayoutObject())
     return CreateImageFilterForLayoutObject(*layout_object);
 
-  sk_sp<SkImage> image = image_ ? image_->ImageForCurrentFrame() : nullptr;
+  sk_sp<SkImage> image =
+      image_ ? image_->PaintImageForCurrentFrame().GetSkImage() : nullptr;
   if (!image) {
     // "A href reference that is an empty image (zero width or zero height),
     //  that fails to download, is non-existent, or that cannot be displayed

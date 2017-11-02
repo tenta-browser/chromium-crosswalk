@@ -13,7 +13,7 @@
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/task_runner_util.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_constants.h"
@@ -31,7 +31,6 @@
 #include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
-#include "content/public/browser/browser_thread.h"
 #include "crypto/random.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 
@@ -181,10 +180,9 @@ void SupervisedUserCreationControllerNew::StartCreationImpl() {
     }
 
     base::DictionaryValue extra;
-    authentication->FillDataForNewUser(creation_context_->local_user_id,
-                                       creation_context_->password,
-                                       &creation_context_->password_data,
-                                       &extra);
+    authentication->FillDataForNewUser(
+        creation_context_->local_user_id, creation_context_->password,
+        &creation_context_->password_data, &extra);
     creation_context_->password_data.GetStringWithoutPathExpansion(
         kEncryptedPassword, &creation_context_->salted_password);
     extra.GetStringWithoutPathExpansion(kPasswordEncryptionKey,
@@ -200,10 +198,8 @@ void SupervisedUserCreationControllerNew::StartCreationImpl() {
   VLOG(1) << " Phase 2 : Create cryptohome";
 
   timeout_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromSeconds(kUserCreationTimeoutSeconds),
-      this,
-      &SupervisedUserCreationControllerNew::CreationTimedOut);
+      FROM_HERE, base::TimeDelta::FromSeconds(kUserCreationTimeoutSeconds),
+      this, &SupervisedUserCreationControllerNew::CreationTimedOut);
   authenticator_ = ExtendedAuthenticator::Create(this);
   UserContext user_context;
   user_context.SetKey(Key(creation_context_->master_key));
@@ -267,21 +263,18 @@ void SupervisedUserCreationControllerNew::OnMountSuccess(
   // Plain text password, hashed and salted with individual salt.
   // It can be used for mounting homedir, and can be replaced only when signed.
   cryptohome::KeyDefinition password_key(
-      creation_context_->salted_password,
-      kCryptohomeSupervisedUserKeyLabel,
+      creation_context_->salted_password, kCryptohomeSupervisedUserKeyLabel,
       kCryptohomeSupervisedUserKeyPrivileges);
   std::string encryption_key;
   base::Base64Decode(creation_context_->encryption_key, &encryption_key);
   password_key.authorization_data.push_back(
-      cryptohome::KeyDefinition::AuthorizationData(true /* encrypt */,
-                                                   false /* sign */,
-                                                   encryption_key));
+      cryptohome::KeyDefinition::AuthorizationData(
+          true /* encrypt */, false /* sign */, encryption_key));
   std::string signature_key;
   base::Base64Decode(creation_context_->signature_key, &signature_key);
   password_key.authorization_data.push_back(
-      cryptohome::KeyDefinition::AuthorizationData(false /* encrypt */,
-                                                   true /* sign */,
-                                                   signature_key));
+      cryptohome::KeyDefinition::AuthorizationData(
+          false /* encrypt */, true /* sign */, signature_key));
 
   Key key(Key::KEY_TYPE_SALTED_PBKDF2_AES256_1234,
           std::string(),  // The salt is stored elsewhere.
@@ -293,9 +286,7 @@ void SupervisedUserCreationControllerNew::OnMountSuccess(
   context.SetIsUsingOAuth(false);
 
   authenticator_->AddKey(
-      context,
-      password_key,
-      true,
+      context, password_key, true,
       base::Bind(&SupervisedUserCreationControllerNew::OnAddKeySuccess,
                  weak_factory_.GetWeakPtr()));
 }
@@ -330,8 +321,7 @@ void SupervisedUserCreationControllerNew::OnAddKeySuccess() {
 
   // Registration utility will update user data if user already exist.
   creation_context_->registration_utility->Register(
-      creation_context_->sync_user_id,
-      info,
+      creation_context_->sync_user_id, info,
       base::Bind(&SupervisedUserCreationControllerNew::RegistrationCallback,
                  weak_factory_.GetWeakPtr()));
 }
@@ -348,9 +338,9 @@ void SupervisedUserCreationControllerNew::RegistrationCallback(
     creation_context_->token = token;
 
     PostTaskAndReplyWithResult(
-        content::BrowserThread::GetBlockingPool()
-            ->GetTaskRunnerWithShutdownBehavior(
-                  base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN)
+        base::CreateTaskRunnerWithTraits(
+            {base::MayBlock(), base::TaskPriority::BACKGROUND,
+             base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})
             .get(),
         FROM_HERE,
         base::Bind(&StoreSupervisedUserFiles, creation_context_->token,

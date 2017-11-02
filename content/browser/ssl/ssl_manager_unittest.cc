@@ -6,6 +6,7 @@
 
 #include "base/macros.h"
 #include "content/browser/site_instance_impl.h"
+#include "content/common/frame_messages.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/test/mock_render_process_host.h"

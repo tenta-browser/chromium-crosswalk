@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGRect rect",
@@ -20,14 +20,6 @@
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGResourcePattern pattern id='Pattern'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "full"
-    },
     {
       "object": "LayoutSVGRect rect",
       "reason": "SVG resource change"

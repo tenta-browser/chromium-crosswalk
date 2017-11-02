@@ -14,10 +14,12 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/values.h"
-#include "components/prefs/base_prefs_export.h"
 #include "components/prefs/pref_store.h"
+#include "components/prefs/prefs_export.h"
 
+class PersistentPrefStore;
 class PrefNotifier;
+class PrefRegistry;
 class PrefStore;
 
 // The PrefValueStore manages various sources of values for Preferences
@@ -30,6 +32,34 @@ class PrefStore;
 class COMPONENTS_PREFS_EXPORT PrefValueStore {
  public:
   typedef base::Callback<void(const std::string&)> PrefChangedCallback;
+
+  // Delegate used to observe certain events in the |PrefValueStore|'s lifetime.
+  class Delegate {
+   public:
+    virtual ~Delegate() {}
+
+    // Called by the PrefValueStore constructor with the PrefStores passed to
+    // it.
+    virtual void Init(PrefStore* managed_prefs,
+                      PrefStore* supervised_user_prefs,
+                      PrefStore* extension_prefs,
+                      PrefStore* command_line_prefs,
+                      PrefStore* user_prefs,
+                      PrefStore* recommended_prefs,
+                      PrefStore* default_prefs,
+                      PrefNotifier* pref_notifier) = 0;
+
+    virtual void InitIncognitoUserPrefs(
+        scoped_refptr<PersistentPrefStore> incognito_user_prefs_overlay,
+        scoped_refptr<PersistentPrefStore> incognito_user_prefs_underlay,
+        const std::vector<const char*>& overlay_pref_names) = 0;
+
+    virtual void InitPrefRegistry(PrefRegistry* pref_registry) = 0;
+
+    // Called whenever PrefValueStore::UpdateCommandLinePrefStore is called,
+    // with the same argument.
+    virtual void UpdateCommandLinePrefStore(PrefStore* command_line_prefs) = 0;
+  };
 
   // PrefStores must be listed here in order from highest to lowest priority.
   //   MANAGED contains all managed preference values that are provided by
@@ -77,19 +107,24 @@ class COMPONENTS_PREFS_EXPORT PrefValueStore {
                  PrefStore* user_prefs,
                  PrefStore* recommended_prefs,
                  PrefStore* default_prefs,
-                 PrefNotifier* pref_notifier);
+                 PrefNotifier* pref_notifier,
+                 std::unique_ptr<Delegate> delegate = nullptr);
   virtual ~PrefValueStore();
 
   // Creates a clone of this PrefValueStore with PrefStores overwritten
   // by the parameters passed, if unequal NULL.
-  PrefValueStore* CloneAndSpecialize(PrefStore* managed_prefs,
-                                     PrefStore* supervised_user_prefs,
-                                     PrefStore* extension_prefs,
-                                     PrefStore* command_line_prefs,
-                                     PrefStore* user_prefs,
-                                     PrefStore* recommended_prefs,
-                                     PrefStore* default_prefs,
-                                     PrefNotifier* pref_notifier);
+  //
+  // The new PrefValueStore is passed the |delegate| in its constructor.
+  PrefValueStore* CloneAndSpecialize(
+      PrefStore* managed_prefs,
+      PrefStore* supervised_user_prefs,
+      PrefStore* extension_prefs,
+      PrefStore* command_line_prefs,
+      PrefStore* user_prefs,
+      PrefStore* recommended_prefs,
+      PrefStore* default_prefs,
+      PrefNotifier* pref_notifier,
+      std::unique_ptr<Delegate> delegate = nullptr);
 
   // A PrefValueStore can have exactly one callback that is directly
   // notified of preferences changing in the store. This does not
@@ -141,6 +176,8 @@ class COMPONENTS_PREFS_EXPORT PrefValueStore {
 
   // Update the command line PrefStore with |command_line_prefs|.
   void UpdateCommandLinePrefStore(PrefStore* command_line_prefs);
+
+  bool IsInitializationComplete() const;
 
  private:
   // Keeps a PrefStore reference on behalf of the PrefValueStore and monitors
@@ -254,6 +291,9 @@ class COMPONENTS_PREFS_EXPORT PrefValueStore {
 
   // True if not all of the PrefStores were initialized successfully.
   bool initialization_failed_;
+
+  // Might be null.
+  std::unique_ptr<Delegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(PrefValueStore);
 };

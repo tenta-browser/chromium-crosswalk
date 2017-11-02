@@ -4,7 +4,6 @@
 
 #include "core/layout/LayoutTestHelper.h"
 #include "core/layout/LayoutView.h"
-#include "core/layout/PaintInvalidationState.h"
 #include "core/paint/PaintLayer.h"
 #include "core/paint/PaintPropertyTreePrinter.h"
 #include "platform/graphics/paint/GeometryMapper.h"
@@ -44,12 +43,16 @@ class VisualRectMappingTest : public RenderingTest {
       return;
 
     FloatClipRect geometry_mapper_rect((FloatRect(local_rect)));
-    if (object.PaintProperties() || object.LocalBorderBoxProperties()) {
-      geometry_mapper_rect.MoveBy(FloatPoint(object.PaintOffset()));
-      GeometryMapper::SourceToDestinationVisualRect(
-          *object.LocalBorderBoxProperties(), ancestor.ContentsProperties(),
-          geometry_mapper_rect);
-      geometry_mapper_rect.MoveBy(-FloatPoint(ancestor.PaintOffset()));
+    if (FragmentData* fragment_data = object.FirstFragment()) {
+      if (fragment_data->PaintProperties() ||
+          fragment_data->LocalBorderBoxProperties()) {
+        geometry_mapper_rect.MoveBy(FloatPoint(object.PaintOffset()));
+        GeometryMapper::LocalToAncestorVisualRect(
+            *fragment_data->LocalBorderBoxProperties(),
+            ancestor.FirstFragment()->ContentsProperties(),
+            geometry_mapper_rect);
+        geometry_mapper_rect.MoveBy(-FloatPoint(ancestor.PaintOffset()));
+      }
     }
 
     // The following condition can be false if paintInvalidationContainer is
@@ -64,7 +67,7 @@ class VisualRectMappingTest : public RenderingTest {
     EXPECT_TRUE(EnclosingIntRect(slow_map_rect)
                     .Contains(EnclosingIntRect(expected_visual_rect)));
 
-    if (object.PaintProperties()) {
+    if (object.FirstFragment() && object.FirstFragment()->PaintProperties()) {
       EXPECT_TRUE(EnclosingIntRect(geometry_mapper_rect.Rect())
                       .Contains(EnclosingIntRect(expected_visual_rect)));
     }
@@ -202,7 +205,7 @@ TEST_F(VisualRectMappingTest, LayoutViewSubpixelRounding) {
   LayoutBlock* frame_container =
       ToLayoutBlock(GetLayoutObjectByElementId("frameContainer"));
   LayoutObject* target =
-      ChildDocument().GetElementById("target")->GetLayoutObject();
+      ChildDocument().getElementById("target")->GetLayoutObject();
   LayoutRect rect(0, 0, 100, 100);
   EXPECT_TRUE(target->MapToVisualRectInAncestorSpace(frame_container, rect));
   // When passing from the iframe to the parent frame, the rect of (0.5, 0, 100,
@@ -242,7 +245,7 @@ TEST_F(VisualRectMappingTest, LayoutViewDisplayNone) {
   EXPECT_TRUE(frame_div->MapToVisualRectInAncestorSpace(frame_container, rect));
   EXPECT_EQ(rect, LayoutRect(4, 13, 20, 37));
 
-  Element* frame_element = GetDocument().GetElementById("frame");
+  Element* frame_element = GetDocument().getElementById("frame");
   frame_element->SetInlineStyleProperty(CSSPropertyDisplay, "none");
   GetDocument().View()->UpdateAllLifecyclePhases();
 
@@ -368,7 +371,7 @@ TEST_F(VisualRectMappingTest, ContainerOverflowScroll) {
   CheckPaintInvalidationVisualRect(*target);
   // (2, 3, 140, 100) is first clipped by container's overflow clip, to
   // (10, 10, 50, 80), then is by added container's offset in LayoutView
-  // (111, 222).
+  // (222, 111).
   EXPECT_EQ(LayoutRect(232, 121, 50, 80), target->VisualRect());
 
   LayoutRect container_local_visual_rect = container->LocalVisualRect();
@@ -405,8 +408,8 @@ TEST_F(VisualRectMappingTest, ContainerFlippedWritingModeAndOverflowScroll) {
   // 150 = total_layout_overflow(100 + 100) - width(50)
   EXPECT_EQ(LayoutUnit(150), container->ScrollLeft());
   container->SetScrollTop(LayoutUnit(7));
-  container->SetScrollLeft(
-      LayoutUnit(142));  // Scroll to the right by 8 pixels.
+  // Scroll to the right by 8 pixels.
+  container->SetScrollLeft(LayoutUnit(142));
   GetDocument().View()->UpdateAllLifecyclePhases();
 
   LayoutBlock* target = ToLayoutBlock(GetLayoutObjectByElementId("target"));
@@ -435,10 +438,9 @@ TEST_F(VisualRectMappingTest, ContainerFlippedWritingModeAndOverflowScroll) {
   CheckPaintInvalidationVisualRect(*target);
   // (-2, 3, 140, 100) is first clipped by container's overflow clip, to
   // (40, 10, 50, 80), then is added by container's offset in LayoutView
-  // (111, 222).
-  // TODO(crbug.com/600039): rect.x() should be 262 (left + border-left), but is
-  // offset
-  // by extra horizontal border-widths because of layout error.
+  // (222, 111).
+  // TODO(crbug.com/600039): rect.X() should be 262 (left + border-left), but is
+  // offset by extra horizontal border-widths because of layout error.
   EXPECT_EQ(LayoutRect(322, 121, 50, 80), target->VisualRect());
 
   LayoutRect container_local_visual_rect = container->LocalVisualRect();
@@ -873,7 +875,7 @@ TEST_F(VisualRectMappingTest, PerspectivePlusScroll) {
   transform.FlattenTo2d();
 
   LayoutRect output(transform.MapRect(FloatRect(originalRect)));
-  output.Intersect(container->ClippingRect());
+  output.Intersect(container->ClippingRect(LayoutPoint()));
   CheckVisualRect(*target, *target->View(), originalRect, output, false, false);
 }
 

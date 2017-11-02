@@ -35,6 +35,10 @@
 
 namespace blink {
 
+namespace {
+static size_t max_index = 0;
+}
+
 PerformanceEntry::PerformanceEntry(const String& name,
                                    const String& entry_type,
                                    double start_time,
@@ -43,7 +47,9 @@ PerformanceEntry::PerformanceEntry(const String& name,
       entry_type_(entry_type),
       start_time_(start_time),
       duration_(finish_time - start_time),
-      entry_type_enum_(ToEntryTypeEnum(entry_type)) {}
+      entry_type_enum_(ToEntryTypeEnum(entry_type)) {
+  index_ = ++max_index;
+}
 
 PerformanceEntry::~PerformanceEntry() {}
 
@@ -89,11 +95,12 @@ PerformanceEntry::EntryType PerformanceEntry::ToEntryTypeEnum(
 ScriptValue PerformanceEntry::toJSONForBinding(
     ScriptState* script_state) const {
   V8ObjectBuilder result(script_state);
-  BuildJSONValue(result);
+  BuildJSONValue(script_state, result);
   return result.GetScriptValue();
 }
 
-void PerformanceEntry::BuildJSONValue(V8ObjectBuilder& builder) const {
+void PerformanceEntry::BuildJSONValue(ScriptState* script_state,
+                                      V8ObjectBuilder& builder) const {
   builder.AddString("name", name());
   builder.AddString("entryType", entryType());
   builder.AddNumber("startTime", startTime());

@@ -33,6 +33,8 @@ public class SectionInformation {
     protected ArrayList<PaymentOption> mItems;
     private int mSelectedItem;
     public String mErrorMessage;
+    @Nullable
+    public String mAddditionalText;
 
     /**
      * Builds an empty section without selection.
@@ -169,7 +171,7 @@ public class SectionInformation {
      */
     public int getAddStringId() {
         if (mDataType == PaymentRequestUI.TYPE_SHIPPING_ADDRESSES) {
-            return R.string.autofill_create_profile;
+            return R.string.payments_add_address;
         } else if (mDataType == PaymentRequestUI.TYPE_CONTACT_DETAILS) {
             return R.string.payments_add_contact;
         } else if (mDataType == PaymentRequestUI.TYPE_PAYMENT_METHODS) {
@@ -207,6 +209,17 @@ public class SectionInformation {
     /** @return The optional error message to display when the selection is invalid. */
     public String getErrorMessage() {
         return mErrorMessage;
+    }
+
+    /** @param text The optional additional text to display in this section. */
+    public void setAdditionalText(String text) {
+        mAddditionalText = text;
+    }
+
+    /** @return The optional additional text to display in this section. */
+    @Nullable
+    public String getAdditionalText() {
+        return mAddditionalText;
     }
 
     /**

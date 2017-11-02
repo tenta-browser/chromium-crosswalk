@@ -56,16 +56,15 @@ const char* TrayPopupHeaderButton::GetClassName() const {
   return kViewClassName;
 }
 
-gfx::Size TrayPopupHeaderButton::GetPreferredSize() const {
+gfx::Size TrayPopupHeaderButton::CalculatePreferredSize() const {
   return gfx::Size(kTrayPopupItemMinHeight, kTrayPopupItemMinHeight);
 }
 
 void TrayPopupHeaderButton::StateChanged(ButtonState old_state) {
   if (state() == STATE_HOVERED || state() == STATE_PRESSED) {
-    set_background(views::Background::CreateSolidBackground(
-        kTrayPopupHoverBackgroundColor));
+    SetBackground(views::CreateSolidBackground(kTrayPopupHoverBackgroundColor));
   } else {
-    set_background(nullptr);
+    SetBackground(nullptr);
   }
   SchedulePaint();
 }

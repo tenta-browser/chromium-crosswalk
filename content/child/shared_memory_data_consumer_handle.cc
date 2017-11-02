@@ -5,10 +5,10 @@
 #include "content/child/shared_memory_data_consumer_handle.h"
 
 #include <algorithm>
-#include <deque>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
@@ -117,7 +117,7 @@ class SharedMemoryDataConsumerHandle::Context final
       // We cannot notify synchronously because the user doesn't have the reader
       // yet.
       notification_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&Context::NotifyInternal, this, false));
+          FROM_HERE, base::BindOnce(&Context::NotifyInternal, this, false));
     }
   }
   void ReleaseReaderLock() {
@@ -137,7 +137,7 @@ class SharedMemoryDataConsumerHandle::Context final
     // this task because in this case a new reader is obtained and
     // notification is already done at the reader creation time if necessary.
     runner->PostTask(FROM_HERE,
-                     base::Bind(&Context::NotifyInternal, this, false));
+                     base::BindOnce(&Context::NotifyInternal, this, false));
   }
   // Must be called with |lock_| not aquired.
   void Notify() { NotifyInternal(true); }
@@ -157,7 +157,8 @@ class SharedMemoryDataConsumerHandle::Context final
       // We need to reset |on_reader_detached_| on the right thread because it
       // might lead to the object destruction.
       writer_task_runner_->PostTask(
-          FROM_HERE, base::Bind(&Context::ResetOnReaderDetachedWithLock, this));
+          FROM_HERE,
+          base::BindOnce(&Context::ResetOnReaderDetachedWithLock, this));
     }
   }
   bool is_handle_locked() const {
@@ -220,7 +221,7 @@ class SharedMemoryDataConsumerHandle::Context final
       // this task because in this case a new reader is obtained and
       // notification is already done at the reader creation time if necessary.
       runner->PostTask(FROM_HERE,
-                       base::Bind(&Context::NotifyInternal, this, false));
+                       base::BindOnce(&Context::NotifyInternal, this, false));
     }
   }
   void Clear() {
@@ -243,7 +244,8 @@ class SharedMemoryDataConsumerHandle::Context final
   // |result_| stores the ultimate state of this handle if it has. Otherwise,
   // |Ok| is set.
   Result result_;
-  std::deque<std::unique_ptr<RequestPeer::ThreadSafeReceivedData>> queue_;
+  base::circular_deque<std::unique_ptr<RequestPeer::ThreadSafeReceivedData>>
+      queue_;
   size_t first_offset_;
   Client* client_;
   scoped_refptr<base::SingleThreadTaskRunner> notification_task_runner_;

@@ -5,9 +5,9 @@
 #include "modules/serviceworkers/ServiceWorkerLinkResource.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/Document.h"
+#include "core/dom/TaskRunnerHelper.h"
 #include "core/frame/DOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
@@ -15,9 +15,11 @@
 #include "core/inspector/ConsoleMessage.h"
 #include "modules/serviceworkers/NavigatorServiceWorker.h"
 #include "modules/serviceworkers/ServiceWorkerContainer.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
+#include "public/platform/modules/serviceworker/service_worker_error_type.mojom-blink.h"
 
 namespace blink {
 
@@ -26,32 +28,26 @@ namespace {
 class RegistrationCallback
     : public WebServiceWorkerProvider::WebServiceWorkerRegistrationCallbacks {
  public:
-  explicit RegistrationCallback(LinkLoaderClient* client) : client_(client) {}
+  explicit RegistrationCallback(HTMLLinkElement* owner) : owner_(owner) {}
   ~RegistrationCallback() override {}
 
   void OnSuccess(
       std::unique_ptr<WebServiceWorkerRegistration::Handle> handle) override {
-    Platform::Current()
-        ->CurrentThread()
-        ->Scheduler()
-        ->TimerTaskRunner()
+    TaskRunnerHelper::Get(TaskType::kUnthrottled, &owner_->GetDocument())
         ->PostTask(BLINK_FROM_HERE,
-                   WTF::Bind(&LinkLoaderClient::LinkLoaded, client_));
+                   WTF::Bind(&LinkLoaderClient::LinkLoaded, owner_));
   }
 
   void OnError(const WebServiceWorkerError& error) override {
-    Platform::Current()
-        ->CurrentThread()
-        ->Scheduler()
-        ->TimerTaskRunner()
+    TaskRunnerHelper::Get(TaskType::kUnthrottled, &owner_->GetDocument())
         ->PostTask(BLINK_FROM_HERE,
-                   WTF::Bind(&LinkLoaderClient::LinkLoadingErrored, client_));
+                   WTF::Bind(&LinkLoaderClient::LinkLoadingErrored, owner_));
   }
 
  private:
   WTF_MAKE_NONCOPYABLE(RegistrationCallback);
 
-  Persistent<LinkLoaderClient> client_;
+  Persistent<HTMLLinkElement> owner_;
 };
 }
 
@@ -92,7 +88,7 @@ void ServiceWorkerLinkResource::Process() {
         "Cannot register service worker with <link> element. " +
             error_message));
     WTF::MakeUnique<RegistrationCallback>(owner_)->OnError(
-        WebServiceWorkerError(WebServiceWorkerError::kErrorTypeSecurity,
+        WebServiceWorkerError(mojom::blink::ServiceWorkerErrorType::kSecurity,
                               error_message));
     return;
   }

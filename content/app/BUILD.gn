@@ -26,9 +26,11 @@ template("implement_content_app") {
     "//content:export",
     "//content:sandbox_helper_win",
     "//content/public/common:common_sources",
+    "//content/public/common:service_names",
     "//crypto",
     "//services/service_manager/embedder",
     "//services/service_manager/public/interfaces",
+    "//services/service_manager/runner/common",
     "//mojo/edk/system",
     "//ppapi/features",
     "//ui/base",
@@ -49,9 +51,7 @@ template("implement_content_app") {
       "//content/public/android:jni",
       "//device/bluetooth",
       "//device/gamepad",
-      "//device/generic_sensor",
       "//device/geolocation",
-      "//device/power_save_blocker",
       "//device/sensors",
       "//device/usb",
       "//gpu",
@@ -118,13 +118,9 @@ template("implement_content_app") {
 
     if (is_android) {
       sources += [
-        "android/app_jni_registrar.cc",
-        "android/app_jni_registrar.h",
-        "android/child_process_service_impl.cc",
-        "android/child_process_service_impl.h",
+        "android/content_child_process_service_delegate.cc",
         "android/content_jni_onload.cc",
         "android/content_main.cc",
-        "android/content_main.h",
         "android/library_loader_hooks.cc",
         "android/library_loader_hooks.h",
       ]

@@ -64,9 +64,6 @@ var NetInternalsTest = (function() {
       // If it was actual text it'd be too low-contrast, but a square is fine.
       this.accessibilityAuditConfig.ignoreSelectors(
           'lowContrastElements', '#timeline-view-selection-ul label');
-      // Suppress this error; the black-on-gray button is readable.
-      this.accessibilityAuditConfig.ignoreSelectors(
-          'lowContrastElements', '#export-view-save-log-file');
       // False positive because the background color highlights and then
       // fades out with a transition when there's an error.
       this.accessibilityAuditConfig.ignoreSelectors(
@@ -74,7 +71,7 @@ var NetInternalsTest = (function() {
       // False positives for unknown reason.
       this.accessibilityAuditConfig.ignoreSelectors(
           'focusableElementNotVisibleAndNotAriaHidden',
-          '#hsts-view-tab-content *');
+          '#domain-security-policy-view-tab-content *');
 
       // TODO(aboxhall): enable when this bug is fixed:
       // https://github.com/GoogleChrome/accessibility-developer-tools/issues/69
@@ -82,7 +79,6 @@ var NetInternalsTest = (function() {
           'focusableElementNotVisibleAndNotAriaHidden');
 
       var controlsWithoutLabelSelectors = [
-        '#export-view-user-comments',
         '#hsts-view-add-input',
         '#hsts-view-delete-input',
         '#hsts-view-query-input',
@@ -304,7 +300,6 @@ var NetInternalsTest = (function() {
      */
     var hashToTabIdMap = {
       capture: CaptureView.TAB_ID,
-      export: ExportView.TAB_ID,
       import: ImportView.TAB_ID,
       proxy: ProxyView.TAB_ID,
       events: EventsView.TAB_ID,
@@ -314,10 +309,9 @@ var NetInternalsTest = (function() {
       http2: SpdyView.TAB_ID,
       'alt-svc': AltSvcView.TAB_ID,
       quic: QuicView.TAB_ID,
-      sdch: SdchView.TAB_ID,
       httpCache: HttpCacheView.TAB_ID,
       modules: ModulesView.TAB_ID,
-      hsts: HSTSView.TAB_ID,
+      hsts: DomainSecurityPolicyView.TAB_ID,
       prerender: PrerenderView.TAB_ID,
       bandwidth: BandwidthView.TAB_ID,
       chromeos: CrosView.TAB_ID

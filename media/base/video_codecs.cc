@@ -90,6 +90,8 @@ std::string GetProfileName(VideoCodecProfile profile) {
       return "dolby vision profile 5";
     case DOLBYVISION_PROFILE7:
       return "dolby vision profile 7";
+    case THEORAPROFILE_ANY:
+      return "theora";
   }
   NOTREACHED();
   return "";
@@ -237,9 +239,10 @@ bool ParseLegacyVp9CodecID(const std::string& codec_id,
                            VideoCodecProfile* profile,
                            uint8_t* level_idc) {
   if (codec_id == "vp9" || codec_id == "vp9.0") {
-    // Profile is not included in the codec string. Assuming profile 0 to be
-    // backward compatible.
-    *profile = VP9PROFILE_PROFILE0;
+    // Profile is not included in the codec string. Consumers of parsed codec
+    // should handle by rejecting ambiguous string or resolving to a default
+    // profile.
+    *profile = VIDEO_CODEC_PROFILE_UNKNOWN;
     // Use 0 to indicate unknown level.
     *level_idc = 0;
     return true;

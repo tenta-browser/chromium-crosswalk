@@ -4,7 +4,10 @@
 
 /**
  * @typedef {{
- *   fontList: Array<{0: string, 1: (string|undefined), 2: (string|undefined)}>,
+ *   fontList: !Array<{
+ *       0: string,
+ *       1: (string|undefined),
+ *       2: (string|undefined)}>,
  *   extensionUrl: string
  * }}
  */
@@ -12,44 +15,39 @@ var FontsData;
 
 cr.define('settings', function() {
   /** @interface */
-  function FontsBrowserProxy() {}
-
-  FontsBrowserProxy.prototype = {
+  class FontsBrowserProxy {
     /**
      * @return {!Promise<!FontsData>} Fonts and the advanced font settings
      *     extension URL.
      */
-    fetchFontsData: assertNotReached,
+    fetchFontsData() {}
 
-    observeAdvancedFontExtensionAvailable: assertNotReached,
+    observeAdvancedFontExtensionAvailable() {}
 
-    openAdvancedFontSettings: assertNotReached,
-  };
+    openAdvancedFontSettings() {}
+  }
 
   /**
    * @implements {settings.FontsBrowserProxy}
-   * @constructor
    */
-  function FontsBrowserProxyImpl() {}
-
-  cr.addSingletonGetter(FontsBrowserProxyImpl);
-
-  FontsBrowserProxyImpl.prototype = {
+  class FontsBrowserProxyImpl {
     /** @override */
-    fetchFontsData: function() {
+    fetchFontsData() {
       return cr.sendWithPromise('fetchFontsData');
-    },
+    }
 
     /** @override */
-    observeAdvancedFontExtensionAvailable: function() {
+    observeAdvancedFontExtensionAvailable() {
       chrome.send('observeAdvancedFontExtensionAvailable');
-    },
+    }
 
     /** @override */
-    openAdvancedFontSettings: function() {
+    openAdvancedFontSettings() {
       chrome.send('openAdvancedFontSettings');
     }
-  };
+  }
+
+  cr.addSingletonGetter(FontsBrowserProxyImpl);
 
   return {
     FontsBrowserProxy: FontsBrowserProxy,

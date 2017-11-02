@@ -44,8 +44,11 @@ struct CONTENT_EXPORT DownloadCreateInfo {
   // redirection by the server for |url_chain|.
   const GURL& url() const;
 
-  // The ID of the download.
+  // The ID of the download. (Deprecated)
   uint32_t download_id;
+
+  // The unique identifier for the download.
+  std::string guid;
 
   // The chain of redirects that leading up to and including the final URL.
   std::vector<GURL> url_chain;
@@ -130,11 +133,20 @@ struct CONTENT_EXPORT DownloadCreateInfo {
   // For continuing a download, the ETag of the file.
   std::string etag;
 
-  // If "Accept-Ranges:bytes" header presents in the response header.
+  // If the download response can be partial content.
+  // Either "Accept-Ranges" or "Content-Range" header presents in the
+  // response header.
   bool accept_range;
 
   // The HTTP connection type.
   net::HttpResponseInfo::ConnectionInfo connection_info;
+
+  // The HTTP request method.
+  std::string method;
+
+  // Whether the download should fetch the response body for non successful HTTP
+  // response.
+  bool fetch_error_body = false;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(DownloadCreateInfo);

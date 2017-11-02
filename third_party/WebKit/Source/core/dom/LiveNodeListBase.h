@@ -26,10 +26,10 @@
 #define LiveNodeListBase_h
 
 #include "core/CoreExport.h"
-#include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/html/CollectionType.h"
+#include "core/html_names.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -149,7 +149,7 @@ Element* LiveNodeListBase::TraverseMatchingElementsForwardToOffset(
     if (++current_offset == offset)
       return next;
   }
-  return 0;
+  return nullptr;
 }
 
 template <typename MatchFunc>
@@ -167,7 +167,7 @@ Element* LiveNodeListBase::TraverseMatchingElementsBackwardToOffset(
     if (--current_offset == offset)
       return previous;
   }
-  return 0;
+  return nullptr;
 }
 
 }  // namespace blink

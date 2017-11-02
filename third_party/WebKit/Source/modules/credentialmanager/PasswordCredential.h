@@ -5,11 +5,11 @@
 #ifndef PasswordCredential_h
 #define PasswordCredential_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/modules/v8/FormDataOrURLSearchParams.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
+#include "bindings/modules/v8/form_data_or_url_search_params.h"
 #include "modules/ModulesExport.h"
-#include "modules/credentialmanager/SiteBoundCredential.h"
+#include "modules/credentialmanager/Credential.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/network/EncodedFormData.h"
 #include "platform/weborigin/KURL.h"
@@ -22,7 +22,7 @@ class WebPasswordCredential;
 
 using CredentialPostBodyType = FormDataOrURLSearchParams;
 
-class MODULES_EXPORT PasswordCredential final : public SiteBoundCredential {
+class MODULES_EXPORT PasswordCredential final : public Credential {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -45,9 +45,12 @@ class MODULES_EXPORT PasswordCredential final : public SiteBoundCredential {
     out = additional_data_;
   }
 
+  const String& password() const;
+  const String& name() const;
+  const KURL& iconURL() const;
+
   // Internal methods
-  PassRefPtr<EncodedFormData> EncodeFormData(String& content_type) const;
-  const String& Password() const;
+  RefPtr<EncodedFormData> EncodeFormData(String& content_type) const;
   DECLARE_VIRTUAL_TRACE();
 
  private:

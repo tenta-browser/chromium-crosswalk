@@ -2,24 +2,47 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/child/service_worker/service_worker_dispatcher.h"
+
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "content/child/service_worker/service_worker_dispatcher.h"
 #include "content/child/service_worker/service_worker_handle_reference.h"
 #include "content/child/service_worker/service_worker_provider_context.h"
 #include "content/child/service_worker/web_service_worker_impl.h"
 #include "content/child/service_worker/web_service_worker_registration_impl.h"
 #include "content/child/thread_safe_sender.h"
+#include "content/common/service_worker/service_worker_container.mojom.h"
 #include "content/common/service_worker/service_worker_messages.h"
 #include "content/common/service_worker/service_worker_types.h"
 #include "ipc/ipc_sync_message_filter.h"
 #include "ipc/ipc_test_sink.h"
+#include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerProviderClient.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 
 namespace content {
 
 namespace {
+
+class MockServiceWorkerRegistrationObjectHost
+    : public blink::mojom::ServiceWorkerRegistrationObjectHost {
+ public:
+  MockServiceWorkerRegistrationObjectHost() = default;
+  ~MockServiceWorkerRegistrationObjectHost() override = default;
+
+  void AddBinding(
+      blink::mojom::ServiceWorkerRegistrationObjectHostAssociatedRequest
+          request) {
+    bindings_.AddBinding(this, std::move(request));
+  }
+
+  int GetBindingCount() const { return bindings_.size(); }
+
+ private:
+  mojo::AssociatedBindingSet<blink::mojom::ServiceWorkerRegistrationObjectHost>
+      bindings_;
+};
 
 class ServiceWorkerTestSender : public ThreadSafeSender {
  public:
@@ -51,10 +74,13 @@ class ServiceWorkerDispatcherTest : public testing::Test {
   }
 
   void CreateObjectInfoAndVersionAttributes(
-      ServiceWorkerRegistrationObjectInfo* info,
+      blink::mojom::ServiceWorkerRegistrationObjectInfoPtr* info,
       ServiceWorkerVersionAttributes* attrs) {
-    info->handle_id = 10;
-    info->registration_id = 20;
+    *info = blink::mojom::ServiceWorkerRegistrationObjectInfo::New();
+    (*info)->handle_id = 10;
+    (*info)->registration_id = 20;
+    remote_registration_object_host_.AddBinding(
+        mojo::MakeRequest(&(*info)->host_ptr_info));
 
     attrs->active.handle_id = 100;
     attrs->active.version_id = 200;
@@ -72,25 +98,18 @@ class ServiceWorkerDispatcherTest : public testing::Test {
     return ContainsKey(dispatcher_->registrations_, registration_handle_id);
   }
 
-  void OnAssociateRegistration(int thread_id,
-                               int provider_id,
-                               const ServiceWorkerRegistrationObjectInfo& info,
-                               const ServiceWorkerVersionAttributes& attrs) {
-    dispatcher_->OnAssociateRegistration(thread_id, provider_id, info, attrs);
-  }
-
-  void OnDisassociateRegistration(int thread_id, int provider_id) {
-    dispatcher_->OnDisassociateRegistration(thread_id, provider_id);
-  }
-
   void OnSetControllerServiceWorker(int thread_id,
                                     int provider_id,
                                     const ServiceWorkerObjectInfo& info,
                                     bool should_notify_controllerchange,
                                     const std::set<uint32_t>& used_features) {
-    dispatcher_->OnSetControllerServiceWorker(thread_id, provider_id, info,
-                                              should_notify_controllerchange,
-                                              used_features);
+    ServiceWorkerMsg_SetControllerServiceWorker_Params params;
+    params.thread_id = thread_id;
+    params.provider_id = provider_id;
+    params.object_info = info;
+    params.should_notify_controllerchange = should_notify_controllerchange;
+    params.used_features = used_features;
+    dispatcher_->OnSetControllerServiceWorker(params);
   }
 
   void OnPostMessage(const ServiceWorkerMsg_MessageToDocument_Params& params) {
@@ -105,12 +124,17 @@ class ServiceWorkerDispatcherTest : public testing::Test {
   ServiceWorkerDispatcher* dispatcher() { return dispatcher_.get(); }
   ThreadSafeSender* thread_safe_sender() { return sender_.get(); }
   IPC::TestSink* ipc_sink() { return &ipc_sink_; }
+  const MockServiceWorkerRegistrationObjectHost&
+  remote_registration_object_host() const {
+    return remote_registration_object_host_;
+  }
 
  private:
   base::MessageLoop message_loop_;
   IPC::TestSink ipc_sink_;
   std::unique_ptr<ServiceWorkerDispatcher> dispatcher_;
   scoped_refptr<ServiceWorkerTestSender> sender_;
+  MockServiceWorkerRegistrationObjectHost remote_registration_object_host_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerDispatcherTest);
 };
@@ -138,7 +162,7 @@ class MockWebServiceWorkerProviderClientImpl
   void DispatchMessageEvent(
       std::unique_ptr<blink::WebServiceWorker::Handle> handle,
       const blink::WebString& message,
-      blink::WebMessagePortChannelArray channels) override {
+      blink::WebVector<blink::MessagePortChannel> ports) override {
     // WebPassOwnPtr cannot be owned in Chromium, so drop the handle here.
     // The destruction releases ServiceWorkerHandleReference.
     is_dispatch_message_event_called_ = true;
@@ -162,103 +186,13 @@ class MockWebServiceWorkerProviderClientImpl
   std::set<uint32_t> used_features_;
 };
 
-TEST_F(ServiceWorkerDispatcherTest, OnAssociateRegistration_NoProviderContext) {
-  // Assume that these objects are passed from the browser process and own
-  // references to browser-side registration/worker representations.
-  ServiceWorkerRegistrationObjectInfo info;
-  ServiceWorkerVersionAttributes attrs;
-  CreateObjectInfoAndVersionAttributes(&info, &attrs);
-
-  // The passed references should be adopted but immediately released because
-  // there is no provider context to own the references.
-  const int kProviderId = 10;
-  OnAssociateRegistration(kDocumentMainThreadId, kProviderId, info, attrs);
-  ASSERT_EQ(4UL, ipc_sink()->message_count());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(0)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(1)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(2)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(3)->type());
-}
-
-TEST_F(ServiceWorkerDispatcherTest,
-       OnAssociateRegistration_ProviderContextForController) {
-  // Assume that these objects are passed from the browser process and own
-  // references to browser-side registration/worker representations.
-  ServiceWorkerRegistrationObjectInfo info;
-  ServiceWorkerVersionAttributes attrs;
-  CreateObjectInfoAndVersionAttributes(&info, &attrs);
-
-  // Set up ServiceWorkerProviderContext for ServiceWorkerGlobalScope.
-  const int kProviderId = 10;
-  scoped_refptr<ServiceWorkerProviderContext> provider_context(
-      new ServiceWorkerProviderContext(kProviderId,
-                                       SERVICE_WORKER_PROVIDER_FOR_CONTROLLER,
-                                       thread_safe_sender()));
-
-  // The passed references should be adopted and owned by the provider context.
-  OnAssociateRegistration(kDocumentMainThreadId, kProviderId, info, attrs);
-  EXPECT_EQ(0UL, ipc_sink()->message_count());
-
-  // Destruction of the provider context should release references to the
-  // associated registration and its versions.
-  provider_context = nullptr;
-  ASSERT_EQ(4UL, ipc_sink()->message_count());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(0)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(1)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(2)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(3)->type());
-}
-
-TEST_F(ServiceWorkerDispatcherTest,
-       OnAssociateRegistration_ProviderContextForControllee) {
-  // Assume that these objects are passed from the browser process and own
-  // references to browser-side registration/worker representations.
-  ServiceWorkerRegistrationObjectInfo info;
-  ServiceWorkerVersionAttributes attrs;
-  CreateObjectInfoAndVersionAttributes(&info, &attrs);
-
-  // Set up ServiceWorkerProviderContext for a document context.
-  const int kProviderId = 10;
-  scoped_refptr<ServiceWorkerProviderContext> provider_context(
-      new ServiceWorkerProviderContext(kProviderId,
-                                       SERVICE_WORKER_PROVIDER_FOR_WINDOW,
-                                       thread_safe_sender()));
-
-  // The passed references should be adopted and only the registration reference
-  // should be owned by the provider context.
-  OnAssociateRegistration(kDocumentMainThreadId, kProviderId, info, attrs);
-  ASSERT_EQ(3UL, ipc_sink()->message_count());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(0)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(1)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(2)->type());
-  ipc_sink()->ClearMessages();
-
-  // Disassociating the provider context from the registration should release
-  // the reference.
-  OnDisassociateRegistration(kDocumentMainThreadId, kProviderId);
-  ASSERT_EQ(1UL, ipc_sink()->message_count());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(0)->type());
-}
-
 TEST_F(ServiceWorkerDispatcherTest, OnSetControllerServiceWorker) {
   const int kProviderId = 10;
   bool should_notify_controllerchange = true;
 
   // Assume that these objects are passed from the browser process and own
   // references to browser-side registration/worker representations.
-  ServiceWorkerRegistrationObjectInfo info;
+  blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
   ServiceWorkerVersionAttributes attrs;
   CreateObjectInfoAndVersionAttributes(&info, &attrs);
 
@@ -276,11 +210,10 @@ TEST_F(ServiceWorkerDispatcherTest, OnSetControllerServiceWorker) {
   // (2) In the case there is no WebSWProviderClient but SWProviderContext for
   // the provider, the passed referecence should be adopted and owned by the
   // provider context.
-  scoped_refptr<ServiceWorkerProviderContext> provider_context(
-      new ServiceWorkerProviderContext(kProviderId,
-                                       SERVICE_WORKER_PROVIDER_FOR_WINDOW,
-                                       thread_safe_sender()));
-  OnAssociateRegistration(kDocumentMainThreadId, kProviderId, info, attrs);
+  auto provider_context = base::MakeRefCounted<ServiceWorkerProviderContext>(
+      kProviderId, SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+      nullptr /* provider_request */, nullptr /* host_ptr_info */, dispatcher(),
+      nullptr /* loader_factory_getter */);
   ipc_sink()->ClearMessages();
   OnSetControllerServiceWorker(kDocumentMainThreadId, kProviderId, attrs.active,
                                should_notify_controllerchange,
@@ -290,11 +223,9 @@ TEST_F(ServiceWorkerDispatcherTest, OnSetControllerServiceWorker) {
   // Destruction of the provider context should release references to the
   // associated registration and the controller.
   provider_context = nullptr;
-  ASSERT_EQ(2UL, ipc_sink()->message_count());
+  ASSERT_EQ(1UL, ipc_sink()->message_count());
   EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
             ipc_sink()->GetMessageAt(0)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(1)->type());
   ipc_sink()->ClearMessages();
 
   // (3) In the case there is no SWProviderContext but WebSWProviderClient for
@@ -325,9 +256,10 @@ TEST_F(ServiceWorkerDispatcherTest, OnSetControllerServiceWorker) {
   // provider context. In addition, the new reference should be created for the
   // provider client and immediately released due to limitation of the mock
   // implementation.
-  provider_context = new ServiceWorkerProviderContext(
-      kProviderId, SERVICE_WORKER_PROVIDER_FOR_WINDOW, thread_safe_sender());
-  OnAssociateRegistration(kDocumentMainThreadId, kProviderId, info, attrs);
+  provider_context = base::MakeRefCounted<ServiceWorkerProviderContext>(
+      kProviderId, SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+      nullptr /* provider_request */, nullptr /* host_ptr_info */, dispatcher(),
+      nullptr /* loader_factory_getter */);
   provider_client.reset(
       new MockWebServiceWorkerProviderClientImpl(kProviderId, dispatcher()));
   ASSERT_FALSE(provider_client->is_set_controlled_called());
@@ -349,18 +281,16 @@ TEST_F(ServiceWorkerDispatcherTest, OnSetControllerServiceWorker_Null) {
   const int kProviderId = 10;
   bool should_notify_controllerchange = true;
 
-  ServiceWorkerRegistrationObjectInfo info;
+  blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
   ServiceWorkerVersionAttributes attrs;
   CreateObjectInfoAndVersionAttributes(&info, &attrs);
 
   std::unique_ptr<MockWebServiceWorkerProviderClientImpl> provider_client(
       new MockWebServiceWorkerProviderClientImpl(kProviderId, dispatcher()));
-  scoped_refptr<ServiceWorkerProviderContext> provider_context(
-      new ServiceWorkerProviderContext(kProviderId,
-                                       SERVICE_WORKER_PROVIDER_FOR_WINDOW,
-                                       thread_safe_sender()));
-
-  OnAssociateRegistration(kDocumentMainThreadId, kProviderId, info, attrs);
+  auto provider_context = base::MakeRefCounted<ServiceWorkerProviderContext>(
+      kProviderId, SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+      nullptr /* provider_request */, nullptr /* host_ptr_info */, dispatcher(),
+      nullptr /* loader_factory_getter */);
 
   // Set the controller to kInvalidServiceWorkerHandle.
   OnSetControllerServiceWorker(
@@ -377,7 +307,7 @@ TEST_F(ServiceWorkerDispatcherTest, OnPostMessage) {
 
   // Assume that these objects are passed from the browser process and own
   // references to browser-side registration/worker representations.
-  ServiceWorkerRegistrationObjectInfo info;
+  blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
   ServiceWorkerVersionAttributes attrs;
   CreateObjectInfoAndVersionAttributes(&info, &attrs);
 
@@ -409,7 +339,7 @@ TEST_F(ServiceWorkerDispatcherTest, OnPostMessage) {
 }
 
 TEST_F(ServiceWorkerDispatcherTest, GetServiceWorker) {
-  ServiceWorkerRegistrationObjectInfo info;
+  blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
   ServiceWorkerVersionAttributes attrs;
   CreateObjectInfoAndVersionAttributes(&info, &attrs);
 
@@ -437,99 +367,139 @@ TEST_F(ServiceWorkerDispatcherTest, GetServiceWorker) {
 }
 
 TEST_F(ServiceWorkerDispatcherTest, GetOrCreateRegistration) {
-  ServiceWorkerRegistrationObjectInfo info;
-  ServiceWorkerVersionAttributes attrs;
-  CreateObjectInfoAndVersionAttributes(&info, &attrs);
+  scoped_refptr<WebServiceWorkerRegistrationImpl> registration1;
+  scoped_refptr<WebServiceWorkerRegistrationImpl> registration2;
 
-  // Should return a registration object newly created with incrementing
-  // the refcounts.
-  scoped_refptr<WebServiceWorkerRegistrationImpl> registration1(
-      dispatcher()->GetOrCreateRegistration(info, attrs));
-  EXPECT_TRUE(registration1);
-  EXPECT_TRUE(ContainsRegistration(info.handle_id));
-  EXPECT_EQ(info.registration_id, registration1->RegistrationId());
-  ASSERT_EQ(4UL, ipc_sink()->message_count());
-  EXPECT_EQ(ServiceWorkerHostMsg_IncrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(0)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_IncrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(1)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_IncrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(2)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_IncrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(3)->type());
+  {
+    blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
+    ServiceWorkerVersionAttributes attrs;
+    CreateObjectInfoAndVersionAttributes(&info, &attrs);
+    int64_t registration_id = info->registration_id;
+    int32_t handle_id = info->handle_id;
+    // The 1st ServiceWorkerRegistrationObjectHost Mojo connection has been
+    // added.
+    ASSERT_EQ(1, remote_registration_object_host().GetBindingCount());
+
+    // Should return a registration object newly created with incrementing
+    // the refcounts.
+    registration1 =
+        dispatcher()->GetOrCreateRegistration(std::move(info), attrs);
+    EXPECT_TRUE(registration1);
+    EXPECT_TRUE(ContainsRegistration(handle_id));
+    EXPECT_EQ(registration_id, registration1->RegistrationId());
+    EXPECT_EQ(1, remote_registration_object_host().GetBindingCount());
+    ASSERT_EQ(3UL, ipc_sink()->message_count());
+    EXPECT_EQ(ServiceWorkerHostMsg_IncrementServiceWorkerRefCount::ID,
+              ipc_sink()->GetMessageAt(0)->type());
+    EXPECT_EQ(ServiceWorkerHostMsg_IncrementServiceWorkerRefCount::ID,
+              ipc_sink()->GetMessageAt(1)->type());
+    EXPECT_EQ(ServiceWorkerHostMsg_IncrementServiceWorkerRefCount::ID,
+              ipc_sink()->GetMessageAt(2)->type());
+  }
 
   ipc_sink()->ClearMessages();
 
-  // Should return the same registration object without incrementing the
-  // refcounts.
-  scoped_refptr<WebServiceWorkerRegistrationImpl> registration2(
-      dispatcher()->GetOrCreateRegistration(info, attrs));
-  EXPECT_TRUE(registration2);
-  EXPECT_EQ(registration1, registration2);
-  EXPECT_EQ(0UL, ipc_sink()->message_count());
+  {
+    blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
+    ServiceWorkerVersionAttributes attrs;
+    CreateObjectInfoAndVersionAttributes(&info, &attrs);
+    // The 2nd Mojo connection has been added.
+    ASSERT_EQ(2, remote_registration_object_host().GetBindingCount());
+    // Should return the same registration object without incrementing the
+    // refcounts.
+    registration2 =
+        dispatcher()->GetOrCreateRegistration(std::move(info), attrs);
+    EXPECT_TRUE(registration2);
+    EXPECT_EQ(registration1, registration2);
+    // The 2nd Mojo connection has been dropped.
+    base::RunLoop().RunUntilIdle();
+    EXPECT_EQ(1, remote_registration_object_host().GetBindingCount());
+    EXPECT_EQ(0UL, ipc_sink()->message_count());
+  }
 
   ipc_sink()->ClearMessages();
 
   // The registration dtor decrements the refcounts.
   registration1 = nullptr;
   registration2 = nullptr;
-  ASSERT_EQ(4UL, ipc_sink()->message_count());
+  ASSERT_EQ(3UL, ipc_sink()->message_count());
   EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
             ipc_sink()->GetMessageAt(0)->type());
   EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
             ipc_sink()->GetMessageAt(1)->type());
   EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
             ipc_sink()->GetMessageAt(2)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(3)->type());
+  // The 1st Mojo connection has been dropped.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0, remote_registration_object_host().GetBindingCount());
 }
 
 TEST_F(ServiceWorkerDispatcherTest, GetOrAdoptRegistration) {
-  ServiceWorkerRegistrationObjectInfo info;
-  ServiceWorkerVersionAttributes attrs;
-  CreateObjectInfoAndVersionAttributes(&info, &attrs);
+  scoped_refptr<WebServiceWorkerRegistrationImpl> registration1;
+  scoped_refptr<WebServiceWorkerRegistrationImpl> registration2;
 
-  // Should return a registration object newly created with adopting the
-  // refcounts.
-  scoped_refptr<WebServiceWorkerRegistrationImpl> registration1(
-      dispatcher()->GetOrAdoptRegistration(info, attrs));
-  EXPECT_TRUE(registration1);
-  EXPECT_TRUE(ContainsRegistration(info.handle_id));
-  EXPECT_EQ(info.registration_id, registration1->RegistrationId());
-  EXPECT_EQ(0UL, ipc_sink()->message_count());
+  {
+    blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
+    ServiceWorkerVersionAttributes attrs;
+    CreateObjectInfoAndVersionAttributes(&info, &attrs);
+    int64_t registration_id = info->registration_id;
+    int32_t handle_id = info->handle_id;
+    // The 1st ServiceWorkerRegistrationObjectHost Mojo connection has been
+    // added.
+    ASSERT_EQ(1, remote_registration_object_host().GetBindingCount());
+
+    // Should return a registration object newly created with adopting the
+    // refcounts.
+    registration1 =
+        dispatcher()->GetOrAdoptRegistration(std::move(info), attrs);
+    EXPECT_TRUE(registration1);
+    EXPECT_TRUE(ContainsRegistration(handle_id));
+    EXPECT_EQ(registration_id, registration1->RegistrationId());
+    EXPECT_EQ(1, remote_registration_object_host().GetBindingCount());
+    EXPECT_EQ(0UL, ipc_sink()->message_count());
+  }
 
   ipc_sink()->ClearMessages();
 
-  // Should return the same registration object without incrementing the
-  // refcounts.
-  scoped_refptr<WebServiceWorkerRegistrationImpl> registration2(
-      dispatcher()->GetOrAdoptRegistration(info, attrs));
-  EXPECT_TRUE(registration2);
-  EXPECT_EQ(registration1, registration2);
-  ASSERT_EQ(4UL, ipc_sink()->message_count());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(0)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(1)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
-            ipc_sink()->GetMessageAt(2)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(3)->type());
+  {
+    blink::mojom::ServiceWorkerRegistrationObjectInfoPtr info;
+    ServiceWorkerVersionAttributes attrs;
+    CreateObjectInfoAndVersionAttributes(&info, &attrs);
+    // The 2nd Mojo connection has been added.
+    ASSERT_EQ(2, remote_registration_object_host().GetBindingCount());
+    // Should return the same registration object without incrementing the
+    // refcounts.
+    registration2 =
+        dispatcher()->GetOrAdoptRegistration(std::move(info), attrs);
+    EXPECT_TRUE(registration2);
+    EXPECT_EQ(registration1, registration2);
+    // The 2nd Mojo connection has been dropped.
+    base::RunLoop().RunUntilIdle();
+    EXPECT_EQ(1, remote_registration_object_host().GetBindingCount());
+    ASSERT_EQ(3UL, ipc_sink()->message_count());
+    EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
+              ipc_sink()->GetMessageAt(0)->type());
+    EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
+              ipc_sink()->GetMessageAt(1)->type());
+    EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
+              ipc_sink()->GetMessageAt(2)->type());
+  }
 
   ipc_sink()->ClearMessages();
 
   // The registration dtor decrements the refcounts.
   registration1 = nullptr;
   registration2 = nullptr;
-  ASSERT_EQ(4UL, ipc_sink()->message_count());
+  ASSERT_EQ(3UL, ipc_sink()->message_count());
   EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
             ipc_sink()->GetMessageAt(0)->type());
   EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
             ipc_sink()->GetMessageAt(1)->type());
   EXPECT_EQ(ServiceWorkerHostMsg_DecrementServiceWorkerRefCount::ID,
             ipc_sink()->GetMessageAt(2)->type());
-  EXPECT_EQ(ServiceWorkerHostMsg_DecrementRegistrationRefCount::ID,
-            ipc_sink()->GetMessageAt(3)->type());
+  // The 1st Mojo connection has been dropped.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_EQ(0, remote_registration_object_host().GetBindingCount());
 }
 
 }  // namespace content

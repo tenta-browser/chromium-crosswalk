@@ -8,7 +8,6 @@
 
 #include "base/mac/bundle_locations.h"
 #include "base/macros.h"
-#include "base/process/process.h"
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/ui/cocoa/multi_key_equivalent_button.h"
 #import "chrome/browser/ui/cocoa/tab_contents/favicon_util_mac.h"
@@ -17,6 +16,7 @@
 #include "chrome/common/logging_chrome.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -104,7 +104,7 @@ class HungRendererWebContentsObserverBridge
 
 - (void)awakeFromNib {
   // Load in the image.
-  ResourceBundle& rb = ResourceBundle::GetSharedInstance();
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   NSImage* backgroundImage =
       rb.GetNativeImageNamed(IDR_FROZEN_TAB_ICON).ToNSImage();
   [imageView_ setImage:backgroundImage];
@@ -157,9 +157,8 @@ class HungRendererWebContentsObserverBridge
 
 - (IBAction)kill:(id)sender {
   if (hungContents_) {
-    base::Process process = base::Process::DeprecatedGetProcessFromHandle(
-        hungContents_->GetRenderProcessHost()->GetHandle());
-    process.Terminate(content::RESULT_CODE_HUNG, false);
+    hungContents_->GetMainFrame()->GetProcess()->Shutdown(
+        content::RESULT_CODE_HUNG, false);
   }
   // Cannot call performClose:, because the close button is disabled.
   [self close];
@@ -227,7 +226,8 @@ class HungRendererWebContentsObserverBridge
   base::scoped_nsobject<NSMutableArray> titles([[NSMutableArray alloc] init]);
   base::scoped_nsobject<NSMutableArray> favicons([[NSMutableArray alloc] init]);
   for (TabContentsIterator it; !it.done(); it.Next()) {
-    if (it->GetRenderProcessHost() == hungContents_->GetRenderProcessHost()) {
+    if (it->GetMainFrame()->GetProcess() ==
+        hungContents_->GetMainFrame()->GetProcess()) {
       base::string16 title = it->GetTitle();
       if (title.empty())
         title = CoreTabHelper::GetDefaultTitle();
@@ -247,8 +247,8 @@ class HungRendererWebContentsObserverBridge
 - (void)endForWebContents:(WebContents*)contents {
   DCHECK(contents);
   DCHECK(hungContents_);
-  if (hungContents_ && hungContents_->GetRenderProcessHost() ==
-      contents->GetRenderProcessHost()) {
+  if (hungContents_ && hungContents_->GetMainFrame()->GetProcess() ==
+                           contents->GetMainFrame()->GetProcess()) {
     // Cannot call performClose:, because the close button is disabled.
     [self close];
   }

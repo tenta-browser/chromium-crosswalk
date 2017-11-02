@@ -33,6 +33,10 @@ class ChromeBrowserState;
 // Called when the controller should be dismissed.
 - (void)bookmarkEditorWantsDismissal:(BookmarkEditViewController*)controller;
 
+// Called when the controller is going to commit the title or URL change.
+- (void)bookmarkEditorWillCommitTitleOrUrlChange:
+    (BookmarkEditViewController*)controller;
+
 @end
 
 // View controller for editing bookmarks. Allows editing of the title, URL and
@@ -51,7 +55,8 @@ class ChromeBrowserState;
 - (instancetype)initWithBookmark:(const bookmarks::BookmarkNode*)bookmark
                     browserState:(ios::ChromeBrowserState*)browserState
     NS_DESIGNATED_INITIALIZER;
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style
+- (instancetype)initWithLayout:(UICollectionViewLayout*)layout
+                         style:(CollectionViewControllerStyle)style
     NS_UNAVAILABLE;
 
 // Closes the edit view as if close button was pressed.

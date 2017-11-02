@@ -37,8 +37,8 @@
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Functional.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefCounted.h"
+#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/WebAddressSpace.h"
 #include "public/platform/WebURLRequest.h"
@@ -56,22 +56,24 @@ class CORE_EXPORT WorkerScriptLoader final
   USING_FAST_MALLOC(WorkerScriptLoader);
 
  public:
-  static PassRefPtr<WorkerScriptLoader> Create() {
-    return AdoptRef(new WorkerScriptLoader());
+  static RefPtr<WorkerScriptLoader> Create() {
+    return WTF::AdoptRef(new WorkerScriptLoader());
   }
 
   void LoadSynchronously(ExecutionContext&,
                          const KURL&,
-                         CrossOriginRequestPolicy,
+                         WebURLRequest::RequestContext,
                          WebAddressSpace);
 
   // Note that callbacks could be invoked before loadAsynchronously() returns.
   void LoadAsynchronously(ExecutionContext&,
                           const KURL&,
-                          CrossOriginRequestPolicy,
+                          WebURLRequest::RequestContext,
+                          WebURLRequest::FetchRequestMode,
+                          WebURLRequest::FetchCredentialsMode,
                           WebAddressSpace,
-                          std::unique_ptr<WTF::Closure> response_callback,
-                          std::unique_ptr<WTF::Closure> finished_callback);
+                          WTF::Closure response_callback,
+                          WTF::Closure finished_callback);
 
   // This will immediately invoke |finishedCallback| if loadAsynchronously()
   // is in progress.
@@ -117,25 +119,20 @@ class CORE_EXPORT WorkerScriptLoader final
   void DidFail(const ResourceError&) override;
   void DidFailRedirectCheck() override;
 
-  void SetRequestContext(WebURLRequest::RequestContext request_context) {
-    request_context_ = request_context;
-  }
-
  private:
   friend class WTF::RefCounted<WorkerScriptLoader>;
 
   WorkerScriptLoader();
   ~WorkerScriptLoader() override;
 
-  ResourceRequest CreateResourceRequest(WebAddressSpace);
   void NotifyError();
   void NotifyFinished();
 
   void ProcessContentSecurityPolicy(const ResourceResponse&);
 
   // Callbacks for loadAsynchronously().
-  std::unique_ptr<WTF::Closure> response_callback_;
-  std::unique_ptr<WTF::Closure> finished_callback_;
+  WTF::Closure response_callback_;
+  WTF::Closure finished_callback_;
 
   Persistent<ThreadableLoader> threadable_loader_;
   String response_encoding_;
@@ -152,7 +149,6 @@ class CORE_EXPORT WorkerScriptLoader final
   unsigned long identifier_ = 0;
   long long app_cache_id_ = 0;
   std::unique_ptr<Vector<char>> cached_metadata_;
-  WebURLRequest::RequestContext request_context_;
   Persistent<ContentSecurityPolicy> content_security_policy_;
   Persistent<ExecutionContext> execution_context_;
   WebAddressSpace response_address_space_;

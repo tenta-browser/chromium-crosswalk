@@ -6,8 +6,7 @@
 
 namespace ui {
 
-bool ViewClient::OnTouchEvent(const MotionEventAndroid& event,
-                              bool for_touch_handle) {
+bool ViewClient::OnTouchEvent(const MotionEventAndroid& event) {
   return false;
 }
 
@@ -18,5 +17,13 @@ bool ViewClient::OnMouseEvent(const MotionEventAndroid& event) {
 bool ViewClient::OnMouseWheelEvent(const MotionEventAndroid& event) {
   return false;
 }
+
+bool ViewClient::OnDragEvent(const DragEventAndroid& event) {
+  return false;
+}
+
+void ViewClient::OnSizeChanged() {}
+
+void ViewClient::OnPhysicalBackingSizeChanged() {}
 
 }  // namespace ui

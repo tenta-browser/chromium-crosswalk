@@ -118,12 +118,11 @@ enum DownloadFileRenameMethodType { RENAME_AND_UNIQUIFY, RENAME_AND_ANNOTATE };
 // retries renames failed due to ACCESS_DENIED.
 class TestDownloadFileImpl : public DownloadFileImpl {
  public:
-  TestDownloadFileImpl(
-      std::unique_ptr<DownloadSaveInfo> save_info,
-      const base::FilePath& default_downloads_directory,
-      std::unique_ptr<ByteStreamReader> stream,
-      const net::NetLogWithSource& net_log,
-      base::WeakPtr<DownloadDestinationObserver> observer)
+  TestDownloadFileImpl(std::unique_ptr<DownloadSaveInfo> save_info,
+                       const base::FilePath& default_downloads_directory,
+                       std::unique_ptr<DownloadManager::InputStream> stream,
+                       const net::NetLogWithSource& net_log,
+                       base::WeakPtr<DownloadDestinationObserver> observer)
       : DownloadFileImpl(std::move(save_info),
                          default_downloads_directory,
                          std::move(stream),
@@ -229,7 +228,8 @@ class DownloadFileTest : public testing::Test {
 
     download_file_.reset(new TestDownloadFileImpl(
         std::move(save_info), base::FilePath(),
-        std::unique_ptr<ByteStreamReader>(input_stream_),
+        base::MakeUnique<DownloadManager::InputStream>(
+            std::unique_ptr<ByteStreamReader>(input_stream_)),
         net::NetLogWithSource(), observer_factory_.GetWeakPtr()));
 
     EXPECT_CALL(*input_stream_, Read(_, _))
@@ -727,7 +727,7 @@ void TestRenameCompletionCallback(const base::Closure& closure,
 }  // namespace
 
 // Test that the retry logic works. This test assumes that DownloadFileImpl will
-// post tasks to the current message loop (acting as the FILE thread)
+// post tasks to the current message loop (acting as the download sequence)
 // asynchronously to retry the renames. We will stuff RunLoop::QuitClosures()
 // in between the retry tasks to stagger them and then allow the rename to
 // succeed.
@@ -918,8 +918,9 @@ TEST_F(DownloadFileTest, MutipleStreamsWrite) {
   EXPECT_CALL(*(observer_.get()), MockDestinationCompleted(_, _));
 
   // Activate the streams.
-  download_file_->AddByteStream(
-      std::unique_ptr<MockByteStreamReader>(additional_streams_[0]),
+  download_file_->AddInputStream(
+      base::MakeUnique<DownloadManager::InputStream>(
+          std::unique_ptr<ByteStreamReader>(additional_streams_[0])),
       stream_0_length, DownloadSaveInfo::kLengthFullContent);
   sink_callback_.Run();
   base::RunLoop().RunUntilIdle();
@@ -964,11 +965,13 @@ TEST_F(DownloadFileTest, MutipleStreamsLimitedLength) {
   EXPECT_CALL(*(observer_.get()), MockDestinationCompleted(_, _));
 
   // Activate all the streams.
-  download_file_->AddByteStream(
-      std::unique_ptr<MockByteStreamReader>(additional_streams_[0]),
+  download_file_->AddInputStream(
+      base::MakeUnique<DownloadManager::InputStream>(
+          std::unique_ptr<ByteStreamReader>(additional_streams_[0])),
       stream_0_length, stream_1_length);
-  download_file_->AddByteStream(
-      std::unique_ptr<MockByteStreamReader>(additional_streams_[1]),
+  download_file_->AddInputStream(
+      base::MakeUnique<DownloadManager::InputStream>(
+          std::unique_ptr<ByteStreamReader>(additional_streams_[1])),
       stream_0_length + stream_1_length, DownloadSaveInfo::kLengthFullContent);
   sink_callback_.Run();
   base::RunLoop().RunUntilIdle();
@@ -989,7 +992,7 @@ TEST_F(DownloadFileTest, MutipleStreamsLimitedLength) {
   DestroyDownloadFile(0, false);
 }
 
-//  Activate and deplete one stream, later add the second stream.
+// Activate and deplete one stream, later add the second stream.
 TEST_F(DownloadFileTest, MutipleStreamsFirstStreamWriteAllData) {
   int64_t stream_0_length = GetBuffersLength(kTestData8, 4);
 
@@ -1008,8 +1011,9 @@ TEST_F(DownloadFileTest, MutipleStreamsFirstStreamWriteAllData) {
   EXPECT_FALSE(download_file_->InProgress());
 
   additional_streams_[0] = new StrictMock<MockByteStreamReader>();
-  download_file_->AddByteStream(
-      std::unique_ptr<MockByteStreamReader>(additional_streams_[0]),
+  download_file_->AddInputStream(
+      base::MakeUnique<DownloadManager::InputStream>(
+          std::unique_ptr<ByteStreamReader>(additional_streams_[0])),
       stream_0_length - 1, DownloadSaveInfo::kLengthFullContent);
   base::RunLoop().RunUntilIdle();
 
@@ -1048,9 +1052,10 @@ TEST_F(DownloadFileTest, SecondStreamStartingOffsetAlreadyWritten) {
       .WillOnce(Return(ByteStreamReader::STREAM_EMPTY))
       .RetiresOnSaturation();
 
-  download_file_->AddByteStream(
-      std::unique_ptr<MockByteStreamReader>(additional_streams_[0]), 0,
-      DownloadSaveInfo::kLengthFullContent);
+  download_file_->AddInputStream(
+      base::MakeUnique<DownloadManager::InputStream>(
+          std::unique_ptr<ByteStreamReader>(additional_streams_[0])),
+      0, DownloadSaveInfo::kLengthFullContent);
 
   // The stream should get terminated and reset the callback.
   EXPECT_TRUE(sink_callback_.is_null());

@@ -22,6 +22,8 @@
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/core/quic_pending_retransmission.h"
 #include "net/quic/core/quic_sustained_bandwidth_recorder.h"
+#include "net/quic/core/quic_transmission_info.h"
+#include "net/quic/core/quic_types.h"
 #include "net/quic/core/quic_unacked_packet_map.h"
 #include "net/quic/platform/api/quic_containers.h"
 #include "net/quic/platform/api/quic_export.h"
@@ -210,8 +212,6 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
 
   QuicPacketNumber GetLargestSentPacket() const;
 
-  QuicPacketNumber GetLeastPacketAwaitedByPeer() const;
-
   void SetNetworkChangeVisitor(NetworkChangeVisitor* visitor);
 
   bool InSlowStart() const;
@@ -223,6 +223,8 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   void OnApplicationLimited();
 
   const SendAlgorithmInterface* GetSendAlgorithm() const;
+
+  void SetStreamNotifier(StreamNotifierInterface* stream_notifier);
 
   QuicPacketNumber largest_packet_peer_knows_is_acked() const {
     return largest_packet_peer_knows_is_acked_;
@@ -380,15 +382,12 @@ class QUIC_EXPORT_PRIVATE QuicSentPacketManager {
   // If true, use the new RTO with loss based CWND reduction instead of the send
   // algorithms's OnRetransmissionTimeout to reduce the congestion window.
   bool use_new_rto_;
-  // If true, cancel pending retransmissions if they're larger than
-  // largest_newly_acked.
-  bool undo_pending_retransmits_;
   // If true, use a more conservative handshake retransmission policy.
   bool conservative_handshake_retransmits_;
 
   // Vectors packets acked and lost as a result of the last congestion event.
-  SendAlgorithmInterface::CongestionVector packets_acked_;
-  SendAlgorithmInterface::CongestionVector packets_lost_;
+  AckedPacketVector packets_acked_;
+  LostPacketVector packets_lost_;
   // Largest newly acknowledged packet.
   QuicPacketNumber largest_newly_acked_;
   // Largest packet in bytes ever acknowledged.

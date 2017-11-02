@@ -4,6 +4,10 @@
 
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 WebStateObserverBridge::WebStateObserverBridge(web::WebState* webState,
@@ -14,10 +18,23 @@ WebStateObserverBridge::WebStateObserverBridge(web::WebState* webState,
 WebStateObserverBridge::~WebStateObserverBridge() {
 }
 
-void WebStateObserverBridge::ProvisionalNavigationStarted(const GURL& url) {
-  SEL selector = @selector(webState:didStartProvisionalNavigationForURL:);
+void WebStateObserverBridge::WasShown() {
+  if ([observer_ respondsToSelector:@selector(webStateWasShown:)]) {
+    [observer_ webStateWasShown:web_state()];
+  }
+}
+
+void WebStateObserverBridge::WasHidden() {
+  if ([observer_ respondsToSelector:@selector(webStateWasHidden:)]) {
+    [observer_ webStateWasHidden:web_state()];
+  }
+}
+
+void WebStateObserverBridge::NavigationItemsPruned(size_t pruned_item_count) {
+  SEL selector = @selector(webState:didPruneNavigationItemsWithCount:);
   if ([observer_ respondsToSelector:selector]) {
-    [observer_ webState:web_state() didStartProvisionalNavigationForURL:url];
+    [observer_ webState:web_state()
+        didPruneNavigationItemsWithCount:pruned_item_count];
   }
 }
 
@@ -27,6 +44,13 @@ void WebStateObserverBridge::NavigationItemCommitted(
   if ([observer_ respondsToSelector:selector]) {
     [observer_ webState:web_state()
         didCommitNavigationWithDetails:load_detatils];
+  }
+}
+
+void WebStateObserverBridge::DidStartNavigation(
+    web::NavigationContext* navigation_context) {
+  if ([observer_ respondsToSelector:@selector(webState:didStartNavigation:)]) {
+    [observer_ webState:web_state() didStartNavigation:navigation_context];
   }
 }
 

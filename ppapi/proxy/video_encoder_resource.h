@@ -7,12 +7,12 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <memory>
+#include <vector>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "ppapi/proxy/connection.h"
 #include "ppapi/proxy/plugin_resource.h"
 #include "ppapi/shared_impl/media_stream_buffer_manager.h"
@@ -46,7 +46,7 @@ class PPAPI_PROXY_EXPORT VideoEncoderResource
     ShmBuffer(uint32_t id, std::unique_ptr<base::SharedMemory> shm);
     ~ShmBuffer();
 
-    // Index of the buffer in the ScopedVector. Buffers have the same id in
+    // Index of the buffer in the vector. Buffers have the same id in
     // the plugin and the host.
     uint32_t id;
     std::unique_ptr<base::SharedMemory> shm;
@@ -56,7 +56,7 @@ class PPAPI_PROXY_EXPORT VideoEncoderResource
     BitstreamBuffer(uint32_t id, uint32_t size, bool key_frame);
     ~BitstreamBuffer();
 
-    // Index of the buffer in the ScopedVector. Same as ShmBuffer::id.
+    // Index of the buffer in the vector. Same as ShmBuffer::id.
     uint32_t id;
     uint32_t size;
     bool key_frame;
@@ -141,10 +141,10 @@ class PPAPI_PROXY_EXPORT VideoEncoderResource
       VideoFrameMap;
   VideoFrameMap video_frames_;
 
-  ScopedVector<ShmBuffer> shm_buffers_;
+  std::vector<std::unique_ptr<ShmBuffer>> shm_buffers_;
 
-  std::deque<BitstreamBuffer> available_bitstream_buffers_;
-  typedef std::map<void*, uint32_t> BitstreamBufferMap;
+  base::circular_deque<BitstreamBuffer> available_bitstream_buffers_;
+  using BitstreamBufferMap = std::map<void*, uint32_t>;
   BitstreamBufferMap bitstream_buffer_map_;
 
   scoped_refptr<TrackedCallback> get_supported_profiles_callback_;
@@ -152,7 +152,7 @@ class PPAPI_PROXY_EXPORT VideoEncoderResource
   scoped_refptr<TrackedCallback> get_video_frame_callback_;
   PP_Resource* get_video_frame_data_;
 
-  typedef std::map<PP_Resource, scoped_refptr<TrackedCallback> > EncodeMap;
+  using EncodeMap = std::map<PP_Resource, scoped_refptr<TrackedCallback>>;
   EncodeMap encode_callbacks_;
 
   scoped_refptr<TrackedCallback> get_bitstream_buffer_callback_;

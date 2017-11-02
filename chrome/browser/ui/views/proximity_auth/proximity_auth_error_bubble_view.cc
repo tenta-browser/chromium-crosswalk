@@ -6,6 +6,7 @@
 
 #include "base/lazy_instance.h"
 #include "base/strings/string_util.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/proximity_auth/proximity_auth_error_bubble.h"
 #include "chrome/grit/theme_resources.h"
 #include "content/public/browser/page_navigator.h"
@@ -85,6 +86,7 @@ ProximityAuthErrorBubbleView::ProximityAuthErrorBubbleView(
       link_url_(link_url),
       weak_ptr_factory_(this) {
   SetAnchorRect(anchor_rect);
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::PROXIMITY_AUTH_ERROR);
 }
 
 void ProximityAuthErrorBubbleView::Init() {
@@ -92,7 +94,7 @@ void ProximityAuthErrorBubbleView::Init() {
   // ----------------------------
   // | icon | padding | message |
   // ----------------------------
-  std::unique_ptr<views::GridLayout> layout(new views::GridLayout(this));
+  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
   views::ColumnSet* columns = layout->AddColumnSet(0);
   columns->AddColumn(views::GridLayout::LEADING, views::GridLayout::LEADING, 0,
                      views::GridLayout::USE_PREF, 0, 0);
@@ -118,7 +120,6 @@ void ProximityAuthErrorBubbleView::Init() {
   layout->StartRow(0, 0);
   layout->AddView(warning_icon.release());
   layout->AddView(label.release());
-  SetLayoutManager(layout.release());
 }
 
 ProximityAuthErrorBubbleView::~ProximityAuthErrorBubbleView() {}

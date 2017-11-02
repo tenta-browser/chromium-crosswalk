@@ -5,18 +5,14 @@
 #ifndef CHROME_BROWSER_UI_STARTUP_STARTUP_BROWSER_CREATOR_H_
 #define CHROME_BROWSER_UI_STARTUP_STARTUP_BROWSER_CREATOR_H_
 
-#include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "build/build_config.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/startup/startup_tab.h"
 #include "chrome/browser/ui/startup/startup_types.h"
-#include "url/gurl.h"
 
 class Browser;
 class GURL;
@@ -30,6 +26,19 @@ class CommandLine;
 // initialize the profile.
 class StartupBrowserCreator {
  public:
+  // The type of page to be shown in a tab when the user is being welcomed back
+  // to Chrome.
+  enum class WelcomeBackPage {
+    kNone,
+#if defined(OS_WIN)
+    // chrome://welcome-win10/ if Chrome's default browser UX may be shown;
+    // otherwise, see kWelcomeStandard.
+    kWelcomeWin10,
+#endif
+    // chrome://welcome/ if sign-in is allowed; otherwise, none.
+    kWelcomeStandard,
+  };
+
   typedef std::vector<Profile*> Profiles;
 
   StartupBrowserCreator();
@@ -38,6 +47,15 @@ class StartupBrowserCreator {
   // Adds a url to be opened during first run. This overrides the standard
   // tabs shown at first run.
   void AddFirstRunTab(const GURL& url);
+
+  // Configures the instance to include the specified "welcome back" page in a
+  // tab before other tabs (e.g., those from session restore). This is used for
+  // specific launches via retention experiments for which no URLs are provided
+  // on the command line. No "welcome back" page is shown to supervised users.
+  void set_welcome_back_page(WelcomeBackPage welcome_back_page) {
+    welcome_back_page_ = welcome_back_page;
+  }
+  WelcomeBackPage welcome_back_page() const { return welcome_back_page_; }
 
   // This function is equivalent to ProcessCommandLine but should only be
   // called during actual process startup.
@@ -107,11 +125,6 @@ class StartupBrowserCreator {
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
-  // Returns whether the Consolidated startup flow will be used, based on the
-  // platform-appropriate Feature.
-  // TODO(tmartino): Remove once this is on 100%.
-  static bool UseConsolidatedFlow();
-
  private:
   friend class CloudPrintProxyPolicyTest;
   friend class CloudPrintProxyPolicyStartupTest;
@@ -130,6 +143,27 @@ class StartupBrowserCreator {
                           bool process_startup,
                           Profile* last_used_profile,
                           const Profiles& last_opened_profiles);
+
+  // Launch browser for |last_opened_profiles| if it's not empty. Otherwise,
+  // launch browser for |last_used_profile|. Return false if any browser is
+  // failed to be launched. Otherwise, return true.
+  bool LaunchBrowserForLastProfiles(const base::CommandLine& command_line,
+                                    const base::FilePath& cur_dir,
+                                    bool process_startup,
+                                    Profile* last_used_profile,
+                                    const Profiles& last_opened_profiles);
+
+  // Launch the |last_used_profile| with the full command line, and the other
+  // |last_opened_profiles| without the URLs to launch. Return false if any
+  // browser is failed to be launched. Otherwise, return true.
+
+  bool ProcessLastOpenedProfiles(
+      const base::CommandLine& command_line,
+      const base::FilePath& cur_dir,
+      chrome::startup::IsProcessStartup is_process_startup,
+      chrome::startup::IsFirstRun is_first_run,
+      Profile* last_used_profile,
+      const Profiles& last_opened_profiles);
 
   // Returns the list of URLs to open from the command line.
   static std::vector<GURL> GetURLsFromCommandLine(
@@ -160,6 +194,9 @@ class StartupBrowserCreator {
 
   // Additional tabs to open during first run.
   std::vector<GURL> first_run_tabs_;
+
+  // The page to be shown in a tab when welcoming a user back to Chrome.
+  WelcomeBackPage welcome_back_page_ = WelcomeBackPage::kNone;
 
   // True if the set-as-default dialog has been explicitly suppressed.
   // This information is used to allow the default browser prompt to show on

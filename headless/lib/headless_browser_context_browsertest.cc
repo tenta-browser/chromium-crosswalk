@@ -12,7 +12,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "headless/lib/browser/headless_web_contents_impl.h"
-#include "headless/public/domains/runtime.h"
+#include "headless/public/devtools/domains/runtime.h"
 #include "headless/public/headless_browser.h"
 #include "headless/public/headless_browser_context.h"
 #include "headless/public/headless_devtools_client.h"
@@ -279,7 +279,7 @@ IN_PROC_BROWSER_TEST_F(HeadlessBrowserTest, ContextWebPreferences) {
       browser()
           ->CreateBrowserContextBuilder()
           .SetOverrideWebPreferencesCallback(
-              base::Bind([](headless::WebPreferences* preferences) {
+              base::Bind([](WebPreferences* preferences) {
                 preferences->hide_scrollbars = true;
               }))
           .Build();

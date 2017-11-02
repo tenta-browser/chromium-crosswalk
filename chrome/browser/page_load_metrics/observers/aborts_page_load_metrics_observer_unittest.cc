@@ -6,6 +6,9 @@
 
 #include "base/memory/ptr_util.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
+#include "chrome/browser/page_load_metrics/page_load_tracker.h"
+#include "chrome/common/page_load_metrics/test/page_load_metrics_test_util.h"
+#include "content/public/browser/web_contents.h"
 
 class AbortsPageLoadMetricsObserverTest
     : public page_load_metrics::PageLoadMetricsObserverTestHarness {
@@ -15,7 +18,8 @@ class AbortsPageLoadMetricsObserverTest
   }
 
   void SimulateTimingWithoutPaint() {
-    page_load_metrics::PageLoadTiming timing;
+    page_load_metrics::mojom::PageLoadTiming timing;
+    page_load_metrics::InitPageLoadTimingForTest(&timing);
     timing.navigation_start = base::Time::FromDoubleT(1);
     SimulateTimingUpdate(timing);
   }
@@ -244,9 +248,10 @@ TEST_F(AbortsPageLoadMetricsObserverTest,
 }
 
 TEST_F(AbortsPageLoadMetricsObserverTest, NoAbortNewNavigationAfterPaint) {
-  page_load_metrics::PageLoadTiming timing;
+  page_load_metrics::mojom::PageLoadTiming timing;
+  page_load_metrics::InitPageLoadTimingForTest(&timing);
   timing.navigation_start = base::Time::FromDoubleT(1);
-  timing.first_paint = base::TimeDelta::FromMicroseconds(1);
+  timing.paint_timing->first_paint = base::TimeDelta::FromMicroseconds(1);
   PopulateRequiredTimingFields(&timing);
   NavigateAndCommit(GURL("https://www.google.com"));
   SimulateTimingUpdate(timing);

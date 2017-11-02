@@ -2,15 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/message_loop/message_loop.h"
+#include "device/geolocation/wifi_data_provider_chromeos.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/shill_manager_client.h"
 #include "chromeos/network/geolocation_handler.h"
-#include "device/geolocation/wifi_data_provider_chromeos.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -18,7 +18,9 @@ namespace device {
 
 class GeolocationChromeOsWifiDataProviderTest : public testing::Test {
  protected:
-  GeolocationChromeOsWifiDataProviderTest() {}
+  GeolocationChromeOsWifiDataProviderTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
 
   void SetUp() override {
     chromeos::DBusThreadManager::Initialize();
@@ -46,12 +48,11 @@ class GeolocationChromeOsWifiDataProviderTest : public testing::Test {
             "%02X:%02X:%02X:%02X:%02X:%02X", i, j, 3, 4, 5, 6);
         std::string channel = base::IntToString(i * 10 + j);
         std::string strength = base::IntToString(i * 100 + j);
-        properties.SetStringWithoutPathExpansion(shill::kGeoMacAddressProperty,
-                                                 mac_address);
-        properties.SetStringWithoutPathExpansion(shill::kGeoChannelProperty,
-                                                 channel);
-        properties.SetStringWithoutPathExpansion(
-            shill::kGeoSignalStrengthProperty, strength);
+        properties.SetKey(shill::kGeoMacAddressProperty,
+                          base::Value(mac_address));
+        properties.SetKey(shill::kGeoChannelProperty, base::Value(channel));
+        properties.SetKey(shill::kGeoSignalStrengthProperty,
+                          base::Value(strength));
         manager_test_->AddGeoNetwork(shill::kGeoWifiAccessPointsProperty,
                                      properties);
       }
@@ -59,7 +60,7 @@ class GeolocationChromeOsWifiDataProviderTest : public testing::Test {
     base::RunLoop().RunUntilIdle();
   }
 
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   scoped_refptr<WifiDataProviderChromeOs> provider_;
   chromeos::ShillManagerClient* manager_client_;
   chromeos::ShillManagerClient::TestInterface* manager_test_;

@@ -36,22 +36,25 @@ typedef unsigned AXID;
 namespace blink {
 
 class AbstractInlineTextBox;
-class FrameView;
+class AccessibleNode;
 class HTMLCanvasElement;
 class HTMLOptionElement;
 class HTMLSelectElement;
 class LayoutMenuList;
 class LineLayoutItem;
+class LocalFrameView;
 
 class CORE_EXPORT AXObjectCache
-    : public GarbageCollectedFinalized<AXObjectCache> {
+    : public GarbageCollectedFinalized<AXObjectCache>,
+      public ContextLifecycleObserver {
   WTF_MAKE_NONCOPYABLE(AXObjectCache);
+  USING_GARBAGE_COLLECTED_MIXIN(AXObjectCache);
 
  public:
   static AXObjectCache* Create(Document&);
 
   virtual ~AXObjectCache();
-  DEFINE_INLINE_VIRTUAL_TRACE() {}
+  DECLARE_VIRTUAL_TRACE();
 
   enum AXNotification {
     kAXActiveDescendantChanged,
@@ -94,12 +97,14 @@ class CORE_EXPORT AXObjectCache
   virtual void SelectionChanged(Node*) = 0;
   virtual void ChildrenChanged(Node*) = 0;
   virtual void ChildrenChanged(LayoutObject*) = 0;
+  virtual void ChildrenChanged(AccessibleNode*) = 0;
   virtual void CheckedStateChanged(Node*) = 0;
   virtual void ListboxOptionStateChanged(HTMLOptionElement*) = 0;
   virtual void ListboxSelectedChildrenChanged(HTMLSelectElement*) = 0;
   virtual void ListboxActiveIndexChanged(HTMLSelectElement*) = 0;
   virtual void RadiobuttonRemovedFromGroup(HTMLInputElement*) = 0;
 
+  virtual void Remove(AccessibleNode*) = 0;
   virtual void Remove(LayoutObject*) = 0;
   virtual void Remove(Node*) = 0;
   virtual void Remove(AbstractInlineTextBox*) = 0;
@@ -119,6 +124,7 @@ class CORE_EXPORT AXObjectCache
                                              Node* new_focused_node) = 0;
   virtual void HandleInitialFocus() = 0;
   virtual void HandleEditableTextContentChanged(Node*) = 0;
+  virtual void HandleTextMarkerDataAdded(Node* start, Node* end) = 0;
   virtual void HandleTextFormControlChanged(Node*) = 0;
   virtual void HandleValueChanged(Node*) = 0;
   virtual void HandleUpdateActiveMenuOption(LayoutMenuList*,
@@ -136,7 +142,7 @@ class CORE_EXPORT AXObjectCache
   virtual void InlineTextBoxesUpdated(LineLayoutItem) = 0;
 
   // Called when the scroll offset changes.
-  virtual void HandleScrollPositionChanged(FrameView*) = 0;
+  virtual void HandleScrollPositionChanged(LocalFrameView*) = 0;
   virtual void HandleScrollPositionChanged(LayoutObject*) = 0;
 
   // Called when scroll bars are added / removed (as the view resizes).
@@ -151,8 +157,11 @@ class CORE_EXPORT AXObjectCache
   typedef AXObjectCache* (*AXObjectCacheCreateFunction)(Document&);
   static void Init(AXObjectCacheCreateFunction);
 
+  // Static helper functions.
+  static bool IsInsideFocusableElementOrARIAWidget(const Node&);
+
  protected:
-  AXObjectCache();
+  AXObjectCache(Document&);
 
  private:
   static AXObjectCacheCreateFunction create_function_;

@@ -28,11 +28,11 @@
 
 #include "core/html/forms/InputTypeView.h"
 
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/events/KeyboardEvent.h"
-#include "core/html/HTMLFormElement.h"
-#include "core/html/HTMLInputElement.h"
 #include "core/html/forms/FormController.h"
+#include "core/html/forms/HTMLFormElement.h"
+#include "core/html/forms/HTMLInputElement.h"
 #include "core/layout/LayoutObject.h"
 
 namespace blink {
@@ -91,8 +91,8 @@ LayoutObject* InputTypeView::CreateLayoutObject(
   return LayoutObject::CreateObject(&GetElement(), style);
 }
 
-PassRefPtr<ComputedStyle> InputTypeView::CustomStyleForLayoutObject(
-    PassRefPtr<ComputedStyle> original_style) {
+RefPtr<ComputedStyle> InputTypeView::CustomStyleForLayoutObject(
+    RefPtr<ComputedStyle> original_style) {
   return original_style;
 }
 
@@ -107,8 +107,6 @@ void InputTypeView::Blur() {
 bool InputTypeView::HasCustomFocusLogic() const {
   return true;
 }
-
-void InputTypeView::HandleFocusEvent(Element*, WebFocusType) {}
 
 void InputTypeView::HandleBlurEvent() {}
 

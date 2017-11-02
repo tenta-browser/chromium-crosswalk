@@ -32,8 +32,9 @@ class CONTENT_EXPORT TestSynchronousCompositor : public SynchronousCompositor {
       const gfx::Size& viewport_size,
       const gfx::Rect& viewport_rect_for_tile_priority,
       const gfx::Transform& transform_for_tile_priority) override;
-  void ReturnResources(uint32_t compositor_frame_sink_id,
-                       const cc::ReturnedResourceArray& resources) override;
+  void ReturnResources(
+      uint32_t layer_tree_frame_sink_id,
+      const std::vector<viz::ReturnedResource>& resources) override;
   bool DemandDrawSw(SkCanvas* canvas) override;
   void SetMemoryPolicy(size_t bytes_limit) override {}
   void DidChangeRootLayerScrollOffset(
@@ -42,16 +43,16 @@ class CONTENT_EXPORT TestSynchronousCompositor : public SynchronousCompositor {
                            const gfx::Point& anchor) override {}
   void OnComputeScroll(base::TimeTicks animate_time) override {}
 
-  void SetHardwareFrame(uint32_t compositor_frame_sink_id,
-                        std::unique_ptr<cc::CompositorFrame> frame);
+  void SetHardwareFrame(uint32_t layer_tree_frame_sink_id,
+                        std::unique_ptr<viz::CompositorFrame> frame);
 
   struct ReturnedResources {
     ReturnedResources();
     ReturnedResources(const ReturnedResources& other);
     ~ReturnedResources();
 
-    uint32_t compositor_frame_sink_id;
-    cc::ReturnedResourceArray resources;
+    uint32_t layer_tree_frame_sink_id;
+    std::vector<viz::ReturnedResource> resources;
   };
   using FrameAckArray = std::vector<ReturnedResources>;
   void SwapReturnedResources(FrameAckArray* array);

@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef CONTENT_COMMON_DEVTOOLS_MESSAGES_H_
+#define CONTENT_COMMON_DEVTOOLS_MESSAGES_H_
+
 // Developer tools consist of the following parts:
 //
 // DevToolsAgent lives in the renderer of an inspected page and provides access
@@ -38,7 +41,6 @@
 //
 // This file describes developer tools message types.
 
-// Multiply-included message file, no standard include guard.
 #include <map>
 #include <string>
 
@@ -90,7 +92,7 @@ IPC_MESSAGE_ROUTED3(DevToolsAgentMsg_Reattach,
                     std::string /* agent_state */)
 
 // Tells agent that there is no longer a client host connected to it.
-IPC_MESSAGE_ROUTED0(DevToolsAgentMsg_Detach)
+IPC_MESSAGE_ROUTED1(DevToolsAgentMsg_Detach, int /* session_id */)
 
 // WebKit-level transport.
 IPC_MESSAGE_ROUTED4(DevToolsAgentMsg_DispatchOnInspectorBackend,
@@ -135,3 +137,5 @@ IPC_MESSAGE_ROUTED1(DevToolsMsg_SetupDevToolsClient,
 // Transport from Inspector frontend to frontend host.
 IPC_MESSAGE_ROUTED1(DevToolsHostMsg_DispatchOnEmbedder,
                     std::string /* message */)
+
+#endif  // CONTENT_COMMON_DEVTOOLS_MESSAGES_H_

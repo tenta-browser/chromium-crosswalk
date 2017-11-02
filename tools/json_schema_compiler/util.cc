@@ -20,7 +20,7 @@ bool ReportError(const base::Value& from,
     error->append(base::ASCIIToUTF16("; "));
   error->append(base::ASCIIToUTF16(base::StringPrintf(
       "expected %s, got %s", base::Value::GetTypeName(expected),
-      base::Value::GetTypeName(from.GetType()))));
+      base::Value::GetTypeName(from.type()))));
   return false;  // Always false on purpose.
 }
 
@@ -69,20 +69,18 @@ bool PopulateItem(const base::Value& from,
 }
 
 bool PopulateItem(const base::Value& from, std::vector<char>* out) {
-  const base::Value* binary = nullptr;
-  if (!from.GetAsBinary(&binary))
+  if (!from.is_blob())
     return false;
-  out->assign(binary->GetBuffer(), binary->GetBuffer() + binary->GetSize());
+  *out = from.GetBlob();
   return true;
 }
 
 bool PopulateItem(const base::Value& from,
                   std::vector<char>* out,
                   base::string16* error) {
-  const base::Value* binary = nullptr;
-  if (!from.GetAsBinary(&binary))
+  if (!from.is_blob())
     return ReportError(from, base::Value::Type::BINARY, error);
-  out->assign(binary->GetBuffer(), binary->GetBuffer() + binary->GetSize());
+  *out = from.GetBlob();
   return true;
 }
 

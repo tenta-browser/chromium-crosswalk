@@ -31,8 +31,7 @@
 #include "ipc/ipc_channel_mojo.h"
 #include "ipc/ipc_logging.h"
 #include "ipc/message_filter.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "services/resource_coordinator/public/interfaces/memory/constants.mojom.h"
+#include "services/resource_coordinator/public/interfaces/memory_instrumentation/constants.mojom.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
 
 #if defined(OS_LINUX)
@@ -44,13 +43,11 @@
 namespace {
 
 // Global atomic to generate child process unique IDs.
-base::StaticAtomicSequenceNumber g_unique_id;
+base::AtomicSequenceNumber g_unique_id;
 
 }  // namespace
 
 namespace content {
-
-int ChildProcessHost::kInvalidUniqueID = -1;
 
 // static
 ChildProcessHost* ChildProcessHost::Create(ChildProcessHostDelegate* delegate) {
@@ -119,23 +116,7 @@ void ChildProcessHostImpl::ForceShutdown() {
   Send(new ChildProcessMsg_Shutdown());
 }
 
-std::string ChildProcessHostImpl::CreateChannelMojo(
-    mojo::edk::PendingProcessConnection* connection) {
-  DCHECK(channel_id_.empty());
-  channel_ =
-      IPC::ChannelMojo::Create(connection->CreateMessagePipe(&channel_id_),
-                               IPC::Channel::MODE_SERVER, this);
-  if (!channel_ || !InitChannel())
-    return std::string();
-  return channel_id_;
-}
-
 void ChildProcessHostImpl::CreateChannelMojo() {
-  // TODO(rockot): Remove |channel_id_| once this is the only code path by which
-  // the Channel is created. For now it serves to at least mutually exclude
-  // different CreateChannel* calls.
-  DCHECK(channel_id_.empty());
-  channel_id_ = "ChannelMojo";
 
   mojo::MessagePipe pipe;
   BindInterface(IPC::mojom::ChannelBootstrap::Name_, std::move(pipe.handle1));
@@ -156,7 +137,7 @@ bool ChildProcessHostImpl::InitChannel() {
   delegate_->OnChannelInitialized(channel_.get());
 
   // Make sure these messages get sent first.
-#if defined(IPC_MESSAGE_LOG_ENABLED)
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   bool enabled = IPC::Logging::GetInstance()->Enabled();
   Send(new ChildProcessMsg_SetIPCLoggingEnabled(enabled));
 #endif
@@ -206,13 +187,12 @@ uint64_t ChildProcessHostImpl::ChildProcessUniqueIdToTracingProcessId(
   // The hash value is incremented so that the tracing id is never equal to
   // MemoryDumpManager::kInvalidTracingProcessId.
   return static_cast<uint64_t>(
-             base::Hash(reinterpret_cast<const char*>(&child_process_id),
-                        sizeof(child_process_id))) +
+             base::Hash(&child_process_id, sizeof(child_process_id))) +
          1;
 }
 
 bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   IPC::Logging* logger = IPC::Logging::GetInstance();
   if (msg.type() == IPC_LOGGING_ID) {
     logger->OnReceivedLoggingMessage(msg);
@@ -243,7 +223,7 @@ bool ChildProcessHostImpl::OnMessageReceived(const IPC::Message& msg) {
       handled = delegate_->OnMessageReceived(msg);
   }
 
-#ifdef IPC_MESSAGE_LOG_ENABLED
+#if BUILDFLAG(IPC_MESSAGE_LOG_ENABLED)
   if (logger->Enabled())
     logger->OnPostDispatchMessage(msg);
 #endif

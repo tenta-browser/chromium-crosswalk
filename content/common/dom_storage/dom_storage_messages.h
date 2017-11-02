@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Multiply-included message file, no traditional include guard.
+#ifndef CONTENT_COMMON_DOM_STORAGE_DOM_STORAGE_MESSAGES_H_
+#define CONTENT_COMMON_DOM_STORAGE_DOM_STORAGE_MESSAGES_H_
 
 #include <stdint.h>
 
@@ -77,17 +78,19 @@ IPC_SYNC_MESSAGE_CONTROL1_1(DOMStorageHostMsg_LoadStorageArea,
 
 // Set a value that's associated with a key in a storage area.
 // A completion notification is sent in response.
-IPC_MESSAGE_CONTROL4(DOMStorageHostMsg_SetItem,
+IPC_MESSAGE_CONTROL5(DOMStorageHostMsg_SetItem,
                      int /* connection_id */,
                      base::string16 /* key */,
                      base::string16 /* value */,
+                     base::NullableString16 /* client_old_value */,
                      GURL /* page_url */)
 
 // Remove the value associated with a key in a storage area.
 // A completion notification is sent in response.
-IPC_MESSAGE_CONTROL3(DOMStorageHostMsg_RemoveItem,
+IPC_MESSAGE_CONTROL4(DOMStorageHostMsg_RemoveItem,
                      int /* connection_id */,
                      base::string16 /* key */,
+                     base::NullableString16 /* client_old_value */,
                      GURL /* page_url */)
 
 // Clear the storage area. A completion notification is sent in response.
@@ -97,3 +100,5 @@ IPC_MESSAGE_CONTROL2(DOMStorageHostMsg_Clear,
 
 // Used to flush the ipc message queue.
 IPC_SYNC_MESSAGE_CONTROL0_0(DOMStorageHostMsg_FlushMessages)
+
+#endif  // CONTENT_COMMON_DOM_STORAGE_DOM_STORAGE_MESSAGES_H_

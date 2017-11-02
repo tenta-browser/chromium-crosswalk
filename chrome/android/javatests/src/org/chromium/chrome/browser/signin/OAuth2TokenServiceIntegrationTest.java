@@ -5,7 +5,6 @@
 package org.chromium.chrome.browser.signin;
 
 import android.accounts.Account;
-import android.content.Context;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.MediumTest;
 import android.support.test.rule.UiThreadTestRule;
@@ -24,10 +23,10 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.test.util.ApplicationData;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.MockAccountManager;
+import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
 import org.chromium.content.browser.test.NativeLibraryTestRule;
 
 import java.util.concurrent.Callable;
@@ -46,9 +45,9 @@ public class OAuth2TokenServiceIntegrationTest {
     public UiThreadTestRule mUiThreadTestRule = new UiThreadTestRule();
 
     private static final Account TEST_ACCOUNT1 =
-            AccountManagerHelper.createAccountFromName("foo@gmail.com");
+            AccountManagerFacade.createAccountFromName("foo@gmail.com");
     private static final Account TEST_ACCOUNT2 =
-            AccountManagerHelper.createAccountFromName("bar@gmail.com");
+            AccountManagerFacade.createAccountFromName("bar@gmail.com");
     private static final AccountHolder TEST_ACCOUNT_HOLDER_1 =
             AccountHolder.builder(TEST_ACCOUNT1).alwaysAccept(true).build();
     private static final AccountHolder TEST_ACCOUNT_HOLDER_2 =
@@ -56,7 +55,7 @@ public class OAuth2TokenServiceIntegrationTest {
 
     private AdvancedMockContext mContext;
     private OAuth2TokenService mOAuth2TokenService;
-    private MockAccountManager mAccountManager;
+    private FakeAccountManagerDelegate mAccountManager;
     private TestObserver mObserver;
     private ChromeSigninController mChromeSigninController;
 
@@ -65,21 +64,23 @@ public class OAuth2TokenServiceIntegrationTest {
         mapAccountNamesToIds();
         ApplicationData.clearAppData(
                 InstrumentationRegistry.getInstrumentation().getTargetContext());
-        mActivityTestRule.loadNativeLibraryAndInitBrowserProcess();
 
-        // Set up AccountManager.
+        // loadNativeLibraryAndInitBrowserProcess will access AccountManagerFacade, so it should
+        // be initialized beforehand.
         mContext = new AdvancedMockContext(
                 InstrumentationRegistry.getInstrumentation().getTargetContext());
-        mAccountManager = new MockAccountManager(
-                mContext, InstrumentationRegistry.getInstrumentation().getContext());
-        AccountManagerHelper.overrideAccountManagerHelperForTests(mContext, mAccountManager);
+        mAccountManager = new FakeAccountManagerDelegate(
+                FakeAccountManagerDelegate.DISABLE_PROFILE_DATA_SOURCE);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(mAccountManager);
+
+        mActivityTestRule.loadNativeLibraryAndInitBrowserProcess();
 
         // Make sure there is no account signed in yet.
         mChromeSigninController = ChromeSigninController.get();
         mChromeSigninController.setSignedInAccountName(null);
 
         // Seed test accounts to AccountTrackerService.
-        seedAccountTrackerService(mContext);
+        seedAccountTrackerService();
 
         // Get a reference to the service.
         mOAuth2TokenService = getOAuth2TokenServiceOnUiThread();
@@ -119,7 +120,7 @@ public class OAuth2TokenServiceIntegrationTest {
         });
     }
 
-    private void seedAccountTrackerService(final Context context) {
+    private void seedAccountTrackerService() {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
@@ -154,6 +155,16 @@ public class OAuth2TokenServiceIntegrationTest {
                 mOAuth2TokenService.addObserver(observer);
             }
         });
+    }
+
+    private void addAccount(AccountHolder accountHolder) {
+        mAccountManager.addAccountHolderBlocking(accountHolder);
+        ThreadUtils.runOnUiThreadBlocking(this::seedAccountTrackerService);
+    }
+
+    private void removeAccount(AccountHolder accountHolder) {
+        mAccountManager.removeAccountHolderBlocking(accountHolder);
+        ThreadUtils.runOnUiThreadBlocking(this::seedAccountTrackerService);
     }
 
     @Test
@@ -256,12 +267,11 @@ public class OAuth2TokenServiceIntegrationTest {
     @Test
     @MediumTest
     public void testValidateAccountsOneAccountsRegisteredAndNoSignedInUser() throws Throwable {
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add account.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-
                 // Run test.
                 mOAuth2TokenService.validateAccounts(false);
 
@@ -276,12 +286,11 @@ public class OAuth2TokenServiceIntegrationTest {
     @Test
     @MediumTest
     public void testValidateAccountsOneAccountsRegisteredSignedIn() throws Throwable {
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add account.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-
                 // Mark user as signed in.
                 mChromeSigninController.setSignedInAccountName(TEST_ACCOUNT1.name);
 
@@ -311,12 +320,11 @@ public class OAuth2TokenServiceIntegrationTest {
     @Test
     @MediumTest
     public void testValidateAccountsSingleAccountWithoutChanges() throws Throwable {
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add account.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-
                 // Mark user as signed in.
                 mChromeSigninController.setSignedInAccountName(TEST_ACCOUNT1.name);
 
@@ -338,12 +346,11 @@ public class OAuth2TokenServiceIntegrationTest {
     @Test
     @MediumTest
     public void testValidateAccountsSingleAccountThenAddOne() throws Throwable {
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add account.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-
                 // Mark user as signed in.
                 mChromeSigninController.setSignedInAccountName(TEST_ACCOUNT1.name);
 
@@ -352,13 +359,15 @@ public class OAuth2TokenServiceIntegrationTest {
                 Assert.assertEquals(1, mObserver.getAvailableCallCount());
                 Assert.assertEquals(0, mObserver.getRevokedCallCount());
                 Assert.assertEquals(0, mObserver.getLoadedCallCount());
+            }
+        });
 
-                // Add another account.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
+        // Add another account.
+        addAccount(TEST_ACCOUNT_HOLDER_2);
 
-                // Seed AccountTrackerService again since accounts changed after last validation.
-                seedAccountTrackerService(mContext);
-
+        mUiThreadTestRule.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
                 // Re-run validation.
                 mOAuth2TokenService.validateAccounts(false);
                 Assert.assertEquals(2, mObserver.getAvailableCallCount());
@@ -371,21 +380,27 @@ public class OAuth2TokenServiceIntegrationTest {
     @Test
     @MediumTest
     public void testValidateAccountsTwoAccountsThenRemoveOne() throws Throwable {
+        // Add accounts.
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+        addAccount(TEST_ACCOUNT_HOLDER_2);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add accounts.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
-
                 // Mark user as signed in.
                 mChromeSigninController.setSignedInAccountName(TEST_ACCOUNT1.name);
 
                 // Run one validation.
                 mOAuth2TokenService.validateAccounts(false);
                 Assert.assertEquals(2, mObserver.getAvailableCallCount());
+            }
+        });
 
-                mAccountManager.removeAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
+        removeAccount(TEST_ACCOUNT_HOLDER_2);
+
+        mUiThreadTestRule.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
                 mOAuth2TokenService.validateAccounts(false);
 
                 Assert.assertEquals(2, mObserver.getAvailableCallCount());
@@ -398,23 +413,28 @@ public class OAuth2TokenServiceIntegrationTest {
     @Test
     @MediumTest
     public void testValidateAccountsTwoAccountsThenRemoveAll() throws Throwable {
+        // Add accounts.
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+        addAccount(TEST_ACCOUNT_HOLDER_2);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add accounts.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
-
                 // Mark user as signed in.
                 mChromeSigninController.setSignedInAccountName(TEST_ACCOUNT1.name);
 
                 mOAuth2TokenService.validateAccounts(false);
                 Assert.assertEquals(2, mObserver.getAvailableCallCount());
+            }
+        });
 
-                // Remove all.
-                mAccountManager.removeAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-                mAccountManager.removeAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
+        // Remove all.
+        removeAccount(TEST_ACCOUNT_HOLDER_1);
+        removeAccount(TEST_ACCOUNT_HOLDER_2);
 
+        mUiThreadTestRule.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
                 // Re-validate and run checks.
                 mOAuth2TokenService.validateAccounts(false);
                 Assert.assertEquals(2, mObserver.getRevokedCallCount());
@@ -427,13 +447,13 @@ public class OAuth2TokenServiceIntegrationTest {
     @MediumTest
     @RetryOnFailure
     public void testValidateAccountsTwoAccountsThenRemoveAllSignOut() throws Throwable {
+        // Add accounts.
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+        addAccount(TEST_ACCOUNT_HOLDER_2);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add accounts.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
-
                 // Mark user as signed in.
                 mChromeSigninController.setSignedInAccountName(TEST_ACCOUNT1.name);
 
@@ -442,9 +462,15 @@ public class OAuth2TokenServiceIntegrationTest {
 
                 // Remove all.
                 mChromeSigninController.setSignedInAccountName(null);
-                mAccountManager.removeAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-                mAccountManager.removeAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
+            }
+        });
 
+        removeAccount(TEST_ACCOUNT_HOLDER_1);
+        removeAccount(TEST_ACCOUNT_HOLDER_2);
+
+        mUiThreadTestRule.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
                 // Re-validate and run checks.
                 mOAuth2TokenService.validateAccounts(false);
                 Assert.assertEquals(2, mObserver.getRevokedCallCount());
@@ -456,13 +482,13 @@ public class OAuth2TokenServiceIntegrationTest {
     @Test
     @MediumTest
     public void testValidateAccountsTwoAccountsRegisteredAndOneSignedIn() throws Throwable {
+        // Add accounts.
+        addAccount(TEST_ACCOUNT_HOLDER_1);
+        addAccount(TEST_ACCOUNT_HOLDER_2);
+
         mUiThreadTestRule.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Add accounts.
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_1);
-                mAccountManager.addAccountHolderExplicitly(TEST_ACCOUNT_HOLDER_2);
-
                 // Mark user as signed in.
                 mChromeSigninController.setSignedInAccountName(TEST_ACCOUNT1.name);
 

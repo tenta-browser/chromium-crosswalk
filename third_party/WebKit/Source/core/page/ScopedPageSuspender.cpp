@@ -24,10 +24,10 @@
 #include "core/loader/FrameLoader.h"
 #include "core/page/Page.h"
 #include "platform/heap/Handle.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/StdLibExtras.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 
 namespace blink {
 
@@ -41,26 +41,26 @@ ScopedPageSuspender::ScopedPageSuspender() {
   if (++g_suspension_count > 1)
     return;
 
-  SetSuspended(true);
-  Platform::Current()->CurrentThread()->Scheduler()->SuspendTimerQueue();
+  SetPaused(true);
+  pause_handle_ =
+      Platform::Current()->CurrentThread()->Scheduler()->PauseScheduler();
 }
 
 ScopedPageSuspender::~ScopedPageSuspender() {
   if (--g_suspension_count > 0)
     return;
 
-  SetSuspended(false);
-  Platform::Current()->CurrentThread()->Scheduler()->ResumeTimerQueue();
+  SetPaused(false);
 }
 
-void ScopedPageSuspender::SetSuspended(bool is_suspended) {
+void ScopedPageSuspender::SetPaused(bool paused) {
   // Make a copy of the collection. Undeferring loads can cause script to run,
   // which would mutate ordinaryPages() in the middle of iteration.
   HeapVector<Member<Page>> pages;
   CopyToVector(Page::OrdinaryPages(), pages);
 
   for (const auto& page : pages)
-    page->SetSuspended(is_suspended);
+    page->SetPaused(paused);
 }
 
 bool ScopedPageSuspender::IsActive() {

@@ -65,9 +65,9 @@ namespace {
 
 class ExecuteSQLCallbackWrapper : public RefCounted<ExecuteSQLCallbackWrapper> {
  public:
-  static PassRefPtr<ExecuteSQLCallbackWrapper> Create(
+  static RefPtr<ExecuteSQLCallbackWrapper> Create(
       std::unique_ptr<ExecuteSQLCallback> callback) {
-    return AdoptRef(new ExecuteSQLCallbackWrapper(std::move(callback)));
+    return WTF::AdoptRef(new ExecuteSQLCallbackWrapper(std::move(callback)));
   }
   ~ExecuteSQLCallbackWrapper() {}
   ExecuteSQLCallback* Get() { return callback_.get(); }
@@ -93,7 +93,7 @@ class ExecuteSQLCallbackWrapper : public RefCounted<ExecuteSQLCallbackWrapper> {
 class StatementCallback final : public SQLStatementCallback {
  public:
   static StatementCallback* Create(
-      PassRefPtr<ExecuteSQLCallbackWrapper> request_callback) {
+      RefPtr<ExecuteSQLCallbackWrapper> request_callback) {
     return new StatementCallback(std::move(request_callback));
   }
 
@@ -134,7 +134,7 @@ class StatementCallback final : public SQLStatementCallback {
   }
 
  private:
-  StatementCallback(PassRefPtr<ExecuteSQLCallbackWrapper> request_callback)
+  StatementCallback(RefPtr<ExecuteSQLCallbackWrapper> request_callback)
       : request_callback_(std::move(request_callback)) {}
   RefPtr<ExecuteSQLCallbackWrapper> request_callback_;
 };
@@ -142,7 +142,7 @@ class StatementCallback final : public SQLStatementCallback {
 class StatementErrorCallback final : public SQLStatementErrorCallback {
  public:
   static StatementErrorCallback* Create(
-      PassRefPtr<ExecuteSQLCallbackWrapper> request_callback) {
+      RefPtr<ExecuteSQLCallbackWrapper> request_callback) {
     return new StatementErrorCallback(std::move(request_callback));
   }
 
@@ -156,7 +156,7 @@ class StatementErrorCallback final : public SQLStatementErrorCallback {
   }
 
  private:
-  StatementErrorCallback(PassRefPtr<ExecuteSQLCallbackWrapper> request_callback)
+  StatementErrorCallback(RefPtr<ExecuteSQLCallbackWrapper> request_callback)
       : request_callback_(std::move(request_callback)) {}
   RefPtr<ExecuteSQLCallbackWrapper> request_callback_;
 };
@@ -165,7 +165,7 @@ class TransactionCallback final : public SQLTransactionCallback {
  public:
   static TransactionCallback* Create(
       const String& sql_statement,
-      PassRefPtr<ExecuteSQLCallbackWrapper> request_callback) {
+      RefPtr<ExecuteSQLCallbackWrapper> request_callback) {
     return new TransactionCallback(sql_statement, std::move(request_callback));
   }
 
@@ -186,7 +186,7 @@ class TransactionCallback final : public SQLTransactionCallback {
 
  private:
   TransactionCallback(const String& sql_statement,
-                      PassRefPtr<ExecuteSQLCallbackWrapper> request_callback)
+                      RefPtr<ExecuteSQLCallbackWrapper> request_callback)
       : sql_statement_(sql_statement),
         request_callback_(std::move(request_callback)) {}
   String sql_statement_;
@@ -196,7 +196,7 @@ class TransactionCallback final : public SQLTransactionCallback {
 class TransactionErrorCallback final : public SQLTransactionErrorCallback {
  public:
   static TransactionErrorCallback* Create(
-      PassRefPtr<ExecuteSQLCallbackWrapper> request_callback) {
+      RefPtr<ExecuteSQLCallbackWrapper> request_callback) {
     return new TransactionErrorCallback(std::move(request_callback));
   }
 
@@ -210,8 +210,7 @@ class TransactionErrorCallback final : public SQLTransactionErrorCallback {
   }
 
  private:
-  TransactionErrorCallback(
-      PassRefPtr<ExecuteSQLCallbackWrapper> request_callback)
+  TransactionErrorCallback(RefPtr<ExecuteSQLCallbackWrapper> request_callback)
       : request_callback_(std::move(request_callback)) {}
   RefPtr<ExecuteSQLCallbackWrapper> request_callback_;
 };
@@ -262,7 +261,7 @@ void InspectorDatabaseAgent::DidCommitLoadForLocalFrame(LocalFrame* frame) {
   if (frame != page_->MainFrame())
     return;
 
-  resources_.Clear();
+  resources_.clear();
 }
 
 InspectorDatabaseAgent::InspectorDatabaseAgent(Page* page)
@@ -290,7 +289,7 @@ Response InspectorDatabaseAgent::disable() {
   state_->setBoolean(DatabaseAgentState::kDatabaseAgentEnabled, enabled_);
   if (DatabaseClient* client = DatabaseClient::FromPage(page_))
     client->SetInspectorAgent(nullptr);
-  resources_.Clear();
+  resources_.clear();
   return Response::OK();
 }
 
@@ -360,7 +359,7 @@ InspectorDatabaseResource* InspectorDatabaseAgent::FindByFileName(
 
 blink::Database* InspectorDatabaseAgent::DatabaseForId(
     const String& database_id) {
-  DatabaseResourcesHeapMap::iterator it = resources_.Find(database_id);
+  DatabaseResourcesHeapMap::iterator it = resources_.find(database_id);
   if (it == resources_.end())
     return 0;
   return it->value->GetDatabase();

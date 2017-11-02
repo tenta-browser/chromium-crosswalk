@@ -34,11 +34,11 @@
 #include "platform/blob/BlobData.h"
 #include "platform/network/HTTPHeaderMap.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/Deque.h"
-#include "wtf/HashMap.h"
-#include "wtf/Vector.h"
-#include "wtf/text/AtomicString.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/Deque.h"
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/AtomicString.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -55,14 +55,14 @@ class XHRReplayData final : public GarbageCollectedFinalized<XHRReplayData> {
                                const AtomicString& method,
                                const KURL&,
                                bool async,
-                               PassRefPtr<EncodedFormData>,
+                               RefPtr<EncodedFormData>,
                                bool include_credentials);
 
   void AddHeader(const AtomicString& key, const AtomicString& value);
   const AtomicString& Method() const { return method_; }
   const KURL& Url() const { return url_; }
   bool Async() const { return async_; }
-  PassRefPtr<EncodedFormData> FormData() const { return form_data_; }
+  RefPtr<EncodedFormData> FormData() const { return form_data_; }
   const HTTPHeaderMap& Headers() const { return headers_; }
   bool IncludeCredentials() const { return include_credentials_; }
   ExecutionContext* GetExecutionContext() const { return execution_context_; }
@@ -74,7 +74,7 @@ class XHRReplayData final : public GarbageCollectedFinalized<XHRReplayData> {
                 const AtomicString& method,
                 const KURL&,
                 bool async,
-                PassRefPtr<EncodedFormData>,
+                RefPtr<EncodedFormData>,
                 bool include_credentials);
 
   Member<ExecutionContext> execution_context_;
@@ -132,10 +132,8 @@ class NetworkResourcesData final
       text_encoding_name_ = text_encoding_name;
     }
 
-    PassRefPtr<SharedBuffer> Buffer() const { return buffer_; }
-    void SetBuffer(PassRefPtr<SharedBuffer> buffer) {
-      buffer_ = std::move(buffer);
-    }
+    RefPtr<SharedBuffer> Buffer() const { return buffer_; }
+    void SetBuffer(RefPtr<SharedBuffer> buffer) { buffer_ = std::move(buffer); }
 
     Resource* CachedResource() const { return cached_resource_.Get(); }
     void SetResource(Resource*);
@@ -146,9 +144,9 @@ class NetworkResourcesData final
     }
 
     BlobDataHandle* DownloadedFileBlob() const {
-      return downloaded_file_blob_.Get();
+      return downloaded_file_blob_.get();
     }
-    void SetDownloadedFileBlob(PassRefPtr<BlobDataHandle> blob) {
+    void SetDownloadedFileBlob(RefPtr<BlobDataHandle> blob) {
       downloaded_file_blob_ = std::move(blob);
     }
 
@@ -170,7 +168,7 @@ class NetworkResourcesData final
     DECLARE_TRACE();
 
    private:
-    bool HasData() const { return data_buffer_.Get(); }
+    bool HasData() const { return data_buffer_.get(); }
     size_t DataLength() const;
     void AppendData(const char* data, size_t data_length);
     size_t DecodeDataToContent();
@@ -246,6 +244,10 @@ class NetworkResourcesData final
   ResourceData* ResourceDataForRequestId(const String& request_id);
   void EnsureNoDataForRequestId(const String& request_id);
   bool EnsureFreeSpace(size_t);
+  ResourceData* PrepareToAddResourceData(const String& request_id,
+                                         size_t data_length);
+  void MaybeAddResourceData(const String& request_id,
+                            RefPtr<const SharedBuffer>);
 
   Deque<String> request_ids_deque_;
 

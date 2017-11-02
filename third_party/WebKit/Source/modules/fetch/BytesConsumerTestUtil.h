@@ -29,9 +29,8 @@ class BytesConsumerTestUtil {
 
     MOCK_METHOD2(BeginRead, Result(const char**, size_t*));
     MOCK_METHOD1(EndRead, Result(size_t));
-    MOCK_METHOD1(DrainAsBlobDataHandle,
-                 PassRefPtr<BlobDataHandle>(BlobSizePolicy));
-    MOCK_METHOD0(DrainAsFormData, PassRefPtr<EncodedFormData>());
+    MOCK_METHOD1(DrainAsBlobDataHandle, RefPtr<BlobDataHandle>(BlobSizePolicy));
+    MOCK_METHOD0(DrainAsFormData, RefPtr<EncodedFormData>());
     MOCK_METHOD1(SetClient, void(Client*));
     MOCK_METHOD0(ClearClient, void());
     MOCK_METHOD0(Cancel, void());
@@ -59,6 +58,7 @@ class BytesConsumerTestUtil {
     MOCK_METHOD1(DidFetchDataLoadedBlobHandleMock,
                  void(RefPtr<BlobDataHandle>));
     MOCK_METHOD1(DidFetchDataLoadedArrayBufferMock, void(DOMArrayBuffer*));
+    MOCK_METHOD1(DidFetchDataLoadedFormDataMock, void(FormData*));
     MOCK_METHOD1(DidFetchDataLoadedString, void(const String&));
     MOCK_METHOD0(DidFetchDataLoadStream, void());
     MOCK_METHOD0(DidFetchDataLoadFailed, void());
@@ -66,10 +66,13 @@ class BytesConsumerTestUtil {
     void DidFetchDataLoadedArrayBuffer(DOMArrayBuffer* array_buffer) override {
       DidFetchDataLoadedArrayBufferMock(array_buffer);
     }
-    // In mock methods we use RefPtr<> rather than PassRefPtr<>.
+    // TODO(yhirano): Remove DidFetchDataLoadedBlobHandleMock.
     void DidFetchDataLoadedBlobHandle(
-        PassRefPtr<BlobDataHandle> blob_data_handle) override {
-      DidFetchDataLoadedBlobHandleMock(blob_data_handle);
+        RefPtr<BlobDataHandle> blob_data_handle) override {
+      DidFetchDataLoadedBlobHandleMock(std::move(blob_data_handle));
+    }
+    void DidFetchDataLoadedFormData(FormData* FormData) override {
+      DidFetchDataLoadedFormDataMock(FormData);
     }
   };
 
@@ -148,6 +151,7 @@ class BytesConsumerTestUtil {
     explicit TwoPhaseReader(BytesConsumer* /* consumer */);
 
     void OnStateChange() override;
+    String DebugName() const override { return "TwoPhaseReader"; }
     std::pair<BytesConsumer::Result, Vector<char>> Run();
 
     DEFINE_INLINE_TRACE() {
@@ -160,6 +164,8 @@ class BytesConsumerTestUtil {
     BytesConsumer::Result result_ = BytesConsumer::Result::kShouldWait;
     Vector<char> data_;
   };
+
+  static String CharVectorToString(const Vector<char>&);
 };
 
 }  // namespace blink

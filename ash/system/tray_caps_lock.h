@@ -5,10 +5,11 @@
 #ifndef ASH_SYSTEM_TRAY_CAPS_LOCK_H_
 #define ASH_SYSTEM_TRAY_CAPS_LOCK_H_
 
+#include "ash/ime/ime_controller.h"
 #include "ash/system/tray/tray_image_item.h"
 #include "base/macros.h"
-#include "ui/base/ime/chromeos/ime_keyboard.h"
-#include "ui/events/event_handler.h"
+
+class PrefRegistrySimple;
 
 namespace views {
 class View;
@@ -17,25 +18,25 @@ class View;
 namespace ash {
 class CapsLockDefaultView;
 
-class TrayCapsLock : public TrayImageItem,
-                     public chromeos::input_method::ImeKeyboard::Observer {
+// Shows a status area icon and a system tray menu item when caps lock is on.
+class TrayCapsLock : public TrayImageItem, public ImeController::Observer {
  public:
   explicit TrayCapsLock(SystemTray* system_tray);
   ~TrayCapsLock() override;
 
- private:
-  // Overriden from chromeos::input_method::ImeKeyboard::Observer:
+  // See Shell::RegisterProfilePrefs().
+  static void RegisterProfilePrefs(PrefRegistrySimple* registry, bool for_test);
+
+  // Overridden from ImeController::Observer:
   void OnCapsLockChanged(bool enabled) override;
 
   // Overridden from TrayImageItem.
   bool GetInitialVisibility() override;
   views::View* CreateDefaultView(LoginStatus status) override;
-  views::View* CreateDetailedView(LoginStatus status) override;
-  void DestroyDefaultView() override;
-  void DestroyDetailedView() override;
+  void OnDefaultViewDestroyed() override;
 
+ private:
   CapsLockDefaultView* default_;
-  views::View* detailed_;
 
   bool caps_lock_enabled_;
   bool message_shown_;

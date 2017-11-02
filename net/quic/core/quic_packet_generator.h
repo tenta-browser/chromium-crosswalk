@@ -73,6 +73,7 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
 
   QuicPacketGenerator(QuicConnectionId connection_id,
                       QuicFramer* framer,
+                      QuicRandom* random_generator,
                       QuicBufferAllocator* buffer_allocator,
                       DelegateInterface* delegate);
 
@@ -92,22 +93,29 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
   // mode, these packets will also be sent during this call.
   // |delegate| (if not nullptr) will be informed once all packets sent as a
   // result of this call are ACKed by the peer.
+  // When |state| is FIN_AND_PADDING, random padding of size [1, 256] will be
+  // added after stream frames. If current constructed packet cannot
+  // accommodate, the padding will overflow to the next packet(s).
   QuicConsumedData ConsumeData(
       QuicStreamId id,
       QuicIOVector iov,
       QuicStreamOffset offset,
-      bool fin,
+      StreamSendingState state,
       QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener);
 
   // Sends as many data only packets as allowed by the send algorithm and the
   // available iov.
-  // This path does not support FEC, padding, or bundling pending frames.
+  // This path does not support padding, or bundling pending frames.
+  // In case we access this method from ConsumeData, total_bytes_consumed
+  // keeps track of how many bytes have already been consumed.
   QuicConsumedData ConsumeDataFastPath(
       QuicStreamId id,
       const QuicIOVector& iov,
       QuicStreamOffset offset,
       bool fin,
-      QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener);
+      size_t total_bytes_consumed,
+      const QuicReferenceCountedPointer<QuicAckListenerInterface>&
+          ack_listener);
 
   // Generates an MTU discovery packet of specified size.
   void GenerateMtuDiscoveryPacket(
@@ -139,7 +147,7 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
 
   // Creates a version negotiation packet which supports |supported_versions|.
   std::unique_ptr<QuicEncryptedPacket> SerializeVersionNegotiationPacket(
-      const QuicVersionVector& supported_versions);
+      const QuicTransportVersionVector& supported_versions);
 
   // Re-serializes frames with the original packet's packet number length.
   // Used for retransmitting packets to ensure they aren't too long.
@@ -157,6 +165,10 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
 
   // Sets the encrypter to use for the encryption level.
   void SetEncrypter(EncryptionLevel level, QuicEncrypter* encrypter);
+
+  // Returns true if there are control frames or current constructed packet has
+  // pending retransmittable frames.
+  bool HasRetransmittableFrames() const;
 
   // Sets the encryption level that will be applied to new packets.
   void set_encryption_level(EncryptionLevel level);
@@ -176,10 +188,6 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
     packet_creator_.set_debug_delegate(debug_delegate);
   }
 
-  bool latched_flag_no_stop_waiting_frames() const {
-    return packet_creator_.latched_flag_no_stop_waiting_frames();
-  }
-
  private:
   friend class test::QuicPacketGeneratorPeer;
 
@@ -195,6 +203,13 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
   // Returns false and flushes current open packet if the pending frame cannot
   // fit into current open packet.
   bool AddNextPendingFrame();
+
+  // Adds a random amount of padding (between 1 to 256 bytes).
+  void AddRandomPadding();
+
+  // Sends remaining pending padding.
+  // Pending paddings should only be sent when there is nothing else to send.
+  void SendRemainingPendingPadding();
 
   DelegateInterface* delegate_;
 
@@ -212,6 +227,8 @@ class QUIC_EXPORT_PRIVATE QuicPacketGenerator {
   // are referenced elsewhere so that they can later be (optionally)
   // retransmitted.
   QuicStopWaitingFrame pending_stop_waiting_frame_;
+
+  QuicRandom* random_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicPacketGenerator);
 };

@@ -4,6 +4,7 @@
 
 module ui.mojom;
 
+import "mojo/common/time.mojom";
 import "ui/events/mojo/event_constants.mojom";
 import "ui/events/mojo/keyboard_codes.mojom";
 import "ui/latency/mojo/latency_info.mojom";
@@ -107,6 +108,12 @@ struct BrushData {
   float tilt_y;
 };
 
+// Data to support gesture events.
+// TODO(crbug.com/767087): Expand GestureEvent and GestureEventDetails support.
+struct GestureData {
+  LocationData location;
+};
+
 struct Event {
   // TODO(sky): rename to type.
   EventType action;
@@ -115,11 +122,12 @@ struct Event {
   //
   // TODO(sky): parts of this should move to PointerData.
   int32 flags;
-  // Time in microseconds from when the platform was started.
-  // This value accurately orders events w.r.t. to each other but
-  // does not position them at an absolute time.
-  int64 time_stamp;
+  // This value accurately orders events w.r.t. to each other but does not
+  // position them at an absolute time since the TimeTicks origin is only
+  // guaranteed to be fixed during one instance of the application.
+  mojo.common.mojom.TimeTicks time_stamp;
   LatencyInfo latency;
   KeyData? key_data;
   PointerData? pointer_data;
+  GestureData? gesture_data;
 };

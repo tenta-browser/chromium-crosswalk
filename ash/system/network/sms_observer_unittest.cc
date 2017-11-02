@@ -4,9 +4,9 @@
 
 #include "ash/system/network/sms_observer.h"
 
+#include <memory>
+
 #include "ash/public/interfaces/vpn_list.mojom.h"
-#include "ash/shelf/shelf_widget.h"
-#include "ash/shelf/wm_shelf.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
 #include "base/macros.h"
@@ -28,7 +28,7 @@ std::unique_ptr<base::DictionaryValue> CreateMessage(
     const char* kDefaultNumber = "000-000-0000",
     const char* kDefaultTimestamp = "Fri Jun  8 13:26:04 EDT 2016") {
   std::unique_ptr<base::DictionaryValue> sms =
-      base::MakeUnique<base::DictionaryValue>();
+      std::make_unique<base::DictionaryValue>();
   if (kDefaultNumber)
     sms->SetString("number", kDefaultNumber);
   if (kDefaultMessage)
@@ -40,7 +40,7 @@ std::unique_ptr<base::DictionaryValue> CreateMessage(
 
 }  // namespace
 
-class SmsObserverTest : public test::AshTestBase {
+class SmsObserverTest : public AshTestBase {
  public:
   SmsObserverTest() {}
   ~SmsObserverTest() override {}

@@ -17,6 +17,7 @@
 #include "base/files/file_path.h"
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -292,8 +293,8 @@ TEST_F(BackgroundApplicationListModelTest, ExtensionLoadAndUnload) {
   ASSERT_EQ(1U, model()->size());
 
   extensions::TestExtensionRegistryObserver unload_observer(registry());
-  service()->UnloadExtension(
-      bgapp->id(), extensions::UnloadedExtensionInfo::REASON_UNINSTALL);
+  service()->UnloadExtension(bgapp->id(),
+                             extensions::UnloadedExtensionReason::UNINSTALL);
   unload_observer.WaitForExtensionUnloaded();
   ASSERT_TRUE(registry()->enabled_extensions().is_empty());
   EXPECT_EQ(0U, model()->size());

@@ -19,12 +19,12 @@
 
 #include "core/layout/svg/SVGResourcesCache.h"
 
-#include "core/HTMLNames.h"
+#include <memory>
+#include "core/html_names.h"
 #include "core/layout/svg/LayoutSVGResourceContainer.h"
 #include "core/layout/svg/SVGResources.h"
 #include "core/layout/svg/SVGResourcesCycleSolver.h"
 #include "core/svg/SVGDocumentExtensions.h"
-#include <memory>
 
 namespace blink {
 
@@ -43,6 +43,9 @@ void SVGResourcesCache::AddResourcesFromLayoutObject(
       SVGResources::BuildResources(object, style);
   if (!new_resources)
     return;
+
+  // The new resource may cause new paint property nodes.
+  object->SetNeedsPaintPropertyUpdate();
 
   // Put object in cache.
   SVGResources* resources =
@@ -64,6 +67,9 @@ void SVGResourcesCache::RemoveResourcesFromLayoutObject(LayoutObject* object) {
   std::unique_ptr<SVGResources> resources = cache_.Take(object);
   if (!resources)
     return;
+
+  // Removal of the resource may cause removal of paint property nodes.
+  object->SetNeedsPaintPropertyUpdate();
 
   // Walk resources and unregister the layout object as a client of each
   // resource.
@@ -184,6 +190,26 @@ void SVGResourcesCache::ClientDestroyed(LayoutObject* layout_object) {
     resources->RemoveClientFromCache(layout_object);
   SVGResourcesCache& cache = ResourcesCache(layout_object->GetDocument());
   cache.RemoveResourcesFromLayoutObject(layout_object);
+}
+
+SVGResourcesCache::TemporaryStyleScope::TemporaryStyleScope(
+    LayoutObject& layout_object,
+    const ComputedStyle& style,
+    const ComputedStyle& temporary_style)
+    : layout_object_(layout_object),
+      original_style_(style),
+      styles_are_equal_(style == temporary_style) {
+  SwitchTo(temporary_style);
+}
+
+void SVGResourcesCache::TemporaryStyleScope::SwitchTo(
+    const ComputedStyle& style) {
+  DCHECK(LayoutObjectCanHaveResources(&layout_object_));
+  if (styles_are_equal_)
+    return;
+  SVGResourcesCache& cache = ResourcesCache(layout_object_.GetDocument());
+  cache.RemoveResourcesFromLayoutObject(&layout_object_);
+  cache.AddResourcesFromLayoutObject(&layout_object_, style);
 }
 
 }  // namespace blink

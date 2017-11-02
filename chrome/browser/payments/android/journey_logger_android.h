@@ -5,8 +5,6 @@
 #ifndef CHROME_BROWSER_PAYMENTS_ANDROID_JOURNEY_LOGGER_ANDROID_H_
 #define CHROME_BROWSER_PAYMENTS_ANDROID_JOURNEY_LOGGER_ANDROID_H_
 
-#include <jni.h>
-
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
 #include "components/payments/core/journey_logger.h"
@@ -16,9 +14,6 @@ namespace payments {
 // Forwarding calls to payments::JourneyLogger.
 class JourneyLoggerAndroid {
  public:
-  // Registers the JNI bindings for this class.
-  static bool Register(JNIEnv* env);
-
   JourneyLoggerAndroid(bool is_incognito, const std::string& url);
   ~JourneyLoggerAndroid();
 
@@ -30,7 +25,8 @@ class JourneyLoggerAndroid {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller,
       jint jsection,
-      jint jnumber);
+      jint jnumber,
+      jboolean jhas_complete_suggestion);
   void IncrementSelectionChanges(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller,
@@ -47,15 +43,30 @@ class JourneyLoggerAndroid {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller,
       jboolean jvalue);
-  void SetShowCalled(JNIEnv* env,
-                     const base::android::JavaParamRef<jobject>& jcaller);
   void SetEventOccurred(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& jcaller,
                         jint jevent);
-  void RecordJourneyStatsHistograms(
+  void SetRequestedInformation(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller,
-      jint jcompletion_status);
+      jboolean requested_shipping,
+      jboolean requested_email,
+      jboolean requested_phone,
+      jboolean requested_name);
+  void SetRequestedPaymentMethodTypes(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jcaller,
+      jboolean requested_basic_card,
+      jboolean requested_method_google,
+      jboolean requested_method_other);
+  void SetCompleted(JNIEnv* env,
+                    const base::android::JavaParamRef<jobject>& jcaller);
+  void SetAborted(JNIEnv* env,
+                  const base::android::JavaParamRef<jobject>& jcaller,
+                  jint jreason);
+  void SetNotShown(JNIEnv* env,
+                   const base::android::JavaParamRef<jobject>& jcaller,
+                   jint jreason);
 
  private:
   JourneyLogger journey_logger_;

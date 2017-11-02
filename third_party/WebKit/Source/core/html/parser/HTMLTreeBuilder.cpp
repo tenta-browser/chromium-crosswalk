@@ -28,25 +28,27 @@
 
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/HTMLNames.h"
-#include "core/MathMLNames.h"
-#include "core/SVGNames.h"
-#include "core/XLinkNames.h"
-#include "core/XMLNSNames.h"
-#include "core/XMLNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/DocumentFragment.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/frame/UseCounter.h"
-#include "core/html/HTMLFormControlElement.h"
-#include "core/html/HTMLFormElement.h"
 #include "core/html/HTMLTemplateElement.h"
+#include "core/html/forms/HTMLFormControlElement.h"
+#include "core/html/forms/HTMLFormElement.h"
 #include "core/html/parser/AtomicHTMLToken.h"
 #include "core/html/parser/HTMLDocumentParser.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/html/parser/HTMLStackItem.h"
 #include "core/html/parser/HTMLToken.h"
 #include "core/html/parser/HTMLTokenizer.h"
+#include "core/html_names.h"
+#include "core/mathml_names.h"
+#include "core/svg_names.h"
+#include "core/xlink_names.h"
+#include "core/xml_names.h"
+#include "core/xmlns_names.h"
+#include "platform/bindings/RuntimeCallStats.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "platform/text/PlatformLocale.h"
 #include "platform/wtf/text/CharacterNames.h"
 
@@ -150,7 +152,7 @@ class HTMLTreeBuilder::CharacterTokenBuffer {
     DCHECK(!IsEmpty());
     unsigned start = current_;
     current_ = end_;
-    return StringView(characters_.Get(), start, end_ - start);
+    return StringView(characters_.get(), start, end_ - start);
   }
 
   void GiveRemainingTo(StringBuilder& recipient) {
@@ -205,7 +207,7 @@ class HTMLTreeBuilder::CharacterTokenBuffer {
     DCHECK(!IsEmpty());
     const unsigned start = current_;
     SkipLeading<characterPredicate>();
-    return StringView(characters_.Get(), start, current_ - start);
+    return StringView(characters_.get(), start, current_ - start);
   }
 
   RefPtr<StringImpl> characters_;
@@ -247,7 +249,7 @@ HTMLTreeBuilder::HTMLTreeBuilder(HTMLDocumentParser* parser,
   tree_.OpenElements()->PushRootNode(HTMLStackItem::Create(
       fragment, HTMLStackItem::kItemForDocumentFragmentNode));
 
-  if (isHTMLTemplateElement(*context_element))
+  if (IsHTMLTemplateElement(*context_element))
     template_insertion_modes_.push_back(kTemplateContentsMode);
 
   ResetInsertionModeAppropriately();
@@ -301,6 +303,8 @@ Element* HTMLTreeBuilder::TakeScriptToProcess(
 }
 
 void HTMLTreeBuilder::ConstructTree(AtomicHTMLToken* token) {
+  RUNTIME_CALL_TIMER_SCOPE(V8PerIsolateData::MainThreadIsolate(),
+                           RuntimeCallStats::CounterId::kConstructTree);
   if (ShouldProcessTokenInForeignContent(token))
     ProcessTokenInForeignContent(token);
   else
@@ -445,12 +449,14 @@ static void MapLoweredLocalNameToName(PrefixedNameToQualifiedNameMap* map,
   for (size_t i = 0; i < length; ++i) {
     const QualifiedName& name = *names[i];
     const AtomicString& local_name = name.LocalName();
-    AtomicString lowered_local_name = local_name.DeprecatedLower();
+    AtomicString lowered_local_name = local_name.LowerASCII();
     if (lowered_local_name != local_name)
       map->insert(lowered_local_name, name);
   }
 }
 
+// "Any other start tag" bullet in
+// https://html.spec.whatwg.org/multipage/parsing.html#parsing-main-inforeign
 static void AdjustSVGTagNameCase(AtomicHTMLToken* token) {
   static PrefixedNameToQualifiedNameMap* case_map = 0;
   if (!case_map) {
@@ -482,10 +488,12 @@ static void AdjustAttributes(AtomicHTMLToken* token) {
   }
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#adjust-svg-attributes
 static void AdjustSVGAttributes(AtomicHTMLToken* token) {
   AdjustAttributes<SVGNames::getSVGAttrs, SVGNames::SVGAttrsCount>(token);
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#adjust-mathml-attributes
 static void AdjustMathMLAttributes(AtomicHTMLToken* token) {
   AdjustAttributes<MathMLNames::getMathMLAttrs, MathMLNames::MathMLAttrsCount>(
       token);
@@ -618,6 +626,8 @@ void HTMLTreeBuilder::ProcessStartTagForInBody(AtomicHTMLToken* token) {
   if (token->GetName() == formTag) {
     if (tree_.IsFormElementPointerNonNull() && !IsParsingTemplateContents()) {
       ParseError(token);
+      UseCounter::Count(tree_.CurrentNode()->GetDocument(),
+                        WebFeature::kHTMLParseErrorNestedForm);
       return;
     }
     ProcessFakePEndTagIfPInButtonScope();
@@ -732,9 +742,7 @@ void HTMLTreeBuilder::ProcessStartTagForInBody(AtomicHTMLToken* token) {
       frameset_ok_ = false;
     return;
   }
-  if ((RuntimeEnabledFeatures::contextMenuEnabled() &&
-       token->GetName() == menuitemTag) ||
-      token->GetName() == paramTag || token->GetName() == sourceTag ||
+  if (token->GetName() == paramTag || token->GetName() == sourceTag ||
       token->GetName() == trackTag) {
     tree_.InsertSelfClosingHTMLElementDestroyingToken(token);
     return;
@@ -858,7 +866,7 @@ bool HTMLTreeBuilder::ProcessTemplateEndTag(AtomicHTMLToken* token) {
   if (!tree_.OpenElements()->HasTemplateInHTMLScope()) {
     DCHECK(template_insertion_modes_.IsEmpty() ||
            (template_insertion_modes_.size() == 1 &&
-            isHTMLTemplateElement(fragment_context_.ContextElement())));
+            IsHTMLTemplateElement(fragment_context_.ContextElement())));
     ParseError(token);
     return false;
   }
@@ -884,7 +892,7 @@ bool HTMLTreeBuilder::ProcessEndOfFileForInTemplateContents(
 
 bool HTMLTreeBuilder::ProcessColgroupEndTagForInColumnGroup() {
   if (tree_.CurrentIsRootNode() ||
-      isHTMLTemplateElement(*tree_.CurrentNode())) {
+      IsHTMLTemplateElement(*tree_.CurrentNode())) {
     DCHECK(IsParsingFragmentOrTemplateContents());
     // FIXME: parse error
     return false;
@@ -1384,9 +1392,6 @@ bool HTMLTreeBuilder::ProcessBodyEndTagForInBody(AtomicHTMLToken* token) {
 
 void HTMLTreeBuilder::ProcessAnyOtherEndTagForInBody(AtomicHTMLToken* token) {
   DCHECK_EQ(token->GetType(), HTMLToken::kEndTag);
-  if (token->GetName() == menuitemTag)
-    UseCounter::Count(tree_.CurrentNode()->GetDocument(),
-                      UseCounter::kMenuItemCloseTag);
   HTMLElementStack::ElementRecord* record = tree_.OpenElements()->TopRecord();
   while (1) {
     HTMLStackItem* item = record->StackItem();
@@ -2415,7 +2420,7 @@ void HTMLTreeBuilder::ProcessEndOfFile(AtomicHTMLToken* token) {
         return;  // FIXME: Should we break here instead of returning?
       }
       DCHECK(tree_.CurrentNode()->HasTagName(colgroupTag) ||
-             isHTMLTemplateElement(tree_.CurrentNode()));
+             IsHTMLTemplateElement(tree_.CurrentNode()));
       ProcessColgroupEndTagForInColumnGroup();
     // Fall through
     case kInFramesetMode:
@@ -2446,7 +2451,7 @@ void HTMLTreeBuilder::ProcessEndOfFile(AtomicHTMLToken* token) {
         DVLOG(1) << "Not implemented.";
       }
       Element* el = tree_.OpenElements()->Top();
-      if (isHTMLTextAreaElement(el))
+      if (IsHTMLTextAreaElement(el))
         ToHTMLFormControlElement(el)->SetBlocksFormSubmission(true);
       tree_.OpenElements()->Pop();
       DCHECK_NE(original_insertion_mode_, kTextMode);

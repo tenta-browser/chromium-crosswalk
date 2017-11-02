@@ -9,18 +9,18 @@
 #include "platform/blob/BlobData.h"
 #include "platform/blob/BlobRegistry.h"
 #include "platform/blob/BlobURL.h"
-#include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/ResourceError.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/loader/fetch/ResourceRequest.h"
+#include "platform/loader/fetch/fetch_initiator_type_names.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
 
 namespace blink {
 
-BlobBytesConsumer::BlobBytesConsumer(
-    ExecutionContext* execution_context,
-    PassRefPtr<BlobDataHandle> blob_data_handle,
-    ThreadableLoader* loader)
+BlobBytesConsumer::BlobBytesConsumer(ExecutionContext* execution_context,
+                                     RefPtr<BlobDataHandle> blob_data_handle,
+                                     ThreadableLoader* loader)
     : ContextLifecycleObserver(execution_context),
       blob_data_handle_(std::move(blob_data_handle)),
       loader_(loader) {
@@ -34,9 +34,8 @@ BlobBytesConsumer::BlobBytesConsumer(
   }
 }
 
-BlobBytesConsumer::BlobBytesConsumer(
-    ExecutionContext* execution_context,
-    PassRefPtr<BlobDataHandle> blob_data_handle)
+BlobBytesConsumer::BlobBytesConsumer(ExecutionContext* execution_context,
+                                     RefPtr<BlobDataHandle> blob_data_handle)
     : BlobBytesConsumer(execution_context,
                         std::move(blob_data_handle),
                         nullptr) {}
@@ -75,6 +74,8 @@ BytesConsumer::Result BlobBytesConsumer::BeginRead(const char** buffer,
 
       ResourceRequest request(blob_url_);
       request.SetRequestContext(WebURLRequest::kRequestContextInternal);
+      request.SetFetchRequestMode(WebURLRequest::kFetchRequestModeSameOrigin);
+      request.SetFetchCredentialsMode(WebURLRequest::kFetchCredentialsModeOmit);
       request.SetUseStreamOnResponse(true);
       // We intentionally skip
       // 'setExternalRequestStateFromRequestorAddressSpace', as 'blob:'
@@ -116,7 +117,7 @@ BytesConsumer::Result BlobBytesConsumer::EndRead(size_t read) {
   return body_->EndRead(read);
 }
 
-PassRefPtr<BlobDataHandle> BlobBytesConsumer::DrainAsBlobDataHandle(
+RefPtr<BlobDataHandle> BlobBytesConsumer::DrainAsBlobDataHandle(
     BlobSizePolicy policy) {
   if (!IsClean())
     return nullptr;
@@ -125,17 +126,17 @@ PassRefPtr<BlobDataHandle> BlobBytesConsumer::DrainAsBlobDataHandle(
       blob_data_handle_->size() == UINT64_MAX)
     return nullptr;
   Close();
-  return blob_data_handle_.Release();
+  return std::move(blob_data_handle_);
 }
 
-PassRefPtr<EncodedFormData> BlobBytesConsumer::DrainAsFormData() {
+RefPtr<EncodedFormData> BlobBytesConsumer::DrainAsFormData() {
   RefPtr<BlobDataHandle> handle =
       DrainAsBlobDataHandle(BlobSizePolicy::kAllowBlobWithInvalidSize);
   if (!handle)
     return nullptr;
   RefPtr<EncodedFormData> form_data = EncodedFormData::Create();
   form_data->AppendBlob(handle->Uuid(), handle);
-  return form_data.Release();
+  return form_data;
 }
 
 void BlobBytesConsumer::SetClient(BytesConsumer::Client* client) {
@@ -271,7 +272,7 @@ DEFINE_TRACE(BlobBytesConsumer) {
 
 BlobBytesConsumer* BlobBytesConsumer::CreateForTesting(
     ExecutionContext* execution_context,
-    PassRefPtr<BlobDataHandle> blob_data_handle,
+    RefPtr<BlobDataHandle> blob_data_handle,
     ThreadableLoader* loader) {
   return new BlobBytesConsumer(execution_context, std::move(blob_data_handle),
                                loader);
@@ -279,14 +280,11 @@ BlobBytesConsumer* BlobBytesConsumer::CreateForTesting(
 
 ThreadableLoader* BlobBytesConsumer::CreateLoader() {
   ThreadableLoaderOptions options;
-  options.preflight_policy = kConsiderPreflight;
-  options.cross_origin_request_policy = kDenyCrossOriginRequests;
-  options.content_security_policy_enforcement =
-      kDoNotEnforceContentSecurityPolicy;
-  options.initiator = FetchInitiatorTypeNames::internal;
 
   ResourceLoaderOptions resource_loader_options;
   resource_loader_options.data_buffering_policy = kDoNotBufferData;
+  resource_loader_options.initiator_info.name =
+      FetchInitiatorTypeNames::internal;
 
   return ThreadableLoader::Create(*GetExecutionContext(), this, options,
                                   resource_loader_options);

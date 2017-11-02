@@ -6,10 +6,10 @@
 
 #include <cstdint>
 
-#include "net/quic/core/quic_flags.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_str_cat.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/mock_clock.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
 
@@ -64,22 +64,6 @@ std::vector<TestParams> GetTestParams() {
     for (bool fix_cubic_quantization : {true, false}) {
       for (bool fix_beta_last_max : {true, false}) {
         for (bool allow_per_ack_updates : {true, false}) {
-          if (!FLAGS_quic_reloadable_flag_quic_fix_cubic_convex_mode &&
-              fix_convex_mode) {
-            continue;
-          }
-          if (!FLAGS_quic_reloadable_flag_quic_fix_cubic_bytes_quantization &&
-              fix_cubic_quantization) {
-            continue;
-          }
-          if (!FLAGS_quic_reloadable_flag_quic_fix_beta_last_max &&
-              fix_beta_last_max) {
-            continue;
-          }
-          if (!FLAGS_quic_reloadable_flag_quic_enable_cubic_per_ack_updates &&
-              allow_per_ack_updates) {
-            continue;
-          }
           TestParams param(fix_convex_mode, fix_cubic_quantization,
                            fix_beta_last_max, allow_per_ack_updates);
           params.push_back(param);
@@ -92,7 +76,7 @@ std::vector<TestParams> GetTestParams() {
 
 }  // namespace
 
-class CubicBytesTest : public ::testing::TestWithParam<TestParams> {
+class CubicBytesTest : public QuicTestWithParam<TestParams> {
  protected:
   CubicBytesTest()
       : one_ms_(QuicTime::Delta::FromMilliseconds(1)),

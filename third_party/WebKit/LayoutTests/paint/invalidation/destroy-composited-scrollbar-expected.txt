@@ -4,14 +4,13 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV",
       "position": [0, 100],
       "bounds": [200, 200],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {
@@ -26,8 +25,13 @@
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV",
-          "rect": [185, 0, 15, 200],
-          "reason": "scroll"
+          "rect": [0, 0, 200, 200],
+          "reason": "compositing update"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='content'",
+          "rect": [0, 0, 100, 100],
+          "reason": "compositing update"
         }
       ]
     }
@@ -35,7 +39,11 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "scroll"
+      "reason": "compositing update"
+    },
+    {
+      "object": "LayoutBlockFlow DIV id='content'",
+      "reason": "compositing update"
     }
   ]
 }

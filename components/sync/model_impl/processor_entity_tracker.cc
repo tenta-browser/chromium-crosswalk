@@ -45,6 +45,7 @@ std::unique_ptr<ProcessorEntityTracker> ProcessorEntityTracker::CreateNew(
 std::unique_ptr<ProcessorEntityTracker>
 ProcessorEntityTracker::CreateFromMetadata(const std::string& storage_key,
                                            sync_pb::EntityMetadata* metadata) {
+  DCHECK(!storage_key.empty());
   return std::unique_ptr<ProcessorEntityTracker>(
       new ProcessorEntityTracker(storage_key, metadata));
 }
@@ -60,6 +61,12 @@ ProcessorEntityTracker::ProcessorEntityTracker(
 }
 
 ProcessorEntityTracker::~ProcessorEntityTracker() {}
+
+void ProcessorEntityTracker::SetStorageKey(const std::string& storage_key) {
+  DCHECK(storage_key_.empty());
+  DCHECK(!storage_key.empty());
+  storage_key_ = storage_key;
+}
 
 void ProcessorEntityTracker::SetCommitData(EntityData* data) {
   DCHECK(data);
@@ -207,10 +214,14 @@ void ProcessorEntityTracker::InitializeCommitRequestData(
 }
 
 void ProcessorEntityTracker::ReceiveCommitResponse(
-    const CommitResponseData& data) {
+    const CommitResponseData& data,
+    bool commit_only) {
   DCHECK_EQ(metadata_.client_tag_hash(), data.client_tag_hash);
   DCHECK_GT(data.sequence_number, metadata_.acked_sequence_number());
-  DCHECK_GT(data.response_version, metadata_.server_version());
+  // Version is not valid for commit only types, as it's stripped before being
+  // sent to the server, so it cannot behave correctly.
+  DCHECK(commit_only || data.response_version > metadata_.server_version())
+      << data.response_version << " vs " << metadata_.server_version();
 
   // The server can assign us a new ID in a commit response.
   metadata_.set_server_id(data.id);

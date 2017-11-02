@@ -22,6 +22,7 @@
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "mojo/public/cpp/system/core.h"
 #include "mojo/public/cpp/system/message_pipe.h"
+#include "mojo/public/interfaces/bindings/native_struct.mojom.h"
 
 namespace IPC {
 namespace internal {
@@ -42,7 +43,7 @@ namespace internal {
 // be called on any thread. All |Delegate| functions will be called on the IO
 // thread.
 //
-class IPC_EXPORT MessagePipeReader : public NON_EXPORTED_BASE(mojom::Channel) {
+class IPC_EXPORT MessagePipeReader : public mojom::Channel {
  public:
   class Delegate {
    public:
@@ -74,7 +75,7 @@ class IPC_EXPORT MessagePipeReader : public NON_EXPORTED_BASE(mojom::Channel) {
   void Close();
 
   // Return true if the MessagePipe is alive.
-  bool IsValid() { return sender_; }
+  bool IsValid() { return sender_.is_bound(); }
 
   // Sends an IPC::Message to the other end of the pipe. Safe to call from any
   // thread.
@@ -93,9 +94,9 @@ class IPC_EXPORT MessagePipeReader : public NON_EXPORTED_BASE(mojom::Channel) {
  private:
   // mojom::Channel:
   void SetPeerPid(int32_t peer_pid) override;
-  void Receive(
-      const std::vector<uint8_t>& data,
-      base::Optional<std::vector<mojom::SerializedHandlePtr>> handles) override;
+  void Receive(base::span<const uint8_t> data,
+               base::Optional<std::vector<mojo::native::SerializedHandlePtr>>
+                   handles) override;
   void GetAssociatedInterface(
       const std::string& name,
       mojom::GenericInterfaceAssociatedRequest request) override;

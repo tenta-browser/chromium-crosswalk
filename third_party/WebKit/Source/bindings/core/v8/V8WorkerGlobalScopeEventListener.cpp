@@ -30,8 +30,7 @@
 
 #include "bindings/core/v8/V8WorkerGlobalScopeEventListener.h"
 
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8DOMWrapper.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Event.h"
 #include "bindings/core/v8/V8EventTarget.h"
 #include "bindings/core/v8/V8GCController.h"
@@ -41,6 +40,7 @@
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/probe/CoreProbes.h"
 #include "core/workers/WorkerGlobalScope.h"
+#include "platform/bindings/V8DOMWrapper.h"
 
 namespace blink {
 
@@ -51,17 +51,16 @@ V8WorkerGlobalScopeEventListener::V8WorkerGlobalScopeEventListener(
 
 void V8WorkerGlobalScopeEventListener::HandleEvent(ScriptState* script_state,
                                                    Event* event) {
+  v8::Local<v8::Context> context = script_state->GetContext();
   WorkerOrWorkletScriptController* script =
-      ToWorkerGlobalScope(ExecutionContext::From(script_state))
-          ->ScriptController();
+      ToWorkerGlobalScope(ToExecutionContext(context))->ScriptController();
   if (!script)
     return;
 
   ScriptState::Scope scope(script_state);
 
   // Get the V8 wrapper for the event object.
-  v8::Local<v8::Value> js_event =
-      ToV8(event, script_state->GetContext()->Global(), GetIsolate());
+  v8::Local<v8::Value> js_event = ToV8(event, context->Global(), GetIsolate());
   if (js_event.IsEmpty())
     return;
 
@@ -73,7 +72,7 @@ v8::Local<v8::Value> V8WorkerGlobalScopeEventListener::CallListenerFunction(
     ScriptState* script_state,
     v8::Local<v8::Value> js_event,
     Event* event) {
-  ASSERT(!js_event.IsEmpty());
+  DCHECK(!js_event.IsEmpty());
   v8::Local<v8::Function> handler_function = GetListenerFunction(script_state);
   v8::Local<v8::Object> receiver = GetReceiverObject(script_state, event);
   if (handler_function.IsEmpty() || receiver.IsEmpty())
@@ -81,8 +80,8 @@ v8::Local<v8::Value> V8WorkerGlobalScopeEventListener::CallListenerFunction(
 
   v8::Local<v8::Value> parameters[1] = {js_event};
   v8::MaybeLocal<v8::Value> maybe_result = V8ScriptRunner::CallFunction(
-      handler_function, ExecutionContext::From(script_state), receiver,
-      WTF_ARRAY_LENGTH(parameters), parameters, GetIsolate());
+      handler_function, ToExecutionContext(script_state->GetContext()),
+      receiver, WTF_ARRAY_LENGTH(parameters), parameters, GetIsolate());
 
   v8::Local<v8::Value> result;
   if (!maybe_result.ToLocal(&result))

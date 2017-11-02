@@ -10,6 +10,8 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
+#include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
@@ -25,14 +27,12 @@
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service.h"
 #include "chrome/browser/chromeos/settings/device_oauth2_token_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/channel_info.h"
 #include "chromeos/attestation/attestation_flow.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/auth_policy_client.h"
 #include "chromeos/dbus/cryptohome/rpc.pb.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/upstart_client.h"
-#include "components/version_info/version_info.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/http/http_status_code.h"
@@ -152,6 +152,51 @@ EnrollmentHandlerChromeOS::~EnrollmentHandlerChromeOS() {
   store_->RemoveObserver(this);
 }
 
+void EnrollmentHandlerChromeOS::CheckAvailableLicenses(
+    const AvailableLicensesCallback& license_callback) {
+  CHECK_EQ(STEP_PENDING, enrollment_step_);
+  available_licenses_callback_ = license_callback;
+  client_->RequestAvailableLicenses(
+      auth_token_,
+      base::Bind(&EnrollmentHandlerChromeOS::HandleAvailableLicensesResult,
+                 weak_ptr_factory_.GetWeakPtr()));
+}
+
+void EnrollmentHandlerChromeOS::HandleAvailableLicensesResult(
+    bool success,
+    const CloudPolicyClient::LicenseMap& license_map) {
+  if (!success) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(&EnrollmentHandlerChromeOS::ReportResult,
+            weak_ptr_factory_.GetWeakPtr(),
+            EnrollmentStatus::ForStatus(
+                EnrollmentStatus::LICENSE_REQUEST_FAILED)));
+    return;
+  }
+  if (available_licenses_callback_)
+    available_licenses_callback_.Run(license_map);
+}
+
+void EnrollmentHandlerChromeOS::StartEnrollmentWithLicense(
+    LicenseType license_type) {
+  CHECK_EQ(STEP_PENDING, enrollment_step_);
+  CHECK_NE(license_type, ::policy::LicenseType::UNKNOWN);
+  switch (license_type) {
+    case LicenseType::PERPETUAL:
+      license_type_ = ::em::LicenseType::CDM_PERPETUAL;
+      break;
+    case LicenseType::ANNUAL:
+      license_type_ = ::em::LicenseType::CDM_ANNUAL;
+      break;
+    case LicenseType::KIOSK:
+      license_type_ = ::em::LicenseType::KIOSK;
+      break;
+    case LicenseType::UNKNOWN:
+      NOTREACHED();
+  }
+  StartEnrollment();
+}
+
 void EnrollmentHandlerChromeOS::StartEnrollment() {
   CHECK_EQ(STEP_PENDING, enrollment_step_);
   SetStep(STEP_STATE_KEYS);
@@ -195,13 +240,11 @@ void EnrollmentHandlerChromeOS::OnPolicyFetched(CloudPolicyClient* client) {
 
   std::unique_ptr<DeviceCloudPolicyValidator> validator(
       DeviceCloudPolicyValidator::Create(
-          std::unique_ptr<em::PolicyFetchResponse>(
-              new em::PolicyFetchResponse(*policy)),
+          base::MakeUnique<em::PolicyFetchResponse>(*policy),
           background_task_runner_));
 
-  validator->ValidateTimestamp(
-      base::Time(), base::Time::NowFromSystemTime(),
-      CloudPolicyValidatorBase::TIMESTAMP_FULLY_VALIDATED);
+  validator->ValidateTimestamp(base::Time(),
+                               CloudPolicyValidatorBase::TIMESTAMP_VALIDATED);
 
   // If this is re-enrollment, make sure that the new policy matches the
   // previously-enrolled domain.  (Currently only implemented for cloud
@@ -221,7 +264,8 @@ void EnrollmentHandlerChromeOS::OnPolicyFetched(CloudPolicyClient* client) {
   // can validate the username on the resulting policy, and use the domain from
   // that username to validate the key below (http://crbug.com/343074).
   validator->ValidateInitialKey(domain);
-  validator.release()->StartValidation(
+  DeviceCloudPolicyValidator::StartValidation(
+      std::move(validator),
       base::Bind(&EnrollmentHandlerChromeOS::HandlePolicyValidationResult,
                  weak_ptr_factory_.GetWeakPtr()));
 }
@@ -237,14 +281,6 @@ void EnrollmentHandlerChromeOS::OnRegistrationStateChanged(
         // Do nothing.
         break;
       case DEVICE_MODE_ENTERPRISE_AD:
-        if (chrome::GetChannel() == version_info::Channel::BETA ||
-            chrome::GetChannel() == version_info::Channel::STABLE) {
-          LOG(ERROR) << "Active Directory management is not enabled on the "
-                        "current channel";
-          ReportResult(EnrollmentStatus::ForStatus(
-              EnrollmentStatus::REGISTRATION_BAD_MODE));
-          return;
-        }
         chromeos::DBusThreadManager::Get()
             ->GetUpstartClient()
             ->StartAuthPolicyService();
@@ -331,7 +367,8 @@ void EnrollmentHandlerChromeOS::StartRegistration() {
     client_->Register(
         em::DeviceRegisterRequest::DEVICE,
         EnrollmentModeToRegistrationFlavor(enrollment_config_.mode),
-        auth_token_, client_id_, requisition_, current_state_key_);
+        license_type_, auth_token_, client_id_, requisition_,
+        current_state_key_);
   }
 }
 
@@ -353,7 +390,8 @@ void EnrollmentHandlerChromeOS::HandleRegistrationCertificateResult(
     client_->RegisterWithCertificate(
         em::DeviceRegisterRequest::DEVICE,
         EnrollmentModeToRegistrationFlavor(enrollment_config_.mode),
-        pem_certificate_chain, client_id_, requisition_, current_state_key_);
+        license_type_, pem_certificate_chain, client_id_, requisition_,
+        current_state_key_);
   else
     ReportResult(EnrollmentStatus::ForStatus(
         EnrollmentStatus::REGISTRATION_CERT_FETCH_FAILED));
@@ -439,20 +477,18 @@ void EnrollmentHandlerChromeOS::SetFirmwareManagementParametersData() {
 
   install_attributes_->SetBlockDevmodeInTpm(
       GetBlockdevmodeFromPolicy(policy_.get()),
-      base::Bind(
+      base::BindOnce(
           &EnrollmentHandlerChromeOS::OnFirmwareManagementParametersDataSet,
           weak_ptr_factory_.GetWeakPtr()));
 }
 
 void EnrollmentHandlerChromeOS::OnFirmwareManagementParametersDataSet(
-    chromeos::DBusMethodCallStatus call_status,
-    bool result,
-    const cryptohome::BaseReply& reply) {
+    base::Optional<cryptohome::BaseReply> reply) {
   DCHECK_EQ(STEP_SET_FWMP_DATA, enrollment_step_);
-  if (!result) {
+  if (!reply.has_value()) {
     LOG(ERROR)
         << "Failed to update firmware management parameters in TPM, error: "
-        << reply.error();
+        << reply->error();
   }
 
   SetStep(STEP_LOCK_DEVICE);
@@ -548,8 +584,9 @@ void EnrollmentHandlerChromeOS::HandleLockDeviceResult(
         LOG(WARNING) << "Install Attributes not ready yet will retry in "
                      << kLockRetryIntervalMs << "ms.";
         base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-            FROM_HERE, base::Bind(&EnrollmentHandlerChromeOS::StartLockDevice,
-                                  weak_ptr_factory_.GetWeakPtr()),
+            FROM_HERE,
+            base::BindOnce(&EnrollmentHandlerChromeOS::StartLockDevice,
+                           weak_ptr_factory_.GetWeakPtr()),
             base::TimeDelta::FromMilliseconds(kLockRetryIntervalMs));
         lockbox_init_duration_ += kLockRetryIntervalMs;
       } else {
@@ -576,8 +613,8 @@ void EnrollmentHandlerChromeOS::StartStoreDMToken() {
       g_browser_process->local_state());
   dm_token_storage_->StoreDMToken(
       client_->dm_token(),
-      base::Bind(&EnrollmentHandlerChromeOS::HandleDMTokenStoreResult,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&EnrollmentHandlerChromeOS::HandleDMTokenStoreResult,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void EnrollmentHandlerChromeOS::StartStoreRobotAuth() {
@@ -614,7 +651,7 @@ void EnrollmentHandlerChromeOS::HandleStoreRobotAuthTokenResult(bool result) {
         install_attributes_->GetMode());
     chromeos::DBusThreadManager::Get()
         ->GetAuthPolicyClient()
-        ->RefreshDevicePolicy(base::Bind(
+        ->RefreshDevicePolicy(base::BindOnce(
             &EnrollmentHandlerChromeOS::HandleActiveDirectoryPolicyRefreshed,
             weak_ptr_factory_.GetWeakPtr()));
   } else {
@@ -643,6 +680,7 @@ void EnrollmentHandlerChromeOS::Stop() {
   SetStep(STEP_FINISHED);
   weak_ptr_factory_.InvalidateWeakPtrs();
   completion_callback_.Reset();
+  available_licenses_callback_.Reset();
 }
 
 void EnrollmentHandlerChromeOS::ReportResult(EnrollmentStatus status) {

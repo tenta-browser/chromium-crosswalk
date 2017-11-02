@@ -12,7 +12,7 @@
 #include "content/renderer/media/mock_data_channel_impl.h"
 #include "content/renderer/media/webrtc/mock_peer_connection_dependency_factory.h"
 #include "third_party/webrtc/api/rtpreceiverinterface.h"
-#include "third_party/webrtc/base/refcountedobject.h"
+#include "third_party/webrtc/rtc_base/refcountedobject.h"
 
 using testing::_;
 using webrtc::AudioTrackInterface;
@@ -116,8 +116,7 @@ class MockDtmfSender : public DtmfSenderInterface {
   int inter_tone_gap_;
 };
 
-class FakeRtpReceiver
-    : public rtc::RefCountedObject<webrtc::RtpReceiverInterface> {
+class FakeRtpReceiver : public webrtc::RtpReceiverInterface {
  public:
   FakeRtpReceiver(rtc::scoped_refptr<webrtc::MediaStreamTrackInterface> track)
       : track_(track) {}
@@ -213,10 +212,12 @@ MockPeerConnectionImpl::GetReceivers() const {
   std::vector<rtc::scoped_refptr<webrtc::RtpReceiverInterface>> receivers;
   for (size_t i = 0; i < remote_streams_->count(); ++i) {
     for (const auto& audio_track : remote_streams_->at(i)->GetAudioTracks()) {
-      receivers.push_back(new FakeRtpReceiver(audio_track));
+      receivers.push_back(
+          new rtc::RefCountedObject<FakeRtpReceiver>(audio_track));
     }
     for (const auto& video_track : remote_streams_->at(i)->GetVideoTracks()) {
-      receivers.push_back(new FakeRtpReceiver(video_track));
+      receivers.push_back(
+          new rtc::RefCountedObject<FakeRtpReceiver>(video_track));
     }
   }
   return receivers;
@@ -340,6 +341,12 @@ bool MockPeerConnectionImpl::AddIceCandidate(
 void MockPeerConnectionImpl::RegisterUMAObserver(
     webrtc::UMAObserver* observer) {
   NOTIMPLEMENTED();
+}
+
+webrtc::RTCError MockPeerConnectionImpl::SetBitrate(
+    const BitrateParameters& bitrate) {
+  NOTIMPLEMENTED();
+  return webrtc::RTCError::OK();
 }
 
 }  // namespace content

@@ -9,11 +9,12 @@
 #include "base/memory/ref_counted.h"
 #include "device/vr/vr_device.h"
 #include "device/vr/vr_device_provider.h"
-#include "device/vr/vr_service_impl.h"
+#include "device/vr/vr_export.h"
 
 namespace device {
 
-class FakeVRDevice : public VRDevice {
+// TODO(mthiesse, crbug.com/769373): Remove DEVICE_VR_EXPORT.
+class DEVICE_VR_EXPORT FakeVRDevice : public VRDevice {
  public:
   explicit FakeVRDevice();
   ~FakeVRDevice() override;
@@ -23,21 +24,14 @@ class FakeVRDevice : public VRDevice {
   void SetVRDevice(const mojom::VRDisplayInfoPtr& device);
 
   // VRDevice
-  void CreateVRDisplayInfo(
-      const base::Callback<void(mojom::VRDisplayInfoPtr)>& on_created) override;
-
-  void RequestPresent(mojom::VRSubmitFrameClientPtr submit_client,
-                      const base::Callback<void(bool)>& callback) override;
-  void SetSecureOrigin(bool secure_origin) override;
+  mojom::VRDisplayInfoPtr GetVRDisplayInfo() override;
+  void RequestPresent(
+      VRDisplayImpl* display,
+      mojom::VRSubmitFrameClientPtr submit_client,
+      mojom::VRPresentationProviderRequest request,
+      mojom::VRDisplayHost::RequestPresentCallback callback) override;
   void ExitPresent() override;
-  void SubmitFrame(int16_t frame_index,
-                   const gpu::MailboxHolder& mailbox) override;
-  void UpdateLayerBounds(int16_t frame_index,
-                         mojom::VRLayerBoundsPtr leftBounds,
-                         mojom::VRLayerBoundsPtr rightBounds,
-                         int16_t source_width,
-                         int16_t source_height) override;
-  void GetVRVSyncProvider(mojom::VRVSyncProviderRequest request) override;
+  void GetPose(mojom::VRMagicWindowProvider::GetPoseCallback callback) override;
 
  private:
   mojom::VREyeParametersPtr InitEye(float fov, float offset, uint32_t size);

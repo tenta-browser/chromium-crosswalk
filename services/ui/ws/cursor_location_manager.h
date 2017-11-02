@@ -15,6 +15,9 @@ class Point;
 
 namespace ui {
 namespace ws {
+namespace test {
+class CursorLocationManagerTestApi;
+}
 
 // Manages a shared memory buffer that stores the cursor location.
 class CursorLocationManager {
@@ -23,14 +26,16 @@ class CursorLocationManager {
   ~CursorLocationManager();
 
   // Sets the current cursor location to |point|. Atomically writes the location
-  // to shared memory.
-  void OnMouseCursorLocationChanged(const gfx::Point& point);
+  // to shared memory. |point| should be in screen-coord and DIP.
+  void OnMouseCursorLocationChanged(const gfx::Point& point_in_dip);
 
   // Returns a read-only handle to the shared memory which contains the global
   // mouse cursor position. Each call returns a new handle.
   mojo::ScopedSharedBufferHandle GetCursorLocationMemory();
 
  private:
+  friend test::CursorLocationManagerTestApi;
+
   base::subtle::Atomic32* cursor_location_memory() {
     return reinterpret_cast<base::subtle::Atomic32*>(
         cursor_location_mapping_.get());

@@ -5,6 +5,8 @@
 #ifndef CHROMEOS_DBUS_FAKE_ARC_OBB_MOUNTER_CLIENT_H_
 #define CHROMEOS_DBUS_FAKE_ARC_OBB_MOUNTER_CLIENT_H_
 
+#include <string>
+
 #include "chromeos/dbus/arc_obb_mounter_client.h"
 
 namespace chromeos {
@@ -22,9 +24,9 @@ class CHROMEOS_EXPORT FakeArcObbMounterClient : public ArcObbMounterClient {
   void MountObb(const std::string& obb_file,
                 const std::string& mount_path,
                 int32_t owner_gid,
-                const VoidDBusMethodCallback& callback) override;
+                VoidDBusMethodCallback callback) override;
   void UnmountObb(const std::string& mount_path,
-                  const VoidDBusMethodCallback& callback) override;
+                  VoidDBusMethodCallback callback) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FakeArcObbMounterClient);

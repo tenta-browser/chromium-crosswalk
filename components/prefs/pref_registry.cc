@@ -46,17 +46,26 @@ void PrefRegistry::SetDefaultPrefValue(const std::string& pref_name,
   const base::Value* current_value = NULL;
   DCHECK(defaults_->GetValue(pref_name, &current_value))
       << "Setting default for unregistered pref: " << pref_name;
-  DCHECK(value->IsType(current_value->GetType()))
+  DCHECK(value->IsType(current_value->type()))
       << "Wrong type for new default: " << pref_name;
 
   defaults_->ReplaceDefaultValue(pref_name, base::WrapUnique(value));
+}
+
+void PrefRegistry::SetDefaultForeignPrefValue(
+    const std::string& path,
+    std::unique_ptr<base::Value> default_value,
+    uint32_t flags) {
+  auto erased = foreign_pref_keys_.erase(path);
+  DCHECK_EQ(1u, erased);
+  RegisterPreference(path, std::move(default_value), flags);
 }
 
 void PrefRegistry::RegisterPreference(
     const std::string& path,
     std::unique_ptr<base::Value> default_value,
     uint32_t flags) {
-  base::Value::Type orig_type = default_value->GetType();
+  base::Value::Type orig_type = default_value->type();
   DCHECK(orig_type != base::Value::Type::NONE &&
          orig_type != base::Value::Type::BINARY) <<
          "invalid preference type: " << orig_type;
@@ -68,4 +77,9 @@ void PrefRegistry::RegisterPreference(
   defaults_->SetDefaultValue(path, std::move(default_value));
   if (flags != NO_REGISTRATION_FLAGS)
     registration_flags_[path] = flags;
+}
+
+void PrefRegistry::RegisterForeignPref(const std::string& path) {
+  bool inserted = foreign_pref_keys_.insert(path).second;
+  DCHECK(inserted);
 }

@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "chrome/grit/generated_resources.h"
@@ -14,7 +15,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/chromeos/resources/grit/ui_chromeos_resources.h"
 #include "ui/message_center/fake_message_center.h"
 #include "ui/message_center/message_center.h"
 
@@ -58,6 +58,7 @@ class LowDiskNotificationTest : public testing::Test,
   }
 
  protected:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<LowDiskNotification> low_disk_notification_;
   std::unique_ptr<message_center::Notification> last_notification_;
   int notification_count_;

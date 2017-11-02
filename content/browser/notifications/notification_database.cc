@@ -14,10 +14,10 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_database_data.h"
 #include "storage/common/database/database_identifier.h"
+#include "third_party/WebKit/public/platform/modules/serviceworker/service_worker_registration.mojom.h"
 #include "third_party/leveldatabase/env_chromium.h"
-#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 #include "third_party/leveldatabase/src/include/leveldb/db.h"
-#include "third_party/leveldatabase/src/include/leveldb/env.h"
 #include "third_party/leveldatabase/src/include/leveldb/filter_policy.h"
 #include "third_party/leveldatabase/src/include/leveldb/write_batch.h"
 #include "url/gurl.h"
@@ -122,24 +122,22 @@ NotificationDatabase::Status NotificationDatabase::Open(
 
   filter_policy_.reset(leveldb::NewBloomFilterPolicy(10));
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.create_if_missing = create_if_missing;
   options.paranoid_checks = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   options.filter_policy = filter_policy_.get();
+  options.block_cache = leveldb_chrome::GetSharedWebBlockCache();
   if (IsInMemoryDatabase()) {
-    env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
+    env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
     options.env = env_.get();
   }
 
-  leveldb::DB* db = nullptr;
   Status status = LevelDBStatusToStatus(
-      leveldb::DB::Open(options, path_.AsUTF8Unsafe(), &db));
+      leveldb_env::OpenDB(options, path_.AsUTF8Unsafe(), &db_));
   if (status != STATUS_OK)
     return status;
 
   state_ = STATE_INITIALIZED;
-  db_.reset(db);
 
   return ReadNextPersistentNotificationId();
 }
@@ -172,9 +170,9 @@ NotificationDatabase::Status NotificationDatabase::ReadNotificationData(
 
 NotificationDatabase::Status NotificationDatabase::ReadAllNotificationData(
     std::vector<NotificationDatabaseData>* notification_data_vector) const {
-  return ReadAllNotificationDataInternal(GURL() /* origin */,
-                                         kInvalidServiceWorkerRegistrationId,
-                                         notification_data_vector);
+  return ReadAllNotificationDataInternal(
+      GURL() /* origin */, blink::mojom::kInvalidServiceWorkerRegistrationId,
+      notification_data_vector);
 }
 
 NotificationDatabase::Status
@@ -182,7 +180,8 @@ NotificationDatabase::ReadAllNotificationDataForOrigin(
     const GURL& origin,
     std::vector<NotificationDatabaseData>* notification_data_vector) const {
   return ReadAllNotificationDataInternal(
-      origin, kInvalidServiceWorkerRegistrationId, notification_data_vector);
+      origin, blink::mojom::kInvalidServiceWorkerRegistrationId,
+      notification_data_vector);
 }
 
 NotificationDatabase::Status
@@ -240,9 +239,9 @@ NotificationDatabase::DeleteAllNotificationDataForOrigin(
     const GURL& origin,
     const std::string& tag,
     std::set<std::string>* deleted_notification_ids) {
-  return DeleteAllNotificationDataInternal(origin, tag,
-                                           kInvalidServiceWorkerRegistrationId,
-                                           deleted_notification_ids);
+  return DeleteAllNotificationDataInternal(
+      origin, tag, blink::mojom::kInvalidServiceWorkerRegistrationId,
+      deleted_notification_ids);
 }
 
 NotificationDatabase::Status
@@ -258,7 +257,7 @@ NotificationDatabase::DeleteAllNotificationDataForServiceWorkerRegistration(
 NotificationDatabase::Status NotificationDatabase::Destroy() {
   DCHECK(sequence_checker_.CalledOnValidSequence());
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   if (IsInMemoryDatabase()) {
     if (!env_)
       return STATUS_OK;  // The database has not been initialized.
@@ -322,16 +321,12 @@ NotificationDatabase::ReadAllNotificationDataInternal(
     if (status != STATUS_OK)
       return status;
 
-    if (service_worker_registration_id != kInvalidServiceWorkerRegistrationId &&
+    if (service_worker_registration_id !=
+            blink::mojom::kInvalidServiceWorkerRegistrationId &&
         notification_database_data.service_worker_registration_id !=
             service_worker_registration_id) {
       continue;
     }
-
-    // Silently ignore the notification if it doesn't have an ID assigned.
-    // TODO(peter): Remove this clause when Chrome 55 has branched.
-    if (notification_database_data.notification_id.empty())
-      continue;
 
     notification_data_vector->push_back(notification_database_data);
   }
@@ -371,7 +366,8 @@ NotificationDatabase::DeleteAllNotificationDataInternal(
       continue;
     }
 
-    if (service_worker_registration_id != kInvalidServiceWorkerRegistrationId &&
+    if (service_worker_registration_id !=
+            blink::mojom::kInvalidServiceWorkerRegistrationId &&
         notification_database_data.service_worker_registration_id !=
             service_worker_registration_id) {
       continue;

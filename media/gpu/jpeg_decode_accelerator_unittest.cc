@@ -18,28 +18,24 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
+#include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "media/base/test_data_util.h"
 #include "media/filters/jpeg_parser.h"
+#include "media/gpu/features.h"
+#include "media/gpu/ipc/service/gpu_jpeg_decode_accelerator_factory_provider.h"
 #include "media/gpu/video_accelerator_unittest_helpers.h"
 #include "media/video/jpeg_decode_accelerator.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 
-#if defined(OS_CHROMEOS)
-#if defined(USE_V4L2_CODEC)
-#include "media/gpu/v4l2_device.h"
-#include "media/gpu/v4l2_jpeg_decode_accelerator.h"
-#endif
-#if defined(ARCH_CPU_X86_FAMILY)
-#include "media/gpu/vaapi_jpeg_decode_accelerator.h"
+#if BUILDFLAG(USE_VAAPI)
 #include "media/gpu/vaapi_wrapper.h"
-#endif
 #endif
 
 namespace media {
@@ -133,21 +129,28 @@ JpegClient::JpegClient(const std::vector<TestImageFile*>& test_image_files,
 JpegClient::~JpegClient() {}
 
 void JpegClient::CreateJpegDecoder() {
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
-  decoder_.reset(
-      new VaapiJpegDecodeAccelerator(base::ThreadTaskRunnerHandle::Get()));
-#elif defined(OS_CHROMEOS) && defined(USE_V4L2_CODEC)
-  scoped_refptr<V4L2Device> device = V4L2Device::Create();
-  if (!device.get()) {
-    LOG(ERROR) << "V4L2Device::Create failed";
+  decoder_ = nullptr;
+
+  auto jda_factories =
+      GpuJpegDecodeAcceleratorFactoryProvider::GetAcceleratorFactories();
+  if (jda_factories.size() == 0) {
+    LOG(ERROR) << "JpegDecodeAccelerator not supported on this platform.";
     SetState(CS_ERROR);
     return;
   }
-  decoder_.reset(new V4L2JpegDecodeAccelerator(
-      device, base::ThreadTaskRunnerHandle::Get()));
-#else
-#error The JpegDecodeAccelerator is not supported on this platform.
-#endif
+
+  for (const auto& create_jda_func : jda_factories) {
+    decoder_ = create_jda_func.Run(base::ThreadTaskRunnerHandle::Get());
+    if (decoder_) {
+      break;
+    }
+  }
+  if (!decoder_) {
+    LOG(ERROR) << "Failed to create JpegDecodeAccelerator.";
+    SetState(CS_ERROR);
+    return;
+  }
+
   if (!decoder_->Initialize(this)) {
     LOG(ERROR) << "JpegDecodeAccelerator::Initialize() failed";
     SetState(CS_ERROR);
@@ -313,6 +316,10 @@ class JpegDecodeAcceleratorTestEnvironment : public ::testing::Environment {
   // Read image from |filename| to |image_data|.
   void ReadTestJpegImage(base::FilePath& filename, TestImageFile* image_data);
 
+  // Returns a file path for a file in what name specified or media/test/data
+  // directory.  If the original file path is existed, returns it first.
+  base::FilePath GetOriginalOrTestDataFilePath(const std::string& name);
+
   // Parsed data of |test_1280x720_jpeg_file_|.
   std::unique_ptr<TestImageFile> image_data_1280x720_black_;
   // Parsed data of |test_640x368_jpeg_file_|.
@@ -324,7 +331,7 @@ class JpegDecodeAcceleratorTestEnvironment : public ::testing::Environment {
   // Parsed data of failure image.
   std::unique_ptr<TestImageFile> image_data_invalid_;
   // Parsed data from command line.
-  ScopedVector<TestImageFile> image_data_user_;
+  std::vector<std::unique_ptr<TestImageFile>> image_data_user_;
 
  private:
   const base::FilePath::CharType* user_jpeg_filenames_;
@@ -359,7 +366,8 @@ void JpegDecodeAcceleratorTestEnvironment::SetUp() {
   ASSERT_NO_FATAL_FAILURE(ReadTestJpegImage(test_640x360_jpeg_file_,
                                             image_data_640x360_black_.get()));
 
-  base::FilePath default_jpeg_file = GetTestDataFilePath(kDefaultJpegFilename);
+  base::FilePath default_jpeg_file =
+      GetOriginalOrTestDataFilePath(kDefaultJpegFilename);
   image_data_1280x720_default_.reset(new TestImageFile(kDefaultJpegFilename));
   ASSERT_NO_FATAL_FAILURE(
       ReadTestJpegImage(default_jpeg_file, image_data_1280x720_default_.get()));
@@ -375,10 +383,10 @@ void JpegDecodeAcceleratorTestEnvironment::SetUp() {
       user_jpeg_filenames_, base::FilePath::StringType(1, ';'),
       base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   for (const auto& filename : filenames) {
-    base::FilePath input_file = GetTestDataFilePath(filename);
-    TestImageFile* image_data = new TestImageFile(filename);
-    ASSERT_NO_FATAL_FAILURE(ReadTestJpegImage(input_file, image_data));
-    image_data_user_.push_back(image_data);
+    base::FilePath input_file = GetOriginalOrTestDataFilePath(filename);
+    auto image_data = base::MakeUnique<TestImageFile>(filename);
+    ASSERT_NO_FATAL_FAILURE(ReadTestJpegImage(input_file, image_data.get()));
+    image_data_user_.push_back(std::move(image_data));
   }
 }
 
@@ -392,13 +400,14 @@ bool JpegDecodeAcceleratorTestEnvironment::CreateTestJpegImage(
     int width,
     int height,
     base::FilePath* filename) {
-  const int kBytesPerPixel = 3;
+  const int kBytesPerPixel = 4;
   const int kJpegQuality = 100;
   std::vector<unsigned char> input_buffer(width * height * kBytesPerPixel);
   std::vector<unsigned char> encoded;
-  if (!gfx::JPEGCodec::Encode(&input_buffer[0], gfx::JPEGCodec::FORMAT_RGB,
-                              width, height, width * kBytesPerPixel,
-                              kJpegQuality, &encoded)) {
+  SkImageInfo info = SkImageInfo::Make(width, height, kRGBA_8888_SkColorType,
+                                       kOpaque_SkAlphaType);
+  SkPixmap src(info, &input_buffer[0], width * kBytesPerPixel);
+  if (!gfx::JPEGCodec::Encode(src, kJpegQuality, &encoded)) {
     return false;
   }
 
@@ -423,6 +432,19 @@ void JpegDecodeAcceleratorTestEnvironment::ReadTestJpegImage(
       VideoFrame::AllocationSize(PIXEL_FORMAT_I420, image_data->visible_size);
 }
 
+base::FilePath
+JpegDecodeAcceleratorTestEnvironment::GetOriginalOrTestDataFilePath(
+    const std::string& name) {
+  base::FilePath original_file_path = base::FilePath(name);
+  base::FilePath return_file_path = GetTestDataFilePath(name);
+
+  if (PathExists(original_file_path))
+    return_file_path = original_file_path;
+
+  VLOG(3) << "Use file path " << return_file_path.value();
+  return return_file_path;
+}
+
 class JpegDecodeAcceleratorTest : public ::testing::Test {
  protected:
   JpegDecodeAcceleratorTest() {}
@@ -443,15 +465,16 @@ void JpegDecodeAcceleratorTest::TestDecode(size_t num_concurrent_decoders) {
   base::Thread decoder_thread("DecoderThread");
   ASSERT_TRUE(decoder_thread.Start());
 
-  ScopedVector<ClientStateNotification<ClientState>> notes;
-  ScopedVector<JpegClient> clients;
+  std::vector<std::unique_ptr<ClientStateNotification<ClientState>>> notes;
+  std::vector<std::unique_ptr<JpegClient>> clients;
 
   for (size_t i = 0; i < num_concurrent_decoders; i++) {
-    notes.push_back(new ClientStateNotification<ClientState>());
-    clients.push_back(new JpegClient(test_image_files_, notes.back()));
+    notes.push_back(base::MakeUnique<ClientStateNotification<ClientState>>());
+    clients.push_back(
+        base::MakeUnique<JpegClient>(test_image_files_, notes.back().get()));
     decoder_thread.task_runner()->PostTask(
         FROM_HERE, base::Bind(&JpegClient::CreateJpegDecoder,
-                              base::Unretained(clients.back())));
+                              base::Unretained(clients.back().get())));
     ASSERT_EQ(notes[i]->Wait(), CS_INITIALIZED);
   }
 
@@ -459,7 +482,7 @@ void JpegDecodeAcceleratorTest::TestDecode(size_t num_concurrent_decoders) {
     for (size_t i = 0; i < num_concurrent_decoders; i++) {
       decoder_thread.task_runner()->PostTask(
           FROM_HERE, base::Bind(&JpegClient::StartDecode,
-                                base::Unretained(clients[i]), index));
+                                base::Unretained(clients[i].get()), index));
     }
     if (index < expected_status_.size()) {
       for (size_t i = 0; i < num_concurrent_decoders; i++) {
@@ -471,22 +494,22 @@ void JpegDecodeAcceleratorTest::TestDecode(size_t num_concurrent_decoders) {
   for (size_t i = 0; i < num_concurrent_decoders; i++) {
     decoder_thread.task_runner()->PostTask(
         FROM_HERE, base::Bind(&JpegClient::DestroyJpegDecoder,
-                              base::Unretained(clients[i])));
+                              base::Unretained(clients[i].get())));
   }
   decoder_thread.Stop();
 }
 
 TEST_F(JpegDecodeAcceleratorTest, SimpleDecode) {
-  for (auto* image : g_env->image_data_user_) {
-    test_image_files_.push_back(image);
+  for (auto& image : g_env->image_data_user_) {
+    test_image_files_.push_back(image.get());
     expected_status_.push_back(CS_DECODE_PASS);
   }
   TestDecode(1);
 }
 
 TEST_F(JpegDecodeAcceleratorTest, MultipleDecoders) {
-  for (auto* image : g_env->image_data_user_) {
-    test_image_files_.push_back(image);
+  for (auto& image : g_env->image_data_user_) {
+    test_image_files_.push_back(image.get());
     expected_status_.push_back(CS_DECODE_PASS);
   }
   TestDecode(3);
@@ -579,7 +602,7 @@ int main(int argc, char** argv) {
     LOG(ERROR) << "Unexpected switch: " << it->first << ":" << it->second;
     return -EINVAL;
   }
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
+#if BUILDFLAG(USE_VAAPI)
   media::VaapiWrapper::PreSandboxInitialization();
 #endif
 

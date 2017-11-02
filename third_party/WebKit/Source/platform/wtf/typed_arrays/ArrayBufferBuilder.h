@@ -56,16 +56,16 @@ class WTF_EXPORT ArrayBufferBuilder final {
     buffer_ = ArrayBuffer::Create(capacity, 1);
   }
 
-  bool IsValid() const { return buffer_.Get(); }
+  bool IsValid() const { return buffer_.get(); }
 
   // Appending empty data is not allowed.
   unsigned Append(const char* data, unsigned length);
 
   // Returns the accumulated data as an ArrayBuffer instance. If needed,
   // creates a new ArrayBuffer instance and copies contents from the internal
-  // buffer to it. Otherwise, returns a PassRefPtr pointing to the internal
+  // buffer to it. Otherwise, returns a RefPtr pointing to the internal
   // buffer.
-  PassRefPtr<ArrayBuffer> ToArrayBuffer();
+  RefPtr<ArrayBuffer> ToArrayBuffer();
 
   // Converts the accumulated data into a String using the default encoding.
   String ToString();

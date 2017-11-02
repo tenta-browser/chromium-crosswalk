@@ -4,9 +4,9 @@
 
 #include "net/quic/core/quic_packets.h"
 
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/core/quic_versions.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_ptr_util.h"
 #include "net/quic/platform/api/quic_str_cat.h"
 #include "net/quic/platform/api/quic_text_utils.h"
@@ -15,7 +15,7 @@ using std::string;
 
 namespace net {
 
-size_t GetPacketHeaderSize(QuicVersion version,
+size_t GetPacketHeaderSize(QuicTransportVersion version,
                            const QuicPacketHeader& header) {
   return GetPacketHeaderSize(version, header.public_header.connection_id_length,
                              header.public_header.version_flag,
@@ -23,7 +23,7 @@ size_t GetPacketHeaderSize(QuicVersion version,
                              header.public_header.packet_number_length);
 }
 
-size_t GetPacketHeaderSize(QuicVersion version,
+size_t GetPacketHeaderSize(QuicTransportVersion version,
                            QuicConnectionIdLength connection_id_length,
                            bool include_version,
                            bool include_diversification_nonce,
@@ -33,12 +33,12 @@ size_t GetPacketHeaderSize(QuicVersion version,
          (include_diversification_nonce ? kDiversificationNonceSize : 0);
 }
 
-size_t GetStartOfEncryptedData(QuicVersion version,
+size_t GetStartOfEncryptedData(QuicTransportVersion version,
                                const QuicPacketHeader& header) {
   return GetPacketHeaderSize(version, header);
 }
 
-size_t GetStartOfEncryptedData(QuicVersion version,
+size_t GetStartOfEncryptedData(QuicTransportVersion version,
                                QuicConnectionIdLength connection_id_length,
                                bool include_version,
                                bool include_diversification_nonce,
@@ -52,7 +52,6 @@ size_t GetStartOfEncryptedData(QuicVersion version,
 QuicPacketPublicHeader::QuicPacketPublicHeader()
     : connection_id(0),
       connection_id_length(PACKET_8BYTE_CONNECTION_ID),
-      multipath_flag(false),
       reset_flag(false),
       version_flag(false),
       packet_number_length(PACKET_6BYTE_PACKET_NUMBER),
@@ -70,12 +69,11 @@ QuicPacketHeader::QuicPacketHeader(const QuicPacketPublicHeader& header)
 
 QuicPacketHeader::QuicPacketHeader(const QuicPacketHeader& other) = default;
 
-QuicPublicResetPacket::QuicPublicResetPacket()
-    : nonce_proof(0), rejected_packet_number(0) {}
+QuicPublicResetPacket::QuicPublicResetPacket() : nonce_proof(0) {}
 
 QuicPublicResetPacket::QuicPublicResetPacket(
     const QuicPacketPublicHeader& header)
-    : public_header(header), nonce_proof(0), rejected_packet_number(0) {}
+    : public_header(header), nonce_proof(0) {}
 
 std::ostream& operator<<(std::ostream& os, const QuicPacketHeader& header) {
   os << "{ connection_id: " << header.public_header.connection_id
@@ -182,14 +180,14 @@ std::ostream& operator<<(std::ostream& os, const QuicReceivedPacket& s) {
   return os;
 }
 
-QuicStringPiece QuicPacket::AssociatedData(QuicVersion version) const {
+QuicStringPiece QuicPacket::AssociatedData(QuicTransportVersion version) const {
   return QuicStringPiece(
       data(), GetStartOfEncryptedData(
                   version, connection_id_length_, includes_version_,
                   includes_diversification_nonce_, packet_number_length_));
 }
 
-QuicStringPiece QuicPacket::Plaintext(QuicVersion version) const {
+QuicStringPiece QuicPacket::Plaintext(QuicTransportVersion version) const {
   const size_t start_of_encrypted_data = GetStartOfEncryptedData(
       version, connection_id_length_, includes_version_,
       includes_diversification_nonce_, packet_number_length_);
@@ -217,6 +215,26 @@ SerializedPacket::SerializedPacket(QuicPacketNumber packet_number,
       largest_acked(0) {}
 
 SerializedPacket::SerializedPacket(const SerializedPacket& other) = default;
+
+SerializedPacket& SerializedPacket::operator=(const SerializedPacket& other) =
+    default;
+
+SerializedPacket::SerializedPacket(SerializedPacket&& other)
+    : encrypted_buffer(other.encrypted_buffer),
+      encrypted_length(other.encrypted_length),
+      has_crypto_handshake(other.has_crypto_handshake),
+      num_padding_bytes(other.num_padding_bytes),
+      packet_number(other.packet_number),
+      packet_number_length(other.packet_number_length),
+      encryption_level(other.encryption_level),
+      has_ack(other.has_ack),
+      has_stop_waiting(other.has_stop_waiting),
+      transmission_type(other.transmission_type),
+      original_packet_number(other.original_packet_number),
+      largest_acked(other.largest_acked) {
+  retransmittable_frames.swap(other.retransmittable_frames);
+  listeners.swap(other.listeners);
+}
 
 SerializedPacket::~SerializedPacket() {}
 

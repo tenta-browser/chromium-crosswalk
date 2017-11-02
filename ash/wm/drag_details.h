@@ -6,23 +6,25 @@
 #define ASH_WM_DRAG_DETAILS_H_
 
 #include "ash/ash_export.h"
-#include "ash/wm/wm_types.h"
+#include "ash/public/interfaces/window_state_type.mojom.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/wm/public/window_move_client.h"
 
+namespace aura {
+class Window;
+}
+
 namespace ash {
 
-class WmWindow;
-
 struct ASH_EXPORT DragDetails {
-  DragDetails(WmWindow* window,
+  DragDetails(aura::Window* window,
               const gfx::Point& location,
               int window_component,
               // TODO(sky): make wm type.
-              aura::client::WindowMoveSource source);
+              ::wm::WindowMoveSource source);
   ~DragDetails();
 
-  ash::wm::WindowStateType initial_state_type;
+  ash::mojom::WindowStateType initial_state_type;
 
   // Initial bounds of the window in parent coordinates.
   const gfx::Rect initial_bounds_in_parent;
@@ -53,7 +55,7 @@ struct ASH_EXPORT DragDetails {
   const bool is_resizable;
 
   // Source of the event initiating the drag.
-  const aura::client::WindowMoveSource source;
+  const ::wm::WindowMoveSource source;
 
   // True if the window should attach to the shelf after releasing.
   bool should_attach_to_shelf;

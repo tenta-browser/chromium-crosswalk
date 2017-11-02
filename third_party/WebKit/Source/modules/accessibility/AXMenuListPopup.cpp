@@ -25,7 +25,7 @@
 
 #include "modules/accessibility/AXMenuListPopup.h"
 
-#include "core/html/HTMLSelectElement.h"
+#include "core/html/forms/HTMLSelectElement.h"
 #include "modules/accessibility/AXMenuListOption.h"
 #include "modules/accessibility/AXObjectCacheImpl.h"
 
@@ -47,11 +47,8 @@ bool AXMenuListPopup::IsOffScreen() const {
   return parent_->IsCollapsed();
 }
 
-bool AXMenuListPopup::IsEnabled() const {
-  if (!parent_)
-    return false;
-
-  return parent_->IsEnabled();
+AXRestriction AXMenuListPopup::Restriction() const {
+  return parent_ && parent_->Restriction() == kDisabled ? kDisabled : kNone;
 }
 
 bool AXMenuListPopup::ComputeAccessibilityIsIgnored(
@@ -62,7 +59,7 @@ bool AXMenuListPopup::ComputeAccessibilityIsIgnored(
 AXMenuListOption* AXMenuListPopup::MenuListOptionAXObject(
     HTMLElement* element) const {
   DCHECK(element);
-  if (!isHTMLOptionElement(*element))
+  if (!IsHTMLOptionElement(*element))
     return 0;
 
   AXObject* object = AxObjectCache().GetOrCreate(element);
@@ -77,19 +74,18 @@ int AXMenuListPopup::GetSelectedIndex() const {
     return -1;
 
   Node* parent_node = parent_->GetNode();
-  if (!isHTMLSelectElement(parent_node))
+  if (!IsHTMLSelectElement(parent_node))
     return -1;
 
-  HTMLSelectElement* html_select_element = toHTMLSelectElement(parent_node);
+  HTMLSelectElement* html_select_element = ToHTMLSelectElement(parent_node);
   return html_select_element->selectedIndex();
 }
 
-bool AXMenuListPopup::Press() {
+bool AXMenuListPopup::OnNativeClickAction() {
   if (!parent_)
     return false;
 
-  parent_->Press();
-  return true;
+  return parent_->OnNativeClickAction();
 }
 
 void AXMenuListPopup::AddChildren() {
@@ -98,10 +94,10 @@ void AXMenuListPopup::AddChildren() {
     return;
 
   Node* parent_node = parent_->GetNode();
-  if (!isHTMLSelectElement(parent_node))
+  if (!IsHTMLSelectElement(parent_node))
     return;
 
-  HTMLSelectElement* html_select_element = toHTMLSelectElement(parent_node);
+  HTMLSelectElement* html_select_element = ToHTMLSelectElement(parent_node);
   have_children_ = true;
 
   if (active_index_ == -1)
@@ -124,13 +120,20 @@ void AXMenuListPopup::UpdateChildrenIfNecessary() {
     AddChildren();
 }
 
-void AXMenuListPopup::DidUpdateActiveOption(int option_index) {
+void AXMenuListPopup::DidUpdateActiveOption(int option_index,
+                                            bool fire_notifications) {
   UpdateChildrenIfNecessary();
 
+  int old_index = active_index_;
+  active_index_ = option_index;
+
+  if (!fire_notifications)
+    return;
+
   AXObjectCacheImpl& cache = AxObjectCache();
-  if (active_index_ != option_index && active_index_ >= 0 &&
-      active_index_ < static_cast<int>(children_.size())) {
-    AXObject* previous_child = children_[active_index_].Get();
+  if (old_index != option_index && old_index >= 0 &&
+      old_index < static_cast<int>(children_.size())) {
+    AXObject* previous_child = children_[old_index].Get();
     cache.PostNotification(previous_child,
                            AXObjectCacheImpl::kAXMenuListItemUnselected);
   }
@@ -140,8 +143,6 @@ void AXMenuListPopup::DidUpdateActiveOption(int option_index) {
     cache.PostNotification(this, AXObjectCacheImpl::kAXActiveDescendantChanged);
     cache.PostNotification(child, AXObjectCacheImpl::kAXMenuListItemSelected);
   }
-
-  active_index_ = option_index;
 }
 
 void AXMenuListPopup::DidHide() {

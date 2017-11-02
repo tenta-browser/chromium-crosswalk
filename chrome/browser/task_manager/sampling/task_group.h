@@ -20,6 +20,7 @@
 #include "chrome/browser/task_manager/providers/task.h"
 #include "chrome/browser/task_manager/sampling/task_group_sampler.h"
 #include "chrome/browser/task_manager/task_manager_observer.h"
+#include "components/nacl/common/features.h"
 
 namespace gpu {
 struct VideoMemoryUsageStats;
@@ -68,7 +69,9 @@ class TaskGroup {
   size_t num_tasks() const { return tasks().size(); }
   bool empty() const { return tasks().empty(); }
 
-  double cpu_usage() const { return cpu_usage_; }
+  double platform_independent_cpu_usage() const {
+    return platform_independent_cpu_usage_;
+  }
   base::Time start_time() const { return start_time_; }
   base::TimeDelta cpu_time() const { return cpu_time_; }
   int64_t private_bytes() const { return memory_usage_.private_bytes; }
@@ -80,8 +83,11 @@ class TaskGroup {
   int64_t gpu_memory() const { return gpu_memory_; }
   bool gpu_memory_has_duplicates() const { return gpu_memory_has_duplicates_; }
   base::MemoryState memory_state() const { return memory_state_; }
-  int64_t per_process_network_usage() const {
-    return per_process_network_usage_;
+  int64_t per_process_network_usage_rate() const {
+    return per_process_network_usage_rate_;
+  }
+  int64_t cumulative_per_process_network_usage() const {
+    return cumulative_per_process_network_usage_;
   }
   bool is_backgrounded() const { return is_backgrounded_; }
 
@@ -92,9 +98,9 @@ class TaskGroup {
   int64_t user_peak_handles() const { return user_peak_handles_; }
 #endif  // defined(OS_WIN)
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   int nacl_debug_stub_port() const { return nacl_debug_stub_port_; }
-#endif  // !defined(DISABLE_NACL)
+#endif  // BUILDFLAG(ENABLE_NACL)
 
 #if defined(OS_LINUX)
   int open_fd_count() const { return open_fd_count_; }
@@ -107,7 +113,7 @@ class TaskGroup {
 
   void RefreshWindowsHandles();
 
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   // |child_process_unique_id| see Task::GetChildProcessUniqueID().
   void RefreshNaClDebugStubPort(int child_process_unique_id);
   void OnRefreshNaClDebugStubPortDone(int port);
@@ -154,7 +160,7 @@ class TaskGroup {
   int64_t current_on_bg_done_flags_;
 
   // The per process resources usages.
-  double cpu_usage_;
+  double platform_independent_cpu_usage_;
   base::Time start_time_;     // Only calculated On Windows now.
   base::TimeDelta cpu_time_;  // Only calculated On Windows now.
   MemoryUsageStats memory_usage_;
@@ -162,7 +168,12 @@ class TaskGroup {
   base::MemoryState memory_state_;
   // The network usage in bytes per second as the sum of all network usages of
   // the individual tasks sharing the same process.
-  int64_t per_process_network_usage_;
+  int64_t per_process_network_usage_rate_;
+
+  // A continuously updating sum of all bytes that have been downloaded and
+  // uploaded by all tasks in this process.
+  int64_t cumulative_per_process_network_usage_;
+
 #if defined(OS_WIN)
   // Windows GDI and USER Handles.
   int64_t gdi_current_handles_;
@@ -170,9 +181,9 @@ class TaskGroup {
   int64_t user_current_handles_;
   int64_t user_peak_handles_;
 #endif  // defined(OS_WIN)
-#if !defined(DISABLE_NACL)
+#if BUILDFLAG(ENABLE_NACL)
   int nacl_debug_stub_port_;
-#endif  // !defined(DISABLE_NACL)
+#endif  // BUILDFLAG(ENABLE_NACL)
   int idle_wakeups_per_second_;
 #if defined(OS_LINUX)
   // The number of file descriptors currently open by the process.

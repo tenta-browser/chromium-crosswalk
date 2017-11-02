@@ -13,7 +13,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/renderer/media/gpu/rtc_video_decoder.h"
 #include "media/base/gmock_callback_support.h"
-#include "media/renderers/mock_gpu_video_accelerator_factories.h"
+#include "media/video/mock_gpu_video_accelerator_factories.h"
 #include "media/video/mock_video_decode_accelerator.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -120,24 +120,22 @@ class RTCVideoDecoderTest
   void NotifyResetDone() {
     DVLOG(2) << "NotifyResetDone";
     vda_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&RTCVideoDecoder::NotifyResetDone,
-                   base::Unretained(rtc_decoder_.get())));
+        FROM_HERE, base::BindOnce(&RTCVideoDecoder::NotifyResetDone,
+                                  base::Unretained(rtc_decoder_.get())));
   }
 
   void NotifyError(media::VideoDecodeAccelerator::Error error) {
     DVLOG(2) << "NotifyError";
     vda_task_runner_->PostTask(
-        FROM_HERE,
-        base::Bind(&RTCVideoDecoder::NotifyError,
-                   base::Unretained(rtc_decoder_.get()), error));
+        FROM_HERE, base::BindOnce(&RTCVideoDecoder::NotifyError,
+                                  base::Unretained(rtc_decoder_.get()), error));
   }
 
   void RunUntilIdle() {
     DVLOG(2) << "RunUntilIdle";
     vda_task_runner_->PostTask(FROM_HERE,
-                               base::Bind(&base::WaitableEvent::Signal,
-                                          base::Unretained(&idle_waiter_)));
+                               base::BindOnce(&base::WaitableEvent::Signal,
+                                              base::Unretained(&idle_waiter_)));
     idle_waiter_.Wait();
   }
 
@@ -158,9 +156,9 @@ class RTCVideoDecoderTest
                              uint32_t texture_target) {
     vda_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&RTCVideoDecoder::ProvidePictureBuffers,
-                   base::Unretained(rtc_decoder_.get()), buffer_count, format,
-                   textures_per_buffer, size, texture_target));
+        base::BindOnce(&RTCVideoDecoder::ProvidePictureBuffers,
+                       base::Unretained(rtc_decoder_.get()), buffer_count,
+                       format, textures_per_buffer, size, texture_target));
     RunUntilIdle();
   }
 
@@ -194,7 +192,7 @@ TEST_F(RTCVideoDecoderTest, CreateReturnsNullOnUnsupportedCodec) {
   CreateDecoder(webrtc::kVideoCodecVP8);
   std::unique_ptr<RTCVideoDecoder> null_rtc_decoder(RTCVideoDecoder::Create(
       webrtc::kVideoCodecI420, mock_gpu_factories_.get()));
-  EXPECT_EQ(NULL, null_rtc_decoder.get());
+  EXPECT_EQ(nullptr, null_rtc_decoder.get());
 }
 
 TEST_P(RTCVideoDecoderTest, CreateAndInitSucceeds) {
@@ -322,8 +320,8 @@ TEST_F(RTCVideoDecoderTest, MultipleTexturesPerBuffer) {
 }
 
 // Tests/Verifies that |rtc_encoder_| drops incoming frames and its error
-// counter is increased when in an error condition.
-TEST_P(RTCVideoDecoderTest, GetVDAErrorCounterForTesting) {
+// counter is increased when decoder implementation calls NotifyError().
+TEST_P(RTCVideoDecoderTest, GetVDAErrorCounterForNotifyError) {
   const webrtc::VideoCodecType codec_type = GetParam();
   CreateDecoder(codec_type);
   Initialize();
@@ -356,6 +354,34 @@ TEST_P(RTCVideoDecoderTest, GetVDAErrorCounterForTesting) {
   EXPECT_EQ(2, rtc_decoder_->GetVDAErrorCounterForTesting());
 }
 
+// Tests/Verifies that |rtc_encoder_| increases its error counter when it runs
+// out of pending buffers.
+TEST_P(RTCVideoDecoderTest, GetVDAErrorCounterForRunningOutOfPendingBuffers) {
+  const webrtc::VideoCodecType codec_type = GetParam();
+  CreateDecoder(codec_type);
+  Initialize();
+
+  webrtc::EncodedImage input_image;
+  uint8_t buffer[1];
+  input_image._buffer = buffer;
+  input_image._completeFrame = true;
+  input_image._encodedWidth = 640;
+  input_image._encodedHeight = 480;
+  input_image._frameType = webrtc::kVideoFrameKey;
+  input_image._length = sizeof(buffer);
+
+  for (size_t i = 0; i < rtc_video_decoder::kMaxNumOfPendingBuffers; ++i) {
+    EXPECT_EQ(WEBRTC_VIDEO_CODEC_OK,
+              rtc_decoder_->Decode(input_image, false, nullptr, nullptr, 0));
+  }
+
+  // Expect the next call to increase error counter.
+  EXPECT_EQ(0, rtc_decoder_->GetVDAErrorCounterForTesting());
+  EXPECT_EQ(WEBRTC_VIDEO_CODEC_ERROR,
+            rtc_decoder_->Decode(input_image, false, nullptr, nullptr, 0));
+  EXPECT_EQ(1, rtc_decoder_->GetVDAErrorCounterForTesting());
+}
+
 TEST_P(RTCVideoDecoderTest, Reinitialize) {
   const webrtc::VideoCodecType codec_type = GetParam();
   CreateDecoder(codec_type);
@@ -369,11 +395,13 @@ TEST_P(RTCVideoDecoderTest, Reinitialize) {
   input_image._encodedHeight = 480;
   input_image._frameType = webrtc::kVideoFrameKey;
   input_image._length = sizeof(buffer);
+  EXPECT_CALL(*mock_vda_, Decode(_)).Times(1);
   EXPECT_EQ(WEBRTC_VIDEO_CODEC_OK,
             rtc_decoder_->Decode(input_image, false, nullptr, nullptr, 0));
   RunUntilIdle();
 
   // InitDecode and Decode after Release should succeed.
+  EXPECT_CALL(*mock_vda_, Reset()).Times(1);
   rtc_decoder_->Release();
   Initialize();
   EXPECT_EQ(WEBRTC_VIDEO_CODEC_OK,

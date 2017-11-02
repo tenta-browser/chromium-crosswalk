@@ -28,33 +28,35 @@
 #ifndef HTMLCanvasElement_h
 #define HTMLCanvasElement_h
 
+#include <memory>
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "core/CoreExport.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/dom/DOMTypedArray.h"
 #include "core/dom/Document.h"
 #include "core/fileapi/BlobCallback.h"
 #include "core/html/HTMLElement.h"
 #include "core/html/canvas/CanvasDrawListener.h"
 #include "core/html/canvas/CanvasImageSource.h"
+#include "core/html/canvas/CanvasRenderingContextHost.h"
 #include "core/imagebitmap/ImageBitmapSource.h"
 #include "core/page/PageVisibilityObserver.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "platform/bindings/ScriptWrappableVisitor.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/geometry/IntSize.h"
-#include "platform/graphics/CanvasSurfaceLayerBridge.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/GraphicsTypes3D.h"
 #include "platform/graphics/ImageBufferClient.h"
 #include "platform/graphics/OffscreenCanvasPlaceholder.h"
+#include "platform/graphics/SurfaceLayerBridge.h"
 #include "platform/heap/Handle.h"
-#include <memory>
 
 #define CanvasDefaultInterpolationQuality kInterpolationLow
 
 namespace blink {
 
 class AffineTransform;
+class CanvasColorParams;
 class CanvasContextCreationAttributes;
 class CanvasRenderingContext;
 class CanvasRenderingContextFactory;
@@ -78,7 +80,8 @@ class CORE_EXPORT HTMLCanvasElement final
       public ContextLifecycleObserver,
       public PageVisibilityObserver,
       public CanvasImageSource,
-      public CanvasSurfaceLayerBridgeObserver,
+      public CanvasRenderingContextHost,
+      public WebSurfaceLayerBridgeObserver,
       public ImageBufferClient,
       public ImageBitmapSource,
       public OffscreenCanvasPlaceholder {
@@ -93,13 +96,13 @@ class CORE_EXPORT HTMLCanvasElement final
   ~HTMLCanvasElement() override;
 
   // Attributes and functions exposed to script
-  int width() const { return size().Width(); }
-  int height() const { return size().Height(); }
+  unsigned width() const { return Size().Width(); }
+  unsigned height() const { return Size().Height(); }
 
-  const IntSize& size() const { return size_; }
+  const IntSize& Size() const override { return size_; }
 
-  void setWidth(int, ExceptionState&);
-  void setHeight(int, ExceptionState&);
+  void setWidth(unsigned, ExceptionState&);
+  void setHeight(unsigned, ExceptionState&);
 
   void SetSize(const IntSize& new_size);
 
@@ -133,25 +136,23 @@ class CORE_EXPORT HTMLCanvasElement final
   void RemoveListener(CanvasDrawListener*);
 
   // Used for rendering
-  void DidDraw(const FloatRect&);
-  void DidDraw();
+  void DidDraw(const FloatRect&) override;
+  void DidDraw() override;
 
   void Paint(GraphicsContext&, const LayoutRect&);
 
-  PaintCanvas* DrawingCanvas() const;
-  void DisableDeferral(DisableDeferralReason) const;
+  PaintCanvas* DrawingCanvas();
+  void DisableDeferral(DisableDeferralReason);
   PaintCanvas* ExistingDrawingCanvas() const;
 
   CanvasRenderingContext* RenderingContext() const { return context_.Get(); }
 
   void EnsureUnacceleratedImageBuffer();
-  ImageBuffer* Buffer() const;
-  PassRefPtr<Image> CopiedImage(SourceDrawingBuffer,
-                                AccelerationHint,
-                                SnapshotReason) const;
+  RefPtr<Image> CopiedImage(SourceDrawingBuffer,
+                            AccelerationHint,
+                            SnapshotReason);
   void ClearCopiedImage();
 
-  SecurityOrigin* GetSecurityOrigin() const;
   bool OriginClean() const;
   void SetOriginTainted() { origin_clean_ = false; }
 
@@ -161,12 +162,15 @@ class CORE_EXPORT HTMLCanvasElement final
   bool Is2d() const;
   bool IsAnimated2d() const;
 
-  bool HasImageBuffer() const { return image_buffer_.get(); }
-  void DiscardImageBuffer();
+  void DiscardImageBuffer() override;
+  ImageBuffer* GetImageBuffer() const override { return image_buffer_.get(); }
+  ImageBuffer* GetOrCreateImageBuffer() override;
+
+  FontSelector* GetFontSelector() override;
 
   bool ShouldBeDirectComposited() const;
 
-  void PrepareSurfaceForPaintingIfNeeded() const;
+  void PrepareSurfaceForPaintingIfNeeded();
 
   const AtomicString ImageSourceURL() const override;
 
@@ -176,7 +180,7 @@ class CORE_EXPORT HTMLCanvasElement final
 
   void DoDeferredPaintInvalidation();
 
-  void FinalizeFrame();
+  void FinalizeFrame() override;
 
   // ContextLifecycleObserver and PageVisibilityObserver implementation
   void ContextDestroyed(ExecutionContext*) override;
@@ -185,10 +189,10 @@ class CORE_EXPORT HTMLCanvasElement final
   void PageVisibilityChanged() override;
 
   // CanvasImageSource implementation
-  PassRefPtr<Image> GetSourceImageForCanvas(SourceImageStatus*,
-                                            AccelerationHint,
-                                            SnapshotReason,
-                                            const FloatSize&) const override;
+  RefPtr<Image> GetSourceImageForCanvas(SourceImageStatus*,
+                                        AccelerationHint,
+                                        SnapshotReason,
+                                        const FloatSize&) override;
   bool WouldTaintOrigin(SecurityOrigin*) const override;
   FloatSize ElementSize(const FloatSize&) const override;
   bool IsCanvasElement() const override { return true; }
@@ -197,7 +201,7 @@ class CORE_EXPORT HTMLCanvasElement final
   int SourceWidth() override { return size_.Width(); }
   int SourceHeight() override { return size_.Height(); }
 
-  // CanvasSurfaceLayerBridgeObserver implementation
+  // SurfaceLayerBridgeObserver implementation
   void OnWebLayerReplaced() override;
 
   // ImageBufferClient implementation
@@ -211,8 +215,7 @@ class CORE_EXPORT HTMLCanvasElement final
   ScriptPromise CreateImageBitmap(ScriptState*,
                                   EventTarget&,
                                   Optional<IntRect> crop_rect,
-                                  const ImageBitmapOptions&,
-                                  ExceptionState&) override;
+                                  const ImageBitmapOptions&) override;
 
   // OffscreenCanvasPlaceholder implementation.
   void SetPlaceholderFrame(RefPtr<StaticBitmapImage>,
@@ -241,14 +244,30 @@ class CORE_EXPORT HTMLCanvasElement final
   String GetIdFromControl(const Element*);
 
   // For OffscreenCanvas that controls this html canvas element
-  CanvasSurfaceLayerBridge* SurfaceLayerBridge() const {
+  ::blink::SurfaceLayerBridge* SurfaceLayerBridge() const {
     return surface_layer_bridge_.get();
   }
   void CreateLayer();
 
-  void DetachContext() { context_ = nullptr; }
+  void DetachContext() override { context_ = nullptr; }
 
   void WillDrawImageTo2DContext(CanvasImageSource*);
+
+  ExecutionContext* GetTopExecutionContext() const override {
+    return GetDocument().GetExecutionContext();
+  }
+
+  const KURL& GetExecutionContextUrl() const override {
+    return GetDocument().TopDocument().Url();
+  }
+
+  DispatchEventResult HostDispatchEvent(Event* event) override {
+    return DispatchEvent(event);
+  }
+
+  bool IsWebGL1Enabled() const override;
+  bool IsWebGL2Enabled() const override;
+  bool IsWebGLBlocked() const override;
 
  protected:
   void DidMoveToNewDocument(Document& old_document) override;
@@ -274,13 +293,10 @@ class CORE_EXPORT HTMLCanvasElement final
 
   void Reset();
 
-  std::unique_ptr<ImageBufferSurface> CreateWebGLImageBufferSurface(
-      OpacityMode);
+  std::unique_ptr<ImageBufferSurface> CreateWebGLImageBufferSurface();
   std::unique_ptr<ImageBufferSurface> CreateAcceleratedImageBufferSurface(
-      OpacityMode,
       int* msaa_sample_count);
-  std::unique_ptr<ImageBufferSurface> CreateUnacceleratedImageBufferSurface(
-      OpacityMode);
+  std::unique_ptr<ImageBufferSurface> CreateUnacceleratedImageBufferSurface();
   void CreateImageBuffer();
   void CreateImageBufferInternal(
       std::unique_ptr<ImageBufferSurface> external_surface);
@@ -289,6 +305,7 @@ class CORE_EXPORT HTMLCanvasElement final
   void SetSurfaceSize(const IntSize&);
 
   bool PaintsIntoCanvasBuffer() const;
+  CanvasColorParams ColorParams() const;
 
   ImageData* ToImageData(SourceDrawingBuffer, SnapshotReason) const;
 
@@ -320,10 +337,8 @@ class CORE_EXPORT HTMLCanvasElement final
   mutable RefPtr<Image> copied_image_;
 
   // Used for OffscreenCanvas that controls this HTML canvas element
-  std::unique_ptr<CanvasSurfaceLayerBridge> surface_layer_bridge_;
+  std::unique_ptr<::blink::SurfaceLayerBridge> surface_layer_bridge_;
 
-  int num_frames_since_last_rendering_mode_switch_;
-  bool pending_rendering_mode_switch_;
   bool did_notify_listeners_for_current_frame_ = false;
 };
 

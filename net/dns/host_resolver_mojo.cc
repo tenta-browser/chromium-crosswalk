@@ -4,10 +4,10 @@
 
 #include "net/dns/host_resolver_mojo.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/callback_helpers.h"
-#include "base/memory/ptr_util.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "net/base/address_list.h"
 #include "net/base/net_errors.h"
@@ -94,7 +94,7 @@ int HostResolverMojo::Resolve(const RequestInfo& info,
                                    host_cache_weak_factory_.GetWeakPtr()));
   request->reset(new RequestImpl(std::move(job)));
 
-  impl_->ResolveDns(base::MakeUnique<HostResolver::RequestInfo>(info),
+  impl_->ResolveDns(std::make_unique<HostResolver::RequestInfo>(info),
                     std::move(handle));
   return ERR_IO_PENDING;
 }

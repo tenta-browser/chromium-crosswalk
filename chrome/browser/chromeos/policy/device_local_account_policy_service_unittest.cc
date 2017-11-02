@@ -436,12 +436,10 @@ TEST_F(DeviceLocalAccountPolicyServiceTest, FetchPolicy) {
 
   EXPECT_EQ(dm_protocol::kChromePublicAccountPolicyType,
             public_account->policy_type());
-  EXPECT_FALSE(public_account->has_machine_id());
   EXPECT_EQ(kAccount1, public_account->settings_entity_id());
 
   EXPECT_EQ(dm_protocol::kChromeExtensionPolicyType,
             extensions->policy_type());
-  EXPECT_FALSE(extensions->has_machine_id());
   EXPECT_FALSE(extensions->has_settings_entity_id());
 
   ASSERT_TRUE(broker->core()->store());
@@ -819,10 +817,6 @@ void DeviceLocalAccountPolicyProviderTest::SetUp() {
                            POLICY_SCOPE_MACHINE,
                            POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
                            base::MakeUnique<base::Value>(true), nullptr);
-  expected_policy_map_.Set(key::kFullscreenAllowed, POLICY_LEVEL_MANDATORY,
-                           POLICY_SCOPE_MACHINE,
-                           POLICY_SOURCE_PUBLIC_SESSION_OVERRIDE,
-                           base::MakeUnique<base::Value>(false), nullptr);
 
   // Policy defaults (for policies not set by admin).
   SetEnterpriseUsersDefaults(&expected_policy_map_);

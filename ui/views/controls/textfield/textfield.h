@@ -52,9 +52,6 @@ class VIEWS_EXPORT Textfield : public View,
   // The textfield's class name.
   static const char kViewClassName[];
 
-  // The preferred size of the padding to be used around textfield text.
-  static const int kTextPadding;
-
   // Returns the text cursor blink time in milliseconds, or 0 for no blinking.
   static size_t GetCaretBlinkMs();
 
@@ -162,6 +159,10 @@ class VIEWS_EXPORT Textfield : public View,
     placeholder_text_color_ = color;
   }
 
+  void set_placeholder_text_draw_flags(int flags) {
+    placeholder_text_draw_flags_ = flags;
+  }
+
   // Sets whether to indicate the textfield has invalid content.
   void SetInvalid(bool invalid);
   bool invalid() const { return invalid_; }
@@ -210,9 +211,8 @@ class VIEWS_EXPORT Textfield : public View,
   void SetAccessibleName(const base::string16& name);
 
   // View overrides:
-  gfx::Insets GetInsets() const override;
   int GetBaseline() const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   const char* GetClassName() const override;
   void SetBorder(std::unique_ptr<Border> b) override;
   gfx::NativeCursor GetCursor(const ui::MouseEvent& event) override;
@@ -220,6 +220,7 @@ class VIEWS_EXPORT Textfield : public View,
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
   void OnMouseCaptureLost() override;
+  bool OnMouseWheel(const ui::MouseWheelEvent& event) override;
   WordLookupClient* GetWordLookupClient() override;
   void OnGestureEvent(ui::GestureEvent* event) override;
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
@@ -379,6 +380,9 @@ class VIEWS_EXPORT Textfield : public View,
   // Update the cursor position in the text field.
   void UpdateCursorViewPosition();
 
+  // Gets the style::TextStyle that should be used.
+  int GetTextStyle() const;
+
   void PaintTextAndCursor(gfx::Canvas* canvas);
 
   // Helper function to call MoveCursorTo on the TextfieldModel.
@@ -471,6 +475,9 @@ class VIEWS_EXPORT Textfield : public View,
   // Placeholder text color.
   // TODO(estade): remove this when Harmony/MD is default.
   SkColor placeholder_text_color_;
+
+  // The draw flags specified for |placeholder_text_|.
+  int placeholder_text_draw_flags_;
 
   // True when the contents are deemed unacceptable and should be indicated as
   // such.

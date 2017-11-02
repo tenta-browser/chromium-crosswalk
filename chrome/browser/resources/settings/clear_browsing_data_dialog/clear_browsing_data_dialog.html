@@ -1,24 +1,28 @@
-<link rel="import" href="chrome://resources/cr_elements/cr_dialog/cr_dialog.html">
 <link rel="import" href="chrome://resources/html/polymer.html">
+
+<link rel="import" href="chrome://resources/cr_elements/cr_dialog/cr_dialog.html">
 <link rel="import" href="chrome://resources/html/web_ui_listener_behavior.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-button/paper-button.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner.html">
 <link rel="import" href="../i18n_setup.html">
 <link rel="import" href="clear_browsing_data_browser_proxy.html">
 <link rel="import" href="history_deletion_dialog.html">
+<link rel="import" href="../controls/important_site_checkbox.html">
 <link rel="import" href="../controls/settings_checkbox.html">
 <link rel="import" href="../controls/settings_dropdown_menu.html">
 <link rel="import" href="../icons.html">
 <link rel="import" href="../settings_shared_css.html">
 
+<!-- This file is forked as clear_browsing_data_dialog_tabs.html until the new
+     CBD UI is launched. -->
 <dom-module id="settings-clear-browsing-data-dialog">
   <template>
     <style include="settings-shared">
-      #dialog:not(.fully-rendered) {
+      #clearBrowsingDataDialog:not(.fully-rendered) {
         visibility: hidden;
       }
 
-      #dialog .footer {
+      #clearBrowsingDataDialog [slot=footer] {
         color: var(--paper-grey-600);
       }
 
@@ -34,7 +38,8 @@
         margin-top: auto;
       }
 
-      settings-checkbox {
+      settings-checkbox,
+      important-site-checkbox {
         --settings-row-two-line-min-height: 48px;
         --settings-checkbox-label: {
           line-height: 1.25rem;
@@ -63,6 +68,10 @@
         width: 16px;
       }
 
+      [slot=footer] iron-icon {
+        margin: auto;
+      }
+
       .clear-browsing-data-footer {
         -webkit-padding-start: 4px;
         align-items: flex-start;
@@ -84,25 +93,35 @@
 
       #clearFrom {
         -webkit-margin-start: 0.5em;
+        /* Adjust for md-select-underline and 1px additional bottom padding
+         * to keep md-select's text (without the underline) aligned with
+         * neighboring text that does not have an underline. */
+        margin-top: 3px;
+      }
+
+      [slot=title] .secondary {
+        font-size: calc(13 / 15 * 100%);
+        padding-top: 8px;
       }
 
       /* Cap the height on smaller screens to avoid unfavorable clipping.
        * Replace the bottom margin with padding to avoid the gap between
        * the scrollbar and the bottom separator. */
       @media all and (max-height: 724px) {
-        #dialog {
+        #clearBrowsingDataDialog {
           /* crbug.com/652027: Show four and a *half* items in the list. */
           --cr-dialog-body-container: {
-            max-height: 280px; 
+            max-height: 280px;
           };
         }
       }
     </style>
 
-    <dialog is="cr-dialog" id="dialog" close-text="$i18n{close}"
-        show-scroll-borders ignore-popstate>
-      <div class="title">$i18n{clearBrowsingData}</div>
-      <div class="body">
+    <dialog is="cr-dialog" id="clearBrowsingDataDialog"
+        on-close="onClearBrowsingDataDialogClose_"
+        close-text="$i18n{close}" ignore-popstate>
+      <div slot="title">$i18n{clearBrowsingData}</div>
+      <div slot="body">
         <div class="row">
           $i18n{clearFollowingItemsFrom}
           <settings-dropdown-menu id="clearFrom"
@@ -111,65 +130,72 @@
               menu-options="[[clearFromOptions_]]">
           </settings-dropdown-menu>
         </div>
-        <settings-checkbox id="browsingCheckbox"
+        <!-- Note: whether these checkboxes are checked are ignored if deleting
+             history is disabled (i.e. supervised users, policy), so it's OK to
+             have a hidden checkbox that's also checked (as the C++ accounts for
+             whether a user is allowed to delete history independently). -->
+        <settings-checkbox id="browsingCheckbox" class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.browsing_history}}"
             label="$i18n{clearBrowsingHistory}"
             sub-label="[[counters_.browsing_history]]"
-            disabled="[[clearingInProgress_]]">
+            disabled="[[clearingInProgress_]]"
+            hidden="[[isSupervised_]]">
         </settings-checkbox>
-        <settings-checkbox id="downloadCheckbox"
+        <settings-checkbox id="downloadCheckbox" class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.download_history}}"
             label="$i18n{clearDownloadHistory}"
             sub-label="[[counters_.download_history]]"
-            disabled="[[clearingInProgress_]]">
+            disabled="[[clearingInProgress_]]"
+            hidden="[[isSupervised_]]">
         </settings-checkbox>
-        <settings-checkbox
+        <settings-checkbox id="cacheCheckbox" class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.cache}}"
             label="$i18n{clearCache}"
             sub-label="[[counters_.cache]]"
             disabled="[[clearingInProgress_]]">
         </settings-checkbox>
-        <settings-checkbox
+        <settings-checkbox id="cookiesCheckbox" class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.cookies}}"
             label="$i18n{clearCookies}"
             sub-label="$i18n{clearCookiesCounter}"
             disabled="[[clearingInProgress_]]">
         </settings-checkbox>
-        <settings-checkbox
+        <settings-checkbox class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.passwords}}"
             label="$i18n{clearPasswords}"
             sub-label="[[counters_.passwords]]"
             disabled="[[clearingInProgress_]]">
         </settings-checkbox>
-        <settings-checkbox
+        <settings-checkbox class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.form_data}}"
             label="$i18n{clearFormData}"
             sub-label="[[counters_.form_data]]"
             disabled="[[clearingInProgress_]]">
         </settings-checkbox>
-        <settings-checkbox
+        <settings-checkbox class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.hosted_apps_data}}"
             label="$i18n{clearHostedAppData}"
             sub-label="[[counters_.hosted_apps_data]]"
             disabled="[[clearingInProgress_]]">
         </settings-checkbox>
-        <settings-checkbox
+        <settings-checkbox class="browsing-data-checkbox"
             pref="{{prefs.browser.clear_data.media_licenses}}"
             label="$i18n{clearMediaLicenses}"
             sub-label="[[counters_.media_licenses]]"
             disabled="[[clearingInProgress_]]">
         </settings-checkbox>
       </div>
-      <div class="button-container">
+      <div slot="button-container">
         <paper-spinner active="[[clearingInProgress_]]"></paper-spinner>
         <paper-button class="cancel-button" disabled="[[clearingInProgress_]]"
             on-tap="onCancelTap_">$i18n{cancel}</paper-button>
-        <paper-button class="action-button" disabled="[[clearingInProgress_]]"
+        <paper-button id="clearBrowsingDataConfirm"
+            class="action-button" disabled="[[clearingInProgress_]]"
             on-tap="onClearBrowsingDataTap_">
-          $i18n{clearBrowsingData}
+            $i18n{clearBrowsingData}
         </paper-button>
       </div>
-      <div class="footer">
+      <div slot="footer">
         <div id="googleFooter" class="clear-browsing-data-footer">
           <iron-icon icon="settings:googleg"></iron-icon>
           <div class="footer-text">$i18nRaw{otherFormsOfBrowsingHistory}</div>
@@ -186,6 +212,44 @@
         </div>
       </div>
     </dialog>
+
+    <template is="dom-if" if="[[showImportantSitesDialog_]]">
+      <dialog is="cr-dialog" id="importantSitesDialog" close-text="$i18n{close}"
+          show-scroll-borders ignore-popstate>
+        <div slot="title">
+          $i18n{clearBrowsingData}
+          <div class="secondary">
+            <template is="dom-if"
+                if="[[!prefs.browser.clear_data.cache.value]]">
+              $i18n{importantSitesSubtitleCookies}
+            </template>
+            <template is="dom-if" if="[[prefs.browser.clear_data.cache.value]]">
+              $i18n{importantSitesSubtitleCookiesAndCache}
+            </template>
+          </div>
+        </div>
+        <div slot="body">
+          <template is="dom-repeat" items="[[importantSites_]]">
+            <div class="row">
+              <important-site-checkbox
+                  site="[[item]]"
+                  disabled="[[clearingInProgress_]]">
+              </important-site-checkbox>
+            </div>
+          </template>
+        </div>
+        <div slot="button-container">
+          <paper-spinner active="[[clearingInProgress_]]"></paper-spinner>
+          <paper-button class="cancel-button" disabled="[[clearingInProgress_]]"
+              on-tap="onImportantSitesCancelTap_">$i18n{cancel}</paper-button>
+          <paper-button id="importantSitesConfirm"
+              class="action-button" disabled="[[clearingInProgress_]]"
+              on-tap="onImportantSitesConfirmTap_">
+            $i18n{importantSitesConfirm}
+          </paper-button>
+        </div>
+      </dialog>
+    </template>
 
     <template is="dom-if" if="[[showHistoryDeletionDialog_]]" restamp>
       <settings-history-deletion-dialog id="notice"

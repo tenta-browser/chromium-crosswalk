@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+#include <string>
+
 #include "content/browser/bad_message.h"
 #include "content/browser/devtools/grit/devtools_resources_map.h"
 #include "content/common/devtools_messages.h"
@@ -29,6 +31,15 @@ DevToolsFrontendHost* DevToolsFrontendHost::Create(
     const HandleMessageCallback& handle_message_callback) {
   return new DevToolsFrontendHostImpl(frontend_main_frame,
                                       handle_message_callback);
+}
+
+// static
+void DevToolsFrontendHost::SetupExtensionsAPI(
+    RenderFrameHost* frame,
+    const std::string& extension_api) {
+  DCHECK(frame->GetParent());
+  frame->Send(new DevToolsMsg_SetupDevToolsClient(frame->GetRoutingID(),
+                                                  extension_api));
 }
 
 // static
@@ -60,7 +71,7 @@ DevToolsFrontendHostImpl::~DevToolsFrontendHostImpl() {
 }
 
 void DevToolsFrontendHostImpl::BadMessageRecieved() {
-  bad_message::ReceivedBadMessage(web_contents()->GetRenderProcessHost(),
+  bad_message::ReceivedBadMessage(web_contents()->GetMainFrame()->GetProcess(),
                                   bad_message::DFH_BAD_EMBEDDER_MESSAGE);
 }
 

@@ -29,7 +29,7 @@ assert_valid("<color>+", "red");
 assert_valid(" <length>+ | <percentage>", "2px 8px");
 assert_valid("<length>|<percentage>|<length-percentage>", "2px"); // Valid but silly
 assert_valid("<color> | <image> | <url> | <integer> | <angle>", "red");
-assert_valid("<time> | <resolution> | <transform-function> | <custom-ident>", "red");
+assert_valid("<time> | <resolution> | <transform-list> | <custom-ident>", "red");
 
 assert_valid("*", ":> hello");
 assert_valid("*", "([ brackets ]) { yay (??)}");
@@ -62,8 +62,8 @@ assert_valid("<time>", "calc(2s - 9ms)");
 assert_valid("<resolution>", "10dpi");
 assert_valid("<resolution>", "3dPpX");
 assert_valid("<resolution>", "-5.3dpcm");
-assert_valid("<transform-function>", "scale(2)");
-assert_valid("<transform-function>+", "translateX(2px) rotate(20deg)");
+assert_valid("<transform-list>", "scale(2)");
+assert_valid("<transform-list>", "translateX(2px) rotate(20deg)");
 
 assert_valid("<color>", "rgb(12, 34, 56)");
 assert_valid("<color>", "lightgoldenrodyellow");
@@ -78,6 +78,7 @@ assert_valid("banana", "banan\\61");
 assert_valid("<custom-ident>", "banan\\61");
 assert_valid("big | bigger | BIGGER", "bigger");
 assert_valid("foo+|bar", "foo foo foo");
+assert_valid("default", "default");
 
 assert_valid("banana\t", "banana");
 assert_valid("\nbanana\r\n", "banana");
@@ -105,9 +106,11 @@ assert_invalid("*|banana", "banana");
 assert_invalid("*+", "banana");
 
 assert_invalid("initial", "initial");
+assert_invalid("inherit", "inherit");
+assert_invalid("unset", "unset");
 assert_invalid("<length>|initial", "10px");
 assert_invalid("<length>|INHERIT", "10px");
-assert_invalid("<percentage>|defAult", "2%");
+assert_invalid("<percentage>|unsEt", "2%");
 
 // Invalid initialValue
 assert_invalid("*", "initial");
@@ -146,10 +149,12 @@ assert_invalid("<integer>", "1.0");
 assert_invalid("<integer>", "1e0");
 assert_invalid("<number>|foo", "foo var(--foo, bla)");
 
+assert_invalid("<angle>", "0");
 assert_invalid("<angle>", "10%");
 assert_invalid("<time>", "2px");
 assert_invalid("<resolution>", "10");
-assert_invalid("<transform-function>", "scale()");
+assert_invalid("<transform-list>", "scale()");
+assert_invalid("<transform-list>+", "translateX(2px) rotate(20deg)");
 assert_invalid("<color>", "fancy-looking");
 assert_invalid("<image>", "banana.png");
 assert_invalid("<url>", "banana.png");

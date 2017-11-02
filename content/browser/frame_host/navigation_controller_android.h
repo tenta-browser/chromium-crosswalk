@@ -21,8 +21,6 @@ class NavigationControllerImpl;
 // with its native counterpart.
 class CONTENT_EXPORT NavigationControllerAndroid {
  public:
-  static bool Register(JNIEnv* env);
-
   explicit NavigationControllerAndroid(
       NavigationControllerImpl* navigation_controller);
   ~NavigationControllerAndroid();
@@ -127,7 +125,8 @@ class CONTENT_EXPORT NavigationControllerAndroid {
       const base::android::JavaParamRef<jobject>& obj);
   void CopyStateFrom(JNIEnv* env,
                      const base::android::JavaParamRef<jobject>& obj,
-                     jlong source_native_navigation_controller_android);
+                     jlong source_native_navigation_controller_android,
+                     jboolean needs_reload);
   void CopyStateFromAndPrune(JNIEnv* env,
                              const base::android::JavaParamRef<jobject>& obj,
                              jlong source_native_navigation_controller_android,

@@ -4,12 +4,17 @@
 
 #include "content/gpu/in_process_gpu_thread.h"
 
+#include "base/command_line.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "content/gpu/gpu_child_thread.h"
 #include "content/gpu/gpu_process.h"
+#include "content/public/common/content_client.h"
+#include "content/public/common/content_switches.h"
+#include "content/public/gpu/content_gpu_client.h"
 #include "gpu/config/gpu_info_collector.h"
 #include "gpu/config/gpu_util.h"
+#include "gpu/ipc/service/gpu_init.h"
 #include "ui/gl/init/gl_factory.h"
 
 #if defined(OS_ANDROID)
@@ -46,25 +51,18 @@ void InProcessGpuThread::Init() {
 
   gpu_process_ = new GpuProcess(io_thread_priority);
 
-#if defined(USE_OZONE)
-  ui::OzonePlatform::InitParams params;
-  params.single_process = true;
-  ui::OzonePlatform::InitializeForGPU(params);
-#endif
+  auto gpu_init = std::make_unique<gpu::GpuInit>();
+  auto* client = GetContentClient()->gpu();
+  gpu_init->InitializeInProcess(base::CommandLine::ForCurrentProcess(),
+                                client ? client->GetGPUInfo() : nullptr,
+                                client ? client->GetGpuFeatureInfo() : nullptr);
 
-  gpu::GPUInfo gpu_info;
-  if (!gl::init::InitializeGLOneOff())
-    VLOG(1) << "gl::init::InitializeGLOneOff failed";
-  else
-    gpu::CollectContextGraphicsInfo(&gpu_info);
-
-  gpu::GpuFeatureInfo gpu_feature_info =
-      gpu::GetGpuFeatureInfo(gpu_info, *base::CommandLine::ForCurrentProcess());
+  GetContentClient()->SetGpuInfo(gpu_init->gpu_info());
 
   // The process object takes ownership of the thread object, so do not
   // save and delete the pointer.
   GpuChildThread* child_thread =
-      new GpuChildThread(params_, gpu_info, gpu_feature_info);
+      new GpuChildThread(params_, std::move(gpu_init));
 
   // Since we are in the browser process, use the thread start time as the
   // process start time.

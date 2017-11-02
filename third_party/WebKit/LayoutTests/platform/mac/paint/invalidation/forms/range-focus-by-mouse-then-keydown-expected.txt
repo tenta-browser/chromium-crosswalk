@@ -4,11 +4,21 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSlider INPUT",
           "rect": [7, 7, 135, 21],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='track'",
+          "rect": [10, 10, 129, 15],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutFlexibleBox DIV",
+          "rect": [10, 10, 129, 15],
           "reason": "subtree"
         },
         {

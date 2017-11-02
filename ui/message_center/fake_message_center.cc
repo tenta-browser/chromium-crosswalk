@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "ui/message_center/fake_message_center.h"
+#include "base/strings/string_util.h"
 #include "ui/message_center/notification_list.h"
 
 namespace message_center {
@@ -52,7 +53,11 @@ bool FakeMessageCenter::HasClickedListener(const std::string& id) {
 
 message_center::Notification* FakeMessageCenter::FindVisibleNotificationById(
     const std::string& id) {
-  return NULL;
+  for (auto* notification : GetVisibleNotifications()) {
+    if (id == notification->id())
+      return notification;
+  }
+  return nullptr;
 }
 
 const NotificationList::Notifications&
@@ -90,10 +95,6 @@ void FakeMessageCenter::SetNotificationButtonIcon(
     const std::string& notification_id,
     int button_index,
     const gfx::Image& image) {
-}
-
-void FakeMessageCenter::DisableNotificationsByNotifier(
-    const NotifierId& notifier_id) {
 }
 
 void FakeMessageCenter::ClickOnNotification(const std::string& id) {
@@ -142,8 +143,13 @@ void FakeMessageCenter::RestartPopupTimers() {}
 
 void FakeMessageCenter::PausePopupTimers() {}
 
-void FakeMessageCenter::DisableTimersForTest() {}
+const base::string16& FakeMessageCenter::GetProductOSName() const {
+  return base::EmptyString16();
+}
 
-void FakeMessageCenter::EnableChangeQueueForTest(bool enabled) {}
+void FakeMessageCenter::SetProductOSName(
+    const base::string16& product_os_name) {}
+
+void FakeMessageCenter::DisableTimersForTest() {}
 
 }  // namespace message_center

@@ -61,8 +61,7 @@ static void DatabaseClosed(Database* database) {
 }
 
 DatabaseTracker& DatabaseTracker::Tracker() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(DatabaseTracker, tracker,
-                                  new DatabaseTracker);
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(DatabaseTracker, tracker, ());
   return tracker;
 }
 
@@ -128,7 +127,7 @@ void DatabaseTracker::RemoveOpenDatabase(Database* database) {
     if (!database_set)
       return;
 
-    DatabaseSet::iterator found = database_set->Find(database);
+    DatabaseSet::iterator found = database_set->find(database);
     if (found == database_set->end())
       return;
 
@@ -149,10 +148,21 @@ void DatabaseTracker::PrepareToOpenDatabase(Database* database) {
   DCHECK(
       database->GetDatabaseContext()->GetExecutionContext()->IsContextThread());
   if (Platform::Current()->DatabaseObserver()) {
+    // This is an asynchronous call to the browser to open the database,
+    // however we can't actually use the database until we revieve an RPC back
+    // that advises is of the actual size of the database, so there is a race
+    // condition where the database is in an unusable state. To assist, we
+    // will record the size of the database straight away so we can use it
+    // immediately, and the real size will eventually be updated by the RPC from
+    // the browser.
     Platform::Current()->DatabaseObserver()->DatabaseOpened(
         WebSecurityOrigin(database->GetSecurityOrigin()),
         database->StringIdentifier(), database->DisplayName(),
         database->EstimatedSize());
+    // We write a temporary size of 0 to the QuotaTracker - we will be updated
+    // with the correct size via RPC asynchronously.
+    QuotaTracker::Instance().UpdateDatabaseSize(
+        database->GetSecurityOrigin(), database->StringIdentifier(), 0);
   }
 }
 
@@ -195,9 +205,8 @@ void DatabaseTracker::CloseDatabasesImmediately(SecurityOrigin* origin,
   }
 }
 
-void DatabaseTracker::ForEachOpenDatabaseInPage(
-    Page* page,
-    std::unique_ptr<DatabaseCallback> callback) {
+void DatabaseTracker::ForEachOpenDatabaseInPage(Page* page,
+                                                DatabaseCallback callback) {
   MutexLocker open_database_map_lock(open_database_map_guard_);
   if (!open_database_map_)
     return;
@@ -207,7 +216,7 @@ void DatabaseTracker::ForEachOpenDatabaseInPage(
         ExecutionContext* context = database->GetExecutionContext();
         DCHECK(context->IsDocument());
         if (ToDocument(context)->GetFrame()->GetPage() == page)
-          (*callback)(database);
+          callback(database);
       }
     }
   }
@@ -230,7 +239,7 @@ void DatabaseTracker::CloseOneDatabaseImmediately(const String& origin_string,
     if (!database_set)
       return;
 
-    DatabaseSet::iterator found = database_set->Find(database);
+    DatabaseSet::iterator found = database_set->find(database);
     if (found == database_set->end())
       return;
   }

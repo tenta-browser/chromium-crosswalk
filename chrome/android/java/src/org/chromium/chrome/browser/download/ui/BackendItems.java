@@ -9,6 +9,7 @@ import android.text.TextUtils;
 import org.chromium.chrome.browser.widget.DateDividedAdapter.TimedItem;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 
@@ -28,13 +29,19 @@ public abstract class BackendItems extends ArrayList<DownloadHistoryItemWrapper>
      */
     public long getTotalBytes() {
         long totalSize = 0;
+        HashSet<String> filePaths = new HashSet<>();
         for (DownloadHistoryItemWrapper item : this) {
-            if (item.isVisibleToUser(DownloadFilter.FILTER_ALL)) totalSize += item.getFileSize();
+            String path = item.getFilePath();
+            if (item.isVisibleToUser(DownloadFilter.FILTER_ALL) && !filePaths.contains(path)) {
+                totalSize += item.getFileSize();
+            }
+            if (path != null && !path.isEmpty()) filePaths.add(path);
         }
         return totalSize;
     }
 
     /**
+     * TODO(shaktisahu) : Remove this when not needed.
      * Filters out items that match the query and are displayed in this list for the current filter.
      * @param filterType    Filter to use.
      * @param query         The text to match.

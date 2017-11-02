@@ -4,18 +4,11 @@
 
 #include "content/browser/android/background_sync_network_observer_android.h"
 
-#include "base/android/context_utils.h"
 #include "jni/BackgroundSyncNetworkObserver_jni.h"
 
 using base::android::JavaParamRef;
 
 namespace content {
-
-// static
-bool BackgroundSyncNetworkObserverAndroid::Observer::RegisterNetworkObserver(
-    JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
 
 // static
 scoped_refptr<BackgroundSyncNetworkObserverAndroid::Observer>
@@ -38,8 +31,7 @@ void BackgroundSyncNetworkObserverAndroid::Observer::Init() {
   JNIEnv* env = base::android::AttachCurrentThread();
   base::android::ScopedJavaGlobalRef<jobject> obj(
       Java_BackgroundSyncNetworkObserver_createObserver(
-          env, base::android::GetApplicationContext(),
-          reinterpret_cast<jlong>(this)));
+          env, reinterpret_cast<jlong>(this)));
   j_observer_.Reset(obj);
 }
 

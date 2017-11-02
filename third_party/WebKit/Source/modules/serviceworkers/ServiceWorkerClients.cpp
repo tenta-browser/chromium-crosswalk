@@ -17,6 +17,7 @@
 #include "modules/serviceworkers/ServiceWorkerGlobalScopeClient.h"
 #include "modules/serviceworkers/ServiceWorkerWindowClient.h"
 #include "modules/serviceworkers/ServiceWorkerWindowClientCallback.h"
+#include "platform/bindings/V8ThrowException.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Vector.h"
@@ -58,7 +59,7 @@ WebServiceWorkerClientType GetClientType(const String& type) {
     return kWebServiceWorkerClientTypeSharedWorker;
   if (type == "all")
     return kWebServiceWorkerClientTypeAll;
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return kWebServiceWorkerClientTypeWindow;
 }
 
@@ -185,7 +186,7 @@ ScriptPromise ServiceWorkerClients::openWindow(ScriptState* script_state,
   }
   context->ConsumeWindowInteraction();
 
-  ServiceWorkerGlobalScopeClient::From(context)->OpenWindow(
+  ServiceWorkerGlobalScopeClient::From(context)->OpenWindowForClients(
       parsed_url, WTF::MakeUnique<NavigateClientCallback>(resolver));
   return promise;
 }

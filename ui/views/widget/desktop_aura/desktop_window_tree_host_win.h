@@ -16,9 +16,16 @@ namespace aura {
 namespace client {
 class DragDropClient;
 class FocusClient;
+}
+}
+
+namespace ui {
+class InputMethod;
+}  // namespace ui
+
+namespace wm {
 class ScopedTooltipDisabler;
-}
-}
+}  // namespace wm
 
 namespace views {
 class DesktopDragDropClientWin;
@@ -31,7 +38,7 @@ class TooltipWin;
 
 class VIEWS_EXPORT DesktopWindowTreeHostWin
     : public DesktopWindowTreeHost,
-      public aura::client::AnimationHost,
+      public wm::AnimationHost,
       public aura::WindowTreeHost,
       public HWNDMessageHandlerDelegate {
  public:
@@ -48,7 +55,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void Init(aura::Window* content_window,
             const Widget::InitParams& params) override;
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
-  void OnNativeWidgetActivationChanged(bool active) override;
+  void OnActiveWindowChanged(bool active) override;
   void OnWidgetInitDone() override;
   std::unique_ptr<corewm::Tooltip> CreateTooltip() override;
   std::unique_ptr<aura::client::DragDropClient> CreateDragDropClient(
@@ -70,7 +77,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   gfx::Rect GetRestoredBounds() const override;
   std::string GetWorkspace() const override;
   gfx::Rect GetWorkAreaBoundsInScreen() const override;
-  void SetShape(std::unique_ptr<SkRegion> native_region) override;
+  void SetShape(std::unique_ptr<Widget::ShapeRects> native_shape) override;
   void Activate() override;
   void Deactivate() override;
   bool IsActive() const override;
@@ -132,6 +139,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void OnWindowHidingAnimationCompleted() override;
 
   // Overridden from HWNDMessageHandlerDelegate:
+  ui::InputMethod* GetHWNDMessageDelegateInputMethod() override;
   bool HasNonClientView() const override;
   FrameMode GetFrameMode() const override;
   bool HasFrame() const override;
@@ -180,6 +188,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void HandleNativeFocus(HWND last_focused_window) override;
   void HandleNativeBlur(HWND focused_window) override;
   bool HandleMouseEvent(const ui::MouseEvent& event) override;
+  bool HandlePointerEvent(ui::PointerEvent* event) override;
   void HandleKeyEvent(ui::KeyEvent* event) override;
   void HandleTouchEvent(const ui::TouchEvent& event) override;
   bool HandleIMEMessage(UINT message,
@@ -212,6 +221,12 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
 
   // Returns true if a modal window is active in the current root window chain.
   bool IsModalWindowActive() const;
+
+  // Called whenever the HWND resizes or moves, to see if the nearest HMONITOR
+  // has changed, and, if so, inform the aura::WindowTreeHost.
+  void CheckForMonitorChange();
+
+  HMONITOR last_monitor_from_window_ = nullptr;
 
   std::unique_ptr<HWNDMessageHandler> message_handler_;
   std::unique_ptr<aura::client::FocusClient> focus_client_;
@@ -266,7 +281,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   // whenever the cursor visibility state changes.
   static bool is_cursor_visible_;
 
-  std::unique_ptr<aura::client::ScopedTooltipDisabler> tooltip_disabler_;
+  std::unique_ptr<wm::ScopedTooltipDisabler> tooltip_disabler_;
 
   // Indicates if current window will receive mouse events when should not
   // become activated.

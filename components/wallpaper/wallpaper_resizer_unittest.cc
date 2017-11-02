@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
@@ -50,9 +51,7 @@ gfx::ImageSkia CreateTestImage(const gfx::Size& size) {
 bool IsColor(const gfx::ImageSkia& image, const uint32_t expect) {
   EXPECT_EQ(image.width(), kTargetWidth);
   EXPECT_EQ(image.height(), kTargetHeight);
-  const SkBitmap* image_bitmap = image.bitmap();
-  SkAutoLockPixels image_lock(*image_bitmap);
-  return *image_bitmap->getAddr32(0, 0) == expect;
+  return *image.bitmap()->getAddr32(0, 0) == expect;
 }
 
 }  // namespace
@@ -86,12 +85,16 @@ class WallpaperResizerTest : public testing::Test,
     return worker_thread_.task_runner();
   }
 
-  void WaitForResize() { base::RunLoop().Run(); }
+  void WaitForResize() {
+    active_runloop_ = base::MakeUnique<base::RunLoop>();
+    active_runloop_->Run();
+  }
 
-  void OnWallpaperResized() override { message_loop_.QuitWhenIdle(); }
+  void OnWallpaperResized() override { active_runloop_->Quit(); }
 
  private:
   base::MessageLoop message_loop_;
+  std::unique_ptr<base::RunLoop> active_runloop_;
   base::Thread worker_thread_;
 
   DISALLOW_COPY_AND_ASSIGN(WallpaperResizerTest);

@@ -22,6 +22,10 @@
 #include "net/base/io_buffer.h"
 
 namespace device {
+
+using mojom::UsbControlTransferParamsPtr;
+using mojom::UsbControlTransferRecipient;
+
 namespace usb {
 
 namespace {
@@ -31,7 +35,7 @@ scoped_refptr<net::IOBuffer> CreateTransferBuffer(size_t size) {
       std::max(static_cast<size_t>(1u), static_cast<size_t>(size)));
 }
 
-void OnTransferIn(const Device::GenericTransferInCallback& callback,
+void OnTransferIn(mojom::UsbDevice::GenericTransferInCallback callback,
                   UsbTransferStatus status,
                   scoped_refptr<net::IOBuffer> buffer,
                   size_t buffer_size) {
@@ -44,23 +48,24 @@ void OnTransferIn(const Device::GenericTransferInCallback& callback,
     std::copy(buffer->data(), buffer->data() + buffer_size, data.begin());
   }
 
-  callback.Run(mojo::ConvertTo<TransferStatus>(status), data);
+  std::move(callback).Run(mojo::ConvertTo<mojom::UsbTransferStatus>(status),
+                          data);
 }
 
-void OnTransferOut(const Device::GenericTransferOutCallback& callback,
+void OnTransferOut(mojom::UsbDevice::GenericTransferOutCallback callback,
                    UsbTransferStatus status,
                    scoped_refptr<net::IOBuffer> buffer,
                    size_t buffer_size) {
-  callback.Run(mojo::ConvertTo<TransferStatus>(status));
+  std::move(callback).Run(mojo::ConvertTo<mojom::UsbTransferStatus>(status));
 }
 
-std::vector<IsochronousPacketPtr> BuildIsochronousPacketArray(
+std::vector<mojom::UsbIsochronousPacketPtr> BuildIsochronousPacketArray(
     const std::vector<uint32_t>& packet_lengths,
-    TransferStatus status) {
-  std::vector<IsochronousPacketPtr> packets;
+    mojom::UsbTransferStatus status) {
+  std::vector<mojom::UsbIsochronousPacketPtr> packets;
   packets.reserve(packet_lengths.size());
   for (uint32_t packet_length : packet_lengths) {
-    auto packet = IsochronousPacket::New();
+    auto packet = mojom::UsbIsochronousPacket::New();
     packet->length = packet_length;
     packet->status = status;
     packets.push_back(std::move(packet));
@@ -69,7 +74,7 @@ std::vector<IsochronousPacketPtr> BuildIsochronousPacketArray(
 }
 
 void OnIsochronousTransferIn(
-    const Device::IsochronousTransferInCallback& callback,
+    mojom::UsbDevice::IsochronousTransferInCallback callback,
     scoped_refptr<net::IOBuffer> buffer,
     const std::vector<UsbDeviceHandle::IsochronousPacket>& packets) {
   std::vector<uint8_t> data;
@@ -86,23 +91,25 @@ void OnIsochronousTransferIn(
     data.resize(buffer_size);
     std::copy(buffer->data(), buffer->data() + buffer_size, data.begin());
   }
-  callback.Run(data,
-               mojo::ConvertTo<std::vector<IsochronousPacketPtr>>(packets));
+  std::move(callback).Run(
+      data,
+      mojo::ConvertTo<std::vector<mojom::UsbIsochronousPacketPtr>>(packets));
 }
 
 void OnIsochronousTransferOut(
-    const Device::IsochronousTransferOutCallback& callback,
+    mojom::UsbDevice::IsochronousTransferOutCallback callback,
     scoped_refptr<net::IOBuffer> buffer,
     const std::vector<UsbDeviceHandle::IsochronousPacket>& packets) {
-  callback.Run(mojo::ConvertTo<std::vector<IsochronousPacketPtr>>(packets));
+  std::move(callback).Run(
+      mojo::ConvertTo<std::vector<mojom::UsbIsochronousPacketPtr>>(packets));
 }
 
 }  // namespace
 
 // static
-void DeviceImpl::Create(scoped_refptr<UsbDevice> device,
+void DeviceImpl::Create(scoped_refptr<device::UsbDevice> device,
                         base::WeakPtr<PermissionProvider> permission_provider,
-                        DeviceRequest request) {
+                        mojom::UsbDeviceRequest request) {
   auto* device_impl =
       new DeviceImpl(std::move(device), std::move(permission_provider));
   device_impl->binding_ = mojo::MakeStrongBinding(base::WrapUnique(device_impl),
@@ -113,7 +120,7 @@ DeviceImpl::~DeviceImpl() {
   CloseHandle();
 }
 
-DeviceImpl::DeviceImpl(scoped_refptr<UsbDevice> device,
+DeviceImpl::DeviceImpl(scoped_refptr<device::UsbDevice> device,
                        base::WeakPtr<PermissionProvider> permission_provider)
     : device_(std::move(device)),
       permission_provider_(std::move(permission_provider)),
@@ -133,48 +140,38 @@ void DeviceImpl::CloseHandle() {
 }
 
 bool DeviceImpl::HasControlTransferPermission(
-    ControlTransferRecipient recipient,
+    UsbControlTransferRecipient recipient,
     uint16_t index) {
   DCHECK(device_handle_);
-  const UsbConfigDescriptor* config = device_->active_configuration();
 
-  if (!permission_provider_)
-    return false;
-
-  if (recipient == ControlTransferRecipient::INTERFACE ||
-      recipient == ControlTransferRecipient::ENDPOINT) {
-    if (!config)
-      return false;
-
-    const UsbInterfaceDescriptor* interface = nullptr;
-    if (recipient == ControlTransferRecipient::ENDPOINT) {
-      interface = device_handle_->FindInterfaceByEndpoint(index & 0xff);
-    } else {
-      auto interface_it =
-          std::find_if(config->interfaces.begin(), config->interfaces.end(),
-                       [index](const UsbInterfaceDescriptor& this_iface) {
-                         return this_iface.interface_number == (index & 0xff);
-                       });
-      if (interface_it != config->interfaces.end())
-        interface = &*interface_it;
-    }
-    if (interface == nullptr)
-      return false;
-
-    return permission_provider_->HasFunctionPermission(
-        interface->first_interface, config->configuration_value, device_);
-  } else if (config) {
-    return permission_provider_->HasConfigurationPermission(
-        config->configuration_value, device_);
-  } else {
-    // Client must already have device permission to have gotten this far.
+  if (recipient != UsbControlTransferRecipient::INTERFACE &&
+      recipient != UsbControlTransferRecipient::ENDPOINT) {
     return true;
   }
+
+  const UsbConfigDescriptor* config = device_->active_configuration();
+  if (!config)
+    return false;
+
+  const UsbInterfaceDescriptor* interface = nullptr;
+  if (recipient == UsbControlTransferRecipient::ENDPOINT) {
+    interface = device_handle_->FindInterfaceByEndpoint(index & 0xff);
+  } else {
+    auto interface_it =
+        std::find_if(config->interfaces.begin(), config->interfaces.end(),
+                     [index](const UsbInterfaceDescriptor& this_iface) {
+                       return this_iface.interface_number == (index & 0xff);
+                     });
+    if (interface_it != config->interfaces.end())
+      interface = &*interface_it;
+  }
+
+  return interface != nullptr;
 }
 
 // static
 void DeviceImpl::OnOpen(base::WeakPtr<DeviceImpl> self,
-                        const OpenCallback& callback,
+                        OpenCallback callback,
                         scoped_refptr<UsbDeviceHandle> handle) {
   if (!self) {
     handle->Close();
@@ -184,73 +181,63 @@ void DeviceImpl::OnOpen(base::WeakPtr<DeviceImpl> self,
   self->device_handle_ = std::move(handle);
   if (self->device_handle_ && self->permission_provider_)
     self->permission_provider_->IncrementConnectionCount();
-  callback.Run(self->device_handle_ ? OpenDeviceError::OK
-                                    : OpenDeviceError::ACCESS_DENIED);
+  std::move(callback).Run(self->device_handle_
+                              ? mojom::UsbOpenDeviceError::OK
+                              : mojom::UsbOpenDeviceError::ACCESS_DENIED);
 }
 
-void DeviceImpl::OnPermissionGrantedForOpen(const OpenCallback& callback,
+void DeviceImpl::OnPermissionGrantedForOpen(OpenCallback callback,
                                             bool granted) {
-  if (granted && permission_provider_ &&
-      permission_provider_->HasDevicePermission(device_)) {
-    device_->Open(
-        base::Bind(&DeviceImpl::OnOpen, weak_factory_.GetWeakPtr(), callback));
+  if (granted) {
+    device_->Open(base::BindOnce(
+        &DeviceImpl::OnOpen, weak_factory_.GetWeakPtr(), std::move(callback)));
   } else {
-    callback.Run(OpenDeviceError::ACCESS_DENIED);
+    std::move(callback).Run(mojom::UsbOpenDeviceError::ACCESS_DENIED);
   }
 }
 
-void DeviceImpl::Open(const OpenCallback& callback) {
+void DeviceImpl::Open(OpenCallback callback) {
   if (device_handle_) {
-    callback.Run(OpenDeviceError::ALREADY_OPEN);
+    std::move(callback).Run(mojom::UsbOpenDeviceError::ALREADY_OPEN);
     return;
   }
 
   if (!device_->permission_granted()) {
     device_->RequestPermission(
-        base::Bind(&DeviceImpl::OnPermissionGrantedForOpen,
-                   weak_factory_.GetWeakPtr(), callback));
+        base::BindOnce(&DeviceImpl::OnPermissionGrantedForOpen,
+                       weak_factory_.GetWeakPtr(), std::move(callback)));
     return;
   }
 
-  if (permission_provider_ &&
-      permission_provider_->HasDevicePermission(device_)) {
-    device_->Open(
-        base::Bind(&DeviceImpl::OnOpen, weak_factory_.GetWeakPtr(), callback));
-  } else {
-    callback.Run(OpenDeviceError::ACCESS_DENIED);
-  }
+  device_->Open(base::BindOnce(&DeviceImpl::OnOpen, weak_factory_.GetWeakPtr(),
+                               std::move(callback)));
 }
 
-void DeviceImpl::Close(const CloseCallback& callback) {
+void DeviceImpl::Close(CloseCallback callback) {
   CloseHandle();
-  callback.Run();
+  std::move(callback).Run();
 }
 
 void DeviceImpl::SetConfiguration(uint8_t value,
-                                  const SetConfigurationCallback& callback) {
+                                  SetConfigurationCallback callback) {
   if (!device_handle_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
-  if (permission_provider_ &&
-      permission_provider_->HasConfigurationPermission(value, device_)) {
-    device_handle_->SetConfiguration(value, callback);
-  } else {
-    callback.Run(false);
-  }
+  device_handle_->SetConfiguration(value, std::move(callback));
 }
 
 void DeviceImpl::ClaimInterface(uint8_t interface_number,
-                                const ClaimInterfaceCallback& callback) {
+                                ClaimInterfaceCallback callback) {
   if (!device_handle_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
   const UsbConfigDescriptor* config = device_->active_configuration();
   if (!config) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
@@ -260,91 +247,80 @@ void DeviceImpl::ClaimInterface(uint8_t interface_number,
                      return interface.interface_number == interface_number;
                    });
   if (interface_it == config->interfaces.end()) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
-  if (permission_provider_ &&
-      permission_provider_->HasFunctionPermission(interface_it->first_interface,
-                                                  config->configuration_value,
-                                                  device_)) {
-    device_handle_->ClaimInterface(interface_number, callback);
-  } else {
-    callback.Run(false);
-  }
+  device_handle_->ClaimInterface(interface_number, std::move(callback));
 }
 
 void DeviceImpl::ReleaseInterface(uint8_t interface_number,
-                                  const ReleaseInterfaceCallback& callback) {
+                                  ReleaseInterfaceCallback callback) {
   if (!device_handle_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
-  device_handle_->ReleaseInterface(interface_number, callback);
+  device_handle_->ReleaseInterface(interface_number, std::move(callback));
 }
 
 void DeviceImpl::SetInterfaceAlternateSetting(
     uint8_t interface_number,
     uint8_t alternate_setting,
-    const SetInterfaceAlternateSettingCallback& callback) {
+    SetInterfaceAlternateSettingCallback callback) {
   if (!device_handle_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
-  device_handle_->SetInterfaceAlternateSetting(interface_number,
-                                               alternate_setting, callback);
+  device_handle_->SetInterfaceAlternateSetting(
+      interface_number, alternate_setting, std::move(callback));
 }
 
-void DeviceImpl::Reset(const ResetCallback& callback) {
+void DeviceImpl::Reset(ResetCallback callback) {
   if (!device_handle_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
-  device_handle_->ResetDevice(callback);
+  device_handle_->ResetDevice(std::move(callback));
 }
 
-void DeviceImpl::ClearHalt(uint8_t endpoint,
-                           const ClearHaltCallback& callback) {
+void DeviceImpl::ClearHalt(uint8_t endpoint, ClearHaltCallback callback) {
   if (!device_handle_) {
-    callback.Run(false);
+    std::move(callback).Run(false);
     return;
   }
 
-  device_handle_->ClearHalt(endpoint, callback);
+  device_handle_->ClearHalt(endpoint, std::move(callback));
 }
 
-void DeviceImpl::ControlTransferIn(ControlTransferParamsPtr params,
+void DeviceImpl::ControlTransferIn(UsbControlTransferParamsPtr params,
                                    uint32_t length,
                                    uint32_t timeout,
-                                   const ControlTransferInCallback& callback) {
+                                   ControlTransferInCallback callback) {
   if (!device_handle_) {
-    callback.Run(TransferStatus::TRANSFER_ERROR, base::nullopt);
+    std::move(callback).Run(mojom::UsbTransferStatus::TRANSFER_ERROR, {});
     return;
   }
 
   if (HasControlTransferPermission(params->recipient, params->index)) {
     scoped_refptr<net::IOBuffer> buffer = CreateTransferBuffer(length);
     device_handle_->ControlTransfer(
-        USB_DIRECTION_INBOUND,
-        mojo::ConvertTo<UsbDeviceHandle::TransferRequestType>(params->type),
-        mojo::ConvertTo<UsbDeviceHandle::TransferRecipient>(params->recipient),
+        UsbTransferDirection::INBOUND, params->type, params->recipient,
         params->request, params->value, params->index, buffer, length, timeout,
-        base::Bind(&OnTransferIn, callback));
+        base::BindOnce(&OnTransferIn, std::move(callback)));
   } else {
-    callback.Run(TransferStatus::PERMISSION_DENIED, base::nullopt);
+    std::move(callback).Run(mojom::UsbTransferStatus::PERMISSION_DENIED, {});
   }
 }
 
-void DeviceImpl::ControlTransferOut(
-    ControlTransferParamsPtr params,
-    const std::vector<uint8_t>& data,
-    uint32_t timeout,
-    const ControlTransferOutCallback& callback) {
+void DeviceImpl::ControlTransferOut(UsbControlTransferParamsPtr params,
+                                    const std::vector<uint8_t>& data,
+                                    uint32_t timeout,
+                                    ControlTransferOutCallback callback) {
   if (!device_handle_) {
-    callback.Run(TransferStatus::TRANSFER_ERROR);
+    std::move(callback).Run(mojom::UsbTransferStatus::TRANSFER_ERROR);
     return;
   }
 
@@ -352,66 +328,63 @@ void DeviceImpl::ControlTransferOut(
     scoped_refptr<net::IOBuffer> buffer = CreateTransferBuffer(data.size());
     std::copy(data.begin(), data.end(), buffer->data());
     device_handle_->ControlTransfer(
-        USB_DIRECTION_OUTBOUND,
-        mojo::ConvertTo<UsbDeviceHandle::TransferRequestType>(params->type),
-        mojo::ConvertTo<UsbDeviceHandle::TransferRecipient>(params->recipient),
+        UsbTransferDirection::OUTBOUND, params->type, params->recipient,
         params->request, params->value, params->index, buffer, data.size(),
-        timeout, base::Bind(&OnTransferOut, callback));
+        timeout, base::BindOnce(&OnTransferOut, std::move(callback)));
   } else {
-    callback.Run(TransferStatus::PERMISSION_DENIED);
+    std::move(callback).Run(mojom::UsbTransferStatus::PERMISSION_DENIED);
   }
 }
 
 void DeviceImpl::GenericTransferIn(uint8_t endpoint_number,
                                    uint32_t length,
                                    uint32_t timeout,
-                                   const GenericTransferInCallback& callback) {
+                                   GenericTransferInCallback callback) {
   if (!device_handle_) {
-    callback.Run(TransferStatus::TRANSFER_ERROR, base::nullopt);
+    std::move(callback).Run(mojom::UsbTransferStatus::TRANSFER_ERROR, {});
     return;
   }
 
   uint8_t endpoint_address = endpoint_number | 0x80;
   scoped_refptr<net::IOBuffer> buffer = CreateTransferBuffer(length);
-  device_handle_->GenericTransfer(USB_DIRECTION_INBOUND, endpoint_address,
-                                  buffer, length, timeout,
-                                  base::Bind(&OnTransferIn, callback));
+  device_handle_->GenericTransfer(
+      UsbTransferDirection::INBOUND, endpoint_address, buffer, length, timeout,
+      base::BindOnce(&OnTransferIn, std::move(callback)));
 }
 
-void DeviceImpl::GenericTransferOut(
-    uint8_t endpoint_number,
-    const std::vector<uint8_t>& data,
-    uint32_t timeout,
-    const GenericTransferOutCallback& callback) {
+void DeviceImpl::GenericTransferOut(uint8_t endpoint_number,
+                                    const std::vector<uint8_t>& data,
+                                    uint32_t timeout,
+                                    GenericTransferOutCallback callback) {
   if (!device_handle_) {
-    callback.Run(TransferStatus::TRANSFER_ERROR);
+    std::move(callback).Run(mojom::UsbTransferStatus::TRANSFER_ERROR);
     return;
   }
 
   uint8_t endpoint_address = endpoint_number;
   scoped_refptr<net::IOBuffer> buffer = CreateTransferBuffer(data.size());
   std::copy(data.begin(), data.end(), buffer->data());
-  device_handle_->GenericTransfer(USB_DIRECTION_OUTBOUND, endpoint_address,
-                                  buffer, data.size(), timeout,
-                                  base::Bind(&OnTransferOut, callback));
+  device_handle_->GenericTransfer(
+      UsbTransferDirection::OUTBOUND, endpoint_address, buffer, data.size(),
+      timeout, base::BindOnce(&OnTransferOut, std::move(callback)));
 }
 
 void DeviceImpl::IsochronousTransferIn(
     uint8_t endpoint_number,
     const std::vector<uint32_t>& packet_lengths,
     uint32_t timeout,
-    const IsochronousTransferInCallback& callback) {
+    IsochronousTransferInCallback callback) {
   if (!device_handle_) {
-    callback.Run(base::nullopt,
-                 BuildIsochronousPacketArray(packet_lengths,
-                                             TransferStatus::TRANSFER_ERROR));
+    std::move(callback).Run(
+        {}, BuildIsochronousPacketArray(
+                packet_lengths, mojom::UsbTransferStatus::TRANSFER_ERROR));
     return;
   }
 
   uint8_t endpoint_address = endpoint_number | 0x80;
   device_handle_->IsochronousTransferIn(
       endpoint_address, packet_lengths, timeout,
-      base::Bind(&OnIsochronousTransferIn, callback));
+      base::BindOnce(&OnIsochronousTransferIn, std::move(callback)));
 }
 
 void DeviceImpl::IsochronousTransferOut(
@@ -419,10 +392,10 @@ void DeviceImpl::IsochronousTransferOut(
     const std::vector<uint8_t>& data,
     const std::vector<uint32_t>& packet_lengths,
     uint32_t timeout,
-    const IsochronousTransferOutCallback& callback) {
+    IsochronousTransferOutCallback callback) {
   if (!device_handle_) {
-    callback.Run(BuildIsochronousPacketArray(packet_lengths,
-                                             TransferStatus::TRANSFER_ERROR));
+    std::move(callback).Run(BuildIsochronousPacketArray(
+        packet_lengths, mojom::UsbTransferStatus::TRANSFER_ERROR));
     return;
   }
 
@@ -431,10 +404,10 @@ void DeviceImpl::IsochronousTransferOut(
   std::copy(data.begin(), data.end(), buffer->data());
   device_handle_->IsochronousTransferOut(
       endpoint_address, buffer, packet_lengths, timeout,
-      base::Bind(&OnIsochronousTransferOut, callback));
+      base::BindOnce(&OnIsochronousTransferOut, std::move(callback)));
 }
 
-void DeviceImpl::OnDeviceRemoved(scoped_refptr<UsbDevice> device) {
+void DeviceImpl::OnDeviceRemoved(scoped_refptr<device::UsbDevice> device) {
   DCHECK_EQ(device_, device);
   binding_->Close();
 }

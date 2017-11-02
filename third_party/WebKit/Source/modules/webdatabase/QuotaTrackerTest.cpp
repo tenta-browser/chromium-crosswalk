@@ -16,20 +16,17 @@ TEST(QuotaTrackerTest, UpdateAndGetSizeAndSpaceAvailable) {
   RefPtr<SecurityOrigin> origin =
       SecurityOrigin::CreateFromString("file:///a/b/c");
 
-  const unsigned long long kSpaceAvailable = 12345678ULL;
-  tracker.UpdateSpaceAvailableToOrigin(origin.Get(), kSpaceAvailable);
-
   const String database_name = "db";
   const unsigned long long kDatabaseSize = 1234ULL;
-  tracker.UpdateDatabaseSize(origin.Get(), database_name, kDatabaseSize);
+  tracker.UpdateDatabaseSize(origin.get(), database_name, kDatabaseSize);
 
   unsigned long long used = 0;
   unsigned long long available = 0;
-  tracker.GetDatabaseSizeAndSpaceAvailableToOrigin(origin.Get(), database_name,
+  tracker.GetDatabaseSizeAndSpaceAvailableToOrigin(origin.get(), database_name,
                                                    &used, &available);
 
   EXPECT_EQ(used, kDatabaseSize);
-  EXPECT_EQ(available, kSpaceAvailable);
+  EXPECT_EQ(available, 0UL);
 }
 
 TEST(QuotaTrackerTest, LocalAccessBlocked) {
@@ -37,23 +34,20 @@ TEST(QuotaTrackerTest, LocalAccessBlocked) {
   RefPtr<SecurityOrigin> origin =
       SecurityOrigin::CreateFromString("file:///a/b/c");
 
-  const unsigned long long kSpaceAvailable = 12345678ULL;
-  tracker.UpdateSpaceAvailableToOrigin(origin.Get(), kSpaceAvailable);
-
   const String database_name = "db";
   const unsigned long long kDatabaseSize = 1234ULL;
-  tracker.UpdateDatabaseSize(origin.Get(), database_name, kDatabaseSize);
+  tracker.UpdateDatabaseSize(origin.get(), database_name, kDatabaseSize);
 
   // QuotaTracker should not care about policy, just identity.
   origin->BlockLocalAccessFromLocalOrigin();
 
   unsigned long long used = 0;
   unsigned long long available = 0;
-  tracker.GetDatabaseSizeAndSpaceAvailableToOrigin(origin.Get(), database_name,
+  tracker.GetDatabaseSizeAndSpaceAvailableToOrigin(origin.get(), database_name,
                                                    &used, &available);
 
   EXPECT_EQ(used, kDatabaseSize);
-  EXPECT_EQ(available, kSpaceAvailable);
+  EXPECT_EQ(available, 0UL);
 }
 
 }  // namespace

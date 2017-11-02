@@ -1,6 +1,6 @@
 aelias@chromium.org
+bauerb@chromium.org
 boliu@chromium.org
-dfalcantara@chromium.org
 dtrainor@chromium.org
 jbudorick@chromium.org
 mariakhomenko@chromium.org
@@ -10,3 +10,4 @@ tedchoc@chromium.org
 yfriedman@chromium.org
 
 # COMPONENT: Test>Android
+# OS: Android

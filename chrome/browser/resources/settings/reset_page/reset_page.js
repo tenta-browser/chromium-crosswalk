@@ -21,10 +21,10 @@ Polymer({
   behaviors: [settings.RouteObserverBehavior],
 
   properties: {
-// <if expr="chromeos">
+    // <if expr="chromeos">
     /** @private */
     showPowerwashDialog_: Boolean,
-// </if>
+    // </if>
 
     /** @private */
     allowPowerwash_: {
@@ -46,23 +46,23 @@ Polymer({
    */
   currentRouteChanged: function(route) {
     this.showResetProfileDialog_ =
-        route == settings.Route.TRIGGERED_RESET_DIALOG ||
-        route == settings.Route.RESET_DIALOG;
+        route == settings.routes.TRIGGERED_RESET_DIALOG ||
+        route == settings.routes.RESET_DIALOG;
   },
 
   /** @private */
   onShowResetProfileDialog_: function() {
-    settings.navigateTo(settings.Route.RESET_DIALOG,
-                        new URLSearchParams('origin=userclick'));
+    settings.navigateTo(
+        settings.routes.RESET_DIALOG, new URLSearchParams('origin=userclick'));
   },
 
   /** @private */
   onResetProfileDialogClose_: function() {
     settings.navigateToPreviousRoute();
-    this.$.resetProfileArrow.focus();
+    cr.ui.focusWithoutInk(assert(this.$.resetProfileArrow));
   },
 
-// <if expr="chromeos">
+  // <if expr="chromeos">
   /**
    * @param {!Event} e
    * @private
@@ -75,7 +75,7 @@ Polymer({
   /** @private */
   onPowerwashDialogClose_: function() {
     this.showPowerwashDialog_ = false;
-    this.$.powerwashArrow.focus();
+    cr.ui.focusWithoutInk(assert(this.$.powerwashArrow));
   },
-// </if>
+  // </if>
 });

@@ -37,9 +37,9 @@ BlinkNotificationServiceImpl::BlinkNotificationServiceImpl(
   DCHECK(notification_context_);
   DCHECK(resource_context_);
 
-  binding_.set_connection_error_handler(
-      base::Bind(&BlinkNotificationServiceImpl::OnConnectionError,
-                 base::Unretained(this) /* the channel is owned by this */));
+  binding_.set_connection_error_handler(base::BindOnce(
+      &BlinkNotificationServiceImpl::OnConnectionError,
+      base::Unretained(this) /* the channel is owned by this */));
 }
 
 BlinkNotificationServiceImpl::~BlinkNotificationServiceImpl() {
@@ -48,11 +48,11 @@ BlinkNotificationServiceImpl::~BlinkNotificationServiceImpl() {
 
 void BlinkNotificationServiceImpl::GetPermissionStatus(
     const std::string& origin,
-    const GetPermissionStatusCallback& callback) {
+    GetPermissionStatusCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   if (!Service()) {
-    callback.Run(blink::mojom::PermissionStatus::DENIED);
+    std::move(callback).Run(blink::mojom::PermissionStatus::DENIED);
     return;
   }
 
@@ -60,7 +60,7 @@ void BlinkNotificationServiceImpl::GetPermissionStatus(
       Service()->CheckPermissionOnIOThread(resource_context_, GURL(origin),
                                            render_process_id_);
 
-  callback.Run(permission_status);
+  std::move(callback).Run(permission_status);
 }
 
 void BlinkNotificationServiceImpl::OnConnectionError() {

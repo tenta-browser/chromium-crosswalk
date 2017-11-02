@@ -30,15 +30,6 @@ class ChromeClassTester {
   clang::CompilerInstance& instance() { return instance_; }
   clang::DiagnosticsEngine& diagnostic() { return diagnostic_; }
 
-  // Emits a simple warning; this shouldn't be used if you require printf-style
-  // printing.
-  // TODO(dcheng): This will be removed. Do not add new usage.
-  void emitWarning(clang::SourceLocation loc, const char* error);
-
-  // Utility method for subclasses to check if this class is in a banned
-  // namespace.
-  bool InBannedNamespace(const clang::Decl* record);
-
   // Utility method for subclasses to check how a certain SourceLocation should
   // be handled. The main criteria for classification is the SourceLocation's
   // path (e.g. whether it's in //third_party).
@@ -97,12 +88,6 @@ class ChromeClassTester {
 
   clang::CompilerInstance& instance_;
   clang::DiagnosticsEngine& diagnostic_;
-
-  // List of banned namespaces.
-  std::set<std::string> banned_namespaces_;
-
-  // List of Blink directories.
-  std::set<std::string> blink_directories_;
 
   // List of banned directories.
   std::set<std::string> banned_directories_;

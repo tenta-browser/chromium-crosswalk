@@ -20,6 +20,7 @@
 #include "base/trace_event/tracing_agent.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
+#include "chromeos/dbus/dbus_method_call_status.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace chromeos {
@@ -114,6 +115,9 @@ class CHROMEOS_EXPORT DebugDaemonClient
   using GetLogsCallback =
       base::Callback<void(bool succeeded,
                           const std::map<std::string, std::string>& logs)>;
+  // Callback type for GetLog().
+  using GetLogCallback =
+      base::Callback<void(bool succeeded, const std::string& result)>;
 
   // Gets scrubbed logs from debugd.
   virtual void GetScrubbedLogs(const GetLogsCallback& callback) = 0;
@@ -128,6 +132,10 @@ class CHROMEOS_EXPORT DebugDaemonClient
 
   // Gets list of user log files that must be read by Chrome.
   virtual void GetUserLogFiles(const GetLogsCallback& callback) = 0;
+
+  // Gets an individual log source provided by debugd.
+  virtual void GetLog(const std::string& log_name,
+                      const GetLogCallback& callback) = 0;
 
   virtual void SetStopAgentTracingTaskRunner(
       scoped_refptr<base::TaskRunner> task_runner) = 0;
@@ -189,13 +197,9 @@ class CHROMEOS_EXPORT DebugDaemonClient
   // Trigger uploading of crashes.
   virtual void UploadCrashes() = 0;
 
-  // A callback for WaitForServiceToBeAvailable().
-  typedef base::Callback<void(bool service_is_ready)>
-      WaitForServiceToBeAvailableCallback;
-
   // Runs the callback as soon as the service becomes available.
   virtual void WaitForServiceToBeAvailable(
-      const WaitForServiceToBeAvailableCallback& callback) = 0;
+      WaitForServiceToBeAvailableCallback callback) = 0;
 
   // A callback for SetOomScoreAdj().
   typedef base::Callback<void(bool success, const std::string& output)>

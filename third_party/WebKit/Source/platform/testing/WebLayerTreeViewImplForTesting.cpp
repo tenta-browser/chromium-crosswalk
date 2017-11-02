@@ -31,7 +31,7 @@ WebLayerTreeViewImplForTesting::WebLayerTreeViewImplForTesting(
   params.task_graph_runner = &task_graph_runner_;
   params.mutator_host = animation_host_.get();
   layer_tree_host_ = cc::LayerTreeHost::CreateSingleThreaded(this, &params);
-  ASSERT(layer_tree_host_);
+  DCHECK(layer_tree_host_);
 }
 
 WebLayerTreeViewImplForTesting::~WebLayerTreeViewImplForTesting() {}
@@ -53,6 +53,13 @@ bool WebLayerTreeViewImplForTesting::HasLayer(const WebLayer& layer) {
          layer_tree_host_.get();
 }
 
+void WebLayerTreeViewImplForTesting::SetViewportSize(
+    const WebSize& device_viewport_size) {
+  gfx::Size gfx_size(std::max(0, device_viewport_size.width),
+                     std::max(0, device_viewport_size.height));
+  layer_tree_host_->SetViewportSize(gfx_size);
+}
+
 void WebLayerTreeViewImplForTesting::SetRootLayer(const blink::WebLayer& root) {
   layer_tree_host_->SetRootLayer(
       static_cast<const cc_blink::WebLayerImpl*>(&root)->layer());
@@ -64,21 +71,6 @@ void WebLayerTreeViewImplForTesting::ClearRootLayer() {
 
 cc::AnimationHost* WebLayerTreeViewImplForTesting::CompositorAnimationHost() {
   return animation_host_.get();
-}
-
-void WebLayerTreeViewImplForTesting::SetViewportSize(
-    const WebSize& unused_deprecated,
-    const WebSize& device_viewport_size) {
-  gfx::Size gfx_size(std::max(0, device_viewport_size.width),
-                     std::max(0, device_viewport_size.height));
-  layer_tree_host_->SetViewportSize(gfx_size);
-}
-
-void WebLayerTreeViewImplForTesting::SetViewportSize(
-    const WebSize& device_viewport_size) {
-  gfx::Size gfx_size(std::max(0, device_viewport_size.width),
-                     std::max(0, device_viewport_size.height));
-  layer_tree_host_->SetViewportSize(gfx_size);
 }
 
 WebSize WebLayerTreeViewImplForTesting::GetViewportSize() const {
@@ -93,8 +85,6 @@ void WebLayerTreeViewImplForTesting::SetDeviceScaleFactor(
 
 void WebLayerTreeViewImplForTesting::SetBackgroundColor(WebColor color) {
   layer_tree_host_->set_background_color(color);
-  layer_tree_host_->set_has_transparent_background(SkColorGetA(color) <
-                                                   SK_AlphaOPAQUE);
 }
 
 void WebLayerTreeViewImplForTesting::SetVisible(bool visible) {
@@ -138,37 +128,49 @@ void WebLayerTreeViewImplForTesting::RecordWheelAndTouchScrollingCount(
     bool has_scrolled_by_wheel,
     bool has_scrolled_by_touch) {}
 
-void WebLayerTreeViewImplForTesting::RequestNewCompositorFrameSink() {
-  // Intentionally do not create and set an CompositorFrameSink.
+void WebLayerTreeViewImplForTesting::RequestNewLayerTreeFrameSink() {
+  // Intentionally do not create and set a LayerTreeFrameSink.
 }
 
-void WebLayerTreeViewImplForTesting::DidFailToInitializeCompositorFrameSink() {
-  ASSERT_NOT_REACHED();
+void WebLayerTreeViewImplForTesting::DidFailToInitializeLayerTreeFrameSink() {
+  NOTREACHED();
 }
 
 void WebLayerTreeViewImplForTesting::RegisterViewportLayers(
-    const blink::WebLayer* overscroll_elasticity_layer,
-    const blink::WebLayer* page_scale_layer,
-    const blink::WebLayer* inner_viewport_scroll_layer,
-    const blink::WebLayer* outer_viewport_scroll_layer) {
-  layer_tree_host_->RegisterViewportLayers(
-      overscroll_elasticity_layer ? static_cast<const cc_blink::WebLayerImpl*>(
-                                        overscroll_elasticity_layer)
-                                        ->layer()
-                                  : nullptr,
-      static_cast<const cc_blink::WebLayerImpl*>(page_scale_layer)->layer(),
-      static_cast<const cc_blink::WebLayerImpl*>(inner_viewport_scroll_layer)
-          ->layer(),
-      outer_viewport_scroll_layer ? static_cast<const cc_blink::WebLayerImpl*>(
-                                        outer_viewport_scroll_layer)
-                                        ->layer()
-                                  : nullptr);
+    const WebLayerTreeView::ViewportLayers& layers) {
+  cc::LayerTreeHost::ViewportLayers viewport_layers;
+  if (layers.overscroll_elasticity) {
+    viewport_layers.overscroll_elasticity =
+        static_cast<const cc_blink::WebLayerImpl*>(layers.overscroll_elasticity)
+            ->layer();
+  }
+  viewport_layers.page_scale =
+      static_cast<const cc_blink::WebLayerImpl*>(layers.page_scale)->layer();
+  if (layers.inner_viewport_container) {
+    viewport_layers.inner_viewport_container =
+        static_cast<const cc_blink::WebLayerImpl*>(
+            layers.inner_viewport_container)
+            ->layer();
+  }
+  if (layers.outer_viewport_container) {
+    viewport_layers.outer_viewport_container =
+        static_cast<const cc_blink::WebLayerImpl*>(
+            layers.outer_viewport_container)
+            ->layer();
+  }
+  viewport_layers.inner_viewport_scroll =
+      static_cast<const cc_blink::WebLayerImpl*>(layers.inner_viewport_scroll)
+          ->layer();
+  if (layers.outer_viewport_scroll) {
+    viewport_layers.outer_viewport_scroll =
+        static_cast<const cc_blink::WebLayerImpl*>(layers.outer_viewport_scroll)
+            ->layer();
+  }
+  layer_tree_host_->RegisterViewportLayers(viewport_layers);
 }
 
 void WebLayerTreeViewImplForTesting::ClearViewportLayers() {
-  layer_tree_host_->RegisterViewportLayers(
-      scoped_refptr<cc::Layer>(), scoped_refptr<cc::Layer>(),
-      scoped_refptr<cc::Layer>(), scoped_refptr<cc::Layer>());
+  layer_tree_host_->RegisterViewportLayers(cc::LayerTreeHost::ViewportLayers());
 }
 
 void WebLayerTreeViewImplForTesting::RegisterSelection(

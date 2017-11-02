@@ -184,8 +184,8 @@ TEST(ContentSettingsPatternTest, FromURLNoWildcard) {
 // The static Wildcard() method goes through a fast path and avoids the Builder
 // pattern. Ensure that it yields the exact same behavior.
 TEST(ContentSettingsPatternTest, ValidWildcardFastPath) {
-  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
-      ContentSettingsPattern::CreateBuilder(true));
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder =
+      ContentSettingsPattern::CreateBuilder();
   builder->WithSchemeWildcard()->WithDomainWildcard()->WithPortWildcard()->
            WithPathWildcard();
   ContentSettingsPattern built_wildcard = builder->Build();
@@ -325,6 +325,14 @@ TEST(ContentSettingsPatternTest, FromString_ExtensionPatterns) {
           .ToString());
   EXPECT_TRUE(Pattern("chrome-extension://peoadpeiejnhkmpaakpnompolbglelel/")
       .Matches(GURL("chrome-extension://peoadpeiejnhkmpaakpnompolbglelel/")));
+}
+
+TEST(ContentSettingsPatternTest, FromString_SearchPatterns) {
+  EXPECT_TRUE(Pattern("chrome-search://local-ntp/").IsValid());
+  EXPECT_EQ("chrome-search://local-ntp/",
+            Pattern("chrome-search://local-ntp/").ToString());
+  EXPECT_TRUE(Pattern("chrome-search://local-ntp/")
+                  .Matches(GURL("chrome-search://local-ntp/")));
 }
 
 TEST(ContentSettingsPatternTest, FromString_WithIPAdresses) {
@@ -799,6 +807,9 @@ TEST(ContentSettingsPatternTest, MigrateFromDomainToOrigin) {
       ContentSettingsPattern::FromString(
           "chrome-extension://peoadpeiejnhkmpaakpnompolbglelel/"),
       &origin_pattern));
+  EXPECT_FALSE(ContentSettingsPattern::MigrateFromDomainToOrigin(
+      ContentSettingsPattern::FromString("chrome-search://local-ntp/"),
+      &origin_pattern));
 
   // These are pattern styles which might be generated using FromURL().
   EXPECT_TRUE(ContentSettingsPattern::MigrateFromDomainToOrigin(
@@ -831,6 +842,8 @@ TEST(ContentSettingsPatternTest, Schemes) {
   EXPECT_EQ(ContentSettingsPattern::SCHEME_CHROMEEXTENSION,
             Pattern("chrome-extension://peoadpeiejnhkmpaakpnompolbglelel/")
                 .GetScheme());
+  EXPECT_EQ(ContentSettingsPattern::SCHEME_CHROMESEARCH,
+            Pattern("chrome-search://local-ntp/").GetScheme());
   EXPECT_EQ(ContentSettingsPattern::SCHEME_WILDCARD,
             Pattern("192.168.0.1").GetScheme());
   EXPECT_EQ(ContentSettingsPattern::SCHEME_WILDCARD,

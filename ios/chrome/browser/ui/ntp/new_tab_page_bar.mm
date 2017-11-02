@@ -8,9 +8,9 @@
 #include <cmath>
 
 #include "base/logging.h"
-#include "base/mac/objc_property_releaser.h"
-#include "base/mac/scoped_nsobject.h"
+
 #import "ios/chrome/browser/ui/bookmarks/bookmark_utils_ios.h"
+#import "ios/chrome/browser/ui/ntp/modal_ntp.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_bar_button.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_bar_item.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
@@ -18,6 +18,10 @@
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ui/gfx/ios/NSString+CrStringDrawing.h"
 #include "ui/gfx/scoped_ui_graphics_push_context_ios.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -32,11 +36,13 @@ const int kNumberOfTabsIncognito = 2;
 }  // anonymous namespace
 
 @interface NewTabPageBar () {
-  base::scoped_nsobject<UIImageView> shadow_;
+  UIImageView* shadow_;
 }
 
-@property(nonatomic, readwrite, retain) NSArray* buttons;
-@property(nonatomic, readwrite, retain) UIButton* popupButton;
+@property(nonatomic, readwrite, strong) NSArray* buttons;
+
+// View containing the content and respecting the safe area.
+@property(nonatomic, strong) UIView* contentView;
 
 - (void)setup;
 - (void)calculateButtonWidth;
@@ -46,36 +52,23 @@ const int kNumberOfTabsIncognito = 2;
 @end
 
 @implementation NewTabPageBar {
-  // Tabbar buttons.
-  NSArray* buttons_;  // UIButton
-  NSArray* items_;    // NewTabPageBarItem
-  // Which button is currently selected.
-  NSUInteger selectedIndex_;
-  // Popup button helper, for iPhone labels.
-  UIButton* popupButton_;
   // Don't allow tabbar animations on startup, only after first tap.
   BOOL canAnimate_;
-  id<NewTabPageBarDelegate> delegate_;  // weak
-  // Logo view, used to center the tab buttons.
-  base::scoped_nsobject<UIImageView> logoView_;
   // Overlay view, used to highlight the selected button.
-  base::scoped_nsobject<UIImageView> overlayView_;
+  UIImageView* overlayView_;
   // Overlay view, used to highlight the selected button.
-  base::scoped_nsobject<UIView> overlayColorView_;
+  UIView* overlayColorView_;
   // Width of a button.
   CGFloat buttonWidth_;
-  // Percentage overlay sits over tab bar buttons.
-  CGFloat overlayPercentage_;
-
-  base::mac::ObjCPropertyReleaser propertyReleaser_NewTabPageBar_;
 }
 
 @synthesize items = items_;
 @synthesize selectedIndex = selectedIndex_;
-@synthesize popupButton = popupButton_;
 @synthesize buttons = buttons_;
 @synthesize delegate = delegate_;
 @synthesize overlayPercentage = overlayPercentage_;
+@synthesize contentView = _contentView;
+@synthesize safeAreaInsetFromNTPView = _safeAreaInsetFromNTPView;
 
 - (id)initWithFrame:(CGRect)frame {
   self = [super initWithFrame:frame];
@@ -94,22 +87,21 @@ const int kNumberOfTabsIncognito = 2;
 }
 
 - (void)setup {
-  propertyReleaser_NewTabPageBar_.Init(self, [NewTabPageBar class]);
   self.selectedIndex = NSNotFound;
   canAnimate_ = NO;
-  self.autoresizingMask =
-      UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleBottomMargin;
-  self.autoresizesSubviews = YES;
-  self.backgroundColor = [UIColor clearColor];
+  self.backgroundColor = [UIColor whiteColor];
+
+  _contentView = [[UIView alloc] initWithFrame:CGRectZero];
+  [self addSubview:_contentView];
 
   if ([self showOverlay]) {
-    overlayView_.reset(
-        [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, buttonWidth_, 2)]);
+    overlayView_ =
+        [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, buttonWidth_, 2)];
 
     // Center |overlayColorView_| inside |overlayView_|.
     CGFloat colorX = AlignValueToPixel((buttonWidth_ - kOverlayColorWidth) / 2);
-    overlayColorView_.reset([[UIView alloc]
-        initWithFrame:CGRectMake(colorX, 0, kOverlayColorWidth, 2)]);
+    overlayColorView_ = [[UIView alloc]
+        initWithFrame:CGRectMake(colorX, 0, kOverlayColorWidth, 2)];
     [overlayColorView_
         setBackgroundColor:UIColorFromRGB(kOverlayViewColor, 1.0)];
     [overlayColorView_ layer].cornerRadius = 1.0;
@@ -117,12 +109,12 @@ const int kNumberOfTabsIncognito = 2;
         setAutoresizingMask:UIViewAutoresizingFlexibleLeftMargin |
                             UIViewAutoresizingFlexibleRightMargin];
     [overlayView_ addSubview:overlayColorView_];
-    [self addSubview:overlayView_];
+    [_contentView addSubview:overlayView_];
   }
 
   // Make the drop shadow.
   UIImage* shadowImage = [UIImage imageNamed:@"ntp_bottom_bar_shadow"];
-  shadow_.reset([[UIImageView alloc] initWithImage:shadowImage]);
+  shadow_ = [[UIImageView alloc] initWithImage:shadowImage];
   // Shadow is positioned directly above the new tab page bar.
   [shadow_
       setFrame:CGRectMake(0, -shadowImage.size.height, self.bounds.size.width,
@@ -136,22 +128,25 @@ const int kNumberOfTabsIncognito = 2;
 - (void)layoutSubviews {
   [super layoutSubviews];
 
+  CGRect contentViewFrame =
+      UIEdgeInsetsInsetRect(self.frame, self.safeAreaInsetFromNTPView);
+  contentViewFrame.origin.y = 0;
+  self.contentView.frame = contentViewFrame;
+
   // |buttonWidth_| changes with the screen orientation when the NTP button bar
   // is enabled.
   [self calculateButtonWidth];
 
-  CGFloat logoWidth = logoView_.get().image.size.width;
-  CGFloat padding = [self useIconsInButtons] ? logoWidth : 0;
-  CGFloat buttonPadding = floor((CGRectGetWidth(self.bounds) - padding -
+  CGFloat buttonPadding = floor((CGRectGetWidth(self.contentView.bounds) -
                                  buttonWidth_ * self.buttons.count) /
-                                    2 +
-                                padding);
+                                2);
 
   for (NSUInteger i = 0; i < self.buttons.count; ++i) {
     NewTabPageBarButton* button = [self.buttons objectAtIndex:i];
-    LayoutRect layout = LayoutRectMake(
-        buttonPadding + (i * buttonWidth_), CGRectGetWidth(self.bounds), 0,
-        buttonWidth_, CGRectGetHeight(self.bounds));
+    LayoutRect layout =
+        LayoutRectMake(buttonPadding + (i * buttonWidth_),
+                       CGRectGetWidth(self.contentView.bounds), 0, buttonWidth_,
+                       CGRectGetHeight(self.contentView.bounds));
     button.frame = LayoutRectGetRect(layout);
     [button
         setContentToDisplay:[self useIconsInButtons]
@@ -170,13 +165,14 @@ const int kNumberOfTabsIncognito = 2;
 }
 
 - (CGSize)sizeThatFits:(CGSize)size {
-  return CGSizeMake(size.width, kBarHeight);
+  return CGSizeMake(size.width,
+                    kBarHeight + self.safeAreaInsetFromNTPView.bottom);
 }
 
 - (void)calculateButtonWidth {
-  if ([self useIconsInButtons]) {
+  if (IsCompact()) {
     if ([items_ count] > 0) {
-      buttonWidth_ = self.bounds.size.width / [items_ count];
+      buttonWidth_ = self.contentView.bounds.size.width / [items_ count];
     } else {
       // In incognito on phones, there are no items shown.
       buttonWidth_ = 0;
@@ -193,8 +189,7 @@ const int kNumberOfTabsIncognito = 2;
   if (newItems == items_)
     return;
 
-  [items_ autorelease];
-  items_ = [newItems retain];
+  items_ = newItems;
   // Remove all the existing buttons from the view.
   for (UIButton* button in self.buttons) {
     [button removeFromSuperview];
@@ -207,10 +202,10 @@ const int kNumberOfTabsIncognito = 2;
     for (NSUInteger i = 0; i < newItems.count; ++i) {
       NewTabPageBarItem* item = [newItems objectAtIndex:i];
       NewTabPageBarButton* button = [NewTabPageBarButton buttonWithItem:item];
-      button.frame = CGRectIntegral(CGRectMake(
-          i * buttonWidth_, 0, buttonWidth_, self.bounds.size.height));
+      button.frame = CGRectIntegral(
+          CGRectMake(i * buttonWidth_, 0, buttonWidth_, kBarHeight));
       [self setupButton:button];
-      [self addSubview:button];
+      [self.contentView addSubview:button];
       [newButtons addObject:button];
     }
     self.buttons = newButtons;
@@ -319,13 +314,13 @@ const int kNumberOfTabsIncognito = 2;
 }
 
 - (BOOL)useIconsInButtons {
-  return !IsIPadIdiom() || IsCompactTablet();
+  return PresentNTPPanelModally() || IsCompactTablet();
 }
 
 - (BOOL)showOverlay {
   // The bar buttons launch modal dialogs on tap on iPhone. Don't show overlay
   // in this case.
-  return IsIPadIdiom();
+  return !PresentNTPPanelModally();
 }
 
 @end

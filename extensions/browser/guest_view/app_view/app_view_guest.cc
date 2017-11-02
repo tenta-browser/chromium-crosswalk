@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "content/public/browser/render_process_host.h"
@@ -156,10 +157,6 @@ bool AppViewGuest::CheckMediaAccessPermission(WebContents* web_contents,
       web_contents, security_origin, type, guest_extension);
 }
 
-bool AppViewGuest::CanRunInDetachedState() const {
-  return true;
-}
-
 void AppViewGuest::CreateWebContents(
     const base::DictionaryValue& create_params,
     const WebContentsCreatedCallback& callback) {
@@ -193,7 +190,7 @@ void AppViewGuest::CreateWebContents(
 
   pending_response_map.Get().insert(std::make_pair(
       guest_instance_id(),
-      base::MakeUnique<ResponseInfo>(
+      std::make_unique<ResponseInfo>(
           guest_extension, weak_ptr_factory_.GetWeakPtr(), callback)));
 
   LazyBackgroundTaskQueue* queue =
@@ -201,9 +198,10 @@ void AppViewGuest::CreateWebContents(
   if (queue->ShouldEnqueueTask(browser_context(), guest_extension)) {
     queue->AddPendingTask(
         browser_context(), guest_extension->id(),
-        base::Bind(&AppViewGuest::LaunchAppAndFireEvent,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   base::Passed(base::WrapUnique(data->DeepCopy())), callback));
+        base::BindOnce(&AppViewGuest::LaunchAppAndFireEvent,
+                       weak_ptr_factory_.GetWeakPtr(),
+                       base::Passed(base::WrapUnique(data->DeepCopy())),
+                       callback));
     return;
   }
 
@@ -268,7 +266,7 @@ void AppViewGuest::LaunchAppAndFireEvent(
       new base::DictionaryValue());
   embed_request->SetInteger(appview::kGuestInstanceID, guest_instance_id());
   embed_request->SetString(appview::kEmbedderID, owner_host());
-  embed_request->Set(appview::kData, data.release());
+  embed_request->Set(appview::kData, std::move(data));
   AppRuntimeEventRouter::DispatchOnEmbedRequestedEvent(
       browser_context(), std::move(embed_request), extension_host->extension());
 }

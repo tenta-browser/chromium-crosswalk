@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
@@ -35,8 +36,7 @@
 #include "storage/browser/fileapi/file_system_context.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/leveldatabase/src/helpers/memenv/memenv.h"
-#include "third_party/leveldatabase/src/include/leveldb/env.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 
 using content::BrowserThread;
 using storage::FileSystemURL;
@@ -51,7 +51,7 @@ namespace {
 
 const char kOrigin[] = "http://example.com";
 
-void DidPrepareForProcessRemoteChange(const tracked_objects::Location& where,
+void DidPrepareForProcessRemoteChange(const base::Location& where,
                                       const base::Closure& oncompleted,
                                       SyncStatusCode expected_status,
                                       const SyncFileMetadata& expected_metadata,
@@ -66,7 +66,7 @@ void DidPrepareForProcessRemoteChange(const tracked_objects::Location& where,
   oncompleted.Run();
 }
 
-void OnSyncCompleted(const tracked_objects::Location& where,
+void OnSyncCompleted(const base::Location& where,
                      const base::Closure& oncompleted,
                      SyncStatusCode expected_status,
                      const FileSystemURL& expected_url,
@@ -78,7 +78,7 @@ void OnSyncCompleted(const tracked_objects::Location& where,
   oncompleted.Run();
 }
 
-void OnGetFileMetadata(const tracked_objects::Location& where,
+void OnGetFileMetadata(const base::Location& where,
                        const base::Closure& oncompleted,
                        SyncStatusCode* status_out,
                        SyncFileMetadata* metadata_out,
@@ -91,13 +91,13 @@ void OnGetFileMetadata(const tracked_objects::Location& where,
 }
 
 ACTION_P(MockStatusCallback, status) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(arg4, status));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::BindOnce(arg4, status));
 }
 
 ACTION_P2(MockStatusCallbackAndRecordChange, status, changes) {
-  base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(arg4, status));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::BindOnce(arg4, status));
   changes->push_back(arg0);
 }
 
@@ -108,18 +108,17 @@ class LocalFileSyncServiceTest
       public LocalFileSyncService::Observer {
  protected:
   LocalFileSyncServiceTest()
-      : thread_bundle_(content::TestBrowserThreadBundle::REAL_FILE_THREAD |
-                       content::TestBrowserThreadBundle::REAL_IO_THREAD),
+      : thread_bundle_(content::TestBrowserThreadBundle::REAL_IO_THREAD),
         num_changes_(0) {}
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    in_memory_env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
+    in_memory_env_.reset(leveldb_chrome::NewMemEnv(leveldb::Env::Default()));
 
     file_system_.reset(new CannedSyncableFileSystem(
         GURL(kOrigin), in_memory_env_.get(),
         BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE)));
+        base::CreateSingleThreadTaskRunnerWithTraits({base::MayBlock()})));
 
     local_service_ = LocalFileSyncService::CreateForTesting(
         &profile_, in_memory_env_.get());
@@ -145,7 +144,8 @@ class LocalFileSyncServiceTest
     local_service_->Shutdown();
     file_system_->TearDown();
     RevokeSyncableFileSystem();
-    content::RunAllPendingInMessageLoop(BrowserThread::FILE);
+
+    base::TaskScheduler::GetInstance()->FlushForTesting();
     content::RunAllPendingInMessageLoop(BrowserThread::IO);
   }
 
@@ -156,7 +156,7 @@ class LocalFileSyncServiceTest
 
   void PrepareForProcessRemoteChange(
       const FileSystemURL& url,
-      const tracked_objects::Location& where,
+      const base::Location& where,
       SyncStatusCode expected_status,
       const SyncFileMetadata& expected_metadata) {
     base::RunLoop run_loop;
@@ -301,7 +301,7 @@ TEST_F(LocalFileSyncServiceTest, MAYBE_LocalChangeObserverMultipleContexts) {
   CannedSyncableFileSystem file_system2(
       GURL(kOrigin2), in_memory_env_.get(),
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE));
+      base::CreateSingleThreadTaskRunnerWithTraits({base::MayBlock()}));
   file_system2.SetUp(CannedSyncableFileSystem::QUOTA_ENABLED);
 
   base::RunLoop run_loop;

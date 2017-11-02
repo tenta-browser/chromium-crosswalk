@@ -90,7 +90,8 @@ bool KeyframeEffectModelBase::SnapshotNeutralCompositorKeyframes(
   bool updated = false;
   EnsureKeyframeGroups();
   for (CSSPropertyID property : CompositorAnimations::kCompositableProperties) {
-    if (CSSPropertyEquality::PropertiesEqual(property, old_style, new_style))
+    if (CSSPropertyEquality::PropertiesEqual(PropertyHandle(property),
+                                             old_style, new_style))
       continue;
     PropertySpecificKeyframeGroup* keyframe_group =
         keyframe_groups_->at(PropertyHandle(property));
@@ -126,7 +127,7 @@ bool KeyframeEffectModelBase::SnapshotAllCompositorKeyframes(
   }
   if (updated && has_neutral_compositable_keyframe) {
     UseCounter::Count(element.GetDocument(),
-                      UseCounter::kSyntheticKeyframesInCompositedCSSAnimation);
+                      WebFeature::kSyntheticKeyframesInCompositedCSSAnimation);
   }
   return updated;
 }
@@ -191,7 +192,7 @@ void KeyframeEffectModelBase::EnsureKeyframeGroups() const {
       zero_offset_easing = &keyframe->Easing();
 
     for (const PropertyHandle& property : keyframe->Properties()) {
-      KeyframeGroupMap::iterator group_iter = keyframe_groups_->Find(property);
+      KeyframeGroupMap::iterator group_iter = keyframe_groups_->find(property);
       PropertySpecificKeyframeGroup* group;
       if (group_iter == keyframe_groups_->end()) {
         group = keyframe_groups_
@@ -272,17 +273,19 @@ bool KeyframeEffectModelBase::IsReplaceOnly() {
 
 Keyframe::PropertySpecificKeyframe::PropertySpecificKeyframe(
     double offset,
-    PassRefPtr<TimingFunction> easing,
+    RefPtr<TimingFunction> easing,
     EffectModel::CompositeOperation composite)
     : offset_(offset), easing_(std::move(easing)), composite_(composite) {
   DCHECK(!IsNull(offset));
+  if (!easing_)
+    easing_ = LinearTimingFunction::Shared();
 }
 
 void KeyframeEffectModelBase::PropertySpecificKeyframeGroup::AppendKeyframe(
-    PassRefPtr<Keyframe::PropertySpecificKeyframe> keyframe) {
+    RefPtr<Keyframe::PropertySpecificKeyframe> keyframe) {
   DCHECK(keyframes_.IsEmpty() ||
          keyframes_.back()->Offset() <= keyframe->Offset());
-  keyframes_.push_back(keyframe);
+  keyframes_.push_back(std::move(keyframe));
 }
 
 void KeyframeEffectModelBase::PropertySpecificKeyframeGroup::
@@ -300,14 +303,13 @@ void KeyframeEffectModelBase::PropertySpecificKeyframeGroup::
         keyframes_[i + 1]->Offset() == offset;
     if (has_same_offset_as_previous_neighbor &&
         has_same_offset_as_next_neighbor)
-      keyframes_.erase(i);
+      keyframes_.EraseAt(i);
   }
   DCHECK_GE(keyframes_.size(), 2U);
 }
 
 bool KeyframeEffectModelBase::PropertySpecificKeyframeGroup::
-    AddSyntheticKeyframeIfRequired(
-        PassRefPtr<TimingFunction> zero_offset_easing) {
+    AddSyntheticKeyframeIfRequired(RefPtr<TimingFunction> zero_offset_easing) {
   DCHECK(!keyframes_.IsEmpty());
 
   bool added_synthetic_keyframe = false;

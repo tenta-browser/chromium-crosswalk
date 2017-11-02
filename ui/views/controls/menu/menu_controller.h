@@ -36,6 +36,7 @@ class MenuItemView;
 class MouseEvent;
 class SubmenuView;
 class View;
+class ViewTracker;
 
 #if defined(USE_AURA)
 class MenuPreTargetHandler;
@@ -82,14 +83,13 @@ class VIEWS_EXPORT MenuController
   // Runs the menu at the specified location. If the menu was configured to
   // block, the selected item is returned. If the menu does not block this
   // returns NULL immediately.
-  MenuItemView* Run(Widget* parent,
-                    MenuButton* button,
-                    MenuItemView* root,
-                    const gfx::Rect& bounds,
-                    MenuAnchorPosition position,
-                    bool context_menu,
-                    bool is_nested_drag,
-                    int* event_flags);
+  void Run(Widget* parent,
+           MenuButton* button,
+           MenuItemView* root,
+           const gfx::Rect& bounds,
+           MenuAnchorPosition position,
+           bool context_menu,
+           bool is_nested_drag);
 
   // Whether or not Run blocks.
   bool IsBlockingRun() const { return blocking_run_; }
@@ -102,6 +102,14 @@ class VIEWS_EXPORT MenuController
   // Whether the MenuController initiated the drag in progress. False if there
   // is no drag in progress.
   bool did_initiate_drag() const { return did_initiate_drag_; }
+
+  bool send_gesture_events_to_owner() const {
+    return send_gesture_events_to_owner_;
+  }
+
+  void set_send_gesture_events_to_owner(bool send_gesture_events_to_owner) {
+    send_gesture_events_to_owner_ = send_gesture_events_to_owner;
+  }
 
   // Returns the owner of child windows.
   // WARNING: this may be NULL.
@@ -238,7 +246,7 @@ class VIEWS_EXPORT MenuController
 
     // Used to capture a hot tracked child button when a nested menu is opened
     // and to restore the hot tracked state when exiting a nested menu.
-    CustomButton* hot_button;
+    Button* hot_button;
 
     // If item has a submenu this indicates if the submenu is showing.
     bool submenu_open;
@@ -309,7 +317,7 @@ class VIEWS_EXPORT MenuController
   // Key processing.
   void OnKeyDown(ui::KeyboardCode key_code);
 
-  // Creates a MenuController. If |blocking| is true a nested message loop is
+  // Creates a MenuController. If |blocking| is true a nested run loop is
   // started in |Run|.
   MenuController(bool blocking,
                  internal::MenuControllerDelegate* delegate);
@@ -525,10 +533,6 @@ class VIEWS_EXPORT MenuController
   // it to null.
   void SendMouseCaptureLostToActiveView();
 
-  // Sets/gets the active mouse view. See UpdateActiveMouseView() for details.
-  void SetActiveMouseView(View* view);
-  View* GetActiveMouseView();
-
   // Sets exit type. Calling this can terminate the active nested message-loop.
   void SetExitType(ExitType type);
 
@@ -549,7 +553,7 @@ class VIEWS_EXPORT MenuController
                                 SelectionIncrementDirectionType direction);
 
   // Updates the current |hot_button_| and its hot tracked state.
-  void SetHotTrackedButton(CustomButton* hot_button);
+  void SetHotTrackedButton(Button* hot_button);
 
   // The active instance.
   static MenuController* active_instance_;
@@ -561,14 +565,14 @@ class VIEWS_EXPORT MenuController
   bool blocking_run_;
 
   // If true, we're showing.
-  bool showing_;
+  bool showing_ = false;
 
   // Indicates what to exit.
-  ExitType exit_type_;
+  ExitType exit_type_ = EXIT_NONE;
 
   // Whether we did a capture. We do a capture only if we're blocking and
   // the mouse was down when Run.
-  bool did_capture_;
+  bool did_capture_ = false;
 
   // As the user drags the mouse around pending_state_ changes immediately.
   // When the user stops moving/dragging the mouse (or clicks the mouse)
@@ -580,10 +584,10 @@ class VIEWS_EXPORT MenuController
   State state_;
 
   // If the user accepted the selection, this is the result.
-  MenuItemView* result_;
+  MenuItemView* result_ = nullptr;
 
   // The event flags when the user selected the menu.
-  int accept_event_flags_;
+  int accept_event_flags_ = 0;
 
   // If not empty, it means we're nested. When Run is invoked from within
   // Run, the current state (state_) is pushed onto menu_stack_. This allows
@@ -608,35 +612,35 @@ class VIEWS_EXPORT MenuController
   base::OneShotTimer cancel_all_timer_;
 
   // Drop target.
-  MenuItemView* drop_target_;
-  MenuDelegate::DropPosition drop_position_;
+  MenuItemView* drop_target_ = nullptr;
+  MenuDelegate::DropPosition drop_position_ = MenuDelegate::DROP_UNKNOWN;
 
   // Owner of child windows.
   // WARNING: this may be NULL.
-  Widget* owner_;
+  Widget* owner_ = nullptr;
 
   // Indicates a possible drag operation.
-  bool possible_drag_;
+  bool possible_drag_ = false;
 
   // True when drag operation is in progress.
-  bool drag_in_progress_;
+  bool drag_in_progress_ = false;
 
   // True when the drag operation in progress was initiated by the
   // MenuController for a child MenuItemView (as opposed to initiated separately
   // by a child View).
-  bool did_initiate_drag_;
+  bool did_initiate_drag_ = false;
 
   // Location the mouse was pressed at. Used to detect d&d.
   gfx::Point press_pt_;
 
   // We get a slew of drag updated messages as the mouse is over us. To avoid
   // continually processing whether we can drop, we cache the coordinates.
-  bool valid_drop_coordinates_;
+  bool valid_drop_coordinates_ = false;
   gfx::Point drop_pt_;
-  int last_drop_operation_;
+  int last_drop_operation_ = MenuDelegate::DROP_UNKNOWN;
 
   // If true, we're in the middle of invoking ShowAt on a submenu.
-  bool showing_submenu_;
+  bool showing_submenu_ = false;
 
   // Task for scrolling the menu. If non-null indicates a scroll is currently
   // underway.
@@ -645,12 +649,12 @@ class VIEWS_EXPORT MenuController
   // The lock to keep the menu button pressed while a menu is visible.
   std::unique_ptr<MenuButton::PressedLock> pressed_lock_;
 
-  // ViewStorage id used to store the view mouse drag events are forwarded to.
-  // See UpdateActiveMouseView() for details.
-  const int active_mouse_view_id_;
+  // ViewTracker used to store the View mouse drag events are forwarded to. See
+  // UpdateActiveMouseView() for details.
+  std::unique_ptr<ViewTracker> active_mouse_view_tracker_;
 
   // Current hot tracked child button if any.
-  CustomButton* hot_button_;
+  Button* hot_button_ = nullptr;
 
   internal::MenuControllerDelegate* delegate_;
 
@@ -666,19 +670,25 @@ class VIEWS_EXPORT MenuController
 
   // Controls behavior differences between a combobox and other types of menu
   // (like a context menu).
-  bool is_combobox_;
+  bool is_combobox_ = false;
+
+  // Whether the menu |owner_| needs gesture events. When set to true, the menu
+  // will preserve the gesture events of the |owner_| and MenuController will
+  // forward the gesture events to |owner_| until no |ET_GESTURE_END| event is
+  // captured.
+  bool send_gesture_events_to_owner_ = false;
 
   // Set to true if the menu item was selected by touch.
-  bool item_selected_by_touch_;
+  bool item_selected_by_touch_ = false;
 
   // During mouse event handling, this is the RootView to forward mouse events
   // to. We need this, because if we forward one event to it (e.g., mouse
   // pressed), subsequent events (like dragging) should also go to it, even if
   // the mouse is no longer over the view.
-  MenuHostRootView* current_mouse_event_target_;
+  MenuHostRootView* current_mouse_event_target_ = nullptr;
 
   // A mask of the EventFlags for the mouse buttons currently pressed.
-  int current_mouse_pressed_state_;
+  int current_mouse_pressed_state_ = 0;
 
 #if defined(USE_AURA)
   std::unique_ptr<MenuPreTargetHandler> menu_pre_target_handler_;

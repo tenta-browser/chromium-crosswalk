@@ -14,7 +14,6 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_vector.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "media/midi/midi_input_port_android.h"
@@ -63,8 +62,6 @@ class MidiManagerAndroid final : public MidiManager,
                   const base::android::JavaParamRef<jobject>& caller,
                   const base::android::JavaParamRef<jobject>& device);
 
-  static bool Register(JNIEnv* env);
-
  private:
   void AddDevice(std::unique_ptr<MidiDeviceAndroid> device);
   void AddInputPortAndroid(MidiInputPortAndroid* port,
@@ -72,7 +69,12 @@ class MidiManagerAndroid final : public MidiManager,
   void AddOutputPortAndroid(MidiOutputPortAndroid* port,
                             MidiDeviceAndroid* device);
 
-  ScopedVector<MidiDeviceAndroid> devices_;
+  // TODO(toyoshim): Remove |lock_| once dynamic instantiation mode is enabled
+  // by default. This protects objects allocated on the I/O thread from doubly
+  // released on the main thread.
+  base::Lock lock_;
+
+  std::vector<std::unique_ptr<MidiDeviceAndroid>> devices_;
   // All ports held in |devices_|. Each device has ownership of ports, but we
   // can store pointers here because a device will keep its ports while it is
   // alive.
@@ -86,11 +88,6 @@ class MidiManagerAndroid final : public MidiManager,
   base::hash_map<MidiOutputPortAndroid*, size_t> output_port_to_index_;
 
   base::android::ScopedJavaGlobalRef<jobject> raw_manager_;
-
-  // Lock to ensure the MidiScheduler is being destructed only once in
-  // Finalize() on Chrome_IOThread.
-  base::Lock scheduler_lock_;
-  std::unique_ptr<MidiScheduler> scheduler_;  // GUARDED_BY(scheduler_lock_)
 };
 
 }  // namespace midi

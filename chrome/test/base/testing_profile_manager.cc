@@ -10,6 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -70,7 +71,8 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   // Create a path for the profile based on the name.
   base::FilePath profile_path(profiles_dir_.GetPath());
 #if defined(OS_CHROMEOS)
-  if (profile_name != chrome::kInitialProfile) {
+  if (profile_name != chrome::kInitialProfile &&
+      profile_name != chromeos::ProfileHelper::GetLockScreenAppProfileName()) {
     profile_path =
         profile_path.Append(chromeos::ProfileHelper::Get()->GetUserProfileDir(
             chromeos::ProfileHelper::GetUserIdHashByUserIdForTesting(
@@ -98,13 +100,13 @@ TestingProfile* TestingProfileManager::CreateTestingProfile(
   profile_manager_->AddProfile(profile);  // Takes ownership.
 
   // Update the user metadata.
-  ProfileInfoCache& cache = profile_manager_->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(profile_path);
-  cache.SetAvatarIconOfProfileAtIndex(index, avatar_id);
-  cache.SetSupervisedUserIdOfProfileAtIndex(index, supervised_user_id);
-  // SetNameOfProfileAtIndex may reshuffle the list of profiles, so we do it
-  // last.
-  cache.SetNameOfProfileAtIndex(index, user_name);
+  ProfileAttributesEntry* entry;
+  bool success = profile_manager_->GetProfileAttributesStorage()
+                     .GetProfileAttributesWithPath(profile_path, &entry);
+  DCHECK(success);
+  entry->SetAvatarIconIndex(avatar_id);
+  entry->SetSupervisedUserId(supervised_user_id);
+  entry->SetName(user_name);
 
   testing_profiles_.insert(std::make_pair(profile_name, profile));
 
@@ -169,8 +171,8 @@ void TestingProfileManager::DeleteTestingProfile(const std::string& name) {
 
   TestingProfile* profile = it->second;
 
-  ProfileInfoCache& cache = profile_manager_->GetProfileInfoCache();
-  cache.DeleteProfileFromCache(profile->GetPath());
+  profile_manager_->GetProfileAttributesStorage().RemoveProfile(
+      profile->GetPath());
 
   profile_manager_->profiles_info_.erase(profile->GetPath());
 
@@ -178,11 +180,12 @@ void TestingProfileManager::DeleteTestingProfile(const std::string& name) {
 }
 
 void TestingProfileManager::DeleteAllTestingProfiles() {
+  ProfileAttributesStorage& storage =
+      profile_manager_->GetProfileAttributesStorage();
   for (TestingProfilesMap::iterator it = testing_profiles_.begin();
        it != testing_profiles_.end(); ++it) {
     TestingProfile* profile = it->second;
-    ProfileInfoCache& cache = profile_manager_->GetProfileInfoCache();
-    cache.DeleteProfileFromCache(profile->GetPath());
+    storage.RemoveProfile(profile->GetPath());
   }
   testing_profiles_.clear();
 }

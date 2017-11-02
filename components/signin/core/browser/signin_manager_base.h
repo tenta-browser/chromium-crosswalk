@@ -26,6 +26,7 @@
 #include <memory>
 #include <string>
 
+#include "base/callback_list.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/macros.h"
@@ -42,6 +43,10 @@ class PrefRegistrySimple;
 class PrefService;
 class SigninClient;
 
+namespace password_manager {
+class PasswordStoreSigninNotifierImpl;
+}
+
 namespace user_prefs {
 class PrefRegistrySyncable;
 }
@@ -54,9 +59,9 @@ class SigninManagerBase : public KeyedService {
     virtual void GoogleSigninFailed(const GoogleServiceAuthError& error) {}
 
     // Called when a user signs into Google services such as sync.
+    // This method is not called during a reauth.
     virtual void GoogleSigninSucceeded(const std::string& account_id,
-                                       const std::string& username,
-                                       const std::string& password) {}
+                                       const std::string& username) {}
 
     // Called when the currently signed-in user for a user has been signed out.
     virtual void GoogleSignedOut(const std::string& account_id,
@@ -64,6 +69,31 @@ class SigninManagerBase : public KeyedService {
 
    protected:
     virtual ~Observer() {}
+
+   private:
+    // Observers that can observer the password of the Google account after a
+    // successful sign-in.
+    friend class PasswordStoreSigninNotifierImpl;
+
+    // SigninManagers that fire |GoogleSigninSucceededWithPassword|
+    // notifications.
+    friend class SigninManager;
+    friend class FakeSigninManager;
+
+    // Called when a user signs into Google services such as sync. Also passes
+    // the password of the Google account that was used to sign in.
+    // This method is not called during a reauth.
+    //
+    // Observers should override |GoogleSigninSucceeded| if they are not
+    // interested in the password thas was used during the sign-in.
+    //
+    // Note: The password is always empty on mobile as the user signs in to
+    // Chrome with accounts that were added to the device, so Chrome does not
+    // have access to the password.
+    virtual void GoogleSigninSucceededWithPassword(
+        const std::string& account_id,
+        const std::string& username,
+        const std::string& password) {}
   };
 
   SigninManagerBase(SigninClient* client,
@@ -132,12 +162,25 @@ class SigninManagerBase : public KeyedService {
   // Gives access to the SigninClient instance associated with this instance.
   SigninClient* signin_client() const { return client_; }
 
+  // Adds a callback that will be called when this instance is shut down.Not
+  // intended for general usage, but rather for usage only by the Identity
+  // Service implementation during the time period of conversion of Chrome to
+  // use the Identity Service.
+  std::unique_ptr<base::CallbackList<void()>::Subscription>
+  RegisterOnShutdownCallback(const base::Closure& cb) {
+    return on_shutdown_callback_list_.Add(cb);
+  }
+
  protected:
   AccountTrackerService* account_tracker_service() const {
     return account_tracker_service_;
   }
 
   // Sets the authenticated user's account id.
+  // If the user is already authenticated with the same account id, then this
+  // method is a no-op.
+  // It is forbidden to call this method if the user is already authenticated
+  // with a different account (this method will DCHECK in that case).
   void SetAuthenticatedAccountId(const std::string& account_id);
 
   // Used by subclass to clear the authenticated user instead of using
@@ -168,6 +211,9 @@ class SigninManagerBase : public KeyedService {
   // The list of SigninDiagnosticObservers.
   base::ObserverList<signin_internals_util::SigninDiagnosticsObserver, true>
       signin_diagnostics_observers_;
+
+  // The list of callbacks notified on shutdown.
+  base::CallbackList<void()> on_shutdown_callback_list_;
 
   base::WeakPtrFactory<SigninManagerBase> weak_pointer_factory_;
 

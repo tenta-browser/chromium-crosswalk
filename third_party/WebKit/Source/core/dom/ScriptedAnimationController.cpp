@@ -27,10 +27,9 @@
 
 #include "core/css/MediaQueryListListener.h"
 #include "core/dom/Document.h"
-#include "core/dom/FrameRequestCallback.h"
-#include "core/events/Event.h"
-#include "core/frame/FrameView.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/LocalDOMWindow.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/loader/DocumentLoader.h"
 #include "core/probe/CoreProbes.h"
@@ -52,6 +51,10 @@ DEFINE_TRACE(ScriptedAnimationController) {
   visitor->Trace(per_frame_events_);
 }
 
+DEFINE_TRACE_WRAPPERS(ScriptedAnimationController) {
+  visitor->TraceWrappers(callback_collection_);
+}
+
 void ScriptedAnimationController::Suspend() {
   ++suspend_count_;
 }
@@ -71,7 +74,8 @@ void ScriptedAnimationController::DispatchEventsAndCallbacksForPrinting() {
 }
 
 ScriptedAnimationController::CallbackId
-ScriptedAnimationController::RegisterCallback(FrameRequestCallback* callback) {
+ScriptedAnimationController::RegisterCallback(
+    FrameRequestCallbackCollection::FrameCallback* callback) {
   CallbackId id = callback_collection_.RegisterCallback(callback);
   ScheduleAnimationIfNeeded();
   return id;
@@ -82,18 +86,18 @@ void ScriptedAnimationController::CancelCallback(CallbackId id) {
 }
 
 void ScriptedAnimationController::RunTasks() {
-  Vector<std::unique_ptr<WTF::Closure>> tasks;
-  tasks.Swap(task_queue_);
+  Vector<WTF::Closure> tasks;
+  tasks.swap(task_queue_);
   for (auto& task : tasks)
-    (*task)();
+    task();
 }
 
 void ScriptedAnimationController::DispatchEvents(
     const AtomicString& event_interface_filter) {
   HeapVector<Member<Event>> events;
   if (event_interface_filter.IsEmpty()) {
-    events.Swap(event_queue_);
-    per_frame_events_.Clear();
+    events.swap(event_queue_);
+    per_frame_events_.clear();
   } else {
     HeapVector<Member<Event>> remaining;
     for (auto& event : event_queue_) {
@@ -104,7 +108,7 @@ void ScriptedAnimationController::DispatchEvents(
         remaining.push_back(event.Release());
       }
     }
-    remaining.Swap(event_queue_);
+    remaining.swap(event_queue_);
   }
 
   for (const auto& event : events) {
@@ -167,8 +171,7 @@ void ScriptedAnimationController::ServiceScriptedAnimations(
   ScheduleAnimationIfNeeded();
 }
 
-void ScriptedAnimationController::EnqueueTask(
-    std::unique_ptr<WTF::Closure> task) {
+void ScriptedAnimationController::EnqueueTask(WTF::Closure task) {
   task_queue_.push_back(std::move(task));
   ScheduleAnimationIfNeeded();
 }
@@ -201,7 +204,7 @@ void ScriptedAnimationController::ScheduleAnimationIfNeeded() {
   if (!document_)
     return;
 
-  if (FrameView* frame_view = document_->View())
+  if (LocalFrameView* frame_view = document_->View())
     frame_view->ScheduleAnimation();
 }
 

@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGContainer g",
@@ -15,10 +15,6 @@
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGResourceClipper clipPath id='myclip'",
-      "reason": "full"
-    },
     {
       "object": "LayoutSVGContainer g",
       "reason": "full"

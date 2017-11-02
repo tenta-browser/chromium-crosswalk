@@ -17,10 +17,12 @@
 #include "content/browser/ssl/ssl_client_auth_handler.h"
 #include "content/browser/ssl/ssl_error_handler.h"
 #include "content/common/content_export.h"
+#include "net/http/http_raw_request_headers.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
 
 namespace net {
+class HttpResponseHeaders;
 class X509Certificate;
 }
 
@@ -58,6 +60,10 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   // ResourceHandler::Delegate implementation:
   void OutOfBandCancel(int error_code, bool tell_renderer) override;
 
+  // CHECKs that the associated URLRequest is still present on its context.
+  // Added for http://crbug.com/754704; remove when that bug is resolved.
+  void AssertURLRequestPresent() const;
+
  private:
   // ResourceController implementation for the ResourceLoader.
   class Controller;
@@ -81,7 +87,9 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   void ContinueSSLRequest() override;
 
   // SSLClientAuthHandler::Delegate implementation.
-  void ContinueWithCertificate(net::X509Certificate* cert) override;
+  void ContinueWithCertificate(
+      scoped_refptr<net::X509Certificate> cert,
+      scoped_refptr<net::SSLPrivateKey> private_key) override;
   void CancelCertificateSelection() override;
 
   // These correspond to Controller's methods.
@@ -93,7 +101,6 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   // otherwise.
   void Resume(bool called_from_resource_controller);
   void Cancel();
-  void CancelAndIgnore();
   void CancelWithError(int error_code);
 
   void StartRequestInternal();
@@ -112,6 +119,8 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   void ResponseCompleted();
   void CallDidFinishLoading();
   void RecordHistograms();
+  void SetRawResponseHeaders(
+      scoped_refptr<const net::HttpResponseHeaders> headers);
 
   bool is_deferred() const { return deferred_stage_ != DEFERRED_NONE; }
 
@@ -176,6 +185,13 @@ class CONTENT_EXPORT ResourceLoader : public net::URLRequest::Delegate,
   // asynchronously.
   scoped_refptr<net::IOBuffer> read_buffer_;
   int read_buffer_size_;
+
+  net::HttpRawRequestHeaders raw_request_headers_;
+  scoped_refptr<const net::HttpResponseHeaders> raw_response_headers_;
+
+  // URLRequestContext of the associated URLRequest.
+  // Added for http://crbug.com/754704; remove when that bug is resolved.
+  const net::URLRequestContext* request_context_;
 
   base::ThreadChecker thread_checker_;
 

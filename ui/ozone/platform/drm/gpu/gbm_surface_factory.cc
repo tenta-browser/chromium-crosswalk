@@ -64,7 +64,9 @@ class GLOzoneEGLGbm : public GLOzoneEGL {
  protected:
   intptr_t GetNativeDisplay() override { return EGL_DEFAULT_DISPLAY; }
 
-  bool LoadGLES2Bindings() override { return LoadDefaultEGLGLES2Bindings(); }
+  bool LoadGLES2Bindings(gl::GLImplementation impl) override {
+    return LoadDefaultEGLGLES2Bindings(impl);
+  }
 
  private:
   GbmSurfaceFactory* surface_factory_;
@@ -108,7 +110,8 @@ std::vector<gl::GLImplementation>
 GbmSurfaceFactory::GetAllowedGLImplementations() {
   DCHECK(thread_checker_.CalledOnValidThread());
   return std::vector<gl::GLImplementation>{gl::kGLImplementationEGLGLES2,
-                                           gl::kGLImplementationOSMesaGL};
+                                           gl::kGLImplementationOSMesaGL,
+                                           gl::kGLImplementationSwiftShaderGL};
 }
 
 GLOzone* GbmSurfaceFactory::GetGLOzone(gl::GLImplementation implementation) {
@@ -153,7 +156,7 @@ scoped_refptr<gfx::NativePixmap> GbmSurfaceFactory::CreateNativePixmap(
   if (!buffer.get())
     return nullptr;
 
-  return make_scoped_refptr(new GbmPixmap(this, buffer));
+  return base::MakeRefCounted<GbmPixmap>(this, buffer);
 }
 
 scoped_refptr<gfx::NativePixmap>
@@ -182,7 +185,7 @@ GbmSurfaceFactory::CreateNativePixmapFromHandle(
       widget, size, format, std::move(scoped_fds), planes);
   if (!buffer)
     return nullptr;
-  return make_scoped_refptr(new GbmPixmap(this, buffer));
+  return base::MakeRefCounted<GbmPixmap>(this, buffer);
 }
 
 }  // namespace ui

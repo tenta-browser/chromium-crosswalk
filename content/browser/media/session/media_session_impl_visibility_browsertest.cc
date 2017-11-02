@@ -7,6 +7,7 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -97,10 +98,9 @@ class MediaSessionImplVisibilityBrowserTest
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitch(
-        switches::kDisableGestureRequirementForMediaPlayback);
+    command_line->AppendSwitch(switches::kIgnoreAutoplayRestrictionsForTests);
 #if !defined(OS_ANDROID)
-    command_line->AppendSwitch(switches::kEnableDefaultMediaSession);
+    command_line->AppendSwitch(switches::kEnableAudioFocus);
 #endif  // !defined(OS_ANDROID)
 
     VisibilityTestData params = GetVisibilityTestData();

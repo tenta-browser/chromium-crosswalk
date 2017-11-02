@@ -60,7 +60,7 @@ class AppListFolderView : public views::View,
   void CloseFolderPage();
 
   // views::View
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
 
@@ -71,6 +71,8 @@ class AppListFolderView : public views::View,
   void OnImplicitAnimationsCompleted() override;
 
   AppsGridView* items_grid_view() { return items_grid_view_; }
+
+  FolderHeaderView* folder_header_view() { return folder_header_view_; }
 
  private:
   void CalculateIdealBounds();
@@ -119,6 +121,11 @@ class AppListFolderView : public views::View,
   bool hide_for_reparent_;
 
   base::string16 accessible_name_;
+
+  const bool is_fullscreen_app_list_enabled_;
+
+  // Whether the app list focus is enabled.
+  const bool is_app_list_focus_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListFolderView);
 };

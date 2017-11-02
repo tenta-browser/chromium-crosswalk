@@ -45,7 +45,7 @@ cr.define('print_preview', function() {
      * @private
      */
     this.isPrintButtonEnabled_ = true;
-  };
+  }
 
   /**
    * Event types dispatched by the print header.
@@ -98,43 +98,29 @@ cr.define('print_preview', function() {
 
       // User events
       this.tracker.add(
-          this.getChildElement('button.cancel'),
-          'click',
+          this.getChildElement('button.cancel'), 'click',
           this.onCancelButtonClick_.bind(this));
       this.tracker.add(
-          this.getChildElement('button.print'),
-          'click',
+          this.getChildElement('button.print'), 'click',
           this.onPrintButtonClick_.bind(this));
 
       // Data events.
       this.tracker.add(
           this.printTicketStore_,
           print_preview.PrintTicketStore.EventType.INITIALIZE,
-          this.onTicketChange_.bind(this));
+          this.onTicketChange.bind(this));
       this.tracker.add(
           this.printTicketStore_,
           print_preview.PrintTicketStore.EventType.DOCUMENT_CHANGE,
-          this.onTicketChange_.bind(this));
-      this.tracker.add(
-          this.printTicketStore_,
-          print_preview.PrintTicketStore.EventType.TICKET_CHANGE,
-          this.onTicketChange_.bind(this));
+          this.onTicketChange.bind(this));
       this.tracker.add(
           this.destinationStore_,
           print_preview.DestinationStore.EventType.DESTINATION_SELECT,
           this.onDestinationSelect_.bind(this));
       this.tracker.add(
-          this.printTicketStore_.copies,
-          print_preview.ticket_items.TicketItem.EventType.CHANGE,
-          this.onTicketChange_.bind(this));
-      this.tracker.add(
           this.printTicketStore_.duplex,
           print_preview.ticket_items.TicketItem.EventType.CHANGE,
-          this.onTicketChange_.bind(this));
-      this.tracker.add(
-          this.printTicketStore_.pageRange,
-          print_preview.ticket_items.TicketItem.EventType.CHANGE,
-          this.onTicketChange_.bind(this));
+          this.onTicketChange.bind(this));
     },
 
     /**
@@ -144,8 +130,7 @@ cr.define('print_preview', function() {
     updatePrintButtonEnabledState_: function() {
       this.getChildElement('button.print').disabled =
           this.destinationStore_.selectedDestination == null ||
-          !this.isEnabled_ ||
-          !this.isPrintButtonEnabled_ ||
+          !this.isEnabled_ || !this.isPrintButtonEnabled_ ||
           !this.printTicketStore_.isTicketValid();
     },
 
@@ -159,18 +144,11 @@ cr.define('print_preview', function() {
         return;
       }
 
-      var summaryLabel =
-          loadTimeData.getString('printPreviewSheetsLabelSingular');
-      var pagesLabel = loadTimeData.getString('printPreviewPageLabelPlural');
-
       var saveToPdfOrDrive = this.destinationStore_.selectedDestination &&
           (this.destinationStore_.selectedDestination.id ==
-              print_preview.Destination.GooglePromotedId.SAVE_AS_PDF ||
+               print_preview.Destination.GooglePromotedId.SAVE_AS_PDF ||
            this.destinationStore_.selectedDestination.id ==
-              print_preview.Destination.GooglePromotedId.DOCS);
-      if (saveToPdfOrDrive) {
-        summaryLabel = loadTimeData.getString('printPreviewPageLabelSingular');
-      }
+               print_preview.Destination.GooglePromotedId.DOCS);
 
       var numPages = this.printTicketStore_.pageRange.getPageNumberSet().size;
       var numSheets = numPages;
@@ -182,9 +160,16 @@ cr.define('print_preview', function() {
       numSheets *= copies;
       numPages *= copies;
 
+      var pagesLabel = loadTimeData.getString('printPreviewPageLabelPlural');
+      var summaryLabel;
       if (numSheets > 1) {
-        summaryLabel = saveToPdfOrDrive ? pagesLabel :
+        summaryLabel = saveToPdfOrDrive ?
+            pagesLabel :
             loadTimeData.getString('printPreviewSheetsLabelPlural');
+      } else {
+        summaryLabel = loadTimeData.getString(
+            saveToPdfOrDrive ? 'printPreviewPageLabelSingular' :
+                               'printPreviewSheetsLabelSingular');
       }
 
       var html;
@@ -193,22 +178,19 @@ cr.define('print_preview', function() {
         html = loadTimeData.getStringF(
             'printPreviewSummaryFormatLong',
             '<b>' + numSheets.toLocaleString() + '</b>',
-            '<b>' + summaryLabel + '</b>',
-            numPages.toLocaleString(),
+            '<b>' + summaryLabel + '</b>', numPages.toLocaleString(),
             pagesLabel);
-        label = loadTimeData.getStringF('printPreviewSummaryFormatLong',
-                                        numSheets.toLocaleString(),
-                                        summaryLabel,
-                                        numPages.toLocaleString(),
-                                        pagesLabel);
+        label = loadTimeData.getStringF(
+            'printPreviewSummaryFormatLong', numSheets.toLocaleString(),
+            summaryLabel, numPages.toLocaleString(), pagesLabel);
       } else {
         html = loadTimeData.getStringF(
             'printPreviewSummaryFormatShort',
             '<b>' + numSheets.toLocaleString() + '</b>',
             '<b>' + summaryLabel + '</b>');
-        label = loadTimeData.getStringF('printPreviewSummaryFormatShort',
-                                        numSheets.toLocaleString(),
-                                        summaryLabel);
+        label = loadTimeData.getStringF(
+            'printPreviewSummaryFormatShort', numSheets.toLocaleString(),
+            summaryLabel);
       }
 
       // Removing extra spaces from within the string.
@@ -229,7 +211,8 @@ cr.define('print_preview', function() {
           print_preview.Destination.GooglePromotedId.SAVE_AS_PDF) {
         this.getChildElement('button.print').classList.add('loading');
         this.getChildElement('button.cancel').classList.add('loading');
-        var isSaveLabel = (this.destinationStore_.selectedDestination.id ==
+        var isSaveLabel =
+            (this.destinationStore_.selectedDestination.id ==
              print_preview.Destination.GooglePromotedId.DOCS);
         this.getChildElement('.summary').innerHTML =
             loadTimeData.getString(isSaveLabel ? 'saving' : 'printing');
@@ -267,9 +250,8 @@ cr.define('print_preview', function() {
     /**
      * Called when the print ticket has changed. Disables the print button if
      * any of the settings are invalid.
-     * @private
      */
-    onTicketChange_: function() {
+    onTicketChange: function() {
       this.updatePrintButtonEnabledState_();
       this.updateSummary_();
       if (document.activeElement == null ||
@@ -280,7 +262,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    PrintHeader: PrintHeader
-  };
+  return {PrintHeader: PrintHeader};
 });

@@ -41,7 +41,7 @@ class SSLBlockingPage
     : public security_interstitials::SecurityInterstitialPage {
  public:
   // Interstitial type, used in tests.
-  static InterstitialPageDelegate::TypeID kTypeForTesting;
+  static const InterstitialPageDelegate::TypeID kTypeForTesting;
 
   ~SSLBlockingPage() override;
 
@@ -59,6 +59,7 @@ class SSLBlockingPage
       int options_mask,
       const base::Time& time_triggered,
       std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
+      bool is_superfish,
       const base::Callback<void(content::CertificateRequestResultType)>&
           callback);
 
@@ -67,7 +68,7 @@ class SSLBlockingPage
 
   // Returns true if |options_mask| refers to a soft-overridable SSL error and
   // if SSL error overriding is allowed by policy.
-  static bool IsOverridable(int options_mask, const Profile* const profile);
+  static bool IsOverridable(int options_mask);
 
   void SetSSLCertReporterForTesting(
       std::unique_ptr<SSLCertReporter> ssl_cert_reporter);
@@ -99,6 +100,7 @@ class SSLBlockingPage
       std::unique_ptr<SSLCertReporter> ssl_cert_reporter,
       bool overrideable,
       std::unique_ptr<ChromeMetricsHelper> metrics_helper,
+      bool is_superfish,
       const base::Callback<void(content::CertificateRequestResultType)>&
           callback);
 

@@ -53,7 +53,9 @@ public class VariationsSeedFetcherTest {
         ThreadUtils.setUiThread(mock(Looper.class));
         mFetcher = spy(VariationsSeedFetcher.get());
         mConnection = mock(HttpURLConnection.class);
-        doReturn(mConnection).when(mFetcher).getServerConnection("");
+        doReturn(mConnection)
+                .when(mFetcher)
+                .getServerConnection(VariationsSeedFetcher.VariationsPlatform.ANDROID, "");
         mPrefs = ContextUtils.getAppSharedPreferences();
         mPrefs.edit().clear().apply();
     }
@@ -116,7 +118,7 @@ public class VariationsSeedFetcherTest {
         mFetcher.fetchSeed("");
 
         assertTrue(mPrefs.getBoolean(VariationsSeedFetcher.VARIATIONS_INITIALIZED_PREF, false));
-        assertFalse(VariationsSeedBridge.hasJavaPref(ContextUtils.getApplicationContext()));
+        assertFalse(VariationsSeedBridge.hasJavaPref());
     }
 
     /**
@@ -129,6 +131,6 @@ public class VariationsSeedFetcherTest {
         mFetcher.fetchSeed("");
 
         assertTrue(mPrefs.getBoolean(VariationsSeedFetcher.VARIATIONS_INITIALIZED_PREF, false));
-        assertFalse(VariationsSeedBridge.hasJavaPref(ContextUtils.getApplicationContext()));
+        assertFalse(VariationsSeedBridge.hasJavaPref());
     }
 }

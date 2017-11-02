@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "mojo/public/cpp/bindings/lib/array_internal.h"
+#include "mojo/public/cpp/bindings/string_data_view.h"
 #include "third_party/WebKit/Source/platform/wtf/text/StringUTF8Adaptor.h"
 
 namespace mojo {
@@ -47,7 +48,7 @@ void StringTraits<WTF::String>::SetToNull(WTF::String* output) {
     return;
 
   WTF::String result;
-  output->Swap(result);
+  output->swap(result);
 }
 
 // static
@@ -77,7 +78,7 @@ const char* StringTraits<WTF::String>::GetData(const WTF::String& input,
 bool StringTraits<WTF::String>::Read(StringDataView input,
                                      WTF::String* output) {
   WTF::String result = WTF::String::FromUTF8(input.storage(), input.size());
-  output->Swap(result);
+  output->swap(result);
   return true;
 }
 

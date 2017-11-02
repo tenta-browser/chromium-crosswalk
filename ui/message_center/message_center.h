@@ -122,12 +122,6 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
                                          int button_index,
                                          const gfx::Image& image) = 0;
 
-  // Operations happening especially from GUIs: click, disable, and settings.
-  // Searches through the notifications and disables any that match the
-  // extension id given.
-  virtual void DisableNotificationsByNotifier(
-      const NotifierId& notifier_id) = 0;
-
   // This should be called by UI classes when a notification is clicked to
   // trigger the notification's delegate callback and also update the message
   // center observers.
@@ -189,6 +183,11 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   // example, after the mouse leaves the popup.)
   virtual void RestartPopupTimers() = 0;
 
+  // "Chromium OS" or "Chrome OS" in the current locale.
+  // Return empty string if not on these platforms.
+  virtual const base::string16& GetProductOSName() const = 0;
+  virtual void SetProductOSName(const base::string16& product_os_name) = 0;
+
  protected:
   friend class ::DownloadNotification;
   friend class ::DownloadNotificationTestBase;
@@ -199,19 +198,11 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   friend class TrayViewControllerTest;
   friend class test::MessagePopupCollectionTest;
   virtual void DisableTimersForTest() = 0;
-  virtual void EnableChangeQueueForTest(bool enabled) = 0;
 
   MessageCenter();
   virtual ~MessageCenter();
 
  private:
-  // Forces to flush the queued changes even when the message center opens. This
-  // method is a workaround of UpdateNotification not updating notifications
-  // while the message center.
-  // Note carefully: this may break the layout of message center. Shouldn't use
-  // this method if the update changes its notification size.
-  virtual void ForceNotificationFlush(const std::string& id) {}
-
   DISALLOW_COPY_AND_ASSIGN(MessageCenter);
 };
 

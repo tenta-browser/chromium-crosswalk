@@ -115,17 +115,18 @@ class HTMLToken {
       return AttemptStaticStringCreation(name_, kLikely8Bit);
     }
     const Vector<UChar, 32>& NameAsVector() const { return name_; }
+    const Vector<UChar, 32>& ValueAsVector() const { return value_; }
 
     void AppendToName(UChar c) { name_.push_back(c); }
 
-    PassRefPtr<StringImpl> Value8BitIfNecessary() const {
+    RefPtr<StringImpl> Value8BitIfNecessary() const {
       return StringImpl::Create8BitIfPossible(value_);
     }
     String Value() const { return String(value_); }
 
     void AppendToValue(UChar c) { value_.push_back(c); }
     void AppendToValue(const String& value) { value.AppendTo(value_); }
-    void ClearValue() { value_.Clear(); }
+    void ClearValue() { value_.clear(); }
 
     const Range& NameRange() const { return name_range_; }
     const Range& ValueRange() const { return value_range_; }
@@ -239,13 +240,13 @@ class HTMLToken {
   void SetPublicIdentifierToEmptyString() {
     DCHECK_EQ(type_, DOCTYPE);
     doctype_data_->has_public_identifier_ = true;
-    doctype_data_->public_identifier_.Clear();
+    doctype_data_->public_identifier_.clear();
   }
 
   void SetSystemIdentifierToEmptyString() {
     DCHECK_EQ(type_, DOCTYPE);
     doctype_data_->has_system_identifier_ = true;
-    doctype_data_->system_identifier_.Clear();
+    doctype_data_->system_identifier_.clear();
   }
 
   void AppendToPublicIdentifier(UChar character) {
@@ -284,7 +285,7 @@ class HTMLToken {
     type_ = kStartTag;
     self_closing_ = false;
     current_attribute_ = 0;
-    attributes_.Clear();
+    attributes_.clear();
 
     data_.push_back(character);
     or_all_data_ |= character;
@@ -295,7 +296,7 @@ class HTMLToken {
     type_ = kEndTag;
     self_closing_ = false;
     current_attribute_ = 0;
-    attributes_.Clear();
+    attributes_.clear();
 
     data_.push_back(character);
   }
@@ -305,7 +306,7 @@ class HTMLToken {
     type_ = kEndTag;
     self_closing_ = false;
     current_attribute_ = 0;
-    attributes_.Clear();
+    attributes_.clear();
 
     data_.AppendVector(characters);
   }
@@ -433,7 +434,7 @@ class HTMLToken {
   // Only for XSSAuditor
   void EraseCharacters() {
     DCHECK_EQ(type_, kCharacter);
-    data_.Clear();
+    data_.clear();
     or_all_data_ = 0;
   }
 

@@ -28,21 +28,24 @@
 
 #include "modules/accessibility/AXObjectCacheImpl.h"
 
-#include "core/HTMLNames.h"
-#include "core/InputTypeNames.h"
+#include "core/dom/AccessibleNode.h"
 #include "core/dom/Document.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/editing/EditingUtilities.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
+#include "core/frame/WebLocalFrameImpl.h"
 #include "core/html/HTMLAreaElement.h"
 #include "core/html/HTMLCanvasElement.h"
+#include "core/html/HTMLFrameOwnerElement.h"
 #include "core/html/HTMLImageElement.h"
-#include "core/html/HTMLInputElement.h"
-#include "core/html/HTMLLabelElement.h"
-#include "core/html/HTMLOptionElement.h"
-#include "core/html/HTMLSelectElement.h"
+#include "core/html/forms/HTMLInputElement.h"
+#include "core/html/forms/HTMLLabelElement.h"
+#include "core/html/forms/HTMLOptionElement.h"
+#include "core/html/forms/HTMLSelectElement.h"
+#include "core/html_names.h"
+#include "core/input_type_names.h"
 #include "core/layout/LayoutListBox.h"
 #include "core/layout/LayoutMenuList.h"
 #include "core/layout/LayoutProgress.h"
@@ -71,6 +74,7 @@
 #include "modules/accessibility/AXMenuListPopup.h"
 #include "modules/accessibility/AXProgressIndicator.h"
 #include "modules/accessibility/AXRadioInput.h"
+#include "modules/accessibility/AXRelationCache.h"
 #include "modules/accessibility/AXSVGRoot.h"
 #include "modules/accessibility/AXSlider.h"
 #include "modules/accessibility/AXSpinButton.h"
@@ -79,8 +83,13 @@
 #include "modules/accessibility/AXTableColumn.h"
 #include "modules/accessibility/AXTableHeaderContainer.h"
 #include "modules/accessibility/AXTableRow.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "modules/accessibility/AXVirtualObject.h"
+#include "modules/permissions/PermissionUtils.h"
 #include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/RefPtr.h"
+#include "public/platform/modules/permissions/permission.mojom-blink.h"
+#include "public/platform/modules/permissions/permission_status.mojom-blink.h"
+#include "public/web/WebFrameClient.h"
 
 namespace blink {
 
@@ -92,12 +101,19 @@ AXObjectCache* AXObjectCacheImpl::Create(Document& document) {
 }
 
 AXObjectCacheImpl::AXObjectCacheImpl(Document& document)
-    : document_(document),
+    : AXObjectCacheBase(document),
+      document_(document),
       modification_count_(0),
+      relation_cache_(new AXRelationCache(this)),
       notification_post_timer_(
           TaskRunnerHelper::Get(TaskType::kUnspecedTimer, &document),
           this,
-          &AXObjectCacheImpl::NotificationPostTimerFired) {}
+          &AXObjectCacheImpl::NotificationPostTimerFired),
+      accessibility_event_permission_(mojom::PermissionStatus::ASK),
+      permission_observer_binding_(this) {
+  if (document_->LoadEventFinished())
+    AddPermissionStatusListener();
+}
 
 AXObjectCacheImpl::~AXObjectCacheImpl() {
 #if DCHECK_IS_ON()
@@ -161,14 +177,13 @@ AXObject* AXObjectCacheImpl::FocusedObject() {
     focused_node = document_;
 
   // If it's an image map, get the focused link within the image map.
-  if (isHTMLAreaElement(focused_node))
-    return FocusedImageMapUIElement(toHTMLAreaElement(focused_node));
+  if (auto* area = ToHTMLAreaElementOrNull(focused_node))
+    return FocusedImageMapUIElement(area);
 
   // See if there's a page popup, for example a calendar picker.
   Element* adjusted_focused_element = document_->AdjustedFocusedElement();
-  if (isHTMLInputElement(adjusted_focused_element)) {
-    if (AXObject* ax_popup =
-            toHTMLInputElement(adjusted_focused_element)->PopupRootAXObject()) {
+  if (auto* input = ToHTMLInputElementOrNull(adjusted_focused_element)) {
+    if (AXObject* ax_popup = input->PopupRootAXObject()) {
       if (Element* focused_element_in_popup =
               ax_popup->GetDocument()->FocusedElement())
         focused_node = focused_element_in_popup;
@@ -201,24 +216,25 @@ AXObject* AXObjectCacheImpl::Get(LayoutObject* layout_object) {
 
 // Returns true if |node| is an <option> element and its parent <select>
 // is a menu list (not a list box).
-static bool IsMenuListOption(Node* node) {
-  if (!isHTMLOptionElement(node))
+static bool IsMenuListOption(const Node* node) {
+  if (!IsHTMLOptionElement(node))
     return false;
-  HTMLSelectElement* select = toHTMLOptionElement(node)->OwnerSelectElement();
+  const HTMLSelectElement* select =
+      ToHTMLOptionElement(node)->OwnerSelectElement();
   if (!select)
     return false;
-  LayoutObject* layout_object = select->GetLayoutObject();
+  const LayoutObject* layout_object = select->GetLayoutObject();
   return layout_object && layout_object->IsMenuList();
 }
 
-AXObject* AXObjectCacheImpl::Get(Node* node) {
+AXObject* AXObjectCacheImpl::Get(const Node* node) {
   if (!node)
     return 0;
 
   // Menu list option and HTML area elements are indexed by DOM node, never by
   // layout object.
   LayoutObject* layout_object = node->GetLayoutObject();
-  if (IsMenuListOption(node) || isHTMLAreaElement(node))
+  if (IsMenuListOption(node) || IsHTMLAreaElement(node))
     layout_object = nullptr;
 
   AXID layout_id = layout_object ? layout_object_mapping_.at(layout_object) : 0;
@@ -256,13 +272,29 @@ AXObject* AXObjectCacheImpl::Get(AbstractInlineTextBox* inline_text_box) {
   return objects_.at(ax_id);
 }
 
+AXObject* AXObjectCacheImpl::Get(AccessibleNode* accessible_node) {
+  if (!accessible_node)
+    return 0;
+
+  AXID ax_id = accessible_node_mapping_.at(accessible_node);
+  DCHECK(!HashTraits<AXID>::IsDeletedValue(ax_id));
+  if (!ax_id)
+    return 0;
+
+  return objects_.at(ax_id);
+}
+
 // FIXME: This probably belongs on Node.
-// FIXME: This should take a const char*, but one caller passes nullAtom.
-bool NodeHasRole(Node* node, const String& role) {
+// FIXME: This should take a const char*, but one caller passes g_null_atom.
+static bool NodeHasRole(Node* node, const String& role) {
   if (!node || !node->IsElementNode())
     return false;
 
   return EqualIgnoringASCIICase(ToElement(node)->getAttribute(roleAttr), role);
+}
+
+static bool NodeHasGridRole(Node* node) {
+  return NodeHasRole(node, "grid") || NodeHasRole(node, "treegrid");
 }
 
 AXObject* AXObjectCacheImpl::CreateFromRenderer(LayoutObject* layout_object) {
@@ -273,12 +305,12 @@ AXObject* AXObjectCacheImpl::CreateFromRenderer(LayoutObject* layout_object) {
   // ul/ol/dl type (it shouldn't be a list if aria says otherwise).
   if (NodeHasRole(node, "list") || NodeHasRole(node, "directory") ||
       (NodeHasRole(node, g_null_atom) &&
-       (isHTMLUListElement(node) || isHTMLOListElement(node) ||
-        isHTMLDListElement(node))))
+       (IsHTMLUListElement(node) || IsHTMLOListElement(node) ||
+        IsHTMLDListElement(node))))
     return AXList::Create(layout_object, *this);
 
   // aria tables
-  if (NodeHasRole(node, "grid") || NodeHasRole(node, "treegrid"))
+  if (NodeHasGridRole(node))
     return AXARIAGrid::Create(layout_object, *this);
   if (NodeHasRole(node, "row"))
     return AXARIAGridRow::Create(layout_object, *this);
@@ -290,11 +322,11 @@ AXObject* AXObjectCacheImpl::CreateFromRenderer(LayoutObject* layout_object) {
   if (node && node->IsMediaControlElement())
     return AccessibilityMediaControl::Create(layout_object, *this);
 
-  if (isHTMLOptionElement(node))
+  if (IsHTMLOptionElement(node))
     return AXListBoxOption::Create(layout_object, *this);
 
-  if (isHTMLInputElement(node) &&
-      toHTMLInputElement(node)->type() == InputTypeNames::radio)
+  if (IsHTMLInputElement(node) &&
+      ToHTMLInputElement(node)->type() == InputTypeNames::radio)
     return AXRadioInput::Create(layout_object, *this);
 
   if (layout_object->IsSVGRoot())
@@ -310,10 +342,24 @@ AXObject* AXObjectCacheImpl::CreateFromRenderer(LayoutObject* layout_object) {
     // standard tables
     if (css_box->IsTable())
       return AXTable::Create(ToLayoutTable(css_box), *this);
-    if (css_box->IsTableRow())
+    if (css_box->IsTableRow()) {
+      // In an ARIA [tree]grid, use an ARIA row, otherwise a table row.
+      LayoutTableRow* table_row = ToLayoutTableRow(css_box);
+      LayoutTable* containing_table = table_row->Table();
+      DCHECK(containing_table);
+      if (NodeHasGridRole(containing_table->GetNode()))
+        return AXARIAGridRow::Create(layout_object, *this);
       return AXTableRow::Create(ToLayoutTableRow(css_box), *this);
-    if (css_box->IsTableCell())
+    }
+    if (css_box->IsTableCell()) {
+      // In an ARIA [tree]grid, use an ARIA gridcell, otherwise a table cell.
+      LayoutTableCell* table_cell = ToLayoutTableCell(css_box);
+      LayoutTable* containing_table = table_cell->Table();
+      DCHECK(containing_table);
+      if (NodeHasGridRole(containing_table->GetNode()))
+        return AXARIAGridCell::Create(layout_object, *this);
       return AXTableCell::Create(ToLayoutTableCell(css_box), *this);
+    }
 
     // progress bar
     if (css_box->IsProgress())
@@ -329,10 +375,10 @@ AXObject* AXObjectCacheImpl::CreateFromRenderer(LayoutObject* layout_object) {
 
 AXObject* AXObjectCacheImpl::CreateFromNode(Node* node) {
   if (IsMenuListOption(node))
-    return AXMenuListOption::Create(toHTMLOptionElement(node), *this);
+    return AXMenuListOption::Create(ToHTMLOptionElement(node), *this);
 
-  if (isHTMLAreaElement(node))
-    return AXImageMapLink::Create(toHTMLAreaElement(node), *this);
+  if (auto* area = ToHTMLAreaElementOrNull(node))
+    return AXImageMapLink::Create(area, *this);
 
   return AXNodeObject::Create(node, *this);
 }
@@ -342,23 +388,38 @@ AXObject* AXObjectCacheImpl::CreateFromInlineTextBox(
   return AXInlineTextBox::Create(inline_text_box, *this);
 }
 
+AXObject* AXObjectCacheImpl::GetOrCreate(AccessibleNode* accessible_node) {
+  if (AXObject* obj = Get(accessible_node))
+    return obj;
+
+  AXObject* new_obj = new AXVirtualObject(*this, accessible_node);
+  const AXID ax_id = GetOrCreateAXID(new_obj);
+  accessible_node_mapping_.Set(accessible_node, ax_id);
+
+  new_obj->Init();
+  return new_obj;
+}
+
 AXObject* AXObjectCacheImpl::GetOrCreate(Node* node) {
   if (!node)
     return 0;
+
+  if (!node->IsElementNode() && !node->IsTextNode() && !node->IsDocumentNode())
+    return 0;  // Only documents, elements and text nodes get a11y objects
 
   if (AXObject* obj = Get(node))
     return obj;
 
   // If the node has a layout object, prefer using that as the primary key for
-  // the AXObject, with the exception of an HTMLAreaElement, which is created
-  // based on its node.
-  if (node->GetLayoutObject() && !isHTMLAreaElement(node))
+  // the AXObject, with the exception of an HTMLAreaElement, which is
+  // created based on its node.
+  if (node->GetLayoutObject() && !IsHTMLAreaElement(node))
     return GetOrCreate(node->GetLayoutObject());
 
   if (!node->parentElement())
     return 0;
 
-  if (isHTMLHeadElement(node))
+  if (IsHTMLHeadElement(node))
     return 0;
 
   AXObject* new_obj = CreateFromNode(node);
@@ -372,8 +433,7 @@ AXObject* AXObjectCacheImpl::GetOrCreate(Node* node) {
   new_obj->Init();
   new_obj->SetLastKnownIsIgnoredValue(new_obj->AccessibilityIsIgnored());
 
-  if (node->IsElementNode())
-    UpdateTreeIfElementIdIsAriaOwned(ToElement(node));
+  relation_cache_->UpdateRelatedTree(node);
 
   return new_obj;
 }
@@ -473,7 +533,16 @@ void AXObjectCacheImpl::Remove(AXID ax_id) {
   if (!objects_.Take(ax_id))
     return;
 
-  DCHECK(objects_.size() >= ids_in_use_.size());
+  DCHECK_GE(objects_.size(), ids_in_use_.size());
+}
+
+void AXObjectCacheImpl::Remove(AccessibleNode* accessible_node) {
+  if (!accessible_node)
+    return;
+
+  AXID ax_id = accessible_node_mapping_.at(accessible_node);
+  Remove(ax_id);
+  accessible_node_mapping_.erase(accessible_node);
 }
 
 void AXObjectCacheImpl::Remove(LayoutObject* layout_object) {
@@ -553,46 +622,50 @@ void AXObjectCacheImpl::RemoveAXID(AXObject* object) {
   object->SetAXObjectID(0);
   ids_in_use_.erase(obj_id);
 
-  if (aria_owner_to_children_mapping_.Contains(obj_id)) {
-    Vector<AXID> child_axi_ds = aria_owner_to_children_mapping_.at(obj_id);
-    for (size_t i = 0; i < child_axi_ds.size(); ++i)
-      aria_owned_child_to_owner_mapping_.erase(child_axi_ds[i]);
-    aria_owner_to_children_mapping_.erase(obj_id);
-  }
-  aria_owned_child_to_owner_mapping_.erase(obj_id);
-  aria_owned_child_to_real_parent_mapping_.erase(obj_id);
-  aria_owner_to_ids_mapping_.erase(obj_id);
+  relation_cache_->RemoveAXID(obj_id);
 }
 
-void AXObjectCacheImpl::SelectionChanged(Node* node) {
+AXObject* AXObjectCacheImpl::NearestExistingAncestor(Node* node) {
   // Find the nearest ancestor that already has an accessibility object, since
   // we might be in the middle of a layout.
   while (node) {
-    if (AXObject* obj = Get(node)) {
-      obj->SelectionChanged();
-      return;
-    }
+    if (AXObject* obj = Get(node))
+      return obj;
     node = node->parentNode();
   }
+  return nullptr;
+}
+
+void AXObjectCacheImpl::SelectionChanged(Node* node) {
+  AXObject* nearestAncestor = NearestExistingAncestor(node);
+  if (nearestAncestor)
+    nearestAncestor->SelectionChanged();
+}
+
+void AXObjectCacheImpl::UpdateReverseRelations(
+    const AXObject* relation_source,
+    const Vector<String>& target_ids) {
+  relation_cache_->UpdateReverseRelations(relation_source, target_ids);
 }
 
 void AXObjectCacheImpl::TextChanged(Node* node) {
-  TextChanged(GetOrCreate(node));
+  TextChanged(Get(node), node);
 }
 
 void AXObjectCacheImpl::TextChanged(LayoutObject* layout_object) {
-  TextChanged(GetOrCreate(layout_object));
+  if (layout_object)
+    TextChanged(Get(layout_object), layout_object->GetNode());
 }
 
-void AXObjectCacheImpl::TextChanged(AXObject* obj) {
-  if (!obj)
-    return;
+void AXObjectCacheImpl::TextChanged(AXObject* obj,
+                                    Node* node_for_relation_update) {
+  if (obj)
+    obj->TextChanged();
 
-  bool parent_already_exists = obj->ParentObjectIfExists();
-  obj->TextChanged();
+  if (node_for_relation_update)
+    relation_cache_->UpdateRelatedTree(node_for_relation_update);
+
   PostNotification(obj, AXObjectCacheImpl::kAXTextChanged);
-  if (parent_already_exists)
-    obj->NotifyIfIgnoredValueChanged();
 }
 
 void AXObjectCacheImpl::UpdateCacheAfterNodeIsAttached(Node* node) {
@@ -600,23 +673,33 @@ void AXObjectCacheImpl::UpdateCacheAfterNodeIsAttached(Node* node) {
   // we need an AXLayoutObject, because it was reparented to a location outside
   // of a canvas.
   Get(node);
-  if (node->IsElementNode())
-    UpdateTreeIfElementIdIsAriaOwned(ToElement(node));
+  relation_cache_->UpdateRelatedTree(node);
 }
 
 void AXObjectCacheImpl::ChildrenChanged(Node* node) {
-  ChildrenChanged(Get(node));
+  ChildrenChanged(Get(node), node);
 }
 
 void AXObjectCacheImpl::ChildrenChanged(LayoutObject* layout_object) {
-  ChildrenChanged(Get(layout_object));
+  if (layout_object) {
+    AXObject* object = Get(layout_object);
+    ChildrenChanged(object, layout_object->GetNode());
+  }
 }
 
-void AXObjectCacheImpl::ChildrenChanged(AXObject* obj) {
-  if (!obj)
-    return;
+void AXObjectCacheImpl::ChildrenChanged(AccessibleNode* accessible_node) {
+  AXObject* object = Get(accessible_node);
+  if (object)
+    ChildrenChanged(object, object->GetNode());
+}
 
-  obj->ChildrenChanged();
+void AXObjectCacheImpl::ChildrenChanged(AXObject* obj,
+                                        Node* node_for_relation_update) {
+  if (obj)
+    obj->ChildrenChanged();
+
+  if (node_for_relation_update)
+    relation_cache_->UpdateRelatedTree(node_for_relation_update);
 }
 
 void AXObjectCacheImpl::NotificationPostTimerFired(TimerBase*) {
@@ -651,7 +734,7 @@ void AXObjectCacheImpl::NotificationPostTimerFired(TimerBase*) {
       ChildrenChanged(obj->ParentObject());
   }
 
-  notifications_to_post_.Clear();
+  notifications_to_post_.clear();
 }
 
 void AXObjectCacheImpl::PostNotification(LayoutObject* layout_object,
@@ -679,201 +762,19 @@ void AXObjectCacheImpl::PostNotification(AXObject* object,
     notification_post_timer_.StartOneShot(0, BLINK_FROM_HERE);
 }
 
-bool AXObjectCacheImpl::IsAriaOwned(const AXObject* child) const {
-  return aria_owned_child_to_owner_mapping_.Contains(child->AxObjectID());
+bool AXObjectCacheImpl::IsAriaOwned(const AXObject* object) const {
+  return relation_cache_->IsAriaOwned(object);
 }
 
-AXObject* AXObjectCacheImpl::GetAriaOwnedParent(const AXObject* child) const {
-  return ObjectFromAXID(
-      aria_owned_child_to_owner_mapping_.at(child->AxObjectID()));
+AXObject* AXObjectCacheImpl::GetAriaOwnedParent(const AXObject* object) const {
+  return relation_cache_->GetAriaOwnedParent(object);
 }
 
 void AXObjectCacheImpl::UpdateAriaOwns(
     const AXObject* owner,
     const Vector<String>& id_vector,
     HeapVector<Member<AXObject>>& owned_children) {
-  //
-  // Update the map from the AXID of this element to the ids of the owned
-  // children, and the reverse map from ids to possible AXID owners.
-  //
-
-  HashSet<String> current_ids =
-      aria_owner_to_ids_mapping_.at(owner->AxObjectID());
-  HashSet<String> new_ids;
-  bool ids_changed = false;
-  for (const String& id : id_vector) {
-    new_ids.insert(id);
-    if (!current_ids.Contains(id)) {
-      ids_changed = true;
-      HashSet<AXID>* owners = id_to_aria_owners_mapping_.at(id);
-      if (!owners) {
-        owners = new HashSet<AXID>();
-        id_to_aria_owners_mapping_.Set(id, WTF::WrapUnique(owners));
-      }
-      owners->insert(owner->AxObjectID());
-    }
-  }
-  for (const String& id : current_ids) {
-    if (!new_ids.Contains(id)) {
-      ids_changed = true;
-      HashSet<AXID>* owners = id_to_aria_owners_mapping_.at(id);
-      if (owners) {
-        owners->erase(owner->AxObjectID());
-        if (owners->IsEmpty())
-          id_to_aria_owners_mapping_.erase(id);
-      }
-    }
-  }
-  if (ids_changed)
-    aria_owner_to_ids_mapping_.Set(owner->AxObjectID(), new_ids);
-
-  //
-  // Now figure out the ids that actually correspond to children that exist and
-  // that we can legally own (not cyclical, not already owned, etc.) and update
-  // the maps and |ownedChildren| based on that.
-  //
-
-  // Figure out the children that are owned by this object and are in the tree.
-  TreeScope& scope = owner->GetNode()->GetTreeScope();
-  Vector<AXID> new_child_axi_ds;
-  for (const String& id_name : id_vector) {
-    Element* element = scope.GetElementById(AtomicString(id_name));
-    if (!element)
-      continue;
-
-    AXObject* child = GetOrCreate(element);
-    if (!child)
-      continue;
-
-    // If this child is already aria-owned by a different owner, continue.
-    // It's an author error if this happens and we don't worry about which of
-    // the two owners wins ownership of the child, as long as only one of them
-    // does.
-    if (IsAriaOwned(child) && GetAriaOwnedParent(child) != owner)
-      continue;
-
-    // You can't own yourself!
-    if (child == owner)
-      continue;
-
-    // Walk up the parents of the owner object, make sure that this child
-    // doesn't appear there, as that would create a cycle.
-    bool found_cycle = false;
-    for (AXObject* parent = owner->ParentObject(); parent && !found_cycle;
-         parent = parent->ParentObject()) {
-      if (parent == child)
-        found_cycle = true;
-    }
-    if (found_cycle)
-      continue;
-
-    new_child_axi_ds.push_back(child->AxObjectID());
-    owned_children.push_back(child);
-  }
-
-  // Compare this to the current list of owned children, and exit early if there
-  // are no changes.
-  Vector<AXID> current_child_axi_ds =
-      aria_owner_to_children_mapping_.at(owner->AxObjectID());
-  bool same = true;
-  if (current_child_axi_ds.size() != new_child_axi_ds.size()) {
-    same = false;
-  } else {
-    for (size_t i = 0; i < current_child_axi_ds.size() && same; ++i) {
-      if (current_child_axi_ds[i] != new_child_axi_ds[i])
-        same = false;
-    }
-  }
-  if (same)
-    return;
-
-  // The list of owned children has changed. Even if they were just reordered,
-  // to be safe and handle all cases we remove all of the current owned children
-  // and add the new list of owned children.
-  for (size_t i = 0; i < current_child_axi_ds.size(); ++i) {
-    // Find the AXObject for the child that this owner no longer owns.
-    AXID removed_child_id = current_child_axi_ds[i];
-    AXObject* removed_child = ObjectFromAXID(removed_child_id);
-
-    // It's possible that this child has already been owned by some other owner,
-    // in which case we don't need to do anything.
-    if (removed_child && GetAriaOwnedParent(removed_child) != owner)
-      continue;
-
-    // Remove it from the child -> owner mapping so it's not owned by this owner
-    // anymore.
-    aria_owned_child_to_owner_mapping_.erase(removed_child_id);
-
-    if (removed_child) {
-      // If the child still exists, find its "real" parent, and reparent it back
-      // to its real parent in the tree by detaching it from its current parent
-      // and calling childrenChanged on its real parent.
-      removed_child->DetachFromParent();
-      AXID real_parent_id =
-          aria_owned_child_to_real_parent_mapping_.at(removed_child_id);
-      AXObject* real_parent = ObjectFromAXID(real_parent_id);
-      ChildrenChanged(real_parent);
-    }
-
-    // Remove the child -> original parent mapping too since this object has now
-    // been reparented back to its original parent.
-    aria_owned_child_to_real_parent_mapping_.erase(removed_child_id);
-  }
-
-  for (size_t i = 0; i < new_child_axi_ds.size(); ++i) {
-    // Find the AXObject for the child that will now be a child of this owner.
-    AXID added_child_id = new_child_axi_ds[i];
-    AXObject* added_child = ObjectFromAXID(added_child_id);
-
-    // Add this child to the mapping from child to owner.
-    aria_owned_child_to_owner_mapping_.Set(added_child_id, owner->AxObjectID());
-
-    // Add its parent object to a mapping from child to real parent. If later
-    // this owner doesn't own this child anymore, we need to return it to its
-    // original parent.
-    AXObject* original_parent = added_child->ParentObject();
-    aria_owned_child_to_real_parent_mapping_.Set(added_child_id,
-                                                 original_parent->AxObjectID());
-
-    // Now detach the object from its original parent and call childrenChanged
-    // on the original parent so that it can recompute its list of children.
-    added_child->DetachFromParent();
-    ChildrenChanged(original_parent);
-  }
-
-  // Finally, update the mapping from the owner to the list of child IDs.
-  aria_owner_to_children_mapping_.Set(owner->AxObjectID(), new_child_axi_ds);
-}
-
-void AXObjectCacheImpl::UpdateTreeIfElementIdIsAriaOwned(Element* element) {
-  if (!element->HasID())
-    return;
-
-  String id = element->GetIdAttribute();
-  HashSet<AXID>* owners = id_to_aria_owners_mapping_.at(id);
-  if (!owners)
-    return;
-
-  AXObject* ax_element = GetOrCreate(element);
-  if (!ax_element)
-    return;
-
-  // If it's already owned, call childrenChanged on the owner to make sure it's
-  // still an owner.
-  if (IsAriaOwned(ax_element)) {
-    AXObject* owned_parent = GetAriaOwnedParent(ax_element);
-    DCHECK(owned_parent);
-    ChildrenChanged(owned_parent);
-    return;
-  }
-
-  // If it's not already owned, check the possible owners based on our mapping
-  // from ids to elements that have that id listed in their aria-owns attribute.
-  for (const auto& ax_id : *owners) {
-    AXObject* owner = ObjectFromAXID(ax_id);
-    if (owner)
-      ChildrenChanged(owner);
-  }
+  relation_cache_->UpdateAriaOwns(owner, id_vector, owned_children);
 }
 
 void AXObjectCacheImpl::CheckedStateChanged(Node* node) {
@@ -922,9 +823,9 @@ void AXObjectCacheImpl::HandleLayoutComplete(LayoutObject* layout_object) {
 
   modification_count_++;
 
-  // Create the AXObject if it didn't yet exist - that's always safe at the end
-  // of a layout, and it allows an AX notification to be sent when a page has
-  // its first layout, rather than when the document first loads.
+  // Create the AXObject if it didn't yet exist - that's always safe at the
+  // end of a layout, and it allows an AX notification to be sent when a page
+  // has its first layout, rather than when the document first loads.
   if (AXObject* obj = GetOrCreate(layout_object))
     PostNotification(obj, kAXLayoutComplete);
 }
@@ -975,14 +876,15 @@ void AXObjectCacheImpl::HandleAttributeChanged(const QualifiedName& attr_name,
     HandleAriaRoleChanged(element);
   else if (attr_name == altAttr || attr_name == titleAttr)
     TextChanged(element);
-  else if (attr_name == forAttr && isHTMLLabelElement(*element))
+  else if (attr_name == forAttr && IsHTMLLabelElement(*element))
     LabelChanged(element);
   else if (attr_name == idAttr)
-    UpdateTreeIfElementIdIsAriaOwned(element);
+    relation_cache_->UpdateRelatedTree(element);
 
   if (!attr_name.LocalName().StartsWith("aria-"))
     return;
 
+  // Perform updates specific to each attribute.
   if (attr_name == aria_activedescendantAttr)
     HandleActiveDescendantChanged(element);
   else if (attr_name == aria_valuenowAttr || attr_name == aria_valuetextAttr)
@@ -990,7 +892,9 @@ void AXObjectCacheImpl::HandleAttributeChanged(const QualifiedName& attr_name,
   else if (attr_name == aria_labelAttr || attr_name == aria_labeledbyAttr ||
            attr_name == aria_labelledbyAttr)
     TextChanged(element);
-  else if (attr_name == aria_checkedAttr)
+  else if (attr_name == aria_describedbyAttr)
+    TextChanged(element);  // TODO do we need a DescriptionChanged() ?
+  else if (attr_name == aria_checkedAttr || attr_name == aria_pressedAttr)
     CheckedStateChanged(element);
   else if (attr_name == aria_selectedAttr)
     HandleAriaSelectedChanged(element);
@@ -1007,7 +911,7 @@ void AXObjectCacheImpl::HandleAttributeChanged(const QualifiedName& attr_name,
 }
 
 void AXObjectCacheImpl::LabelChanged(Element* element) {
-  TextChanged(toHTMLLabelElement(element)->control());
+  TextChanged(ToHTMLLabelElement(element)->control());
 }
 
 void AXObjectCacheImpl::InlineTextBoxesUpdated(
@@ -1094,8 +998,10 @@ bool IsNodeAriaVisible(Node* node) {
   if (!node->IsElementNode())
     return false;
 
-  return EqualIgnoringASCIICase(ToElement(node)->getAttribute(aria_hiddenAttr),
-                                "false");
+  bool is_null = true;
+  bool hidden = AccessibleNode::GetPropertyOrARIAAttribute(
+      ToElement(node), AOMBooleanProperty::kHidden, is_null);
+  return !is_null && !hidden;
 }
 
 void AXObjectCacheImpl::PostPlatformNotification(AXObject* obj,
@@ -1103,10 +1009,13 @@ void AXObjectCacheImpl::PostPlatformNotification(AXObject* obj,
   if (!obj || !obj->GetDocument() || !obj->DocumentFrameView() ||
       !obj->DocumentFrameView()->GetFrame().GetPage())
     return;
-
-  ChromeClient& client =
-      obj->GetDocument()->AxObjectCacheOwner().GetPage()->GetChromeClient();
-  client.PostAccessibilityNotification(obj, notification);
+  // Send via WebFrameClient
+  WebLocalFrameImpl* webframe = WebLocalFrameImpl::FromFrame(
+      obj->GetDocument()->AxObjectCacheOwner().GetFrame());
+  if (webframe && webframe->Client()) {
+    webframe->Client()->PostAccessibilityEvent(
+        WebAXObject(obj), static_cast<WebAXEvent>(notification));
+  }
 }
 
 void AXObjectCacheImpl::HandleFocusedUIElementChanged(Node* old_focused_node,
@@ -1133,7 +1042,18 @@ void AXObjectCacheImpl::HandleInitialFocus() {
 }
 
 void AXObjectCacheImpl::HandleEditableTextContentChanged(Node* node) {
-  AXObject* obj = Get(node);
+  if (!node)
+    return;
+
+  AXObject* obj = nullptr;
+  // We shouldn't create a new AX object here because we might be in the middle
+  // of a layout.
+  do {
+    obj = Get(node);
+  } while (!obj && (node = node->parentNode()));
+  if (!obj)
+    return;
+
   while (obj && !obj->IsNativeTextControl() && !obj->IsNonNativeTextControl())
     obj = obj->ParentObject();
   PostNotification(obj, AXObjectCache::kAXValueChanged);
@@ -1143,13 +1063,24 @@ void AXObjectCacheImpl::HandleTextFormControlChanged(Node* node) {
   HandleEditableTextContentChanged(node);
 }
 
+void AXObjectCacheImpl::HandleTextMarkerDataAdded(Node* start, Node* end) {
+  if (!start || !end)
+    return;
+
+  // Notify the client of new text marker data.
+  ChildrenChanged(start);
+  if (start != end) {
+    ChildrenChanged(end);
+  }
+}
+
 void AXObjectCacheImpl::HandleValueChanged(Node* node) {
   PostNotification(node, AXObjectCache::kAXValueChanged);
 }
 
 void AXObjectCacheImpl::HandleUpdateActiveMenuOption(LayoutMenuList* menu_list,
                                                      int option_index) {
-  AXObject* obj = Get(menu_list);
+  AXObject* obj = GetOrCreate(menu_list);
   if (!obj || !obj->IsMenuList())
     return;
 
@@ -1174,6 +1105,7 @@ void AXObjectCacheImpl::DidHideMenuListPopup(LayoutMenuList* menu_list) {
 
 void AXObjectCacheImpl::HandleLoadComplete(Document* document) {
   PostNotification(GetOrCreate(document), AXObjectCache::kAXLoadComplete);
+  AddPermissionStatusListener();
 }
 
 void AXObjectCacheImpl::HandleLayoutComplete(Document* document) {
@@ -1191,7 +1123,8 @@ void AXObjectCacheImpl::HandleScrolledToAnchor(const Node* anchor_node) {
   PostPlatformNotification(obj, kAXScrolledToAnchor);
 }
 
-void AXObjectCacheImpl::HandleScrollPositionChanged(FrameView* frame_view) {
+void AXObjectCacheImpl::HandleScrollPositionChanged(
+    LocalFrameView* frame_view) {
   AXObject* target_ax_object =
       GetOrCreate(frame_view->GetFrame().GetDocument());
   PostPlatformNotification(target_ax_object, kAXScrollPositionChanged);
@@ -1224,7 +1157,8 @@ void AXObjectCacheImpl::OnTouchAccessibilityHover(const IntPoint& location) {
     // Ignore events on a frame or plug-in, because the touch events
     // will be re-targeted there and we don't want to fire duplicate
     // accessibility events.
-    if (hit->GetLayoutObject() && hit->GetLayoutObject()->IsLayoutPart())
+    if (hit->GetLayoutObject() &&
+        hit->GetLayoutObject()->IsLayoutEmbeddedContent())
       return;
 
     PostPlatformNotification(hit, kAXHover);
@@ -1245,8 +1179,70 @@ void AXObjectCacheImpl::SetCanvasObjectBounds(HTMLCanvasElement* canvas,
   obj->SetElementRect(rect, ax_canvas);
 }
 
+void AXObjectCacheImpl::AddPermissionStatusListener() {
+  if (!document_->GetExecutionContext())
+    return;
+
+  // Passing an Origin to Mojo crashes if the host is empty because
+  // blink::SecurityOrigin sets unique to false, but url::Origin sets
+  // unique to true. This only happens for some obscure corner cases
+  // like on Android where the system registers unusual protocol handlers,
+  // and we don't need any special permissions in those cases.
+  //
+  // http://crbug.com/759528 and http://crbug.com/762716
+  if (document_->Url().Protocol() != "file" &&
+      document_->Url().Host().IsEmpty()) {
+    return;
+  }
+
+  ConnectToPermissionService(document_->GetExecutionContext(),
+                             mojo::MakeRequest(&permission_service_));
+
+  if (permission_observer_binding_.is_bound())
+    permission_observer_binding_.Close();
+
+  mojom::blink::PermissionObserverPtr observer;
+  permission_observer_binding_.Bind(mojo::MakeRequest(&observer));
+  permission_service_->AddPermissionObserver(
+      CreatePermissionDescriptor(
+          mojom::blink::PermissionName::ACCESSIBILITY_EVENTS),
+      document_->GetExecutionContext()->GetSecurityOrigin(),
+      accessibility_event_permission_, std::move(observer));
+}
+
+void AXObjectCacheImpl::OnPermissionStatusChange(
+    mojom::PermissionStatus status) {
+  accessibility_event_permission_ = status;
+}
+
+bool AXObjectCacheImpl::CanCallAOMEventListeners() const {
+  return accessibility_event_permission_ == mojom::PermissionStatus::GRANTED;
+}
+
+void AXObjectCacheImpl::RequestAOMEventListenerPermission() {
+  if (accessibility_event_permission_ != mojom::PermissionStatus::ASK)
+    return;
+
+  if (!permission_service_)
+    return;
+
+  permission_service_->RequestPermission(
+      CreatePermissionDescriptor(
+          mojom::blink::PermissionName::ACCESSIBILITY_EVENTS),
+      document_->GetExecutionContext()->GetSecurityOrigin(),
+      UserGestureIndicator::ProcessingUserGesture(),
+      ConvertToBaseCallback(WTF::Bind(
+          &AXObjectCacheImpl::OnPermissionStatusChange, WrapPersistent(this))));
+}
+
+void AXObjectCacheImpl::ContextDestroyed(ExecutionContext*) {
+  permission_service_.reset();
+  permission_observer_binding_.Close();
+}
+
 DEFINE_TRACE(AXObjectCacheImpl) {
   visitor->Trace(document_);
+  visitor->Trace(accessible_node_mapping_);
   visitor->Trace(node_object_mapping_);
 
   visitor->Trace(objects_);

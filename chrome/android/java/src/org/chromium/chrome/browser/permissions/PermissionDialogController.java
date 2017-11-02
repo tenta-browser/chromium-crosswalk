@@ -4,16 +4,13 @@
 
 package org.chromium.chrome.browser.permissions;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.DialogInterface;
 import android.support.annotation.IntDef;
 import android.support.v7.app.AlertDialog;
 import android.support.v7.widget.SwitchCompat;
-import android.text.SpannableStringBuilder;
-import android.text.Spanned;
 import android.text.TextUtils;
-import android.text.method.LinkMovementMethod;
-import android.text.style.ClickableSpan;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.TextView;
@@ -55,6 +52,7 @@ public class PermissionDialogController implements AndroidPermissionRequester.Re
 
     // Static holder to ensure safe initialization of the singleton instance.
     private static class Holder {
+        @SuppressLint("StaticFieldLeak")
         private static final PermissionDialogController sInstance =
                 new PermissionDialogController();
     }
@@ -87,6 +85,7 @@ public class PermissionDialogController implements AndroidPermissionRequester.Re
      */
     private void queueDialog(PermissionDialogDelegate delegate) {
         mRequestQueue.add(delegate);
+        delegate.setDialogController(this);
         scheduleDisplay();
     }
 
@@ -101,15 +100,21 @@ public class PermissionDialogController implements AndroidPermissionRequester.Re
 
     @Override
     public void onAndroidPermissionAccepted() {
-        mDialogDelegate.onAccept(mSwitchView.isChecked());
-        destroyDelegate();
+        // If the tab navigated or was closed behind the prompt, the delegate will be null.
+        if (mDialogDelegate != null) {
+            mDialogDelegate.onAccept(mSwitchView.isChecked());
+            destroyDelegate();
+        }
         scheduleDisplay();
     }
 
     @Override
     public void onAndroidPermissionCanceled() {
-        mDialogDelegate.onDismiss();
-        destroyDelegate();
+        // If the tab navigated or was closed behind the prompt, the delegate will be null.
+        if (mDialogDelegate != null) {
+            mDialogDelegate.onDismiss();
+            destroyDelegate();
+        }
         scheduleDisplay();
     }
 
@@ -146,7 +151,6 @@ public class PermissionDialogController implements AndroidPermissionRequester.Re
         messageTextView.announceForAccessibility(mDialogDelegate.getMessageText());
         messageTextView.setCompoundDrawablesWithIntrinsicBounds(
                 mDialogDelegate.getDrawableId(), 0, 0, 0);
-        messageTextView.setMovementMethod(LinkMovementMethod.getInstance());
 
         mSwitchView = (SwitchCompat) view.findViewById(R.id.permission_dialog_persist_toggle);
         mSwitchView.setChecked(true);
@@ -161,8 +165,7 @@ public class PermissionDialogController implements AndroidPermissionRequester.Re
             toggleTextView.announceForAccessibility(toggleMessage);
 
         } else {
-            mSwitchView.setVisibility(View.GONE);
-            toggleTextView.setVisibility(View.GONE);
+            view.findViewById(R.id.permission_dialog_persist_layout).setVisibility(View.GONE);
         }
 
         mDialog.setView(view);
@@ -191,9 +194,10 @@ public class PermissionDialogController implements AndroidPermissionRequester.Re
         mDialog.setOnDismissListener(new DialogInterface.OnDismissListener() {
             @Override
             public void onDismiss(DialogInterface dialog) {
-                // For some reason this is ocassionally null. See crbug.com/708562.
+                // Null if dismiss initiated by C++, or for some unknown reason (crbug.com/708562).
                 if (mDialogDelegate == null) {
                     scheduleDisplay();
+                    return;
                 }
 
                 mDialog = null;
@@ -225,30 +229,36 @@ public class PermissionDialogController implements AndroidPermissionRequester.Re
     }
 
     private CharSequence prepareMainMessageString(final PermissionDialogDelegate delegate) {
-        SpannableStringBuilder fullString = new SpannableStringBuilder();
-
         String messageText = delegate.getMessageText();
-        String linkText = delegate.getLinkText();
-        if (!TextUtils.isEmpty(messageText)) fullString.append(messageText);
+        assert !TextUtils.isEmpty(messageText);
 
-        // If the linkText exists, then wrap it in a clickable span and concatenate it with the main
-        // dialog message.
-        if (!TextUtils.isEmpty(linkText)) {
-            if (fullString.length() > 0) fullString.append(" ");
-            int spanStart = fullString.length();
-
-            fullString.append(linkText);
-            fullString.setSpan(new ClickableSpan() {
-                @Override
-                public void onClick(View view) {
-                    mDecision = NOT_DECIDED;
-                    delegate.onLinkClicked();
-                    if (mDialog != null) mDialog.dismiss();
-                }
-            }, spanStart, fullString.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        // TODO(timloh): Currently the strings are shared with infobars, so we for now manually
+        // remove the full stop (this code catches most but not all languages). Update the strings
+        // after removing the infobar path.
+        if (messageText.endsWith(".") || messageText.endsWith("。")) {
+            messageText = messageText.substring(0, messageText.length() - 1);
         }
 
-        return fullString;
+        return messageText;
+    }
+
+    public void dismissFromNative(PermissionDialogDelegate delegate) {
+        if (mDialogDelegate == delegate) {
+            mDialogDelegate = null;
+            AlertDialog dialog = mDialog;
+            mDialog = null;
+            if (dialog != null) {
+                dialog.dismiss();
+            } else {
+                // The prompt was accepted but the tab navigated or was closed while the Android
+                // permission prompt was active.
+                assert mDecision == ACCEPTED;
+            }
+        } else {
+            assert mRequestQueue.contains(delegate);
+            mRequestQueue.remove(delegate);
+        }
+        delegate.destroy();
     }
 
     private void destroyDelegate() {

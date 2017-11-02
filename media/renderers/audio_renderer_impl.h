@@ -21,7 +21,6 @@
 
 #include <stdint.h>
 
-#include <deque>
 #include <memory>
 
 #include "base/macros.h"
@@ -29,6 +28,7 @@
 #include "base/power_monitor/power_observer.h"
 #include "base/synchronization/lock.h"
 #include "media/base/audio_decoder.h"
+#include "media/base/audio_decoder_config.h"
 #include "media/base/audio_renderer.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/base/decryptor.h"
@@ -53,8 +53,10 @@ class MEDIA_EXPORT AudioRendererImpl
     : public AudioRenderer,
       public TimeSource,
       public base::PowerObserver,
-      NON_EXPORTED_BASE(public AudioRendererSink::RenderCallback) {
+      public AudioRendererSink::RenderCallback {
  public:
+  using PlayDelayCBForTesting = base::RepeatingCallback<void(base::TimeDelta)>;
+
   // |task_runner| is the thread on which AudioRendererImpl will execute.
   //
   // |sink| is used as the destination for the rendered audio.
@@ -64,7 +66,7 @@ class MEDIA_EXPORT AudioRendererImpl
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
       AudioRendererSink* sink,
       const CreateAudioDecodersCB& create_audio_decoders_cb,
-      const scoped_refptr<MediaLog>& media_log);
+      MediaLog* media_log);
   ~AudioRendererImpl() override;
 
   // TimeSource implementation.
@@ -90,6 +92,8 @@ class MEDIA_EXPORT AudioRendererImpl
   // base::PowerObserver implementation.
   void OnSuspend() override;
   void OnResume() override;
+
+  void SetPlayDelayCBForTesting(PlayDelayCBForTesting cb);
 
  private:
   friend class AudioRendererImplTest;
@@ -186,15 +190,17 @@ class MEDIA_EXPORT AudioRendererImpl
   void OnBufferingStateChange(BufferingState state);
   void OnWaitingForDecryptionKey();
 
+  // Generally called by the AudioBufferStream when a config change occurs. May
+  // also be called internally with an empty config to reset config-based state.
+  // Will notify RenderClient when called with a valid config.
+  void OnConfigChange(const AudioDecoderConfig& config);
+
   // Used to initiate the flush operation once all pending reads have
   // completed.
   void DoFlush_Locked();
 
   // Called when the |decoder_|.Reset() has completed.
   void ResetDecoderDone();
-
-  // Called by the AudioBufferStream when a config change occurs.
-  void OnConfigChange();
 
   // Updates |buffering_state_| and fires |buffering_state_cb_|.
   void SetBufferingState_Locked(BufferingState buffering_state);
@@ -210,6 +216,11 @@ class MEDIA_EXPORT AudioRendererImpl
   // Whether or not we expect to handle config changes.
   bool expecting_config_changes_;
 
+  // Stores the last decoder config that was passed to
+  // RendererClient::OnAudioConfigChange. Used to prevent signaling config
+  // to the upper layers when when the new config is the same.
+  AudioDecoderConfig current_decoder_config_;
+
   // The sink (destination) for rendered audio. |sink_| must only be accessed
   // on |task_runner_|. |sink_| must never be called under |lock_| or else we
   // may deadlock between |task_runner_| and the audio callback thread.
@@ -217,9 +228,9 @@ class MEDIA_EXPORT AudioRendererImpl
 
   std::unique_ptr<AudioBufferStream> audio_buffer_stream_;
 
-  scoped_refptr<MediaLog> media_log_;
+  MediaLog* media_log_;
 
-  // Cached copy of hardware params from |sink_|.
+  // Cached copy of audio params that the renderer is initialized with.
   AudioParameters audio_parameters_;
 
   RendererClient* client_;
@@ -244,6 +255,13 @@ class MEDIA_EXPORT AudioRendererImpl
   // Similar to |last_decoded_sample_rate_|, used to configure the channel mask
   // given to the |algorithm_| for efficient playback rate changes.
   ChannelLayout last_decoded_channel_layout_;
+
+  // Whether the stream is possibly encrypted.
+  bool is_encrypted_;
+
+  // Similar to |last_decoded_channel_layout_|, used to configure the channel
+  // mask given to the |algorithm_| for efficient playback rate changes.
+  int last_decoded_channels_;
 
   // After Initialize() has completed, all variables below must be accessed
   // under |lock_|. ------------------------------------------------------------
@@ -300,6 +318,13 @@ class MEDIA_EXPORT AudioRendererImpl
   // Set by OnSuspend() and OnResume() to indicate when the system is about to
   // suspend/is suspended and when it resumes.
   bool is_suspending_;
+
+  // Whether to pass compressed audio bitstream to audio sink directly.
+  bool is_passthrough_;
+
+  // Set and used only in tests to report positive play_delay values in
+  // Render().
+  PlayDelayCBForTesting play_delay_cb_for_testing_;
 
   // End variables which must be accessed under |lock_|. ----------------------
 

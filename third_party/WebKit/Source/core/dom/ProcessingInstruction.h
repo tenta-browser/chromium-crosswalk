@@ -22,8 +22,8 @@
 #ifndef ProcessingInstruction_h
 #define ProcessingInstruction_h
 
+#include "core/css/StyleEngineContext.h"
 #include "core/dom/CharacterData.h"
-#include "core/dom/StyleEngineContext.h"
 #include "core/loader/resource/StyleSheetResource.h"
 #include "core/loader/resource/StyleSheetResourceClient.h"
 #include "platform/loader/fetch/ResourceOwner.h"
@@ -88,7 +88,7 @@ class ProcessingInstruction final : public CharacterData,
   void SetCSSStyleSheet(const String& href,
                         const KURL& base_url,
                         ReferrerPolicy,
-                        const String& charset,
+                        const WTF::TextEncoding&,
                         const CSSStyleSheetResource*) override;
   void SetXSLStyleSheet(const String& href,
                         const KURL& base_url,

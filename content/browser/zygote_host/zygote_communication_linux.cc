@@ -15,13 +15,15 @@
 #include "base/path_service.h"
 #include "base/pickle.h"
 #include "base/posix/eintr_wrapper.h"
-#include "base/posix/unix_domain_socket_linux.h"
+#include "base/posix/unix_domain_socket.h"
 #include "content/browser/zygote_host/zygote_host_impl_linux.h"
 #include "content/common/zygote_commands_linux.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
+#include "media/base/media_switches.h"
+#include "services/service_manager/embedder/switches.h"
 #include "ui/display/display_switches.h"
 #include "ui/gfx/switches.h"
 
@@ -83,7 +85,7 @@ ssize_t ZygoteCommunication::ReadReply(void* buf, size_t buf_len) {
 
 pid_t ZygoteCommunication::ForkRequest(
     const std::vector<std::string>& argv,
-    std::unique_ptr<FileDescriptorInfo> mapping,
+    std::unique_ptr<PosixFileDescriptorInfo> mapping,
     const std::string& process_type) {
   DCHECK(init_);
 
@@ -110,7 +112,7 @@ pid_t ZygoteCommunication::ForkRequest(
 
   // First FD to send is peer_sock.
   // TODO(morrita): Ideally, this should be part of the mapping so that
-  // FileDescriptorInfo can manages its lifetime.
+  // PosixFileDescriptorInfo can manages its lifetime.
   fds.push_back(peer_sock.get());
 
   // The rest come from mapping.
@@ -249,7 +251,9 @@ void ZygoteCommunication::Init() {
   // to the zygote/renderers.
   // Should this list be obtained from browser_render_process_host.cc?
   static const char* const kForwardSwitches[] = {
+      service_manager::switches::kDisableInProcessStackTraces,
       switches::kAllowSandboxDebugging, switches::kAndroidFontsPath,
+      switches::kClearKeyCdmPathForTesting,
       switches::kDisableSeccompFilterSandbox, switches::kEnableHeapProfiling,
       switches::kEnableLogging,  // Support, e.g., --enable-logging=stderr.
       // Need to tell the zygote that it is headless so that we don't try to use

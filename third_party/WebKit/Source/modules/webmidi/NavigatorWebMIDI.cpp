@@ -35,11 +35,13 @@
 #include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/frame/Deprecation.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Navigator.h"
 #include "core/frame/UseCounter.h"
 #include "modules/webmidi/MIDIAccessInitializer.h"
 #include "modules/webmidi/MIDIOptions.h"
+#include "public/platform/WebFeaturePolicyFeature.h"
 
 namespace blink {
 
@@ -79,9 +81,21 @@ ScriptPromise NavigatorWebMIDI::requestMIDIAccess(ScriptState* script_state,
         DOMException::Create(kAbortError, "The frame is not working."));
   }
 
+  Document& document = *ToDocument(ExecutionContext::From(script_state));
+  if (options.hasSysex() && options.sysex()) {
+    UseCounter::Count(
+        document,
+        WebFeature::kRequestMIDIAccessWithSysExOption_ObscuredByFootprinting);
+    UseCounter::CountCrossOriginIframe(
+        document,
+        WebFeature::
+            kRequestMIDIAccessIframeWithSysExOption_ObscuredByFootprinting);
+  }
   UseCounter::CountCrossOriginIframe(
-      *ToDocument(ExecutionContext::From(script_state)),
-      UseCounter::kRequestMIDIAccessIframe);
+      document, WebFeature::kRequestMIDIAccessIframe_ObscuredByFootprinting);
+  Deprecation::CountDeprecationFeaturePolicy(
+      document, WebFeaturePolicyFeature::kMidiFeature);
+
   return MIDIAccessInitializer::Start(script_state, options);
 }
 

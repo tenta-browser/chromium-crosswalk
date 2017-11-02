@@ -15,17 +15,14 @@
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/synchronization/lock.h"
 #include "content/public/browser/host_zoom_map.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 
 namespace content {
 
 class WebContentsImpl;
 
 // HostZoomMap needs to be deleted on the UI thread because it listens
-// to notifications on there (and holds a NotificationRegistrar).
-class CONTENT_EXPORT HostZoomMapImpl : public NON_EXPORTED_BASE(HostZoomMap),
-                                       public NotificationObserver {
+// to notifications on there.
+class CONTENT_EXPORT HostZoomMapImpl : public HostZoomMap {
  public:
   HostZoomMapImpl();
   ~HostZoomMapImpl() override;
@@ -43,6 +40,9 @@ class CONTENT_EXPORT HostZoomMapImpl : public NON_EXPORTED_BASE(HostZoomMap),
                     const std::string& host) const override;
   ZoomLevelVector GetAllZoomLevels() const override;
   void SetZoomLevelForHost(const std::string& host, double level) override;
+  void InitializeZoomLevelForHost(const std::string& host,
+                                  double level,
+                                  base::Time last_modified) override;
   void SetZoomLevelForHostAndScheme(const std::string& scheme,
                                     const std::string& host,
                                     double level) override;
@@ -51,7 +51,8 @@ class CONTENT_EXPORT HostZoomMapImpl : public NON_EXPORTED_BASE(HostZoomMap),
   void SetTemporaryZoomLevel(int render_process_id,
                              int render_view_id,
                              double level) override;
-
+  void ClearZoomLevels(base::Time delete_begin, base::Time delete_end) override;
+  void SetStoreLastModified(bool store_last_modified) override;
   void ClearTemporaryZoomLevel(int render_process_id,
                                int render_view_id) override;
   double GetDefaultZoomLevel() const override;
@@ -96,15 +97,18 @@ class CONTENT_EXPORT HostZoomMapImpl : public NON_EXPORTED_BASE(HostZoomMap),
                              int render_process_id,
                              int render_view_id) const;
 
-  // NotificationObserver implementation.
-  void Observe(int type,
-               const NotificationSource& source,
-               const NotificationDetails& details) override;
-
   void SendErrorPageZoomLevelRefresh();
 
+  void WillCloseRenderView(int render_process_id, int render_view_id);
+
+  void SetClockForTesting(std::unique_ptr<base::Clock> clock) override;
+
  private:
-  typedef std::map<std::string, double> HostZoomLevels;
+  struct ZoomLevel {
+    double level;
+    base::Time last_modified;
+  };
+  typedef std::map<std::string, ZoomLevel> HostZoomLevels;
   typedef std::map<std::string, HostZoomLevels> SchemeHostZoomLevels;
 
   struct RenderViewKey {
@@ -129,6 +133,12 @@ class CONTENT_EXPORT HostZoomMapImpl : public NON_EXPORTED_BASE(HostZoomMap),
   double GetZoomLevelForHostInternal(const std::string& host) const;
   double GetZoomLevelForHostAndSchemeInternal(const std::string& scheme,
                                               const std::string& host) const;
+
+  // Set a zoom level for |host| and store the |last_modified| timestamp.
+  // Use only to explicitly set a timestamp.
+  void SetZoomLevelForHostInternal(const std::string& host,
+                                   double level,
+                                   base::Time last_modified);
 
   // Notifies the renderers from this browser context to change the zoom level
   // for the specified host and scheme.
@@ -156,7 +166,9 @@ class CONTENT_EXPORT HostZoomMapImpl : public NON_EXPORTED_BASE(HostZoomMap),
   // guarantee thread safety.
   mutable base::Lock lock_;
 
-  NotificationRegistrar registrar_;
+  bool store_last_modified_;
+
+  std::unique_ptr<base::Clock> clock_;
 
   DISALLOW_COPY_AND_ASSIGN(HostZoomMapImpl);
 };

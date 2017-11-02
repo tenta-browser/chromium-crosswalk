@@ -94,7 +94,7 @@ class LayoutGrid final : public LayoutBlock {
                          GridTrackSizingDirection,
                          size_t start_line,
                          size_t span,
-                         SizingOperation) const;
+                         Optional<LayoutUnit> available_size) const;
   bool CachedHasDefiniteLogicalHeight() const;
   bool IsOrthogonalChild(const LayoutBox&) const;
   bool IsBaselineContextComputed(GridAxis) const;
@@ -102,6 +102,11 @@ class LayoutGrid final : public LayoutBlock {
                                    GridAxis = kGridColumnAxis) const;
   const BaselineGroup& GetBaselineGroupForChild(const LayoutBox&,
                                                 GridAxis) const;
+
+  LayoutUnit GridGap(GridTrackSizingDirection) const;
+  LayoutUnit GridItemOffset(GridTrackSizingDirection) const;
+
+  StyleContentAlignmentData ContentAlignment(GridTrackSizingDirection) const;
 
  protected:
   ItemPosition SelfAlignmentNormalBehavior(
@@ -128,13 +133,23 @@ class LayoutGrid final : public LayoutBlock {
                 LayoutObject* before_child = nullptr) override;
   void RemoveChild(LayoutObject*) override;
 
+  bool SelfAlignmentChangedSize(GridAxis,
+                                const ComputedStyle& old_style,
+                                const ComputedStyle& new_style,
+                                const LayoutBox&) const;
+  bool DefaultAlignmentChangedSize(GridAxis,
+                                   const ComputedStyle& old_style,
+                                   const ComputedStyle& new_style) const;
   void StyleDidChange(StyleDifference, const ComputedStyle*) override;
+
+  Optional<LayoutUnit> AvailableSpaceForGutters(GridTrackSizingDirection) const;
 
   bool ExplicitGridDidResize(const ComputedStyle&) const;
   bool NamedGridLinesDefinitionDidChange(const ComputedStyle&) const;
 
-  size_t ComputeAutoRepeatTracksCount(GridTrackSizingDirection,
-                                      SizingOperation) const;
+  size_t ComputeAutoRepeatTracksCount(
+      GridTrackSizingDirection,
+      Optional<LayoutUnit> available_size) const;
   size_t ClampAutoRepeatTracks(GridTrackSizingDirection,
                                size_t auto_repeat_tracks) const;
 
@@ -142,7 +157,8 @@ class LayoutGrid final : public LayoutBlock {
       Grid&,
       GridTrackSizingDirection) const;
 
-  void PlaceItemsOnGrid(Grid&, SizingOperation) const;
+  void PlaceItemsOnGrid(Grid&,
+                        Optional<LayoutUnit> available_logical_width) const;
   void PopulateExplicitGridAndOrderIterator(Grid&) const;
   std::unique_ptr<GridArea> CreateEmptyGridAreaAtSpecifiedPositionsOutsideGrid(
       const Grid&,
@@ -197,18 +213,23 @@ class LayoutGrid final : public LayoutBlock {
       const LayoutBox&,
       GridTrackSizingDirection) const;
 
-  void ApplyStretchAlignmentToTracksIfNeeded(GridTrackSizingDirection);
-
   void PaintChildren(const PaintInfo&, const LayoutPoint&) const override;
 
-  LayoutUnit MarginLogicalHeightForChild(const LayoutBox&) const;
-  LayoutUnit ComputeMarginLogicalSizeForChild(MarginDirection,
-                                              const LayoutBox&) const;
   LayoutUnit AvailableAlignmentSpaceForChildBeforeStretching(
       LayoutUnit grid_area_breadth_for_child,
       const LayoutBox&) const;
-  StyleSelfAlignmentData JustifySelfForChild(const LayoutBox&) const;
-  StyleSelfAlignmentData AlignSelfForChild(const LayoutBox&) const;
+  StyleSelfAlignmentData JustifySelfForChild(
+      const LayoutBox&,
+      const ComputedStyle* = nullptr) const;
+  StyleSelfAlignmentData AlignSelfForChild(
+      const LayoutBox&,
+      const ComputedStyle* = nullptr) const;
+  StyleSelfAlignmentData SelfAlignmentForChild(
+      GridAxis,
+      const LayoutBox& child,
+      const ComputedStyle* = nullptr) const;
+  StyleSelfAlignmentData DefaultAlignment(GridAxis, const ComputedStyle&) const;
+  bool DefaultAlignmentIsStretchOrNormal(GridAxis, const ComputedStyle&) const;
   void ApplyStretchAlignmentToChildIfNeeded(LayoutBox&);
   bool HasAutoSizeInColumnAxis(const LayoutBox& child) const {
     return IsHorizontalWritingMode() ? child.StyleRef().Height().IsAuto()
@@ -231,13 +252,13 @@ class LayoutGrid final : public LayoutBlock {
   void UpdateAutoMarginsInColumnAxisIfNeeded(LayoutBox&);
   void UpdateAutoMarginsInRowAxisIfNeeded(LayoutBox&);
 
-  int BaselinePosition(
+  LayoutUnit BaselinePosition(
       FontBaseline,
       bool first_line,
       LineDirectionMode,
       LinePositionMode = kPositionOnContainingLine) const override;
-  int FirstLineBoxBaseline() const override;
-  int InlineBlockBaseline(LineDirectionMode) const override;
+  LayoutUnit FirstLineBoxBaseline() const override;
+  LayoutUnit InlineBlockBaseline(LineDirectionMode) const override;
 
   bool IsHorizontalGridAxis(GridAxis) const;
   bool IsParallelToBlockAxisForChild(const LayoutBox&, GridAxis) const;
@@ -251,16 +272,15 @@ class LayoutGrid final : public LayoutBlock {
                              LayoutUnit ascent,
                              GridAxis) const;
 
-  bool BaselineMayAffectIntrinsicWidth() const;
-  bool BaselineMayAffectIntrinsicHeight() const;
+  bool BaselineMayAffectIntrinsicSize(GridTrackSizingDirection) const;
   void ComputeBaselineAlignmentContext();
   void UpdateBaselineAlignmentContextIfNeeded(LayoutBox&, GridAxis);
 
   LayoutUnit ColumnAxisBaselineOffsetForChild(const LayoutBox&) const;
   LayoutUnit RowAxisBaselineOffsetForChild(const LayoutBox&) const;
 
-  LayoutUnit GridGapForDirection(GridTrackSizingDirection,
-                                 SizingOperation) const;
+  LayoutUnit GridGap(GridTrackSizingDirection,
+                     Optional<LayoutUnit> available_size) const;
 
   size_t GridItemSpan(const LayoutBox&, GridTrackSizingDirection);
 
@@ -273,10 +293,10 @@ class LayoutGrid final : public LayoutBlock {
   static LayoutUnit OverrideContainingBlockContentSizeForChild(
       const LayoutBox& child,
       GridTrackSizingDirection);
-  static int SynthesizedBaselineFromContentBox(const LayoutBox&,
-                                               LineDirectionMode);
-  static int SynthesizedBaselineFromBorderBox(const LayoutBox&,
-                                              LineDirectionMode);
+  static LayoutUnit SynthesizedBaselineFromContentBox(const LayoutBox&,
+                                                      LineDirectionMode);
+  static LayoutUnit SynthesizedBaselineFromBorderBox(const LayoutBox&,
+                                                     LineDirectionMode);
   static const StyleContentAlignmentData& ContentAlignmentNormalBehavior();
 
   typedef HashMap<unsigned,

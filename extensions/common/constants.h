@@ -35,6 +35,9 @@ extern const base::FilePath::CharType kVerifiedContentsFilename[];
 // Name of the computed hashes file within the metadata folder.
 extern const base::FilePath::CharType kComputedHashesFilename[];
 
+// Name of the indexed ruleset file for the Declarative Net Request API.
+extern const base::FilePath::CharType kIndexedRulesetFilename[];
+
 // The name of the directory inside the profile where extensions are
 // installed to.
 extern const char kInstallDirectoryName[];
@@ -113,6 +116,12 @@ extern const char kWebStoreAppId[];
 extern const uint8_t kWebstoreSignaturesPublicKey[];
 extern const size_t kWebstoreSignaturesPublicKeySize;
 
+// Thread identifier for the main renderer thread (as opposed to a service
+// worker thread).
+// This is the default thread id used for extension event listeners registered
+// from a non-service worker context
+extern const int kMainThreadId;
+
 // Enumeration of possible app launch sources.
 // This should be kept in sync with LaunchSource in
 // extensions/common/api/app_runtime.idl, and GetLaunchSourceEnum() in
@@ -141,6 +150,7 @@ enum AppLaunchSource {
   SOURCE_CHROME_INTERNAL,
   SOURCE_TEST,
   SOURCE_INSTALLED_NOTIFICATION,
+  SOURCE_CONTEXT_MENU,
   NUM_APP_LAUNCH_SOURCES
 };
 
@@ -199,6 +209,9 @@ enum ExtensionIcons {
   EXTENSION_ICON_INVALID = 0,
 };
 
+// The extension id of the feedback component extension.
+extern const char kFeedbackExtensionId[];
+
 // The extension id of the PDF extension.
 extern const char kPdfExtensionId[];
 
@@ -219,6 +232,9 @@ extern const char kProdHangoutsExtensionId[];
 
 // Extension ids used by Hangouts.
 extern const char* const kHangoutsExtensionIds[6];
+
+// Error message when enterprise policy blocks scripting of webpage.
+extern const char kPolicyBlockedScripting[];
 
 }  // namespace extension_misc
 

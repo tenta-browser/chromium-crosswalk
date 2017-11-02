@@ -5,14 +5,15 @@
 #ifndef COMPONENTS_GCM_DRIVER_GCM_STATS_RECORDER_ANDROID_H_
 #define COMPONENTS_GCM_DRIVER_GCM_STATS_RECORDER_ANDROID_H_
 
-#include <deque>
 #include <string>
 
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
-#include "components/gcm_driver/crypto/gcm_encryption_provider.h"
 #include "components/gcm_driver/gcm_activity.h"
 
 namespace gcm {
+
+enum class GCMDecryptionResult;
 
 // Stats recorder for Android, used for recording stats and activities on the
 // GCM Driver level for debugging purposes. Based on the GCMStatsRecorder, as
@@ -62,7 +63,7 @@ class GCMStatsRecorderAndroid {
 
   // Records a message decryption failure caused by |result| for |app_id|.
   void RecordDecryptionFailure(const std::string& app_id,
-                               GCMEncryptionProvider::DecryptionResult result);
+                               GCMDecryptionResult result);
 
   bool is_recording() const { return is_recording_; }
   void set_is_recording(bool recording) { is_recording_ = recording; }
@@ -79,13 +80,14 @@ class GCMStatsRecorderAndroid {
   bool is_recording_ = false;
 
   // Recorded registration activities (which includes unregistrations).
-  std::deque<RegistrationActivity> registration_activities_;
+  base::circular_deque<RegistrationActivity> registration_activities_;
 
   // Recorded received message activities.
-  std::deque<ReceivingActivity> receiving_activities_;
+  base::circular_deque<ReceivingActivity> receiving_activities_;
 
   // Recorded message decryption failure activities.
-  std::deque<DecryptionFailureActivity> decryption_failure_activities_;
+  base::circular_deque<DecryptionFailureActivity>
+      decryption_failure_activities_;
 
   DISALLOW_COPY_AND_ASSIGN(GCMStatsRecorderAndroid);
 };

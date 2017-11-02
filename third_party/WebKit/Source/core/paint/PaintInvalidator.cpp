@@ -5,8 +5,8 @@
 #include "core/paint/PaintInvalidator.h"
 
 #include "core/editing/FrameSelection.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutTable.h"
@@ -38,9 +38,9 @@ static LayoutRect SlowMapToVisualRectInAncestorSpace(
   if (object.IsLayoutView()) {
     ToLayoutView(object).MapToVisualRectInAncestorSpace(
         &ancestor, result, kInputIsInFrameCoordinates, kDefaultVisualRectFlags);
+  } else {
+    object.MapToVisualRectInAncestorSpace(&ancestor, result);
   }
-
-  object.MapToVisualRectInAncestorSpace(&ancestor, result);
   return result;
 }
 
@@ -54,6 +54,8 @@ LayoutRect PaintInvalidator::MapLocalRectToVisualRectInBacking(
     const LayoutObject& object,
     const Rect& local_rect,
     const PaintInvalidatorContext& context) {
+  DCHECK(context.NeedsVisualRectUpdate(object));
+
   if (local_rect.IsEmpty())
     return LayoutRect();
 
@@ -68,8 +70,8 @@ LayoutRect PaintInvalidator::MapLocalRectToVisualRectInBacking(
   if (!is_svg_child) {
     if (object.IsBox()) {
       ToLayoutBox(object).FlipForWritingMode(rect);
-    } else if (!(context.forced_subtree_invalidation_flags &
-                 PaintInvalidatorContext::kForcedSubtreeSlowPathRect)) {
+    } else if (!(context.subtree_flags &
+                 PaintInvalidatorContext::kSubtreeSlowPathRect)) {
       // For SPv2 and the GeometryMapper path, we also need to convert the rect
       // for non-boxes into physical coordinates before applying paint offset.
       // (Otherwise we'll call mapToVisualrectInAncestorSpace() which requires
@@ -80,7 +82,7 @@ LayoutRect PaintInvalidator::MapLocalRectToVisualRectInBacking(
     }
   }
 
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
     // In SPv2, visual rects are in the space of their local transform node.
     // For SVG, the input rect is in local SVG coordinates in which paint
     // offset doesn't apply.
@@ -93,8 +95,7 @@ LayoutRect PaintInvalidator::MapLocalRectToVisualRectInBacking(
   }
 
   LayoutRect result;
-  if (context.forced_subtree_invalidation_flags &
-      PaintInvalidatorContext::kForcedSubtreeSlowPathRect) {
+  if (context.subtree_flags & PaintInvalidatorContext::kSubtreeSlowPathRect) {
     result = SlowMapToVisualRectInAncestorSpace(
         object, *context.paint_invalidation_container, rect);
   } else if (object == context.paint_invalidation_container) {
@@ -106,11 +107,16 @@ LayoutRect PaintInvalidator::MapLocalRectToVisualRectInBacking(
       rect.MoveBy(Point(object.PaintOffset()));
 
     auto container_contents_properties =
-        context.paint_invalidation_container->ContentsProperties();
+        context.paint_invalidation_container->FirstFragment()
+            ->ContentsProperties();
+    DCHECK(
+        !context.paint_invalidation_container->FirstFragment()->NextFragment());
     if (context.tree_builder_context_->current.transform ==
             container_contents_properties.Transform() &&
         context.tree_builder_context_->current.clip ==
-            container_contents_properties.Clip()) {
+            container_contents_properties.Clip() &&
+        context.tree_builder_context_->current_effect ==
+            container_contents_properties.Effect()) {
       result = LayoutRect(rect);
     } else {
       // Use enclosingIntRect to ensure the final visual rect will cover the
@@ -124,19 +130,25 @@ LayoutRect PaintInvalidator::MapLocalRectToVisualRectInBacking(
 
       PropertyTreeState current_tree_state(
           context.tree_builder_context_->current.transform,
-          context.tree_builder_context_->current.clip, nullptr);
+          context.tree_builder_context_->current.clip,
+          context.tree_builder_context_->current_effect);
 
       FloatClipRect float_rect((FloatRect(rect)));
-      GeometryMapper::SourceToDestinationVisualRect(
+      GeometryMapper::LocalToAncestorVisualRect(
           current_tree_state, container_contents_properties, float_rect);
       result = LayoutRect(float_rect.Rect());
     }
 
-    // Convert the result to the container's contents space.
+    // Convert the result to the paint invalidation container's contents space.
+    // If the paint invalidation container has a transform node associated
+    // with it (due to scroll or transform), then its PaintOffset
+    // must be zero or equal to its subpixel accumulation, since in all
+    // such cases we allocate a paint offset translation transform.
     result.MoveBy(-context.paint_invalidation_container->PaintOffset());
   }
 
-  object.AdjustVisualRectForRasterEffects(result);
+  if (!result.IsEmpty())
+    result.Inflate(object.VisualRectOutsetForRasterEffects());
 
   PaintLayer::MapRectInPaintInvalidationContainerToBacking(
       *context.paint_invalidation_container, result);
@@ -150,7 +162,6 @@ LayoutRect PaintInvalidator::MapLocalRectToVisualRectInBacking(
 void PaintInvalidatorContext::MapLocalRectToVisualRectInBacking(
     const LayoutObject& object,
     LayoutRect& rect) const {
-  DCHECK(NeedsVisualRectUpdate(object));
   rect = PaintInvalidator::MapLocalRectToVisualRectInBacking<LayoutRect,
                                                              LayoutPoint>(
       object, rect, *this);
@@ -172,7 +183,7 @@ LayoutPoint PaintInvalidator::ComputeLocationInBacking(
     const LayoutObject& object,
     const PaintInvalidatorContext& context) {
   // In SPv2, locationInBacking is in the space of their local transform node.
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return object.PaintOffset();
 
   LayoutPoint point;
@@ -180,7 +191,9 @@ LayoutPoint PaintInvalidator::ComputeLocationInBacking(
     point.MoveBy(object.PaintOffset());
 
     const auto* container_transform =
-        context.paint_invalidation_container->ContentsProperties().Transform();
+        context.paint_invalidation_container->FirstFragment()
+            ->ContentsProperties()
+            .Transform();
     if (context.tree_builder_context_->current.transform !=
         container_transform) {
       FloatRect rect = FloatRect(FloatPoint(point), FloatSize());
@@ -190,7 +203,11 @@ LayoutPoint PaintInvalidator::ComputeLocationInBacking(
       point = LayoutPoint(rect.Location());
     }
 
-    // Convert the result to the container's contents space.
+    // Convert the result to the paint invalidation container's contents space.
+    // If the paint invalidation container has a transform node associated
+    // with it (due to scroll or transform), then its PaintOffset
+    // must be zero or equal to its subpixel accumulation, since in all
+    // such cases we allocate a paint offset translation transform.
     point.MoveBy(-context.paint_invalidation_container->PaintOffset());
   }
 
@@ -224,11 +241,8 @@ void PaintInvalidator::UpdatePaintingLayer(const LayoutObject& object,
 
   // Table collapsed borders are painted in PaintPhaseDescendantBlockBackgrounds
   // on the table's layer.
-  if (object.IsTable()) {
-    const LayoutTable& table = ToLayoutTable(object);
-    if (table.CollapseBorders() && !table.CollapsedBorders().IsEmpty())
-      context.painting_layer->SetNeedsPaintPhaseDescendantBlockBackgrounds();
-  }
+  if (object.IsTable() && ToLayoutTable(object).HasCollapsedBorders())
+    context.painting_layer->SetNeedsPaintPhaseDescendantBlockBackgrounds();
 
   // The following flags are for descendants of the layer object only.
   if (object == context.painting_layer->GetLayoutObject())
@@ -253,31 +267,35 @@ void PaintInvalidator::UpdatePaintingLayer(const LayoutObject& object,
 
 namespace {
 
-// This is temporary to workaround paint invalidation issues in
-// non-rootLayerScrolls mode.
-// It undoes FrameView's content clip and scroll for paint invalidation of frame
-// scroll controls and the LayoutView to which the content clip and scroll don't
-// apply.
+// This is a helper to handle paint invalidation for frames in
+// non-RootLayerScrolling mode.
+// It undoes LocalFrameView's content clip and scroll for paint invalidation of
+// frame scroll controls to which the content clip and scroll don't apply.
 class ScopedUndoFrameViewContentClipAndScroll {
  public:
   ScopedUndoFrameViewContentClipAndScroll(
-      const FrameView& frame_view,
-      const PaintPropertyTreeBuilderContext& tree_builder_context)
+      const LocalFrameView& frame_view,
+      const PaintPropertyTreeBuilderFragmentContext& tree_builder_context)
       : tree_builder_context_(
-            const_cast<PaintPropertyTreeBuilderContext&>(tree_builder_context)),
+            const_cast<PaintPropertyTreeBuilderFragmentContext&>(
+                tree_builder_context)),
         saved_context_(tree_builder_context_.current) {
-    DCHECK(!RuntimeEnabledFeatures::rootLayerScrollingEnabled());
+    DCHECK(!RuntimeEnabledFeatures::RootLayerScrollingEnabled());
 
-    if (frame_view.ContentClip() == saved_context_.clip)
-      tree_builder_context_.current.clip = saved_context_.clip->Parent();
-    if (const auto* scroll_translation = frame_view.ScrollTranslation()) {
-      if (scroll_translation->ScrollNode() == saved_context_.scroll)
-        tree_builder_context_.current.scroll = saved_context_.scroll->Parent();
-      if (scroll_translation == saved_context_.transform) {
-        tree_builder_context_.current.transform =
-            saved_context_.transform->Parent();
-      }
+    if (const auto* scroll_node = frame_view.ScrollNode()) {
+      DCHECK_EQ(scroll_node, saved_context_.scroll);
+      tree_builder_context_.current.scroll = saved_context_.scroll->Parent();
     }
+    if (const auto* scroll_translation = frame_view.ScrollTranslation()) {
+      DCHECK_EQ(scroll_translation, saved_context_.transform);
+      tree_builder_context_.current.transform =
+          saved_context_.transform->Parent();
+    }
+    DCHECK_EQ(frame_view.PreTranslation(),
+              tree_builder_context_.current.transform);
+
+    DCHECK_EQ(frame_view.ContentClip(), saved_context_.clip);
+    tree_builder_context_.current.clip = saved_context_.clip->Parent();
   }
 
   ~ScopedUndoFrameViewContentClipAndScroll() {
@@ -285,8 +303,9 @@ class ScopedUndoFrameViewContentClipAndScroll {
   }
 
  private:
-  PaintPropertyTreeBuilderContext& tree_builder_context_;
-  PaintPropertyTreeBuilderContext::ContainingBlockContext saved_context_;
+  PaintPropertyTreeBuilderFragmentContext& tree_builder_context_;
+  PaintPropertyTreeBuilderFragmentContext::ContainingBlockContext
+      saved_context_;
 };
 
 }  // namespace
@@ -324,11 +343,11 @@ void PaintInvalidator::UpdatePaintInvalidationContainer(
     // container on which the current object is painted.
     context.paint_invalidation_container =
         context.paint_invalidation_container_for_stacked_contents;
-    if (context.forced_subtree_invalidation_flags &
-        PaintInvalidatorContext::
-            kForcedSubtreeFullInvalidationForStackedContents)
-      context.forced_subtree_invalidation_flags |=
-          PaintInvalidatorContext::kForcedSubtreeFullInvalidation;
+    if (context.subtree_flags &
+        PaintInvalidatorContext::kSubtreeFullInvalidationForStackedContents) {
+      context.subtree_flags |=
+          PaintInvalidatorContext::kSubtreeFullInvalidation;
+    }
   }
 
   if (object == context.paint_invalidation_container) {
@@ -337,15 +356,14 @@ void PaintInvalidator::UpdatePaintInvalidationContainer(
     // descending into a different invalidation container. (For instance if
     // our parents were moved, the entire container will just move.)
     if (object != context.paint_invalidation_container_for_stacked_contents) {
-      // However, we need to keep ForcedSubtreeVisualRectUpdate and
-      // ForcedSubtreeFullInvalidationForStackedContents flags if the current
+      // However, we need to keep kSubtreeVisualRectUpdate and
+      // kSubtreeFullInvalidationForStackedContents flags if the current
       // object isn't the paint invalidation container of stacked contents.
-      context.forced_subtree_invalidation_flags &=
-          (PaintInvalidatorContext::kForcedSubtreeVisualRectUpdate |
-           PaintInvalidatorContext::
-               kForcedSubtreeFullInvalidationForStackedContents);
+      context.subtree_flags &=
+          (PaintInvalidatorContext::kSubtreeVisualRectUpdate |
+           PaintInvalidatorContext::kSubtreeFullInvalidationForStackedContents);
     } else {
-      context.forced_subtree_invalidation_flags = 0;
+      context.subtree_flags = 0;
     }
   }
 
@@ -356,59 +374,60 @@ void PaintInvalidator::UpdatePaintInvalidationContainer(
 
 void PaintInvalidator::UpdateVisualRectIfNeeded(
     const LayoutObject& object,
+    const PaintPropertyTreeBuilderContext* tree_builder_context,
     PaintInvalidatorContext& context) {
   context.old_visual_rect = object.VisualRect();
-  context.old_location = ObjectPaintInvalidator(object).LocationInBacking();
+  context.old_location = object.LocationInBacking();
 
 #if DCHECK_IS_ON()
-  FindObjectVisualRectNeedingUpdateScope finder(object, context);
+  FindObjectVisualRectNeedingUpdateScope finder(
+      object, context,
+      tree_builder_context && tree_builder_context->is_actually_needed);
+
+  context.tree_builder_context_actually_needed_ =
+      tree_builder_context->is_actually_needed;
 #endif
 
-  if (!context.NeedsVisualRectUpdate(object)) {
-    context.new_location = context.old_location;
+  if (!context.NeedsVisualRectUpdate(object))
     return;
-  }
 
-  UpdateVisualRect(object, context);
+  DCHECK(tree_builder_context);
+  for (auto& fragment : tree_builder_context->fragments) {
+    context.tree_builder_context_ = &fragment;
+    UpdateVisualRect(object, context);
+  }
 }
 
 void PaintInvalidator::UpdateVisualRect(const LayoutObject& object,
                                         PaintInvalidatorContext& context) {
-  // The paint offset should already be updated through
-  // PaintPropertyTreeBuilder::updatePropertiesForSelf.
-  DCHECK(context.tree_builder_context_);
-  DCHECK(context.tree_builder_context_->current.paint_offset ==
-         object.PaintOffset());
-
-  Optional<ScopedUndoFrameViewContentClipAndScroll>
-      undo_frame_view_content_clip_and_scroll;
-
-  if (!RuntimeEnabledFeatures::rootLayerScrollingEnabled() &&
-      object.IsLayoutView() && !object.IsPaintInvalidationContainer()) {
-    undo_frame_view_content_clip_and_scroll.emplace(
-        *ToLayoutView(object).GetFrameView(), *context.tree_builder_context_);
-  }
+  // TODO(chrishtr): re-enable this when invalidation for fragmented
+  // content is done.
+  // DCHECK(context.tree_builder_context_->current.paint_offset ==
+  //        object.PaintOffset());
 
   LayoutRect new_visual_rect = ComputeVisualRectInBacking(object, context);
+  LayoutPoint new_location;
   if (object.IsBoxModelObject()) {
-    context.new_location = ComputeLocationInBacking(object, context);
+    new_location = ComputeLocationInBacking(object, context);
     // Location of empty visual rect doesn't affect paint invalidation. Set it
     // to newLocation to avoid saving the previous location separately in
     // ObjectPaintInvalidator.
     if (new_visual_rect.IsEmpty())
-      new_visual_rect.SetLocation(context.new_location);
+      new_visual_rect.SetLocation(new_location);
   } else {
     // Use visual rect location for non-LayoutBoxModelObject because it suffices
     // to check whether a visual rect changes for layout caused invalidation.
-    context.new_location = new_visual_rect.Location();
+    new_location = new_visual_rect.Location();
   }
 
   object.GetMutableForPainting().SetVisualRect(new_visual_rect);
-  ObjectPaintInvalidator(object).SetLocationInBacking(context.new_location);
+  object.GetMutableForPainting().SetLocationInBacking(new_location);
 }
 
-void PaintInvalidator::InvalidatePaintIfNeeded(
-    FrameView& frame_view,
+void PaintInvalidator::InvalidatePaint(
+    LocalFrameView& frame_view,
+    const PaintPropertyTreeBuilderContext* tree_builder_context,
+
     PaintInvalidatorContext& context) {
   LayoutView* layout_view = frame_view.GetLayoutView();
   CHECK(layout_view);
@@ -417,97 +436,115 @@ void PaintInvalidator::InvalidatePaintIfNeeded(
       context.paint_invalidation_container_for_stacked_contents =
           &layout_view->ContainerForPaintInvalidation();
   context.painting_layer = layout_view->Layer();
+  if (tree_builder_context) {
+    context.tree_builder_context_ = &tree_builder_context->fragments[0];
+#if DCHECK_IS_ON()
+    context.tree_builder_context_actually_needed_ =
+        tree_builder_context->is_actually_needed;
+#endif
+  }
 
-  if (!RuntimeEnabledFeatures::rootLayerScrollingEnabled()) {
+  if (!RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
     Optional<ScopedUndoFrameViewContentClipAndScroll> undo;
-    if (context.tree_builder_context_)
+    if (tree_builder_context)
       undo.emplace(frame_view, *context.tree_builder_context_);
     frame_view.InvalidatePaintOfScrollControlsIfNeeded(context);
   }
 }
 
-void PaintInvalidator::InvalidatePaintIfNeeded(
+void PaintInvalidator::UpdateEmptyVisualRectFlag(
     const LayoutObject& object,
+    PaintInvalidatorContext& context) {
+  bool is_paint_invalidation_container =
+      object == context.paint_invalidation_container;
+
+  // Content under transforms needs to invalidate, even if visual
+  // rects before and after update were the same. This is because
+  // we don't know whether this transform will end up composited in
+  // SPv2, so such transforms are painted even if not visible
+  // due to ancestor clips. This does not apply in SPv1 mode when
+  // crossing paint invalidation container boundaries.
+  if (is_paint_invalidation_container) {
+    // Remove the flag when crossing paint invalidation container boundaries.
+    context.subtree_flags &=
+        ~PaintInvalidatorContext::kInvalidateEmptyVisualRect;
+  } else if (object.StyleRef().HasTransform()) {
+    context.subtree_flags |=
+        PaintInvalidatorContext::kInvalidateEmptyVisualRect;
+  }
+}
+
+void PaintInvalidator::InvalidatePaint(
+    const LayoutObject& object,
+    const PaintPropertyTreeBuilderContext* tree_builder_context,
     PaintInvalidatorContext& context) {
   TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("blink.invalidation"),
                "PaintInvalidator::invalidatePaintIfNeeded()", "object",
                object.DebugName().Ascii());
+
+  if (object.IsSVGHiddenContainer()) {
+    context.subtree_flags |= PaintInvalidatorContext::kSubtreeNoInvalidation;
+  }
+  if (context.subtree_flags & PaintInvalidatorContext::kSubtreeNoInvalidation)
+    return;
 
   object.GetMutableForPainting().EnsureIsReadyForPaintInvalidation();
 
   UpdatePaintingLayer(object, context);
 
   if (object.GetDocument().Printing() &&
-      !RuntimeEnabledFeatures::printBrowserEnabled())
+      !RuntimeEnabledFeatures::PrintBrowserEnabled())
     return;  // Don't invalidate paints if we're printing.
 
-  // TODO(crbug.com/637313): Use GeometryMapper which now supports filter
-  // geometry effects, after skia optimizes filter's mapRect operation.
-  // TODO(crbug.com/648274): This is a workaround for multi-column contents.
-  if (object.HasFilterInducingProperty() || object.IsLayoutFlowThread()) {
-    context.forced_subtree_invalidation_flags |=
-        PaintInvalidatorContext::kForcedSubtreeSlowPathRect;
-  }
+  // TODO(crbug.com/648274): implement fast path for fragmented content.
+  if (object.IsLayoutFlowThread())
+    context.subtree_flags |= PaintInvalidatorContext::kSubtreeSlowPathRect;
 
   UpdatePaintInvalidationContainer(object, context);
-  UpdateVisualRectIfNeeded(object, context);
+  UpdateEmptyVisualRectFlag(object, context);
+  UpdateVisualRectIfNeeded(object, tree_builder_context, context);
 
-  if (!object.ShouldCheckForPaintInvalidation() &&
-      !(context.forced_subtree_invalidation_flags &
-        ~PaintInvalidatorContext::kForcedSubtreeVisualRectUpdate)) {
-    // We are done updating anything needed. No other paint invalidation work to
-    // do for this object.
-    return;
-  }
-
-  if (object.IsSVGHiddenContainer()) {
-    context.forced_subtree_invalidation_flags |=
-        PaintInvalidatorContext::kForcedSubtreeNoRasterInvalidation;
-  }
-
-  PaintInvalidationReason reason = object.InvalidatePaintIfNeeded(context);
+  PaintInvalidationReason reason = object.InvalidatePaint(context);
   switch (reason) {
-    case kPaintInvalidationDelayedFull:
+    case PaintInvalidationReason::kDelayedFull:
       pending_delayed_paint_invalidations_.push_back(&object);
       break;
-    case kPaintInvalidationSubtree:
-      context.forced_subtree_invalidation_flags |=
-          (PaintInvalidatorContext::kForcedSubtreeFullInvalidation |
-           PaintInvalidatorContext::
-               kForcedSubtreeFullInvalidationForStackedContents);
+    case PaintInvalidationReason::kSubtree:
+      context.subtree_flags |=
+          (PaintInvalidatorContext::kSubtreeFullInvalidation |
+           PaintInvalidatorContext::kSubtreeFullInvalidationForStackedContents);
       break;
-    case kPaintInvalidationSVGResourceChange:
-      context.forced_subtree_invalidation_flags |=
-          PaintInvalidatorContext::kForcedSubtreeSVGResourceChange;
+    case PaintInvalidationReason::kSVGResource:
+      context.subtree_flags |=
+          PaintInvalidatorContext::kSubtreeSVGResourceChange;
       break;
     default:
       break;
   }
 
   if (object.MayNeedPaintInvalidationSubtree()) {
-    context.forced_subtree_invalidation_flags |=
-        PaintInvalidatorContext::kForcedSubtreeInvalidationChecking;
+    context.subtree_flags |=
+        PaintInvalidatorContext::kSubtreeInvalidationChecking;
   }
 
-  if (context.old_location != context.new_location &&
+  if (context.old_location != object.LocationInBacking() &&
       !context.painting_layer->SubtreeIsInvisible()) {
-    context.forced_subtree_invalidation_flags |=
-        PaintInvalidatorContext::kForcedSubtreeInvalidationChecking;
+    context.subtree_flags |=
+        PaintInvalidatorContext::kSubtreeInvalidationChecking;
   }
 
-  if (context.forced_subtree_invalidation_flags &&
-      context.NeedsVisualRectUpdate(object)) {
+  if (context.subtree_flags && context.NeedsVisualRectUpdate(object)) {
     // If any subtree flag is set, we also need to pass needsVisualRectUpdate
     // requirement to the subtree.
-    context.forced_subtree_invalidation_flags |=
-        PaintInvalidatorContext::kForcedSubtreeVisualRectUpdate;
+    context.subtree_flags |= PaintInvalidatorContext::kSubtreeVisualRectUpdate;
   }
 }
 
 void PaintInvalidator::ProcessPendingDelayedPaintInvalidations() {
   for (auto target : pending_delayed_paint_invalidations_) {
-    target->GetMutableForPainting().SetShouldDoFullPaintInvalidation(
-        kPaintInvalidationDelayedFull);
+    target->GetMutableForPainting()
+        .SetShouldDoFullPaintInvalidationWithoutGeometryChange(
+            PaintInvalidationReason::kDelayedFull);
   }
 }
 

@@ -26,6 +26,7 @@
 #include "modules/webaudio/AudioScheduledSourceNode.h"
 
 #include <algorithm>
+#include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/TaskRunnerHelper.h"
@@ -167,8 +168,7 @@ void AudioScheduledSourceHandler::Start(double when,
   }
 
   if (when < 0) {
-    exception_state.ThrowDOMException(
-        kInvalidAccessError,
+    exception_state.ThrowRangeError(
         ExceptionMessages::IndexExceedsMinimumBound("start time", when, 0.0));
     return;
   }
@@ -200,8 +200,7 @@ void AudioScheduledSourceHandler::Stop(double when,
   }
 
   if (when < 0) {
-    exception_state.ThrowDOMException(
-        kInvalidAccessError,
+    exception_state.ThrowRangeError(
         ExceptionMessages::IndexExceedsMinimumBound("stop time", when, 0.0));
     return;
   }
@@ -232,7 +231,7 @@ void AudioScheduledSourceHandler::Finish() {
                           Context()->GetExecutionContext())
         ->PostTask(BLINK_FROM_HERE,
                    CrossThreadBind(&AudioScheduledSourceHandler::NotifyEnded,
-                                   WrapPassRefPtr(this)));
+                                   WrapRefPtr(this)));
   }
 }
 

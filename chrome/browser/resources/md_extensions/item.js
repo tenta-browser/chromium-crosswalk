@@ -4,59 +4,57 @@
 
 cr.define('extensions', function() {
   /** @interface */
-  var ItemDelegate = function() {};
-
-  ItemDelegate.prototype = {
+  class ItemDelegate {
     /** @param {string} id */
-    deleteItem: assertNotReached,
+    deleteItem(id) {}
 
     /**
      * @param {string} id
      * @param {boolean} isEnabled
      */
-    setItemEnabled: assertNotReached,
+    setItemEnabled(id, isEnabled) {}
 
     /**
      * @param {string} id
      * @param {boolean} isAllowedIncognito
      */
-    setItemAllowedIncognito: assertNotReached,
+    setItemAllowedIncognito(id, isAllowedIncognito) {}
 
     /**
      * @param {string} id
      * @param {boolean} isAllowedOnFileUrls
      */
-    setItemAllowedOnFileUrls: assertNotReached,
+    setItemAllowedOnFileUrls(id, isAllowedOnFileUrls) {}
 
     /**
      * @param {string} id
      * @param {boolean} isAllowedOnAllSites
      */
-    setItemAllowedOnAllSites: assertNotReached,
+    setItemAllowedOnAllSites(id, isAllowedOnAllSites) {}
 
     /**
      * @param {string} id
      * @param {boolean} collectsErrors
      */
-    setItemCollectsErrors: assertNotReached,
+    setItemCollectsErrors(id, collectsErrors) {}
 
     /**
      * @param {string} id
      * @param {chrome.developerPrivate.ExtensionView} view
      */
-    inspectItemView: assertNotReached,
+    inspectItemView(id, view) {}
 
     /** @param {string} id */
-    reloadItem: assertNotReached,
+    reloadItem(id) {}
 
     /** @param {string} id */
-    repairItem: assertNotReached,
+    repairItem(id) {}
 
     /** @param {string} id */
-    showItemOptionsPage: assertNotReached,
-  };
+    showItemOptionsPage(id) {}
+  }
 
-  var Item = Polymer({
+  const Item = Polymer({
     is: 'extensions-item',
 
     behaviors: [I18nBehavior],
@@ -95,12 +93,11 @@ cr.define('extensions', function() {
     /** @private */
     observeIdVisibility_: function(inDevMode, showingDetails, id) {
       Polymer.dom.flush();
-      var idElement = this.$$('#extension-id');
+      const idElement = this.$$('#extension-id');
       if (idElement) {
         assert(this.data);
         idElement.innerHTML = this.i18n('itemId', this.data.id);
       }
-      this.fire('extension-item-size-changed', {item: this.data});
     },
 
     /**
@@ -109,7 +106,7 @@ cr.define('extensions', function() {
      */
     computeErrorsHidden_: function() {
       return !this.data.manifestErrors.length &&
-             !this.data.runtimeErrors.length;
+          !this.data.runtimeErrors.length;
     },
 
     /** @private */
@@ -119,18 +116,20 @@ cr.define('extensions', function() {
 
     /** @private */
     onEnableChange_: function() {
-      this.delegate.setItemEnabled(this.data.id,
-                                   this.$['enable-toggle'].checked);
+      this.delegate.setItemEnabled(
+          this.data.id, this.$['enable-toggle'].checked);
     },
 
     /** @private */
     onErrorsTap_: function() {
-      this.fire('extension-item-show-errors', {data: this.data});
+      extensions.navigation.navigateTo(
+          {page: Page.ERRORS, extensionId: this.data.id});
     },
 
     /** @private */
     onDetailsTap_: function() {
-      this.fire('extension-item-show-details', {data: this.data});
+      extensions.navigation.navigateTo(
+          {page: Page.DETAILS, extensionId: this.data.id});
     },
 
     /**
@@ -143,7 +142,8 @@ cr.define('extensions', function() {
 
     /** @private */
     onExtraInspectTap_: function() {
-      this.fire('extension-item-show-details', {data: this.data});
+      extensions.navigation.navigateTo(
+          {page: Page.DETAILS, extensionId: this.data.id});
     },
 
     /** @private */
@@ -160,7 +160,17 @@ cr.define('extensions', function() {
      * @return {boolean}
      * @private
      */
-    isEnabled_: function() { return extensions.isEnabled(this.data.state); },
+    isControlled_: function() {
+      return extensions.isControlled(this.data);
+    },
+
+    /**
+     * @return {boolean}
+     * @private
+     */
+    isEnabled_: function() {
+      return extensions.isEnabled(this.data.state);
+    },
 
     /**
      * @return {boolean}
@@ -194,7 +204,7 @@ cr.define('extensions', function() {
      * @private
      */
     computeClasses_: function() {
-      var classes = this.isEnabled_() ? 'enabled' : 'disabled';
+      let classes = this.isEnabled_() ? 'enabled' : 'disabled';
       if (this.inDevMode)
         classes += ' dev-mode';
       return classes;
@@ -223,9 +233,10 @@ cr.define('extensions', function() {
      * @private
      */
     computeSourceIndicatorText_: function() {
-      var sourceType = extensions.getItemSource(this.data);
-      return sourceType == SourceType.WEBSTORE ? '' :
-             extensions.getItemSourceString(sourceType);
+      const sourceType = extensions.getItemSource(this.data);
+      return sourceType == SourceType.WEBSTORE ?
+          '' :
+          extensions.getItemSourceString(sourceType);
     },
 
     /**
@@ -248,7 +259,7 @@ cr.define('extensions', function() {
       // need to handle the case gracefully.
       if (this.data.views.length == 0)
         return '';
-      var label = extensions.computeInspectableViewLabel(this.data.views[0]);
+      let label = extensions.computeInspectableViewLabel(this.data.views[0]);
       if (this.data.views.length > 1)
         label += ',';
       return label;
@@ -268,11 +279,11 @@ cr.define('extensions', function() {
      */
     computeDevReloadButtonHidden_: function() {
       // Only display the reload spinner if the extension is unpacked and
-      // not terminated (since if it's terminated, we'll show a crashed reload
-      // buton).
-      var showIcon =
+      // enabled. There's no point in reloading a disabled extension, and we'll
+      // show a crashed reload buton if it's terminated.
+      const showIcon =
           this.data.location == chrome.developerPrivate.Location.UNPACKED &&
-          this.data.state != chrome.developerPrivate.ExtensionState.TERMINATED;
+          this.data.state == chrome.developerPrivate.ExtensionState.ENABLED;
       return !showIcon;
     },
 
@@ -281,8 +292,8 @@ cr.define('extensions', function() {
      * @private
      */
     computeExtraInspectLabel_: function() {
-      return loadTimeData.getStringF('itemInspectViewsExtra',
-                                     this.data.views.length - 1);
+      return loadTimeData.getStringF(
+          'itemInspectViewsExtra', this.data.views.length - 1);
     },
 
     /**
@@ -291,8 +302,8 @@ cr.define('extensions', function() {
      */
     hasWarnings_: function() {
       return this.data.disableReasons.corruptInstall ||
-             this.data.disableReasons.suspiciousInstall ||
-             !!this.data.blacklistText;
+          this.data.disableReasons.suspiciousInstall ||
+          !!this.data.blacklistText;
     },
 
     /**
@@ -309,4 +320,3 @@ cr.define('extensions', function() {
     ItemDelegate: ItemDelegate,
   };
 });
-

@@ -338,10 +338,9 @@ TEST(ValuesUtilTest, PopDictionaryWithDottedStringKey) {
 
   // Create the expected value.
   base::DictionaryValue dictionary_value;
-  dictionary_value.SetWithoutPathExpansion(kKey1, new base::Value(kBoolValue));
-  dictionary_value.SetWithoutPathExpansion(kKey2, new base::Value(kInt32Value));
-  dictionary_value.SetWithoutPathExpansion(kKey3,
-                                           new base::Value(kDoubleValue));
+  dictionary_value.SetKey(kKey1, base::Value(kBoolValue));
+  dictionary_value.SetKey(kKey2, base::Value(kInt32Value));
+  dictionary_value.SetKey(kKey3, base::Value(kDoubleValue));
 
   // Pop a dictinoary.
   MessageReader reader(response.get());
@@ -377,7 +376,7 @@ TEST(ValuesUtilTest, PopDoubleToIntDictionary) {
   for (size_t i = 0; i != values.size(); ++i) {
     std::string key_string;
     base::JSONWriter::Write(base::Value(keys[i]), &key_string);
-    dictionary_value.SetIntegerWithoutPathExpansion(key_string, values[i]);
+    dictionary_value.SetKey(key_string, base::Value(values[i]));
   }
 
   // Pop a dictionary.
@@ -517,11 +516,11 @@ TEST(ValuesUtilTest, AppendDictionary) {
   const double kDoubleValue = 4.9;
   const std::string kStringValue = "fifty";
 
-  base::ListValue* list_value = new base::ListValue();
+  auto list_value = std::make_unique<base::ListValue>();
   list_value->AppendBoolean(kBoolValue);
   list_value->AppendInteger(kInt32Value);
 
-  base::DictionaryValue* dictionary_value = new base::DictionaryValue();
+  auto dictionary_value = std::make_unique<base::DictionaryValue>();
   dictionary_value->SetBoolean(kKey1, kBoolValue);
   dictionary_value->SetInteger(kKey2, kDoubleValue);
 
@@ -530,8 +529,8 @@ TEST(ValuesUtilTest, AppendDictionary) {
   test_dictionary.SetInteger(kKey2, kInt32Value);
   test_dictionary.SetDouble(kKey3, kDoubleValue);
   test_dictionary.SetString(kKey4, kStringValue);
-  test_dictionary.Set(kKey5, list_value);  // takes ownership
-  test_dictionary.Set(kKey6, dictionary_value);  // takes ownership
+  test_dictionary.Set(kKey5, std::move(list_value));
+  test_dictionary.Set(kKey6, std::move(dictionary_value));
 
   std::unique_ptr<Response> response(Response::CreateEmpty());
   MessageWriter writer(response.get());
@@ -564,11 +563,11 @@ TEST(ValuesUtilTest, AppendDictionaryAsVariant) {
   const double kDoubleValue = 4.9;
   const std::string kStringValue = "fifty";
 
-  base::ListValue* list_value = new base::ListValue();
+  auto list_value = std::make_unique<base::ListValue>();
   list_value->AppendBoolean(kBoolValue);
   list_value->AppendInteger(kInt32Value);
 
-  base::DictionaryValue* dictionary_value = new base::DictionaryValue();
+  auto dictionary_value = std::make_unique<base::DictionaryValue>();
   dictionary_value->SetBoolean(kKey1, kBoolValue);
   dictionary_value->SetInteger(kKey2, kDoubleValue);
 
@@ -577,8 +576,8 @@ TEST(ValuesUtilTest, AppendDictionaryAsVariant) {
   test_dictionary.SetInteger(kKey2, kInt32Value);
   test_dictionary.SetDouble(kKey3, kDoubleValue);
   test_dictionary.SetString(kKey4, kStringValue);
-  test_dictionary.Set(kKey5, list_value);  // takes ownership
-  test_dictionary.Set(kKey6, dictionary_value);  // takes ownership
+  test_dictionary.Set(kKey5, std::move(list_value));
+  test_dictionary.Set(kKey6, std::move(dictionary_value));
 
   std::unique_ptr<Response> response(Response::CreateEmpty());
   MessageWriter writer(response.get());

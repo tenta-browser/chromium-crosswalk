@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <queue>
 #include <string>
 #include <utility>
 
@@ -16,11 +15,12 @@
 #include "base/bind.h"
 #include "base/bits.h"
 #include "base/command_line.h"
+#include "base/containers/queue.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/aligned_memory.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/numerics/safe_conversions.h"
@@ -46,30 +46,19 @@
 #include "media/base/video_frame.h"
 #include "media/filters/ffmpeg_glue.h"
 #include "media/filters/ffmpeg_video_decoder.h"
-#include "media/filters/h264_parser.h"
 #include "media/filters/ivf_parser.h"
+#include "media/gpu/features.h"
+#include "media/gpu/gpu_video_encode_accelerator_factory.h"
 #include "media/gpu/video_accelerator_unittest_helpers.h"
 #include "media/video/fake_video_encode_accelerator.h"
+#include "media/video/h264_parser.h"
 #include "media/video/video_encode_accelerator.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if defined(OS_CHROMEOS)
-#if defined(USE_V4L2_CODEC)
-#include "base/threading/thread_task_runner_handle.h"
-#include "media/gpu/v4l2_video_encode_accelerator.h"
-#endif
-#if defined(ARCH_CPU_X86_FAMILY)
-#include "media/gpu/vaapi_video_encode_accelerator.h"
+#if BUILDFLAG(USE_VAAPI)
 #include "media/gpu/vaapi_wrapper.h"
-// Status has been defined as int in Xlib.h.
-#undef Status
-#endif  // defined(ARCH_CPU_X86_FAMILY)
-#elif defined(OS_MACOSX)
-#include "media/gpu/vt_video_encode_accelerator_mac.h"
 #elif defined(OS_WIN)
 #include "media/gpu/media_foundation_video_encode_accelerator_win.h"
-#else
-#error The VideoEncodeAcceleratorUnittest is not supported on this platform.
 #endif
 
 namespace media {
@@ -380,8 +369,9 @@ static void CreateAlignedInputStreamFile(const gfx::Size& coded_size,
 
 // Parse |data| into its constituent parts, set the various output fields
 // accordingly, read in video stream, and store them to |test_streams|.
-static void ParseAndReadTestStreamData(const base::FilePath::StringType& data,
-                                       ScopedVector<TestStream>* test_streams) {
+static void ParseAndReadTestStreamData(
+    const base::FilePath::StringType& data,
+    std::vector<std::unique_ptr<TestStream>>* test_streams) {
   // Split the string to individual test stream data.
   std::vector<base::FilePath::StringType> test_streams_data =
       base::SplitString(data, base::FilePath::StringType(1, ';'),
@@ -401,7 +391,7 @@ static void ParseAndReadTestStreamData(const base::FilePath::StringType& data,
     }
     LOG_ASSERT(fields.size() >= 4U) << data;
     LOG_ASSERT(fields.size() <= 9U) << data;
-    TestStream* test_stream = new TestStream();
+    auto test_stream = base::MakeUnique<TestStream>();
 
     test_stream->in_filename = FilePathStringTypeToString(fields[0]);
     int width, height;
@@ -438,53 +428,8 @@ static void ParseAndReadTestStreamData(const base::FilePath::StringType& data,
       LOG_ASSERT(base::StringToUint(
           fields[8], &test_stream->requested_subsequent_framerate));
     }
-    test_streams->push_back(test_stream);
+    test_streams->push_back(std::move(test_stream));
   }
-}
-
-static std::unique_ptr<VideoEncodeAccelerator> CreateFakeVEA() {
-  std::unique_ptr<VideoEncodeAccelerator> encoder;
-  if (g_fake_encoder) {
-    encoder.reset(new FakeVideoEncodeAccelerator(
-        scoped_refptr<base::SingleThreadTaskRunner>(
-            base::ThreadTaskRunnerHandle::Get())));
-  }
-  return encoder;
-}
-
-static std::unique_ptr<VideoEncodeAccelerator> CreateV4L2VEA() {
-  std::unique_ptr<VideoEncodeAccelerator> encoder;
-#if defined(OS_CHROMEOS) && defined(USE_V4L2_CODEC)
-  scoped_refptr<V4L2Device> device = V4L2Device::Create();
-  if (device)
-    encoder.reset(new V4L2VideoEncodeAccelerator(device));
-#endif
-  return encoder;
-}
-
-static std::unique_ptr<VideoEncodeAccelerator> CreateVaapiVEA() {
-  std::unique_ptr<VideoEncodeAccelerator> encoder;
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
-  encoder.reset(new VaapiVideoEncodeAccelerator());
-#endif
-  return encoder;
-}
-
-static std::unique_ptr<VideoEncodeAccelerator> CreateVTVEA() {
-  std::unique_ptr<VideoEncodeAccelerator> encoder;
-#if defined(OS_MACOSX)
-  encoder.reset(new VTVideoEncodeAccelerator());
-#endif
-  return encoder;
-}
-
-static std::unique_ptr<VideoEncodeAccelerator> CreateMFVEA() {
-  std::unique_ptr<VideoEncodeAccelerator> encoder;
-#if defined(OS_WIN)
-  MediaFoundationVideoEncodeAccelerator::PreSandboxInitialization();
-  encoder.reset(new MediaFoundationVideoEncodeAccelerator());
-#endif
-  return encoder;
 }
 
 // Basic test environment shared across multiple test cases. We only need to
@@ -498,11 +443,13 @@ class VideoEncodeAcceleratorTestEnvironment : public ::testing::Environment {
   VideoEncodeAcceleratorTestEnvironment(
       std::unique_ptr<base::FilePath::StringType> data,
       const base::FilePath& log_path,
+      const base::FilePath& frame_stats_path,
       bool run_at_fps,
       bool needs_encode_latency,
       bool verify_all_output)
       : test_stream_data_(std::move(data)),
         log_path_(log_path),
+        frame_stats_path_(frame_stats_path),
         run_at_fps_(run_at_fps),
         needs_encode_latency_(needs_encode_latency),
         verify_all_output_(verify_all_output) {}
@@ -545,11 +492,14 @@ class VideoEncodeAcceleratorTestEnvironment : public ::testing::Environment {
   // switch "--verify_all_output".
   bool verify_all_output() const { return verify_all_output_; }
 
-  ScopedVector<TestStream> test_streams_;
+  const base::FilePath& frame_stats_path() const { return frame_stats_path_; }
+
+  std::vector<std::unique_ptr<TestStream>> test_streams_;
 
  private:
   std::unique_ptr<base::FilePath::StringType> test_stream_data_;
   base::FilePath log_path_;
+  base::FilePath frame_stats_path_;
   std::unique_ptr<base::File> log_file_;
   bool run_at_fps_;
   bool needs_encode_latency_;
@@ -712,6 +662,7 @@ class VideoFrameQualityValidator
     : public base::SupportsWeakPtr<VideoFrameQualityValidator> {
  public:
   VideoFrameQualityValidator(const VideoCodecProfile profile,
+                             bool verify_quality,
                              const base::Closure& flush_complete_cb,
                              const base::Closure& decode_error_cb);
   void Initialize(const gfx::Size& coded_size, const gfx::Rect& visible_size);
@@ -727,10 +678,21 @@ class VideoFrameQualityValidator
   void FlushDone(DecodeStatus status);
   void VerifyOutputFrame(const scoped_refptr<VideoFrame>& output_frame);
   void Decode();
+  void WriteFrameStats();
 
   enum State { UNINITIALIZED, INITIALIZED, DECODING, DECODER_ERROR };
+  struct FrameStats {
+    int width;
+    int height;
+    double ssim[VideoFrame::kMaxPlanes];
+    uint64_t mse[VideoFrame::kMaxPlanes];
+  };
 
+  static FrameStats CompareFrames(const VideoFrame& original_frame,
+                                  const VideoFrame& output_frame);
+  MediaLog media_log_;
   const VideoCodecProfile profile_;
+  const bool verify_quality_;
   std::unique_ptr<FFmpegVideoDecoder> decoder_;
   VideoDecoder::DecodeCB decode_cb_;
   // Decode callback of an EOS buffer.
@@ -739,17 +701,20 @@ class VideoFrameQualityValidator
   const base::Closure flush_complete_cb_;
   const base::Closure decode_error_cb_;
   State decoder_state_;
-  std::queue<scoped_refptr<VideoFrame>> original_frames_;
-  std::queue<scoped_refptr<DecoderBuffer>> decode_buffers_;
+  base::queue<scoped_refptr<VideoFrame>> original_frames_;
+  base::queue<scoped_refptr<DecoderBuffer>> decode_buffers_;
+  std::vector<FrameStats> frame_stats_;
   base::ThreadChecker thread_checker_;
 };
 
 VideoFrameQualityValidator::VideoFrameQualityValidator(
     const VideoCodecProfile profile,
+    const bool verify_quality,
     const base::Closure& flush_complete_cb,
     const base::Closure& decode_error_cb)
     : profile_(profile),
-      decoder_(new FFmpegVideoDecoder(make_scoped_refptr(new MediaLog()))),
+      verify_quality_(verify_quality),
+      decoder_(new FFmpegVideoDecoder(&media_log_)),
       decode_cb_(
           base::Bind(&VideoFrameQualityValidator::DecodeDone, AsWeakPtr())),
       eos_decode_cb_(
@@ -771,12 +736,14 @@ void VideoFrameQualityValidator::Initialize(const gfx::Size& coded_size,
   VideoDecoderConfig config;
   if (IsVP8(profile_))
     config.Initialize(kCodecVP8, VP8PROFILE_ANY, kInputFormat,
-                      COLOR_SPACE_UNSPECIFIED, coded_size, visible_size,
-                      natural_size, EmptyExtraData(), Unencrypted());
+                      COLOR_SPACE_UNSPECIFIED, VIDEO_ROTATION_0, coded_size,
+                      visible_size, natural_size, EmptyExtraData(),
+                      Unencrypted());
   else if (IsH264(profile_))
     config.Initialize(kCodecH264, H264PROFILE_MAIN, kInputFormat,
-                      COLOR_SPACE_UNSPECIFIED, coded_size, visible_size,
-                      natural_size, EmptyExtraData(), Unencrypted());
+                      COLOR_SPACE_UNSPECIFIED, VIDEO_ROTATION_0, coded_size,
+                      visible_size, natural_size, EmptyExtraData(),
+                      Unencrypted());
   else
     LOG_ASSERT(0) << "Invalid profile " << GetProfileName(profile_);
 
@@ -826,6 +793,7 @@ void VideoFrameQualityValidator::DecodeDone(DecodeStatus status) {
 void VideoFrameQualityValidator::FlushDone(DecodeStatus status) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
+  WriteFrameStats();
   flush_complete_cb_.Run();
 }
 
@@ -835,6 +803,35 @@ void VideoFrameQualityValidator::Flush() {
   if (decoder_state_ != DECODER_ERROR) {
     decode_buffers_.push(DecoderBuffer::CreateEOSBuffer());
     Decode();
+  }
+}
+
+void VideoFrameQualityValidator::WriteFrameStats() {
+  if (g_env->frame_stats_path().empty())
+    return;
+
+  base::File frame_stats_file(
+      g_env->frame_stats_path(),
+      base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
+  LOG_ASSERT(frame_stats_file.IsValid());
+
+  // TODO(pbos): Consider adding encoded bytes per frame + key/delta frame.
+  std::string csv =
+      "frame,width,height,ssim-y,ssim-u,ssim-v,mse-y,mse-u,mse-v\n";
+  frame_stats_file.WriteAtCurrentPos(csv.data(), static_cast<int>(csv.size()));
+  for (size_t frame_idx = 0; frame_idx < frame_stats_.size(); ++frame_idx) {
+    const FrameStats& frame_stats = frame_stats_[frame_idx];
+    csv = base::StringPrintf(
+        "%d,%d,%d,%f,%f,%f,%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+        static_cast<int>(frame_idx), frame_stats.width, frame_stats.height,
+        frame_stats.ssim[VideoFrame::kYPlane],
+        frame_stats.ssim[VideoFrame::kUPlane],
+        frame_stats.ssim[VideoFrame::kVPlane],
+        frame_stats.mse[VideoFrame::kYPlane],
+        frame_stats.mse[VideoFrame::kUPlane],
+        frame_stats.mse[VideoFrame::kVPlane]);
+    frame_stats_file.WriteAtCurrentPos(csv.data(),
+                                       static_cast<int>(csv.size()));
   }
 }
 
@@ -862,6 +859,163 @@ void VideoFrameQualityValidator::Decode() {
   }
 }
 
+namespace {
+// Gets SSIM (see below) parameters for a 8x8 block.
+void GetSsimParams8x8(const uint8_t* orig,
+                      size_t orig_stride,
+                      const uint8_t* recon,
+                      size_t recon_stride,
+                      int* sum_orig,
+                      int* sum_recon,
+                      int* sum_sq_orig,
+                      int* sum_sq_recon,
+                      int* sum_orig_x_recon) {
+  for (size_t i = 0; i < 8; ++i, orig += orig_stride, recon += recon_stride) {
+    for (size_t j = 0; j < 8; ++j) {
+      *sum_orig += orig[j];
+      *sum_recon += recon[j];
+      *sum_sq_orig += orig[j] * orig[j];
+      *sum_sq_recon += recon[j] * recon[j];
+      *sum_orig_x_recon += orig[j] * recon[j];
+    }
+  }
+}
+
+// Generates SSIM (see below) for a 8x8 block from input parameters.
+// https://en.wikipedia.org/wiki/Structural_similarity
+double GenerateSimilarity(int sum_orig,
+                          int sum_recon,
+                          int sum_sq_orig,
+                          int sum_sq_recon,
+                          int sum_orig_x_recon,
+                          int count) {
+  // Same constants as used inside libvpx.
+  static const int64_t kC1 = 26634;   // (64^2*(.01*255)^2
+  static const int64_t kC2 = 239708;  // (64^2*(.03*255)^2
+
+  // scale the constants by number of pixels
+  int64_t c1 = (kC1 * count * count) >> 12;
+  int64_t c2 = (kC2 * count * count) >> 12;
+
+  int64_t ssim_n = (2 * sum_orig * sum_recon + c1) *
+                   (static_cast<int64_t>(2 * count) * sum_orig_x_recon -
+                    static_cast<int64_t>(2 * sum_orig) * sum_recon + c2);
+
+  int64_t ssim_d = (sum_orig * sum_orig + sum_recon * sum_recon + c1) *
+                   (static_cast<int64_t>(count) * sum_sq_orig -
+                    static_cast<int64_t>(sum_orig) * sum_orig +
+                    static_cast<int64_t>(count) * sum_sq_recon -
+                    static_cast<int64_t>(sum_recon) * sum_recon + c2);
+
+  return static_cast<double>(ssim_n) / ssim_d;
+}
+
+// Generates SSIM for a 8x8 block.
+double GenerateSsim8x8(const uint8_t* orig,
+                       int orig_stride,
+                       const uint8_t* recon,
+                       int recon_stride) {
+  int sum_orig = 0;
+  int sum_recon = 0;
+  int sum_sq_orig = 0;
+  int sum_sq_recon = 0;
+  int sum_orig_x_recon = 0;
+  GetSsimParams8x8(orig, orig_stride, recon, recon_stride, &sum_orig,
+                   &sum_recon, &sum_sq_orig, &sum_sq_recon, &sum_orig_x_recon);
+  return GenerateSimilarity(sum_orig, sum_recon, sum_sq_orig, sum_sq_recon,
+                            sum_orig_x_recon, 64);
+}
+
+// Generates SSIM: https://en.wikipedia.org/wiki/Structural_similarity
+// We are using a 8x8 moving window with starting location of each 8x8 window
+// on the 4x4 pixel grid. Such arrangement allows the windows to overlap
+// block boundaries to penalize blocking artifacts.
+double GenerateSsim(const uint8_t* img1,
+                    size_t stride_img1,
+                    const uint8_t* img2,
+                    size_t stride_img2,
+                    int width,
+                    int height) {
+  int num_samples = 0;
+  double ssim_total = 0;
+
+  // sample point start with each 4x4 location
+  for (int i = 0; i <= height - 8;
+       i += 4, img1 += stride_img1 * 4, img2 += stride_img2 * 4) {
+    for (int j = 0; j <= width - 8; j += 4) {
+      double v = GenerateSsim8x8(img1 + j, stride_img1, img2 + j, stride_img2);
+      ssim_total += v;
+      ++num_samples;
+    }
+  }
+  return ssim_total / num_samples;
+}
+
+// Generates MSE that can later be used (outside this file) to generate PSNR
+// either average per-frame or global average.
+// https://en.wikipedia.org/wiki/Mean_squared_error
+// https://en.wikipedia.org/wiki/Peak_signal-to-noise_ratio
+static uint64_t GenerateMse(const uint8_t* orig,
+                            int orig_stride,
+                            const uint8_t* recon,
+                            int recon_stride,
+                            int cols,
+                            int rows) {
+  uint64_t total_sse = 0;
+  for (int row = 0; row < rows; ++row) {
+    for (int col = 0; col < cols; ++col) {
+      int diff = orig[col] - recon[col];
+      total_sse += diff * diff;
+    }
+
+    orig += orig_stride;
+    recon += recon_stride;
+  }
+
+  return total_sse;
+}
+
+void GenerateMseAndSsim(double* ssim,
+                        uint64_t* mse,
+                        const uint8_t* buf0,
+                        size_t stride0,
+                        const uint8_t* buf1,
+                        size_t stride1,
+                        int w,
+                        int h) {
+  *ssim = GenerateSsim(buf0, stride0, buf1, stride1, w, h);
+  *mse = GenerateMse(buf0, stride0, buf1, stride1, w, h);
+}
+}  // namespace
+
+VideoFrameQualityValidator::FrameStats
+VideoFrameQualityValidator::CompareFrames(const VideoFrame& original_frame,
+                                          const VideoFrame& output_frame) {
+  // This code assumes I420/NV12 (e.g. 12bpp YUV planar) and needs to be updated
+  // to support anything else.
+  CHECK(original_frame.format() == PIXEL_FORMAT_I420 ||
+        original_frame.format() == PIXEL_FORMAT_YV12);
+  CHECK(output_frame.format() == PIXEL_FORMAT_I420 ||
+        output_frame.format() == PIXEL_FORMAT_YV12);
+  CHECK(original_frame.visible_rect().size() ==
+        output_frame.visible_rect().size());
+
+  FrameStats frame_stats;
+  gfx::Size visible_size = original_frame.visible_rect().size();
+  frame_stats.width = visible_size.width();
+  frame_stats.height = visible_size.height();
+  for (size_t plane :
+       {VideoFrame::kYPlane, VideoFrame::kUPlane, VideoFrame::kVPlane}) {
+    GenerateMseAndSsim(
+        &frame_stats.ssim[plane], &frame_stats.mse[plane],
+        original_frame.data(plane), original_frame.stride(plane),
+        output_frame.data(plane), output_frame.stride(plane),
+        VideoFrame::Columns(plane, kInputFormat, frame_stats.width),
+        VideoFrame::Rows(plane, kInputFormat, frame_stats.height));
+  }
+  return frame_stats;
+}
+
 void VideoFrameQualityValidator::VerifyOutputFrame(
     const scoped_refptr<VideoFrame>& output_frame) {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -870,30 +1024,39 @@ void VideoFrameQualityValidator::VerifyOutputFrame(
   original_frames_.pop();
   gfx::Size visible_size = original_frame->visible_rect().size();
 
-  int planes[] = {VideoFrame::kYPlane, VideoFrame::kUPlane,
-                  VideoFrame::kVPlane};
-  double difference = 0;
-  for (int plane : planes) {
-    uint8_t* original_plane = original_frame->data(plane);
-    uint8_t* output_plane = output_frame->data(plane);
+  if (!g_env->frame_stats_path().empty())
+    frame_stats_.push_back(CompareFrames(*original_frame, *output_frame));
 
-    size_t rows = VideoFrame::Rows(plane, kInputFormat, visible_size.height());
-    size_t columns =
-        VideoFrame::Columns(plane, kInputFormat, visible_size.width());
-    size_t stride = original_frame->stride(plane);
+  // TODO(pbos): Consider rewriting similiarity thresholds to use standard
+  // SSIM/PSNR metrics for thresholds instead of abs(difference) / size which
+  // correspond less to perceptive distortion.
+  if (verify_quality_) {
+    int planes[] = {VideoFrame::kYPlane, VideoFrame::kUPlane,
+                    VideoFrame::kVPlane};
+    double difference = 0;
+    for (int plane : planes) {
+      uint8_t* original_plane = original_frame->data(plane);
+      uint8_t* output_plane = output_frame->data(plane);
 
-    for (size_t i = 0; i < rows; i++) {
-      for (size_t j = 0; j < columns; j++) {
-        difference += std::abs(original_plane[stride * i + j] -
-                               output_plane[stride * i + j]);
+      size_t rows =
+          VideoFrame::Rows(plane, kInputFormat, visible_size.height());
+      size_t columns =
+          VideoFrame::Columns(plane, kInputFormat, visible_size.width());
+      size_t stride = original_frame->stride(plane);
+
+      for (size_t i = 0; i < rows; i++) {
+        for (size_t j = 0; j < columns; j++) {
+          difference += std::abs(original_plane[stride * i + j] -
+                                 output_plane[stride * i + j]);
+        }
       }
     }
-  }
 
-  // Divide the difference by the size of frame.
-  difference /= VideoFrame::AllocationSize(kInputFormat, visible_size);
-  EXPECT_TRUE(difference <= kDecodeSimilarityThreshold)
-      << "difference = " << difference << "  > decode similarity threshold";
+    // Divide the difference by the size of frame.
+    difference /= VideoFrame::AllocationSize(kInputFormat, visible_size);
+    EXPECT_TRUE(difference <= kDecodeSimilarityThreshold)
+        << "difference = " << difference << "  > decode similarity threshold";
+  }
 }
 
 // Base class for all VEA Clients in this file
@@ -922,7 +1085,7 @@ class VEAClientBase : public VideoEncodeAccelerator::Client {
   // All methods of this class should be run on the same thread.
   base::ThreadChecker thread_checker_;
 
-  ScopedVector<base::SharedMemory> output_shms_;
+  std::vector<std::unique_ptr<base::SharedMemory>> output_shms_;
   int32_t next_output_buffer_id_;
 };
 
@@ -1128,7 +1291,7 @@ class VEAClient : public VEAClientBase {
   std::unique_ptr<base::RepeatingTimer> input_timer_;
 
   // The timestamps for each frame in the order of CreateFrame() invocation.
-  std::queue<base::TimeDelta> frame_timestamps_;
+  base::queue<base::TimeDelta> frame_timestamps_;
 
   // The last timestamp popped from |frame_timestamps_|.
   base::TimeDelta previous_timestamp_;
@@ -1201,6 +1364,14 @@ VEAClient::VEAClient(TestStream* test_stream,
         test_stream_->requested_profile,
         base::Bind(&VEAClient::HandleEncodedFrame, base::Unretained(this)));
     CHECK(stream_validator_);
+    // VideoFrameQualityValidator is required to generate frame stats as well as
+    // validating encoder quality.
+    if (verify_output_ || !g_env->frame_stats_path().empty()) {
+      quality_validator_.reset(new VideoFrameQualityValidator(
+          test_stream_->requested_profile, verify_output_,
+          base::Bind(&VEAClient::DecodeCompleted, base::Unretained(this)),
+          base::Bind(&VEAClient::DecodeFailed, base::Unretained(this))));
+    }
   }
 
   if (save_to_file_) {
@@ -1221,6 +1392,30 @@ VEAClient::VEAClient(TestStream* test_stream,
   thread_checker_.DetachFromThread();
 }
 
+// Helper function to create VEA.
+static std::unique_ptr<VideoEncodeAccelerator> CreateVideoEncodeAccelerator(
+    VideoPixelFormat input_format,
+    const gfx::Size& input_visible_size,
+    VideoCodecProfile output_profile,
+    uint32_t initial_bitrate,
+    VideoEncodeAccelerator::Client* client,
+    const gpu::GpuPreferences& gpu_preferences) {
+  if (g_fake_encoder) {
+    std::unique_ptr<VideoEncodeAccelerator> encoder(
+        new FakeVideoEncodeAccelerator(
+            scoped_refptr<base::SingleThreadTaskRunner>(
+                base::ThreadTaskRunnerHandle::Get())));
+    if (encoder->Initialize(input_format, input_visible_size, output_profile,
+                            initial_bitrate, client))
+      return encoder;
+    return nullptr;
+  } else {
+    return GpuVideoEncodeAcceleratorFactory::CreateVEA(
+        input_format, input_visible_size, output_profile, initial_bitrate,
+        client, gpu_preferences);
+  }
+}
+
 void VEAClient::CreateEncoder() {
   DCHECK(thread_checker_.CalledOnValidThread());
   LOG_ASSERT(!has_encoder());
@@ -1228,42 +1423,26 @@ void VEAClient::CreateEncoder() {
   vea_client_task_runner_ = base::ThreadTaskRunnerHandle::Get();
   encode_task_runner_ = vea_client_task_runner_;
 
-  std::unique_ptr<VideoEncodeAccelerator> encoders[] = {
-      CreateFakeVEA(), CreateV4L2VEA(), CreateVaapiVEA(), CreateVTVEA(),
-      CreateMFVEA()};
-
   DVLOG(1) << "Profile: " << test_stream_->requested_profile
            << ", initial bitrate: " << requested_bitrate_;
 
-  for (size_t i = 0; i < arraysize(encoders); ++i) {
-    if (!encoders[i])
-      continue;
-    encoder_ = std::move(encoders[i]);
-    if (encoder_->Initialize(kInputFormat, test_stream_->visible_size,
-                             test_stream_->requested_profile,
-                             requested_bitrate_, this)) {
-      encoder_weak_factory_.reset(
-          new base::WeakPtrFactory<VideoEncodeAccelerator>(encoder_.get()));
-      TryToSetupEncodeOnSeparateThread();
-      SetStreamParameters(requested_bitrate_, requested_framerate_);
-      SetState(CS_INITIALIZED);
-
-      if (verify_output_ && !g_fake_encoder)
-        quality_validator_.reset(new VideoFrameQualityValidator(
-            test_stream_->requested_profile,
-            base::Bind(&VEAClient::DecodeCompleted, base::Unretained(this)),
-            base::Bind(&VEAClient::DecodeFailed, base::Unretained(this))));
-      return;
-    }
+  encoder_ = CreateVideoEncodeAccelerator(
+      kInputFormat, test_stream_->visible_size, test_stream_->requested_profile,
+      requested_bitrate_, this, gpu::GpuPreferences());
+  if (!encoder_) {
+    LOG(ERROR) << "Failed creating a VideoEncodeAccelerator.";
+    SetState(CS_ERROR);
+    return;
   }
-  encoder_.reset();
-  LOG(ERROR) << "VideoEncodeAccelerator::Initialize() failed";
-  SetState(CS_ERROR);
+  encoder_weak_factory_.reset(
+      new base::WeakPtrFactory<VideoEncodeAccelerator>(encoder_.get()));
+  TryToSetupEncodeOnSeparateThread();
+  SetStreamParameters(requested_bitrate_, requested_framerate_);
+  SetState(CS_INITIALIZED);
 }
 
 void VEAClient::DecodeCompleted() {
   DCHECK(thread_checker_.CalledOnValidThread());
-
   SetState(CS_VALIDATED);
 }
 
@@ -1405,10 +1584,10 @@ void VEAClient::RequireBitstreamBuffers(unsigned int input_count,
   ASSERT_GT(output_buffer_size_, 0UL);
 
   for (unsigned int i = 0; i < kNumOutputBuffers; ++i) {
-    base::SharedMemory* shm = new base::SharedMemory();
+    auto shm = base::MakeUnique<base::SharedMemory>();
     LOG_ASSERT(shm->CreateAndMapAnonymous(output_buffer_size_));
-    output_shms_.push_back(shm);
-    FeedEncoderWithOutput(shm);
+    FeedEncoderWithOutput(shm.get());
+    output_shms_.push_back(std::move(shm));
   }
 
   if (g_env->run_at_fps()) {
@@ -1645,9 +1824,11 @@ void VEAClient::FeedEncoderWithOutput(base::SharedMemory* shm) {
   if (state_ != CS_ENCODING)
     return;
 
-  base::SharedMemoryHandle dup_handle;
-  LOG_ASSERT(shm->ShareToProcess(base::GetCurrentProcessHandle(), &dup_handle));
+  base::SharedMemoryHandle dup_handle = shm->handle().Duplicate();
+  LOG_ASSERT(dup_handle.IsValid());
 
+  // TODO(erikchen): This may leak the SharedMemoryHandle.
+  // https://crbug.com/640840.
   BitstreamBuffer bitstream_buffer(next_output_buffer_id_++, dup_handle,
                                    output_buffer_size_);
   LOG_ASSERT(output_buffers_at_client_
@@ -1855,26 +2036,17 @@ void SimpleVEAClientBase::CreateEncoder() {
   LOG_ASSERT(!has_encoder());
   LOG_ASSERT(g_env->test_streams_.size());
 
-  std::unique_ptr<VideoEncodeAccelerator> encoders[] = {
-      CreateFakeVEA(), CreateV4L2VEA(), CreateVaapiVEA(), CreateVTVEA(),
-      CreateMFVEA()};
-
   gfx::Size visible_size(width_, height_);
-  for (auto& encoder : encoders) {
-    if (!encoder)
-      continue;
-    encoder_ = std::move(encoder);
-    if (encoder_->Initialize(kInputFormat, visible_size,
-                             g_env->test_streams_[0]->requested_profile,
-                             bitrate_, this)) {
-      encoder_->RequestEncodingParametersChange(bitrate_, fps_);
-      SetState(CS_INITIALIZED);
-      return;
-    }
+  encoder_ = CreateVideoEncodeAccelerator(
+      kInputFormat, visible_size, g_env->test_streams_[0]->requested_profile,
+      bitrate_, this, gpu::GpuPreferences());
+  if (!encoder_) {
+    LOG(ERROR) << "Failed creating a VideoEncodeAccelerator.";
+    SetState(CS_ERROR);
+    return;
   }
-  encoder_.reset();
-  LOG(ERROR) << "VideoEncodeAccelerator::Initialize() failed";
-  SetState(CS_ERROR);
+  encoder_->RequestEncodingParametersChange(bitrate_, fps_);
+  SetState(CS_INITIALIZED);
 }
 
 void SimpleVEAClientBase::DestroyEncoder() {
@@ -1899,10 +2071,10 @@ void SimpleVEAClientBase::RequireBitstreamBuffers(
   ASSERT_GT(output_size, 0UL);
 
   for (unsigned int i = 0; i < kNumOutputBuffers; ++i) {
-    base::SharedMemory* shm = new base::SharedMemory();
+    auto shm = base::MakeUnique<base::SharedMemory>();
     LOG_ASSERT(shm->CreateAndMapAnonymous(output_size));
-    output_shms_.push_back(shm);
-    FeedEncoderWithOutput(shm, output_size);
+    FeedEncoderWithOutput(shm.get(), output_size);
+    output_shms_.push_back(std::move(shm));
   }
 }
 
@@ -1911,8 +2083,8 @@ void SimpleVEAClientBase::FeedEncoderWithOutput(base::SharedMemory* shm,
   if (!has_encoder())
     return;
 
-  base::SharedMemoryHandle dup_handle;
-  LOG_ASSERT(shm->ShareToProcess(base::GetCurrentProcessHandle(), &dup_handle));
+  base::SharedMemoryHandle dup_handle = shm->handle().Duplicate();
+  LOG_ASSERT(dup_handle.IsValid());
 
   BitstreamBuffer bitstream_buffer(next_output_buffer_id_++, dup_handle,
                                    output_size);
@@ -2082,8 +2254,8 @@ TEST_P(VideoEncodeAcceleratorTest, TestSimpleEncode) {
       std::get<7>(GetParam()) || g_env->verify_all_output();
   const bool verify_output_timestamp = std::get<8>(GetParam());
 
-  ScopedVector<ClientStateNotification<ClientState>> notes;
-  ScopedVector<VEAClient> clients;
+  std::vector<std::unique_ptr<ClientStateNotification<ClientState>>> notes;
+  std::vector<std::unique_ptr<VEAClient>> clients;
   base::Thread vea_client_thread("EncoderClientThread");
   ASSERT_TRUE(vea_client_thread.Start());
 
@@ -2098,16 +2270,16 @@ TEST_P(VideoEncodeAcceleratorTest, TestSimpleEncode) {
         (save_to_file &&
          !g_env->test_streams_[test_stream_index]->out_filename.empty());
 
-    notes.push_back(new ClientStateNotification<ClientState>());
-    clients.push_back(new VEAClient(
-        g_env->test_streams_[test_stream_index], notes.back(),
+    notes.push_back(base::MakeUnique<ClientStateNotification<ClientState>>());
+    clients.push_back(base::MakeUnique<VEAClient>(
+        g_env->test_streams_[test_stream_index].get(), notes.back().get(),
         encoder_save_to_file, keyframe_period, force_bitrate, test_perf,
         mid_stream_bitrate_switch, mid_stream_framerate_switch, verify_output,
         verify_output_timestamp));
 
     vea_client_thread.task_runner()->PostTask(
         FROM_HERE, base::Bind(&VEAClient::CreateEncoder,
-                              base::Unretained(clients.back())));
+                              base::Unretained(clients.back().get())));
   }
 
   // All encoders must pass through states in this order.
@@ -2132,8 +2304,8 @@ TEST_P(VideoEncodeAcceleratorTest, TestSimpleEncode) {
 
   for (size_t i = 0; i < num_concurrent_encoders; ++i) {
     vea_client_thread.task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(&VEAClient::DestroyEncoder, base::Unretained(clients[i])));
+        FROM_HERE, base::Bind(&VEAClient::DestroyEncoder,
+                              base::Unretained(clients[i].get())));
   }
 
   // This ensures all tasks have finished.
@@ -2322,6 +2494,7 @@ int main(int argc, char** argv) {
   bool needs_encode_latency = false;
   bool verify_all_output = false;
   base::FilePath log_path;
+  base::FilePath frame_stats_path;
 
   base::CommandLine::SwitchMap switches = cmd_line->GetSwitches();
   for (base::CommandLine::SwitchMap::const_iterator it = switches.begin();
@@ -2361,6 +2534,13 @@ int main(int argc, char** argv) {
       continue;
     if (it->first == "ozone-platform" || it->first == "ozone-use-surfaceless")
       continue;
+
+    // Output per-frame metrics to a csv file.
+    if (it->first == "frame_stats") {
+      frame_stats_path = base::FilePath(
+          base::FilePath::StringType(it->second.begin(), it->second.end()));
+      continue;
+    }
     LOG(FATAL) << "Unexpected switch: " << it->first << ":" << it->second;
   }
 
@@ -2371,16 +2551,18 @@ int main(int argc, char** argv) {
     LOG(FATAL) << "--measure_latency requires --run_at_fps enabled to work.";
   }
 
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
+#if BUILDFLAG(USE_VAAPI)
   media::VaapiWrapper::PreSandboxInitialization();
+#elif defined(OS_WIN)
+  media::MediaFoundationVideoEncodeAccelerator::PreSandboxInitialization();
 #endif
 
   media::g_env =
       reinterpret_cast<media::VideoEncodeAcceleratorTestEnvironment*>(
           testing::AddGlobalTestEnvironment(
               new media::VideoEncodeAcceleratorTestEnvironment(
-                  std::move(test_stream_data), log_path, run_at_fps,
-                  needs_encode_latency, verify_all_output)));
+                  std::move(test_stream_data), log_path, frame_stats_path,
+                  run_at_fps, needs_encode_latency, verify_all_output)));
 
   return RUN_ALL_TESTS();
 }

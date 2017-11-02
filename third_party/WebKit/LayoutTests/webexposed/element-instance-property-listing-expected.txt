@@ -25,6 +25,7 @@ namespace http://www.w3.org/1999/xhtml
     property PROCESSING_INSTRUCTION_NODE
     property TEXT_NODE
     property accessKey
+    property accessibleNode
     property addEventListener
     property after
     property animate
@@ -53,7 +54,6 @@ namespace http://www.w3.org/1999/xhtml
     property computedRole
     property contains
     property contentEditable
-    property contextMenu
     property createShadowRoot
     property dataset
     property dir
@@ -65,6 +65,7 @@ namespace http://www.w3.org/1999/xhtml
     property getAnimations
     property getAttribute
     property getAttributeNS
+    property getAttributeNames
     property getAttributeNode
     property getAttributeNodeNS
     property getBoundingClientRect
@@ -81,6 +82,7 @@ namespace http://www.w3.org/1999/xhtml
     property hasPointerCapture
     property hidden
     property id
+    property inert
     property innerHTML
     property innerText
     property inputMode
@@ -106,6 +108,7 @@ namespace http://www.w3.org/1999/xhtml
     property nodeName
     property nodeType
     property nodeValue
+    property nonce
     property normalize
     property offsetHeight
     property offsetLeft
@@ -141,6 +144,8 @@ namespace http://www.w3.org/1999/xhtml
     property onended
     property onerror
     property onfocus
+    property onfullscreenchange
+    property onfullscreenerror
     property ongotpointercapture
     property oninput
     property oninvalid
@@ -182,7 +187,6 @@ namespace http://www.w3.org/1999/xhtml
     property onseeking
     property onselect
     property onselectstart
-    property onshow
     property onstalled
     property onsubmit
     property onsuspend
@@ -369,10 +373,13 @@ html element body
     property background
     property bgColor
     property link
+    property onafterprint
+    property onbeforeprint
     property onbeforeunload
     property onhashchange
     property onlanguagechange
     property onmessage
+    property onmessageerror
     property onoffline
     property ononline
     property onpagehide
@@ -436,6 +443,8 @@ html element command
 html element content
     property getDistributedNodes
     property select
+html element data
+    property value
 html element datalist
     property options
 html element dd
@@ -515,10 +524,13 @@ html element frame
     property src
 html element frameset
     property cols
+    property onafterprint
+    property onbeforeprint
     property onbeforeunload
     property onhashchange
     property onlanguagechange
     property onmessage
+    property onmessageerror
     property onoffline
     property ononline
     property onpagehide
@@ -555,6 +567,7 @@ html element html
 html element i
 html element iframe
     property align
+    property allow
     property allowFullscreen
     property allowPaymentRequest
     property contentDocument
@@ -577,10 +590,12 @@ html element image
 html element img
     property align
     property alt
+    property async
     property border
     property complete
     property crossOrigin
     property currentSrc
+    property decode
     property height
     property hspace
     property isMap
@@ -715,16 +730,6 @@ html element marquee
     property width
 html element menu
     property compact
-    property label
-    property type
-html element menuitem
-    property checked
-    property default
-    property disabled
-    property icon
-    property label
-    property radiogroup
-    property type
 html element meta
     property content
     property httpEquiv
@@ -835,7 +840,7 @@ html element script
     property event
     property htmlFor
     property integrity
-    property nonce
+    property noModule
     property src
     property text
     property type
@@ -1001,6 +1006,8 @@ html element thead
     property insertRow
     property rows
     property vAlign
+html element time
+    property dateTime
 html element title
     property text
 html element tr
@@ -1125,6 +1132,7 @@ namespace http://www.w3.org/2000/svg
     property PROCESSING_INSTRUCTION_NODE
     property TEXT_NODE
     property accessKey
+    property accessibleNode
     property addEventListener
     property after
     property animate
@@ -1153,7 +1161,6 @@ namespace http://www.w3.org/2000/svg
     property computedRole
     property contains
     property contentEditable
-    property contextMenu
     property createShadowRoot
     property dataset
     property dir
@@ -1165,6 +1172,7 @@ namespace http://www.w3.org/2000/svg
     property getAnimations
     property getAttribute
     property getAttributeNS
+    property getAttributeNames
     property getAttributeNode
     property getAttributeNodeNS
     property getBoundingClientRect
@@ -1181,6 +1189,7 @@ namespace http://www.w3.org/2000/svg
     property hasPointerCapture
     property hidden
     property id
+    property inert
     property innerHTML
     property innerText
     property inputMode
@@ -1206,6 +1215,7 @@ namespace http://www.w3.org/2000/svg
     property nodeName
     property nodeType
     property nodeValue
+    property nonce
     property normalize
     property offsetHeight
     property offsetLeft
@@ -1241,6 +1251,8 @@ namespace http://www.w3.org/2000/svg
     property onended
     property onerror
     property onfocus
+    property onfullscreenchange
+    property onfullscreenerror
     property ongotpointercapture
     property oninput
     property oninvalid
@@ -1282,7 +1294,6 @@ namespace http://www.w3.org/2000/svg
     property onseeking
     property onselect
     property onselectstart
-    property onshow
     property onstalled
     property onsubmit
     property onsuspend
@@ -1431,7 +1442,7 @@ svg element script
     property event
     property htmlFor
     property integrity
-    property nonce
+    property noModule
     property src
     property text
     property type

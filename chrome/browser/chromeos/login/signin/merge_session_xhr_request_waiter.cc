@@ -24,7 +24,7 @@ namespace {
 // Maximum time for delaying XHR requests.
 const int kMaxRequestWaitTimeMS = 10000;
 
-}
+}  // namespace
 
 MergeSessionXHRRequestWaiter::MergeSessionXHRRequestWaiter(
     Profile* profile,
@@ -47,8 +47,8 @@ void MergeSessionXHRRequestWaiter::StartWaiting() {
     manager->AddObserver(this);
     BrowserThread::PostDelayedTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&MergeSessionXHRRequestWaiter::OnTimeout,
-                   weak_ptr_factory_.GetWeakPtr()),
+        base::BindOnce(&MergeSessionXHRRequestWaiter::OnTimeout,
+                       weak_ptr_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(kMaxRequestWaitTimeMS));
   } else {
     NotifyBlockingDone();
@@ -63,10 +63,8 @@ void MergeSessionXHRRequestWaiter::OnSessionRestoreStateChanged(
   OAuth2LoginManager* manager =
       OAuth2LoginManagerFactory::GetInstance()->GetForProfile(profile_);
   DVLOG(1) << "Merge session throttle should "
-           << (!manager->ShouldBlockTabLoading() ?
-                  " NOT" : "")
-           << " be blocking now, "
-           << state;
+           << (!manager->ShouldBlockTabLoading() ? " NOT" : "")
+           << " be blocking now, " << state;
   if (!manager->ShouldBlockTabLoading()) {
     DVLOG(1) << "Unblocking XHR request throttle due to session merge";
     manager->RemoveObserver(this);
@@ -82,8 +80,7 @@ void MergeSessionXHRRequestWaiter::OnTimeout() {
 void MergeSessionXHRRequestWaiter::NotifyBlockingDone() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!callback_.is_null()) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE, callback_);
+    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, callback_);
   }
   weak_ptr_factory_.InvalidateWeakPtrs();
   base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);

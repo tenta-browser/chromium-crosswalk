@@ -30,13 +30,12 @@
 
 #include "platform/fonts/FontDataCache.h"
 
+#include "build/build_config.h"
 #include "platform/fonts/SimpleFontData.h"
-
-using namespace WTF;
 
 namespace blink {
 
-#if !OS(ANDROID)
+#if !defined(OS_ANDROID)
 const unsigned kCMaxInactiveFontData = 250;
 const unsigned kCTargetInactiveFontData = 200;
 #else
@@ -44,10 +43,9 @@ const unsigned kCMaxInactiveFontData = 225;
 const unsigned kCTargetInactiveFontData = 200;
 #endif
 
-PassRefPtr<SimpleFontData> FontDataCache::Get(
-    const FontPlatformData* platform_data,
-    ShouldRetain should_retain,
-    bool subpixel_ascent_descent) {
+RefPtr<SimpleFontData> FontDataCache::Get(const FontPlatformData* platform_data,
+                                          ShouldRetain should_retain,
+                                          bool subpixel_ascent_descent) {
   if (!platform_data)
     return nullptr;
 
@@ -60,7 +58,7 @@ PassRefPtr<SimpleFontData> FontDataCache::Get(
     return nullptr;
   }
 
-  Cache::iterator result = cache_.Find(platform_data);
+  Cache::iterator result = cache_.find(platform_data);
   if (result == cache_.end()) {
     std::pair<RefPtr<SimpleFontData>, unsigned> new_value(
         SimpleFontData::Create(*platform_data, nullptr, false,
@@ -73,7 +71,7 @@ PassRefPtr<SimpleFontData> FontDataCache::Get(
     cache_.Set(&new_value.first->PlatformData(), new_value);
     if (should_retain == kDoNotRetain)
       inactive_font_data_.insert(new_value.first);
-    return new_value.first.Release();
+    return std::move(new_value.first);
   }
 
   if (!result.Get()->value.second) {
@@ -100,7 +98,7 @@ bool FontDataCache::Contains(const FontPlatformData* font_platform_data) const {
 void FontDataCache::Release(const SimpleFontData* font_data) {
   DCHECK(!font_data->IsCustomFont());
 
-  Cache::iterator it = cache_.Find(&(font_data->PlatformData()));
+  Cache::iterator it = cache_.find(&(font_data->PlatformData()));
   DCHECK_NE(it, cache_.end());
   if (it == cache_.end())
     return;
@@ -155,7 +153,7 @@ bool FontDataCache::PurgeLeastRecentlyUsed(int count) {
 
   if (it == end) {
     // Removed everything
-    inactive_font_data_.Clear();
+    inactive_font_data_.clear();
   } else {
     for (int i = 0; i < count; ++i)
       inactive_font_data_.erase(inactive_font_data_.begin());
@@ -163,7 +161,7 @@ bool FontDataCache::PurgeLeastRecentlyUsed(int count) {
 
   bool did_work = font_data_to_delete.size();
 
-  font_data_to_delete.Clear();
+  font_data_to_delete.clear();
 
   is_purging = false;
 

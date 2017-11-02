@@ -20,15 +20,15 @@ namespace content {
 
 namespace {
 
-WebContents* GetWebContentsFromFTNID(int frame_tree_node_id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  FrameTreeNode* frame_tree_node =
-      FrameTreeNode::GloballyFindByID(frame_tree_node_id);
-  if (!frame_tree_node)
-    return nullptr;
-
-  return WebContentsImpl::FromFrameTreeNode(frame_tree_node);
+int FrameTreeNodeIdFromHostIds(int render_process_host_id,
+                               int render_frame_host_id) {
+  RenderFrameHost* render_frame_host =
+      RenderFrameHost::FromID(render_process_host_id, render_frame_host_id);
+  return render_frame_host ? render_frame_host->GetFrameTreeNodeId() : -1;
 }
+
+// static
+const void* const kResourceRequestInfoImplKey = &kResourceRequestInfoImplKey;
 
 }  // namespace
 
@@ -49,14 +49,9 @@ void ResourceRequestInfo::AllocateForTesting(net::URLRequest* request,
                                              int render_view_id,
                                              int render_frame_id,
                                              bool is_main_frame,
-                                             bool parent_is_main_frame,
                                              bool allow_download,
                                              bool is_async,
                                              PreviewsState previews_state) {
-  // Make sure both |is_main_frame| and |parent_is_main_frame| aren't set at the
-  // same time.
-  DCHECK(!(is_main_frame && parent_is_main_frame));
-
   // Make sure RESOURCE_TYPE_MAIN_FRAME is declared as being fetched as part of
   // the main frame.
   DCHECK(resource_type != RESOURCE_TYPE_MAIN_FRAME || is_main_frame);
@@ -70,7 +65,6 @@ void ResourceRequestInfo::AllocateForTesting(net::URLRequest* request,
       0,                                      // request_id
       render_frame_id,                        // render_frame_id
       is_main_frame,                          // is_main_frame
-      parent_is_main_frame,                   // parent_is_main_frame
       resource_type,                          // resource_type
       ui::PAGE_TRANSITION_LINK,               // transition_type
       false,                                  // should_replace_current_entry
@@ -81,6 +75,7 @@ void ResourceRequestInfo::AllocateForTesting(net::URLRequest* request,
       false,                                  // enable load timing
       request->has_upload(),                  // enable upload progress
       false,                                  // do_not_prompt_for_login
+      false,                                  // keep_alive
       blink::kWebReferrerPolicyDefault,       // referrer_policy
       blink::kWebPageVisibilityStateVisible,  // visibility_state
       context,                                // context
@@ -119,7 +114,8 @@ bool ResourceRequestInfo::OriginatedFromServiceWorker(
 // static
 ResourceRequestInfoImpl* ResourceRequestInfoImpl::ForRequest(
     net::URLRequest* request) {
-  return static_cast<ResourceRequestInfoImpl*>(request->GetUserData(NULL));
+  return static_cast<ResourceRequestInfoImpl*>(
+      request->GetUserData(kResourceRequestInfoImplKey));
 }
 
 // static
@@ -136,7 +132,6 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
     int request_id,
     int render_frame_id,
     bool is_main_frame,
-    bool parent_is_main_frame,
     ResourceType resource_type,
     ui::PageTransition transition_type,
     bool should_replace_current_entry,
@@ -147,13 +142,14 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
     bool enable_load_timing,
     bool enable_upload_progress,
     bool do_not_prompt_for_login,
+    bool keepalive,
     blink::WebReferrerPolicy referrer_policy,
     blink::WebPageVisibilityState visibility_state,
     ResourceContext* context,
     bool report_raw_headers,
     bool is_async,
     PreviewsState previews_state,
-    const scoped_refptr<ResourceRequestBodyImpl> body,
+    const scoped_refptr<ResourceRequestBody> body,
     bool initiated_in_secure_context)
     : detachable_handler_(NULL),
       requester_info_(std::move(requester_info)),
@@ -163,7 +159,6 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
       request_id_(request_id),
       render_frame_id_(render_frame_id),
       is_main_frame_(is_main_frame),
-      parent_is_main_frame_(parent_is_main_frame),
       should_replace_current_entry_(should_replace_current_entry),
       is_download_(is_download),
       is_stream_(is_stream),
@@ -172,7 +167,7 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
       enable_load_timing_(enable_load_timing),
       enable_upload_progress_(enable_upload_progress),
       do_not_prompt_for_login_(do_not_prompt_for_login),
-      was_ignored_by_handler_(false),
+      keepalive_(keepalive),
       counted_as_in_flight_request_(false),
       resource_type_(resource_type),
       transition_type_(transition_type),
@@ -182,6 +177,7 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
       context_(context),
       report_raw_headers_(report_raw_headers),
       is_async_(is_async),
+      canceled_by_devtools_(false),
       previews_state_(previews_state),
       body_(body),
       initiated_in_secure_context_(initiated_in_secure_context) {}
@@ -196,7 +192,7 @@ ResourceRequestInfoImpl::GetWebContentsGetterForRequest() const {
   // ID should be used to access the WebContents.
   if (frame_tree_node_id_ != -1) {
     DCHECK(IsBrowserSideNavigationEnabled());
-    return base::Bind(&GetWebContentsFromFTNID, frame_tree_node_id_);
+    return base::Bind(WebContents::FromFrameTreeNodeId, frame_tree_node_id_);
   }
 
   // In other cases, use the RenderProcessHost ID + RenderFrameHost ID to get
@@ -210,6 +206,24 @@ ResourceRequestInfoImpl::GetWebContentsGetterForRequest() const {
 
   return base::Bind(&WebContentsImpl::FromRenderFrameHostID,
                     render_process_host_id, render_frame_host_id);
+}
+
+ResourceRequestInfo::FrameTreeNodeIdGetter
+ResourceRequestInfoImpl::GetFrameTreeNodeIdGetterForRequest() const {
+  if (frame_tree_node_id_ != -1) {
+    DCHECK(IsBrowserSideNavigationEnabled());
+    return base::Bind([](int id) { return id; }, frame_tree_node_id_);
+  }
+
+  int render_process_host_id = -1;
+  int render_frame_host_id = -1;
+  if (!GetAssociatedRenderFrame(&render_process_host_id,
+                                &render_frame_host_id)) {
+    NOTREACHED();
+  }
+
+  return base::Bind(&FrameTreeNodeIdFromHostIds, render_process_host_id,
+                    render_frame_host_id);
 }
 
 ResourceContext* ResourceRequestInfoImpl::GetContext() const {
@@ -244,10 +258,6 @@ bool ResourceRequestInfoImpl::IsMainFrame() const {
   return is_main_frame_;
 }
 
-bool ResourceRequestInfoImpl::ParentIsMainFrame() const {
-  return parent_is_main_frame_;
-}
-
 ResourceType ResourceRequestInfoImpl::GetResourceType() const {
   return resource_type_;
 }
@@ -272,10 +282,6 @@ ui::PageTransition ResourceRequestInfoImpl::GetPageTransition() const {
 
 bool ResourceRequestInfoImpl::HasUserGesture() const {
   return has_user_gesture_;
-}
-
-bool ResourceRequestInfoImpl::WasIgnoredByHandler() const {
-  return was_ignored_by_handler_;
 }
 
 bool ResourceRequestInfoImpl::GetAssociatedRenderFrame(
@@ -306,14 +312,20 @@ NavigationUIData* ResourceRequestInfoImpl::GetNavigationUIData() const {
   return navigation_ui_data_.get();
 }
 
+bool ResourceRequestInfoImpl::CanceledByDevTools() const {
+  return canceled_by_devtools_;
+}
+
 void ResourceRequestInfoImpl::AssociateWithRequest(net::URLRequest* request) {
-  request->SetUserData(NULL, this);
+  // Added for http://crbug.com/754704; remove when that bug is resolved.
+  CHECK(this);
+  request->SetUserData(kResourceRequestInfoImplKey, base::WrapUnique(this));
   int render_process_id;
   int render_frame_id;
   if (GetAssociatedRenderFrame(&render_process_id, &render_frame_id)) {
-    request->SetUserData(
-        URLRequestUserData::kUserDataKey,
-        new URLRequestUserData(render_process_id, render_frame_id));
+    request->SetUserData(URLRequestUserData::kUserDataKey,
+                         base::MakeUnique<URLRequestUserData>(render_process_id,
+                                                              render_frame_id));
   }
 }
 
@@ -331,7 +343,7 @@ void ResourceRequestInfoImpl::UpdateForTransfer(
     int origin_pid,
     int request_id,
     ResourceRequesterInfo* requester_info,
-    mojom::URLLoaderAssociatedRequest url_loader_request,
+    mojom::URLLoaderRequest url_loader_request,
     mojom::URLLoaderClientPtr url_loader_client) {
   route_id_ = route_id;
   render_frame_id_ = render_frame_id;
@@ -348,6 +360,10 @@ void ResourceRequestInfoImpl::UpdateForTransfer(
 
 void ResourceRequestInfoImpl::ResetBody() {
   body_ = nullptr;
+}
+
+void ResourceRequestInfoImpl::SetBlobHandles(BlobHandles blob_handles) {
+  blob_handles_ = std::move(blob_handles);
 }
 
 }  // namespace content

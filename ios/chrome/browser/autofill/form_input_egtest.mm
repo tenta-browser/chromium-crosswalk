@@ -6,7 +6,7 @@
 
 #include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
-#include "ios/chrome/browser/autofill/form_input_accessory_view_controller.h"
+#import "ios/chrome/browser/autofill/form_input_accessory_view_tab_helper.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
@@ -17,8 +17,12 @@
 #import "ios/testing/wait_util.h"
 #import "ios/web/public/test/earl_grey/web_view_actions.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -83,10 +87,7 @@ void AssertElementIsFocused(const std::string& element_id) {
       "http://ios/testing/data/http_server_files/multi_field_form.html");
   [ChromeEarlGrey loadURL:URL];
 
-  id<GREYMatcher> webViewMatcher =
-      chrome_test_util::WebViewContainingText("hello!");
-  [[EarlGrey selectElementWithMatcher:webViewMatcher]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:"hello!"];
 
   // Opening the keyboard from a webview blocks EarlGrey's synchronization.
   [[GREYConfiguration sharedInstance]
@@ -150,11 +151,12 @@ void AssertElementIsFocused(const std::string& element_id) {
 // Tests that trying to programmatically dismiss the keyboard when it isn't
 // visible doesn't crash the browser.
 - (void)testCloseKeyboardWhenNotVisible {
-  FormInputAccessoryViewController* inputAccessoryViewController =
-      chrome_test_util::GetInputAccessoryViewController();
-  GREYAssertNotNil(inputAccessoryViewController,
+  FormInputAccessoryViewTabHelper* tabHelper =
+      FormInputAccessoryViewTabHelper::FromWebState(
+          chrome_test_util::GetCurrentWebState());
+  GREYAssertNotNil(tabHelper,
                    @"The tab's input accessory view should not be non nil.");
-  [inputAccessoryViewController closeKeyboardWithoutButtonPress];
+  tabHelper->CloseKeyboard();
 }
 
 @end

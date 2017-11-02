@@ -7,13 +7,14 @@
 #include <stddef.h>
 
 #include <map>
+#include <utility>
 
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/sequence_checker.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/trace_event/trace_event.h"
 #include "content/common/devtools_messages.h"
 #include "content/common/frame_messages.h"
@@ -46,13 +47,14 @@ const size_t kMaxMessageChunkSize = IPC::Channel::kMaximumMessageSize / 4;
 const char kPageGetAppManifest[] = "Page.getAppManifest";
 
 class WebKitClientMessageLoopImpl
-    : public WebDevToolsAgentClient::WebKitClientMessageLoop,
-      public base::NonThreadSafe {
+    : public WebDevToolsAgentClient::WebKitClientMessageLoop {
  public:
   WebKitClientMessageLoopImpl() = default;
-  ~WebKitClientMessageLoopImpl() override { DCHECK(CalledOnValidThread()); }
+  ~WebKitClientMessageLoopImpl() override {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  }
   void Run() override {
-    DCHECK(CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
     base::RunLoop* const previous_run_loop = run_loop_;
     base::RunLoop run_loop;
@@ -65,7 +67,7 @@ class WebKitClientMessageLoopImpl
     run_loop_ = previous_run_loop;
   }
   void QuitNow() override {
-    DCHECK(CalledOnValidThread());
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(run_loop_);
 
     run_loop_->Quit();
@@ -73,6 +75,8 @@ class WebKitClientMessageLoopImpl
 
  private:
   base::RunLoop* run_loop_ = nullptr;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 };
 
 typedef std::map<int, DevToolsAgent*> IdToAgentMap;
@@ -83,11 +87,9 @@ base::LazyInstance<IdToAgentMap>::Leaky
 
 DevToolsAgent::DevToolsAgent(RenderFrameImpl* frame)
     : RenderFrameObserver(frame),
-      is_attached_(false),
       is_devtools_client_(false),
       paused_(false),
       frame_(frame),
-      cpu_throttler_(new DevToolsCPUThrottler()),
       weak_factory_(this) {
   g_agent_for_routing_id.Get()[routing_id()] = this;
   frame_->GetWebFrame()->SetDevToolsAgentClient(this);
@@ -186,7 +188,7 @@ void DevToolsAgent::DisableTracing() {
 }
 
 void DevToolsAgent::SetCPUThrottlingRate(double rate) {
-  cpu_throttler_->SetThrottlingRate(rate);
+  DevToolsCPUThrottler::GetInstance()->SetThrottlingRate(rate);
 }
 
 // static
@@ -222,7 +224,7 @@ void DevToolsAgent::SendChunkedProtocolMessage(IPC::Sender* sender,
 
   for (size_t pos = 0; pos < message.length(); pos += kMaxMessageChunkSize) {
     chunk.is_last = pos + kMaxMessageChunkSize >= message.length();
-    chunk.session_id = chunk.is_last ? session_id : 0;
+    chunk.session_id = session_id;
     chunk.call_id = chunk.is_last ? call_id : 0;
     chunk.post_state = chunk.is_last ? post_state : std::string();
     chunk.data = message.substr(pos, kMaxMessageChunkSize);
@@ -235,7 +237,7 @@ void DevToolsAgent::SendChunkedProtocolMessage(IPC::Sender* sender,
 
 void DevToolsAgent::OnAttach(const std::string& host_id, int session_id) {
   GetWebAgent()->Attach(WebString::FromUTF8(host_id), session_id);
-  is_attached_ = true;
+  session_ids_.insert(session_id);
 }
 
 void DevToolsAgent::OnReattach(const std::string& host_id,
@@ -243,12 +245,12 @@ void DevToolsAgent::OnReattach(const std::string& host_id,
                                const std::string& agent_state) {
   GetWebAgent()->Reattach(WebString::FromUTF8(host_id), session_id,
                           WebString::FromUTF8(agent_state));
-  is_attached_ = true;
+  session_ids_.insert(session_id);
 }
 
-void DevToolsAgent::OnDetach() {
-  GetWebAgent()->Detach();
-  is_attached_ = false;
+void DevToolsAgent::OnDetach(int session_id) {
+  GetWebAgent()->Detach(session_id);
+  session_ids_.erase(session_id);
 }
 
 void DevToolsAgent::OnDispatchOnInspectorBackend(int session_id,
@@ -258,9 +260,9 @@ void DevToolsAgent::OnDispatchOnInspectorBackend(int session_id,
   TRACE_EVENT0("devtools", "DevToolsAgent::OnDispatchOnInspectorBackend");
   if (method == kPageGetAppManifest) {
     ManifestManager* manager = frame_->manifest_manager();
-    manager->GetManifest(
-        base::Bind(&DevToolsAgent::GotManifest,
-        weak_factory_.GetWeakPtr(), session_id, call_id));
+    manager->GetManifest(base::BindOnce(&DevToolsAgent::GotManifest,
+                                        weak_factory_.GetWeakPtr(), session_id,
+                                        call_id));
     return;
   }
   GetWebAgent()->DispatchOnInspectorBackend(session_id, call_id,
@@ -284,14 +286,12 @@ void DevToolsAgent::ContinueProgram() {
   GetWebAgent()->ContinueProgram();
 }
 
-void DevToolsAgent::OnSetupDevToolsClient(
-    const std::string& compatibility_script) {
+void DevToolsAgent::OnSetupDevToolsClient(const std::string& api_script) {
   // We only want to register once; and only in main frame.
-  DCHECK(!frame_->GetWebFrame()->Parent());
   if (is_devtools_client_)
     return;
   is_devtools_client_ = true;
-  new DevToolsClient(frame_, compatibility_script);
+  new DevToolsClient(frame_, api_script);
 }
 
 WebDevToolsAgent* DevToolsAgent::GetWebAgent() {
@@ -299,7 +299,13 @@ WebDevToolsAgent* DevToolsAgent::GetWebAgent() {
 }
 
 bool DevToolsAgent::IsAttached() {
-  return is_attached_;
+  return !!session_ids_.size();
+}
+
+void DevToolsAgent::DetachAllSessions() {
+  for (int session_id : session_ids_)
+    GetWebAgent()->Detach(session_id);
+  session_ids_.clear();
 }
 
 void DevToolsAgent::GotManifest(int session_id,
@@ -307,7 +313,7 @@ void DevToolsAgent::GotManifest(int session_id,
                                 const GURL& manifest_url,
                                 const Manifest& manifest,
                                 const ManifestDebugInfo& debug_info) {
-  if (!is_attached_)
+  if (!IsAttached())
     return;
 
   std::unique_ptr<base::DictionaryValue> response(new base::DictionaryValue());
@@ -333,8 +339,8 @@ void DevToolsAgent::GotManifest(int session_id,
   result->SetString("url", url.Utf16());
   if (!failed)
     result->SetString("data", debug_info.raw_data);
-  result->Set("errors", errors.release());
-  response->Set("result", result.release());
+  result->Set("errors", std::move(errors));
+  response->Set("result", std::move(result));
 
   std::string json_message;
   base::JSONWriter::Write(*response, &json_message);

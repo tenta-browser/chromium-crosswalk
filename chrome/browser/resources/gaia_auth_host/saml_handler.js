@@ -143,17 +143,14 @@ cr.define('cr.login', function() {
 
     this.webview_.addEventListener(
         'contentload', this.onContentLoad_.bind(this));
-    this.webview_.addEventListener(
-        'loadabort', this.onLoadAbort_.bind(this));
-    this.webview_.addEventListener(
-        'loadcommit', this.onLoadCommit_.bind(this));
+    this.webview_.addEventListener('loadabort', this.onLoadAbort_.bind(this));
+    this.webview_.addEventListener('loadcommit', this.onLoadCommit_.bind(this));
     this.webview_.addEventListener(
         'permissionrequest', this.onPermissionRequest_.bind(this));
 
     this.webview_.request.onBeforeRequest.addListener(
         this.onInsecureRequest.bind(this),
-        {urls: ['http://*/*', 'file://*/*', 'ftp://*/*']},
-        ['blocking']);
+        {urls: ['http://*/*', 'file://*/*', 'ftp://*/*']}, ['blocking']);
     this.webview_.request.onHeadersReceived.addListener(
         this.onHeadersReceived_.bind(this),
         {urls: ['<all_urls>'], types: ['main_frame', 'xmlhttprequest']},
@@ -162,9 +159,7 @@ cr.define('cr.login', function() {
     this.webview_.addContentScripts([{
       name: 'samlInjected',
       matches: ['http://*/*', 'https://*/*'],
-      js: {
-        code: injectedJs
-      },
+      js: {code: injectedJs},
       all_frames: true,
       run_at: 'document_start'
     }]);
@@ -248,7 +243,12 @@ cr.define('cr.login', function() {
      * @private
      */
     onContentLoad_: function(e) {
-      PostMessageChannel.init(this.webview_.contentWindow);
+      // |this.webview_.contentWindow| may be null after network error screen
+      // is shown. See crbug.com/770999.
+      if (this.webview_.contentWindow)
+        PostMessageChannel.init(this.webview_.contentWindow);
+      else
+        console.error('SamlHandler.onContentLoad_: contentWindow is null.');
     },
 
     /**
@@ -290,8 +290,8 @@ cr.define('cr.login', function() {
       if (!this.blockInsecureContent)
         return {};
       var strippedUrl = stripParams(details.url);
-      this.dispatchEvent(new CustomEvent('insecureContentBlocked',
-                                         {detail: {url: strippedUrl}}));
+      this.dispatchEvent(new CustomEvent(
+          'insecureContentBlocked', {detail: {url: strippedUrl}}));
       return {cancel: true};
     },
 
@@ -318,8 +318,8 @@ cr.define('cr.login', function() {
             // requests will be coming from the IdP. Append a cookie to the
             // current |headers| that marks the point at which the redirect
             // occurred.
-            headers.push({name: 'Set-Cookie',
-                          value: 'google-accounts-saml-start=now'});
+            headers.push(
+                {name: 'Set-Cookie', value: 'google-accounts-saml-start=now'});
             return {responseHeaders: headers};
           } else if (action == 'end') {
             this.pendingIsSamlPage_ = false;
@@ -344,8 +344,8 @@ cr.define('cr.login', function() {
             // ignored by Chrome in cookie headers, causing the modified headers
             // to actually set the original cookies.
             var otherHeaders = [];
-            var cookies = [{name: 'Set-Cookie',
-                            value: 'google-accounts-saml-end=now'}];
+            var cookies =
+                [{name: 'Set-Cookie', value: 'google-accounts-saml-end=now'}];
             for (var j = 0; j < headers.length; ++j) {
               if (headers[j].name.toLowerCase().startsWith('set-cookie')) {
                 var header = headers[j];
@@ -373,8 +373,7 @@ cr.define('cr.login', function() {
       var channel = Channel.create();
       channel.init(port);
 
-      channel.registerMessage(
-          'apiCall', this.onAPICall_.bind(this, channel));
+      channel.registerMessage('apiCall', this.onAPICall_.bind(this, channel));
       channel.registerMessage(
           'updatePassword', this.onUpdatePassword_.bind(this, channel));
       channel.registerMessage(
@@ -384,18 +383,19 @@ cr.define('cr.login', function() {
     },
 
     sendInitializationSuccess_: function(channel) {
-      channel.send({name: 'apiResponse', response: {
-        result: 'initialized',
-        version: this.apiVersion_,
-        keyTypes: API_KEY_TYPES
-      }});
+      channel.send({
+        name: 'apiResponse',
+        response: {
+          result: 'initialized',
+          version: this.apiVersion_,
+          keyTypes: API_KEY_TYPES
+        }
+      });
     },
 
     sendInitializationFailure_: function(channel) {
-      channel.send({
-        name: 'apiResponse',
-        response: {result: 'initialization_failed'}
-      });
+      channel.send(
+          {name: 'apiResponse', response: {result: 'initialization_failed'}});
     },
 
     /**
@@ -413,8 +413,8 @@ cr.define('cr.login', function() {
           return;
         }
 
-        this.apiVersion_ = Math.min(call.requestedVersion,
-                                    MAX_API_VERSION_VERSION);
+        this.apiVersion_ =
+            Math.min(call.requestedVersion, MAX_API_VERSION_VERSION);
         this.apiInitialized_ = true;
         this.sendInitializationSuccess_(channel);
         return;
@@ -446,11 +446,13 @@ cr.define('cr.login', function() {
 
     onPageLoaded_: function(channel, msg) {
       this.authDomain = extractDomain(msg.url);
-      this.dispatchEvent(new CustomEvent(
-          'authPageLoaded',
-          {detail: {url: url,
-                    isSAMLPage: this.isSamlPage_,
-                    domain: this.authDomain}}));
+      this.dispatchEvent(new CustomEvent('authPageLoaded', {
+        detail: {
+          url: url,
+          isSAMLPage: this.isSamlPage_,
+          domain: this.authDomain
+        }
+      }));
     },
 
     onPermissionRequest_: function(permissionEvent) {
@@ -467,7 +469,5 @@ cr.define('cr.login', function() {
     },
   };
 
-  return {
-    SamlHandler: SamlHandler
-  };
+  return {SamlHandler: SamlHandler};
 });

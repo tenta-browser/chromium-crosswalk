@@ -25,7 +25,8 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
  public:
   static const char kViewClassName[];
 
-  explicit Checkbox(const base::string16& label);
+  // |force_md| forces MD even when --secondary-ui-md flag is not set.
+  explicit Checkbox(const base::string16& label, bool force_md = false);
   ~Checkbox() override;
 
   // Sets a listener for this checkbox. Checkboxes aren't required to have them
@@ -37,19 +38,21 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
   bool checked() const { return checked_; }
 
  protected:
-  // Returns whether MD is enabled; exists for the sake of brevity.
-  static bool UseMd();
+  // Returns whether MD is enabled. Returns true if |force_md| in the
+  // constructor or --secondary-ui-md flag is set.
+  bool UseMd() const;
 
-  // Overridden from LabelButton:
+  // LabelButton:
   const char* GetClassName() const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
-  void OnPaint(gfx::Canvas* canvas) override;
   void OnFocus() override;
   void OnBlur() override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  std::unique_ptr<InkDrop> CreateInkDrop() override;
   std::unique_ptr<InkDropRipple> CreateInkDropRipple() const override;
   SkColor GetInkDropBaseColor() const override;
   gfx::ImageSkia GetImage(ButtonState for_state) const override;
+  std::unique_ptr<LabelButtonBorder> CreateDefaultBorder() const override;
 
   // Set the image shown for each button state depending on whether it is
   // [checked] or [focused].
@@ -58,14 +61,20 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
                       ButtonState for_state,
                       const gfx::ImageSkia& image);
 
-  // Paints a focus indicator for the view.
-  virtual void PaintFocusRing(gfx::Canvas* canvas, const cc::PaintFlags& flags);
+  // Paints a focus indicator for the view. Overridden in RadioButton.
+  virtual void PaintFocusRing(View* view,
+                              gfx::Canvas* canvas,
+                              const cc::PaintFlags& flags);
 
   // Gets the vector icon to use based on the current state of |checked_|.
   virtual const gfx::VectorIcon& GetVectorIcon() const;
 
  private:
-  // Overridden from Button:
+  friend class IconFocusRing;
+
+  SkColor GetIconImageColor(bool checked) const;
+
+  // Button:
   void NotifyClick(const ui::Event& event) override;
 
   ui::NativeTheme::Part GetThemePart() const override;
@@ -74,8 +83,13 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
   // True if the checkbox is checked.
   bool checked_;
 
+  // FocusRing used in MD mode
+  View* focus_ring_ = nullptr;
+
   // The images for each button node_data.
   gfx::ImageSkia images_[2][2][STATE_COUNT];
+
+  bool use_md_;
 
   DISALLOW_COPY_AND_ASSIGN(Checkbox);
 };

@@ -4,6 +4,7 @@
 
 #include "chromeos/network/auto_connect_handler.h"
 
+#include <sstream>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -24,6 +25,26 @@
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace chromeos {
+
+namespace {
+
+void DisconnectErrorCallback(
+    const std::string& network_path,
+    const std::string& error_name,
+    std::unique_ptr<base::DictionaryValue> error_data) {
+  std::stringstream error_data_ss;
+  if (error_data)
+    error_data_ss << *error_data;
+  else
+    error_data_ss << "<none>";
+
+  NET_LOG(ERROR) << "AutoConnectHandler.Disconnect failed. "
+                 << "Path: \"" << network_path << "\", "
+                 << "Error name: \"" << error_name << "\", "
+                 << "Error data: " << error_data_ss.str();
+}
+
+}  // namespace
 
 AutoConnectHandler::AutoConnectHandler()
     : client_cert_resolver_(nullptr),
@@ -193,7 +214,7 @@ void AutoConnectHandler::CheckBestConnection() {
   connect_to_best_services_after_scan_ = true;
   if (!network_state_handler_->GetScanningByType(
           NetworkTypePattern::Primitive(shill::kTypeWifi))) {
-    network_state_handler_->RequestScan();
+    network_state_handler_->RequestScan(NetworkTypePattern::WiFi());
   }
 }
 
@@ -230,7 +251,7 @@ void AutoConnectHandler::DisconnectFromUnmanagedSharedWiFiNetworks() {
 
   NetworkStateHandler::NetworkStateList networks;
   network_state_handler_->GetVisibleNetworkListByType(
-      NetworkTypePattern::Wireless(), &networks);
+      NetworkTypePattern::WiFi(), &networks);
   for (const NetworkState* network : networks) {
     if (!(network->IsConnectingState() || network->IsConnectedState()))
       break;  // Connected and connecting networks are listed first.
@@ -241,16 +262,14 @@ void AutoConnectHandler::DisconnectFromUnmanagedSharedWiFiNetworks() {
     const bool network_is_policy_managed =
         !network->profile_path().empty() && !network->guid().empty() &&
         managed_configuration_handler_->FindPolicyByGuidAndProfile(
-            network->guid(), network->profile_path());
+            network->guid(), network->profile_path(), nullptr /* onc_source */);
     if (network_is_policy_managed)
       continue;
 
     NET_LOG_EVENT("Disconnect Forced by Policy", network->path());
-    DBusThreadManager::Get()->GetShillServiceClient()->Disconnect(
-        dbus::ObjectPath(network->path()), base::Bind(&base::DoNothing),
-        base::Bind(&network_handler::ShillErrorCallbackFunction,
-                   "AutoConnectHandler.Disconnect failed", network->path(),
-                   network_handler::ErrorCallback()));
+    network_connection_handler_->DisconnectNetwork(
+        network->path(), base::Bind(&base::DoNothing),
+        base::Bind(&DisconnectErrorCallback, network->path()));
   }
 }
 

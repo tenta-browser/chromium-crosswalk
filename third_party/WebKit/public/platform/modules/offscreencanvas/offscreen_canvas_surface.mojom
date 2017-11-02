@@ -4,31 +4,34 @@
 
 module blink.mojom;
 
-import "cc/ipc/frame_sink_id.mojom";
-import "cc/ipc/frame_sink_manager.mojom";
-import "cc/ipc/mojo_compositor_frame_sink.mojom";
-import "cc/ipc/surface_id.mojom";
-import "cc/ipc/surface_sequence.mojom";
+import "services/viz/public/interfaces/compositing/compositor_frame_sink.mojom";
+import "services/viz/public/interfaces/compositing/frame_sink_id.mojom";
+import "services/viz/public/interfaces/compositing/surface_id.mojom";
+import "services/viz/public/interfaces/compositing/surface_info.mojom";
+import "services/viz/public/interfaces/compositing/surface_sequence.mojom";
 
 interface OffscreenCanvasSurface {
-  Require(cc.mojom.SurfaceId surface_id, cc.mojom.SurfaceSequence sequence);
-  Satisfy(cc.mojom.SurfaceSequence sequence);
+  Require(viz.mojom.SurfaceId surface_id, viz.mojom.SurfaceSequence sequence);
+  Satisfy(viz.mojom.SurfaceSequence sequence);
 };
 
-// Creates OffscreenCanvasSurface and MojoCompositorFrameSink instances for use
+interface OffscreenCanvasSurfaceClient {
+  OnFirstSurfaceActivation(viz.mojom.SurfaceInfo surface_info);
+};
+
+// Creates OffscreenCanvasSurface and CompositorFrameSink instances for use
 // with offscreen canvas.
 interface OffscreenCanvasProvider {
-  // TODO(kylechar): Observer interface shouldn't be FrameSinkManagerClient.
   // Create an OffscreenCanvasSurface for |frame_sink_id|. |client| will observe
   // any changes to the SurfaceId associated with |frame_sink_id|.
-  CreateOffscreenCanvasSurface(cc.mojom.FrameSinkId parent_frame_sink_id,
-                               cc.mojom.FrameSinkId frame_sink_id,
-                               cc.mojom.FrameSinkManagerClient client,
+  CreateOffscreenCanvasSurface(viz.mojom.FrameSinkId parent_frame_sink_id,
+                               viz.mojom.FrameSinkId frame_sink_id,
+                               OffscreenCanvasSurfaceClient client,
                                OffscreenCanvasSurface& surface);
 
-  // Create an MojoCompositorFrameSink for |frame_sink_id|. This must happen
+  // Create an CompositorFrameSink for |frame_sink_id|. This must happen
   // after creating an OffsreenCanvasSurface for |frame_sink_id|.
-  CreateCompositorFrameSink(cc.mojom.FrameSinkId frame_sink_id,
-                            cc.mojom.MojoCompositorFrameSinkClient client,
-                            cc.mojom.MojoCompositorFrameSink& sink);
+  CreateCompositorFrameSink(viz.mojom.FrameSinkId frame_sink_id,
+                            viz.mojom.CompositorFrameSinkClient client,
+                            viz.mojom.CompositorFrameSink& sink);
 };

@@ -30,6 +30,7 @@ public class TabModelOrderController {
      * @return Where to insert the tab.
      */
     public int determineInsertionIndex(TabLaunchType type, int position, Tab newTab) {
+        if (type == TabLaunchType.FROM_BROWSER_ACTIONS) return -1;
         if (linkClicked(type)) {
             position = determineInsertionIndex(type, newTab);
         }
@@ -51,15 +52,16 @@ public class TabModelOrderController {
      */
     public int determineInsertionIndex(TabLaunchType type, Tab newTab) {
         TabModel currentModel = mTabModelSelector.getCurrentModel();
-        Tab currentTab = TabModelUtils.getCurrentTab(currentModel);
-        if (currentTab == null) {
-            assert (currentModel.getCount() == 0);
-            return 0;
-        }
-        int currentId = currentTab.getId();
-        int currentIndex = TabModelUtils.getTabIndexById(currentModel, currentId);
 
         if (sameModelType(currentModel, newTab)) {
+            Tab currentTab = TabModelUtils.getCurrentTab(currentModel);
+            if (currentTab == null) {
+                assert (currentModel.getCount() == 0);
+                return 0;
+            }
+            int currentId = currentTab.getId();
+            int currentIndex = TabModelUtils.getTabIndexById(currentModel, currentId);
+
             if (willOpenInForeground(type, newTab.isIncognito())) {
                 // If the tab was opened in the foreground, insert it adjacent to
                 // the tab that opened that link.
@@ -131,7 +133,9 @@ public class TabModelOrderController {
      */
     public boolean willOpenInForeground(TabLaunchType type, boolean isNewTabIncognito) {
         // Restore is handling the active index by itself.
-        if (type == TabLaunchType.FROM_RESTORE) return false;
+        if (type == TabLaunchType.FROM_RESTORE || type == TabLaunchType.FROM_BROWSER_ACTIONS) {
+            return false;
+        }
         return type != TabLaunchType.FROM_LONGPRESS_BACKGROUND
                 || (!mTabModelSelector.isIncognitoSelected() && isNewTabIncognito);
     }

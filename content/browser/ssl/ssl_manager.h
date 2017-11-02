@@ -94,33 +94,21 @@ class CONTENT_EXPORT SSLManager {
   void OnCertError(std::unique_ptr<SSLErrorHandler> handler);
 
  private:
-  enum OnCertErrorInternalOptionsMask {
-    OVERRIDABLE = 1 << 0,
-    STRICT_ENFORCEMENT = 1 << 1,
-    EXPIRED_PREVIOUS_DECISION = 1 << 2
-  };
-
   // Helper method for handling certificate errors.
   //
-  // Options should be a bitmask combination of OnCertErrorInternalOptionsMask.
-  // OVERRIDABLE indicates whether or not the user could (assuming perfect
-  // knowledge) successfully override the error and still get the security
-  // guarantees of TLS. STRICT_ENFORCEMENT indicates whether or not the site the
-  // user is trying to connect to has requested strict enforcement of
-  // certificate validation (e.g. with HTTP Strict-Transport-Security).
-  // EXPIRED_PREVIOUS_DECISION indicates whether a user decision had been
+  // |expired_previous_decision| indicates whether a user decision had been
   // previously made but the decision has expired.
   void OnCertErrorInternal(std::unique_ptr<SSLErrorHandler> handler,
-                           int options_mask);
+                           bool expired_previous_decision);
 
-  // Updates the NavigationEntry's |content_status| flags according to
-  // state in |ssl_host_state_delegate|. |add_content_status_flags| and
-  // |remove_content_status_flags| are bitmasks of
-  // SSLStatus::ContentStatusFlags that will be added or removed from
-  // the |content_status| field. (Pass 0 to add/remove no content status
-  // flags.) This method will notify the WebContents of an SSL state
-  // change if a change was actually made.
-  void UpdateEntry(NavigationEntryImpl* entry,
+  // Updates the NavigationEntry's |content_status| flags according to state in
+  // |ssl_host_state_delegate|. |add_content_status_flags| and
+  // |remove_content_status_flags| are bitmasks of SSLStatus::ContentStatusFlags
+  // that will be added or removed from the |content_status| field. (Pass 0 to
+  // add/remove no content status flags.) |remove_content_status_flags| are
+  // removed before |add_content_status_flags| are added. If the final set of
+  // flags changes, this method will notify the WebContents and return true.
+  bool UpdateEntry(NavigationEntryImpl* entry,
                    int add_content_status_flags,
                    int remove_content_status_flags);
 

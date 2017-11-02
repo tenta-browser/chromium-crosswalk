@@ -23,18 +23,20 @@
 #ifndef LayoutText_h
 #define LayoutText_h
 
+#include <iterator>
 #include "core/CoreExport.h"
 #include "core/dom/Text.h"
 #include "core/layout/LayoutObject.h"
 #include "core/layout/TextRunConstructor.h"
 #include "platform/LengthFunctions.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
 class AbstractInlineTextBox;
 class InlineTextBox;
+class NGOffsetMappingResult;
 
 // LayoutText is the root class for anything that represents
 // a text node (see core/dom/Text.h).
@@ -71,7 +73,7 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   // FIXME: If the node argument is not a Text node or the string argument is
   // not the content of the Text node, updating text-transform property
   // doesn't re-transform the string.
-  LayoutText(Node*, PassRefPtr<StringImpl>);
+  LayoutText(Node*, RefPtr<StringImpl>);
 #if DCHECK_IS_ON()
   ~LayoutText() override;
 #endif
@@ -83,7 +85,7 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   virtual bool IsTextFragment() const;
   virtual bool IsWordBreak() const;
 
-  virtual PassRefPtr<StringImpl> OriginalText() const;
+  virtual RefPtr<StringImpl> OriginalText() const;
 
   void ExtractTextBox(InlineTextBox*);
   void AttachTextBox(InlineTextBox*);
@@ -99,17 +101,12 @@ class CORE_EXPORT LayoutText : public LayoutObject {
 
   void AbsoluteRects(Vector<IntRect>&,
                      const LayoutPoint& accumulated_offset) const final;
-  void AbsoluteRectsForRange(Vector<IntRect>&,
-                             unsigned start_offset = 0,
-                             unsigned end_offset = INT_MAX,
-                             bool use_selection_height = false);
 
   void AbsoluteQuads(Vector<FloatQuad>&,
                      MapCoordinatesFlags mode = 0) const final;
   void AbsoluteQuadsForRange(Vector<FloatQuad>&,
                              unsigned start_offset = 0,
-                             unsigned end_offset = INT_MAX,
-                             bool use_selection_height = false);
+                             unsigned end_offset = INT_MAX) const;
   FloatRect LocalBoundingBoxRectForAccessibility() const final;
 
   enum ClippingOption { kNoClipping, kClipToEllipsis };
@@ -141,14 +138,16 @@ class CORE_EXPORT LayoutText : public LayoutObject {
                       LayoutUnit x_pos,
                       TextDirection,
                       HashSet<const SimpleFontData*>* fallback_fonts = nullptr,
-                      FloatRect* glyph_bounds = nullptr) const;
+                      FloatRect* glyph_bounds = nullptr,
+                      float expansion = 0) const;
   virtual float Width(unsigned from,
                       unsigned len,
                       LayoutUnit x_pos,
                       TextDirection,
                       bool first_line = false,
                       HashSet<const SimpleFontData*>* fallback_fonts = nullptr,
-                      FloatRect* glyph_bounds = nullptr) const;
+                      FloatRect* glyph_bounds = nullptr,
+                      float expansion = 0) const;
 
   float MinLogicalWidth() const;
   float MaxLogicalWidth() const;
@@ -176,15 +175,15 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   float FirstRunX() const;
   float FirstRunY() const;
 
-  virtual void SetText(PassRefPtr<StringImpl>, bool force = false);
-  void SetTextWithOffset(PassRefPtr<StringImpl>,
+  virtual void SetText(RefPtr<StringImpl>, bool force = false);
+  void SetTextWithOffset(RefPtr<StringImpl>,
                          unsigned offset,
                          unsigned len,
                          bool force = false);
 
   // TODO(kojii): setTextInternal() is temporarily public for NGInlineNode.
   // This will be back to protected when NGInlineNode can paint directly.
-  virtual void SetTextInternal(PassRefPtr<StringImpl>);
+  virtual void SetTextInternal(RefPtr<StringImpl>);
 
   virtual void TransformText();
 
@@ -192,9 +191,9 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   void SetSelectionState(SelectionState) final;
   LayoutRect LocalSelectionRect() const final;
   LayoutRect LocalCaretRect(
-      InlineBox*,
+      const InlineBox*,
       int caret_offset,
-      LayoutUnit* extra_width_to_end_of_line = nullptr) override;
+      LayoutUnit* extra_width_to_end_of_line = nullptr) const override;
 
   InlineTextBox* FirstTextBox() const { return first_text_box_; }
   InlineTextBox* LastTextBox() const { return last_text_box_; }
@@ -207,18 +206,22 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   int CaretMaxOffset() const override;
   unsigned ResolvedTextLength() const;
 
+  // True if any character remains after CSS white-space collapsing.
+  bool HasNonCollapsedText() const;
+
   bool ContainsReversedText() const { return contains_reversed_text_; }
 
-  bool IsSecure() const { return Style()->TextSecurity() != TSNONE; }
+  bool IsSecure() const {
+    return Style()->TextSecurity() != ETextSecurity::kNone;
+  }
   void MomentarilyRevealLastTypedCharacter(
       unsigned last_typed_character_offset);
 
   bool IsAllCollapsibleWhitespace() const;
-  bool IsRenderedCharacter(int offset_in_node) const;
 
   void RemoveAndDestroyTextBoxes();
 
-  PassRefPtr<AbstractInlineTextBox> FirstAbstractInlineTextBox();
+  RefPtr<AbstractInlineTextBox> FirstAbstractInlineTextBox();
 
   float HyphenWidth(const Font&, TextDirection);
 
@@ -228,24 +231,30 @@ class CORE_EXPORT LayoutText : public LayoutObject {
     known_to_have_no_overflow_and_no_fallback_fonts_ = false;
   }
 
+  virtual UChar PreviousCharacter() const;
+
  protected:
   void WillBeDestroyed() override;
 
   void StyleWillChange(StyleDifference, const ComputedStyle&) final {}
   void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
 
-  virtual UChar PreviousCharacter() const;
-
-  void AddLayerHitTestRects(LayerHitTestRects&,
-                            const PaintLayer* current_layer,
-                            const LayoutPoint& layer_offset,
-                            const LayoutRect& container_rect) const override;
+  void AddLayerHitTestRects(
+      LayerHitTestRects&,
+      const PaintLayer* current_layer,
+      const LayoutPoint& layer_offset,
+      TouchAction supported_fast_actions,
+      const LayoutRect& container_rect,
+      TouchAction container_whitelisted_touch_action) const override;
 
   virtual InlineTextBox* CreateTextBox(
       int start,
       unsigned short length);  // Subclassed by SVG.
 
   void InvalidateDisplayItemClients(PaintInvalidationReason) const override;
+
+  bool ShouldUseNGAlternatives() const;
+  const NGOffsetMappingResult& GetNGOffsetMapping() const;
 
  private:
   void ComputePreferredLogicalWidths(float lead_width);
@@ -278,16 +287,15 @@ class CORE_EXPORT LayoutText : public LayoutObject {
                       float text_width_so_far,
                       TextDirection,
                       HashSet<const SimpleFontData*>* fallback_fonts,
-                      FloatRect* glyph_bounds_accumulation) const;
+                      FloatRect* glyph_bounds_accumulation,
+                      float expansion = 0) const;
 
   void SecureText(UChar mask);
 
   bool IsText() const =
       delete;  // This will catch anyone doing an unnecessary check.
 
-  LayoutRect LocalVisualRect() const override;
-
-  void CheckConsistency() const;
+  LayoutRect LocalVisualRectIgnoringVisibility() const final;
 
   // We put the bitfield first to minimize padding on 64-bit.
 
@@ -353,16 +361,44 @@ inline float LayoutText::HyphenWidth(const Font& font,
 
 DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutText, IsText());
 
-#if !DCHECK_IS_ON()
-inline void LayoutText::CheckConsistency() const {}
-#endif
-
 inline LayoutText* Text::GetLayoutObject() const {
   return ToLayoutText(CharacterData::GetLayoutObject());
 }
 
+// Represents list of |InlineTextBox| objects associated to |LayoutText| in
+// layout order.
+class InlineTextBoxRange {
+ public:
+  class Iterator
+      : public std::iterator<std::input_iterator_tag, InlineTextBox*> {
+   public:
+    explicit Iterator(InlineTextBox*);
+    Iterator(const Iterator&) = default;
+
+    Iterator& operator++();
+    InlineTextBox* operator*() const;
+
+    bool operator==(const Iterator& other) const {
+      return current_ == other.current_;
+    }
+    bool operator!=(const Iterator& other) const { return !operator==(other); }
+
+   private:
+    InlineTextBox* current_;
+  };
+
+  explicit InlineTextBoxRange(const LayoutText&);
+
+  Iterator begin() const { return Iterator(layout_text_->FirstTextBox()); }
+  Iterator end() const { return Iterator(nullptr); }
+
+ private:
+  const LayoutText* layout_text_;
+};
+
+InlineTextBoxRange InlineTextBoxesOf(const LayoutText&);
+
 void ApplyTextTransform(const ComputedStyle*, String&, UChar);
-AtomicString LocaleForLineBreakIterator(const ComputedStyle&);
 
 }  // namespace blink
 

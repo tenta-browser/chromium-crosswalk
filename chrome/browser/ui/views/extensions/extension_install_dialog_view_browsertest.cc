@@ -25,7 +25,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/permission_message_provider.h"
 #include "extensions/common/permissions/permissions_data.h"
-#include "extensions/common/test_util.h"
 #include "ui/views/controls/scroll_view.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
@@ -112,7 +111,7 @@ bool ScrollbarTest::IsScrollbarVisible(
   views::Widget* modal = constrained_window::CreateBrowserModalDialogViews(
       dialog, web_contents()->GetTopLevelNativeWindow());
   modal->Show();
-  content::RunAllBlockingPoolTasksUntilIdle();
+  content::RunAllTasksUntilIdle();
 
   // Check if the vertical scrollbar is visible.
   return dialog->scroll_view()->vertical_scroll_bar()->visible();
@@ -128,7 +127,7 @@ IN_PROC_BROWSER_TEST_F(ScrollbarTest, LongPromptScrollbar) {
                                             PermissionIDSet()));
   }
   std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt = CreatePrompt();
-  prompt->SetPermissions(permissions,
+  prompt->AddPermissions(permissions,
                          ExtensionInstallPrompt::REGULAR_PERMISSIONS);
   ASSERT_TRUE(IsScrollbarVisible(std::move(prompt)))
       << "Scrollbar is not visible";
@@ -143,7 +142,7 @@ IN_PROC_BROWSER_TEST_F(ScrollbarTest, ScrollbarRegression) {
   permissions.push_back(PermissionMessage(permission_string,
                                           PermissionIDSet()));
   std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt = CreatePrompt();
-  prompt->SetPermissions(permissions,
+  prompt->AddPermissions(permissions,
                          ExtensionInstallPrompt::REGULAR_PERMISSIONS);
   ASSERT_FALSE(IsScrollbarVisible(std::move(prompt))) << "Scrollbar is visible";
 }
@@ -217,9 +216,13 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallDialogViewTest, InstallButtonDelay) {
   // Check initial button states.
   EXPECT_FALSE(delegate_view->IsDialogButtonEnabled(ui::DIALOG_BUTTON_OK));
   EXPECT_TRUE(delegate_view->IsDialogButtonEnabled(ui::DIALOG_BUTTON_CANCEL));
+  EXPECT_TRUE(delegate_view->GetInitiallyFocusedView()->HasFocus());
 
   // Check OK button state after timeout to verify that it is re-enabled.
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(delegate_view->IsDialogButtonEnabled(ui::DIALOG_BUTTON_OK));
+
+  // Ensure default button (cancel) has focus.
+  EXPECT_TRUE(delegate_view->GetInitiallyFocusedView()->HasFocus());
   delegate_view->Close();
 }

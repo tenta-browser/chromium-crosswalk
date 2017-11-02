@@ -29,7 +29,7 @@
 #include "net/disk_cache/simple/simple_index_delegate.h"
 
 namespace base {
-class SingleThreadTaskRunner;
+class SequencedTaskRunner;
 class TaskRunner;
 }
 
@@ -47,6 +47,7 @@ namespace disk_cache {
 // The non-static functions below must be called on the IO thread unless
 // otherwise stated.
 
+class BackendCleanupTracker;
 class SimpleEntryImpl;
 class SimpleIndex;
 
@@ -56,9 +57,10 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
  public:
   SimpleBackendImpl(
       const base::FilePath& path,
+      scoped_refptr<BackendCleanupTracker> cleanup_tracker,
       int max_bytes,
       net::CacheType cache_type,
-      const scoped_refptr<base::SingleThreadTaskRunner>& cache_thread,
+      const scoped_refptr<base::SequencedTaskRunner>& cache_runner,
       net::NetLog* net_log);
 
   ~SimpleBackendImpl() override;
@@ -120,6 +122,8 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
   size_t DumpMemoryStats(
       base::trace_event::ProcessMemoryDump* pmd,
       const std::string& parent_absolute_name) const override;
+  uint8_t GetEntryInMemoryData(const std::string& key) override;
+  void SetEntryInMemoryData(const std::string& key, uint8_t data) override;
 
  private:
   class SimpleIterator;
@@ -169,11 +173,16 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
       uint64_t suggested_max_size,
       const SimpleExperiment& experiment);
 
-  // Searches |active_entries_| for the entry corresponding to |key|. If found,
-  // returns the found entry. Otherwise, creates a new entry and returns that.
-  scoped_refptr<SimpleEntryImpl> CreateOrFindActiveEntry(
+  // Looks at current state of |entries_pending_doom_| and |active_entries_|
+  // relevant to |entry_hash|, and, as appropriate, either returns a valid entry
+  // matching |entry_hash| and |key|, or returns nullptr and sets |*post_doom|
+  // to point to a vector of closures which will be invoked when it's an
+  // appropriate time to try again.  The caller is expected to append its retry
+  // closure to that vector.
+  scoped_refptr<SimpleEntryImpl> CreateOrFindActiveOrDoomedEntry(
       uint64_t entry_hash,
-      const std::string& key);
+      const std::string& key,
+      std::vector<base::Closure>** post_doom);
 
   // Given a hash, will try to open the corresponding Entry. If we have an Entry
   // corresponding to |hash| in the map of active entries, opens it. Otherwise,
@@ -213,10 +222,13 @@ class NET_EXPORT_PRIVATE SimpleBackendImpl : public Backend,
                            const CompletionCallback& callback,
                            int result);
 
+  // We want this destroyed after every other field.
+  scoped_refptr<BackendCleanupTracker> cleanup_tracker_;
+
   const base::FilePath path_;
   const net::CacheType cache_type_;
   std::unique_ptr<SimpleIndex> index_;
-  const scoped_refptr<base::SingleThreadTaskRunner> cache_thread_;
+  const scoped_refptr<base::SequencedTaskRunner> cache_runner_;
   scoped_refptr<base::TaskRunner> worker_pool_;
 
   int orig_max_size_;

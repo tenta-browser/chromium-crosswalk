@@ -42,9 +42,7 @@ static long long GenerateSequenceNumber() {
 }
 
 HistoryItem::HistoryItem()
-    : did_save_scroll_or_scale_state_(false),
-      page_scale_factor_(0),
-      item_sequence_number_(GenerateSequenceNumber()),
+    : item_sequence_number_(GenerateSequenceNumber()),
       document_sequence_number_(GenerateSequenceNumber()),
       scroll_restoration_type_(kScrollRestorationAuto) {}
 
@@ -72,36 +70,27 @@ void HistoryItem::SetURL(const KURL& url) {
 }
 
 void HistoryItem::SetReferrer(const Referrer& referrer) {
-  // This should be a RELEASE_ASSERT.
+  // This should be a CHECK.
   referrer_ = SecurityPolicy::GenerateReferrer(referrer.referrer_policy, Url(),
                                                referrer.referrer);
 }
 
-const ScrollOffset& HistoryItem::VisualViewportScrollOffset() const {
-  return visual_viewport_scroll_offset_;
-}
-
 void HistoryItem::SetVisualViewportScrollOffset(const ScrollOffset& offset) {
-  visual_viewport_scroll_offset_ = offset;
-  SetDidSaveScrollOrScaleState(true);
-}
-
-const ScrollOffset& HistoryItem::GetScrollOffset() const {
-  return scroll_offset_;
+  if (!view_state_)
+    view_state_ = WTF::MakeUnique<ViewState>();
+  view_state_->visual_viewport_scroll_offset_ = offset;
 }
 
 void HistoryItem::SetScrollOffset(const ScrollOffset& offset) {
-  scroll_offset_ = offset;
-  SetDidSaveScrollOrScaleState(true);
-}
-
-float HistoryItem::PageScaleFactor() const {
-  return page_scale_factor_;
+  if (!view_state_)
+    view_state_ = WTF::MakeUnique<ViewState>();
+  view_state_->scroll_offset_ = offset;
 }
 
 void HistoryItem::SetPageScaleFactor(float scale_factor) {
-  page_scale_factor_ = scale_factor;
-  SetDidSaveScrollOrScaleState(true);
+  if (!view_state_)
+    view_state_ = WTF::MakeUnique<ViewState>();
+  view_state_->page_scale_factor_ = scale_factor;
 }
 
 void HistoryItem::SetDocumentState(const Vector<String>& state) {
@@ -125,10 +114,10 @@ Vector<String> HistoryItem::GetReferencedFilePaths() {
 
 void HistoryItem::ClearDocumentState() {
   document_state_.Clear();
-  document_state_vector_.Clear();
+  document_state_vector_.clear();
 }
 
-void HistoryItem::SetStateObject(PassRefPtr<SerializedScriptValue> object) {
+void HistoryItem::SetStateObject(RefPtr<SerializedScriptValue> object) {
   state_object_ = std::move(object);
 }
 
@@ -149,7 +138,7 @@ void HistoryItem::SetFormInfoFromRequest(const ResourceRequest& request) {
   }
 }
 
-void HistoryItem::SetFormData(PassRefPtr<EncodedFormData> form_data) {
+void HistoryItem::SetFormData(RefPtr<EncodedFormData> form_data) {
   form_data_ = std::move(form_data);
 }
 
@@ -158,7 +147,7 @@ void HistoryItem::SetFormContentType(const AtomicString& form_content_type) {
 }
 
 EncodedFormData* HistoryItem::FormData() {
-  return form_data_.Get();
+  return form_data_.get();
 }
 
 ResourceRequest HistoryItem::GenerateResourceRequest(

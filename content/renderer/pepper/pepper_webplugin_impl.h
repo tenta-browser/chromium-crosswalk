@@ -47,12 +47,11 @@ class PepperWebPluginImpl : public blink::WebPlugin {
   void UpdateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
                       const blink::WebRect& unobscured_rect,
-                      const blink::WebVector<blink::WebRect>& cut_outs_rects,
                       bool is_visible) override;
   void UpdateFocus(bool focused, blink::WebFocusType focus_type) override;
   void UpdateVisibility(bool visible) override;
   blink::WebInputEventResult HandleInputEvent(
-      const blink::WebInputEvent& event,
+      const blink::WebCoalescedInputEvent& event,
       blink::WebCursorInfo& cursor_info) override;
   void DidReceiveResponse(const blink::WebURLResponse& response) override;
   void DidReceiveData(const char* data, int data_length) override;
@@ -61,6 +60,10 @@ class PepperWebPluginImpl : public blink::WebPlugin {
   bool HasSelection() const override;
   blink::WebString SelectionAsText() const override;
   blink::WebString SelectionAsMarkup() const override;
+  bool CanEditText() const override;
+  bool ExecuteEditCommand(const blink::WebString& name) override;
+  bool ExecuteEditCommand(const blink::WebString& name,
+                          const blink::WebString& value) override;
   blink::WebURL LinkAtPosition(const blink::WebPoint& position) const override;
   bool GetPrintPresetOptionsFromDocument(
       blink::WebPrintPresetOptions* preset_options) override;
@@ -83,14 +86,16 @@ class PepperWebPluginImpl : public blink::WebPlugin {
  private:
   friend class base::DeleteHelper<PepperWebPluginImpl>;
 
-  virtual ~PepperWebPluginImpl();
-  struct InitData;
+  ~PepperWebPluginImpl() override;
 
-  std::unique_ptr<InitData>
-      init_data_;  // Cleared upon successful initialization.
+  // Cleared upon successful initialization.
+  struct InitData;
+  std::unique_ptr<InitData> init_data_;
+
   // True if the instance represents the entire document in a frame instead of
   // being an embedded resource.
-  bool full_frame_;
+  const bool full_frame_;
+
   std::unique_ptr<PluginInstanceThrottlerImpl> throttler_;
   scoped_refptr<PepperPluginInstanceImpl> instance_;
   gfx::Rect plugin_rect_;

@@ -11,6 +11,7 @@ import android.widget.TextView;
 
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.snackbar.SnackbarManager;
 
 /**
  * The base class for all InfoBar classes.
@@ -58,6 +59,10 @@ public abstract class InfoBar implements InfoBarView {
     @CalledByNative
     protected void onNativeDestroyed() {
         mNativeInfoBarPtr = 0;
+    }
+
+    public SnackbarManager getSnackbarManager() {
+        return mContainer != null ? mContainer.getSnackbarManager() : null;
     }
 
     /**
@@ -127,17 +132,39 @@ public abstract class InfoBar implements InfoBarView {
         return mView;
     }
 
+    /**
+     * Returns the accessibility message to announce when this infobar is first shown.
+     */
+    protected CharSequence getAccessibilityMessage(CharSequence defaultTitle) {
+        return defaultTitle == null ? "" : defaultTitle;
+    }
+
     @Override
     public CharSequence getAccessibilityText() {
         if (mView == null) return "";
-        TextView messageView = (TextView) mView.findViewById(R.id.infobar_message);
-        if (messageView == null) return "";
-        return messageView.getText() + mContext.getString(R.string.bottom_bar_screen_position);
+
+        CharSequence title = null;
+        if (usesCompactLayout()) {
+            title = getAccessibilityMessage(title);
+        } else {
+            // For normal infobar, make an announcement only when a proper TextView is assigned.
+            TextView messageView = (TextView) mView.findViewById(R.id.infobar_message);
+            if (messageView == null) return "";
+            title = getAccessibilityMessage(messageView.getText());
+        }
+        return title + mContext.getString(R.string.bottom_bar_screen_position);
     }
 
     @Override
     public boolean isLegalDisclosure() {
         return false;
+    }
+
+    @Override
+    @InfoBarIdentifier
+    public int getInfoBarIdentifier() {
+        if (mNativeInfoBarPtr == 0) return InfoBarIdentifier.INVALID;
+        return nativeGetInfoBarIdentifier(mNativeInfoBarPtr);
     }
 
     /**
@@ -149,12 +176,19 @@ public abstract class InfoBar implements InfoBarView {
             mIsDismissed = true;
             if (!mContainer.hasBeenDestroyed()) {
                 // If the container was destroyed, it's already been emptied of all its infobars.
+                onStartedHiding();
                 mContainer.removeInfoBar(this);
             }
             return true;
         }
         return false;
     }
+
+    /**
+     * Called just before the Java infobar has begun hiding.  Give the chance to clean up any child
+     * UI that may remain open.
+     */
+    protected void onStartedHiding() {}
 
     long getNativeInfoBarPtr() {
         return mNativeInfoBarPtr;
@@ -200,6 +234,8 @@ public abstract class InfoBar implements InfoBarView {
     public void createContent(InfoBarLayout layout) {
     }
 
+    @InfoBarIdentifier
+    private native int nativeGetInfoBarIdentifier(long nativeInfoBarAndroid);
     private native void nativeOnLinkClicked(long nativeInfoBarAndroid);
     private native void nativeOnButtonClicked(long nativeInfoBarAndroid, int action);
     private native void nativeOnCloseButtonClicked(long nativeInfoBarAndroid);

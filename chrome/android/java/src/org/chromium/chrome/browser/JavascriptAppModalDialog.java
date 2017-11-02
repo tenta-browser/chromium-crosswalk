@@ -100,12 +100,7 @@ public class JavascriptAppModalDialog implements DialogInterface.OnClickListener
         AlertDialog.Builder builder = new AlertDialog.Builder(context, R.style.AlertDialogTheme)
                 .setView(layout)
                 .setTitle(mTitle)
-                .setOnCancelListener(new DialogInterface.OnCancelListener() {
-                    @Override
-                    public void onCancel(DialogInterface dialog) {
-                        cancel(false);
-                    }
-                });
+                .setOnCancelListener(dialog -> cancel(false));
         if (mPositiveButtonTextId != 0) builder.setPositiveButton(mPositiveButtonTextId, this);
         if (mNegativeButtonTextId != 0) builder.setNegativeButton(mNegativeButtonTextId, this);
 
@@ -142,6 +137,17 @@ public class JavascriptAppModalDialog implements DialogInterface.OnClickListener
             layout.findViewById(R.id.js_modal_dialog_scroll_view).setVisibility(View.GONE);
         } else {
             ((TextView) layout.findViewById(R.id.js_modal_dialog_message)).setText(mMessage);
+
+            layout.findViewById(R.id.js_modal_dialog_scroll_view)
+                    .addOnLayoutChangeListener(
+                            (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+                                boolean isScrollable =
+                                        v.getMeasuredHeight() - v.getPaddingTop()
+                                                - v.getPaddingBottom()
+                                                < ((ViewGroup) v).getChildAt(0).getMeasuredHeight();
+
+                                v.setFocusable(isScrollable);
+                            });
         }
     }
 

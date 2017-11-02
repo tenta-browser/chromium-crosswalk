@@ -6,7 +6,6 @@
 
 #import "base/ios/ns_error_util.h"
 #include "base/logging.h"
-#import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
 #include "components/error_page/common/error_page_params.h"
@@ -19,9 +18,13 @@
 #include "ui/base/webui/jstemplate_builder.h"
 #include "url/gurl.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 @implementation ErrorPageGenerator {
   // Stores the HTML generated from the NSError in the initializer.
-  base::scoped_nsobject<NSString> html_;
+  NSString* _HTML;
 }
 
 - (instancetype)initWithError:(NSError*)error
@@ -51,16 +54,16 @@
         &errorStrings);
 
     ui::ScaleFactor scaleFactor =
-        ResourceBundle::GetSharedInstance().GetMaxScaleFactor();
+        ui::ResourceBundle::GetSharedInstance().GetMaxScaleFactor();
 
     const base::StringPiece templateHTML(
-        ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
+        ui::ResourceBundle::GetSharedInstance().GetRawDataResourceForScale(
             IDR_NET_ERROR_HTML, scaleFactor));
     if (templateHTML.empty())
       NOTREACHED() << "unable to load template. ID: " << IDR_NET_ERROR_HTML;
     std::string errorHTML = webui::GetTemplatesHtml(
         templateHTML, &errorStrings, "t" /* IDR_NET_ERROR_HTML root id */);
-    html_.reset([base::SysUTF8ToNSString(errorHTML) retain]);
+    _HTML = base::SysUTF8ToNSString(errorHTML);
   }
   return self;
 }
@@ -68,7 +71,7 @@
 #pragma mark - HtmlGenerator
 
 - (void)generateHtml:(HtmlCallback)callback {
-  callback(html_.get());
+  callback(_HTML);
 }
 
 @end

@@ -13,7 +13,8 @@ namespace sandbox {
 // Operation result codes returned by the sandbox API.
 //
 // Note: These codes are listed in a histogram and any new codes should be added
-// at the end.
+// at the end. If the underlying type is changed then the forward declaration in
+// sandbox_init.h must be updated.
 //
 enum ResultCode : int {
   SBOX_ALL_OK = 0,
@@ -124,9 +125,11 @@ enum TerminationCodes {
   SBOX_FATAL_LAST
 };
 
+#if !defined(SANDBOX_FUZZ_TARGET)
 static_assert(SBOX_FATAL_MEMORY_EXCEEDED ==
                   base::win::kSandboxFatalMemoryExceeded,
               "Value for SBOX_FATAL_MEMORY_EXCEEDED must match base.");
+#endif  // !defined(SANDBOX_FUZZ_TARGET)
 
 class BrokerServices;
 class TargetServices;
@@ -145,7 +148,7 @@ struct SandboxInterfaceInfo {
 
 enum InterceptionType {
   INTERCEPTION_INVALID = 0,
-  INTERCEPTION_SERVICE_CALL,    // Trampoline of an NT native call
+  INTERCEPTION_SERVICE_CALL,  // Trampoline of an NT native call
   INTERCEPTION_EAT,
   INTERCEPTION_SIDESTEP,        // Preamble patch
   INTERCEPTION_SMART_SIDESTEP,  // Preamble patch but bypass internal calls

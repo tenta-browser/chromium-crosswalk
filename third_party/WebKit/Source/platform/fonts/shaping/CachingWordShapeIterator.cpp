@@ -8,7 +8,7 @@
 
 namespace blink {
 
-PassRefPtr<const ShapeResult> CachingWordShapeIterator::ShapeWordWithoutSpacing(
+RefPtr<const ShapeResult> CachingWordShapeIterator::ShapeWordWithoutSpacing(
     const TextRun& word_run,
     const Font* font) {
   ShapeCacheEntry* cache_entry = shape_cache_->Add(word_run, ShapeCacheEntry());
@@ -27,7 +27,7 @@ PassRefPtr<const ShapeResult> CachingWordShapeIterator::ShapeWordWithoutSpacing(
   if (cache_entry)
     cache_entry->shape_result_ = shape_result;
 
-  return shape_result.Release();
+  return shape_result;
 }
 
 }  // namespace blink

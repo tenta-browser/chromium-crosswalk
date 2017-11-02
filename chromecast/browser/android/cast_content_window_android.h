@@ -24,8 +24,6 @@ namespace shell {
 // CastWebContentsActivity.
 class CastContentWindowAndroid : public CastContentWindow {
  public:
-  static bool RegisterJni(JNIEnv* env);
-
   ~CastContentWindowAndroid() override;
 
   // CastContentWindow implementation:
@@ -44,7 +42,8 @@ class CastContentWindowAndroid : public CastContentWindow {
   friend class CastContentWindow;
 
   // This class should only be instantiated by CastContentWindow::Create.
-  explicit CastContentWindowAndroid(CastContentWindow::Delegate* delegate);
+  CastContentWindowAndroid(CastContentWindow::Delegate* delegate,
+                           bool isHeadless);
 
   CastContentWindow::Delegate* const delegate_;
   base::android::ScopedJavaGlobalRef<jobject> java_window_;

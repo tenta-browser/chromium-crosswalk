@@ -22,10 +22,10 @@
 #ifndef MediaList_h
 #define MediaList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/css/MediaQuery.h"
 #include "core/dom/ExceptionCode.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Vector.h"
@@ -42,7 +42,7 @@ class MediaQuery;
 class CORE_EXPORT MediaQuerySet : public RefCounted<MediaQuerySet> {
  public:
   static RefPtr<MediaQuerySet> Create() {
-    return AdoptRef(new MediaQuerySet());
+    return WTF::AdoptRef(new MediaQuerySet());
   }
   static RefPtr<MediaQuerySet> Create(const String& media_string);
 
@@ -59,7 +59,7 @@ class CORE_EXPORT MediaQuerySet : public RefCounted<MediaQuerySet> {
   String MediaText() const;
 
   RefPtr<MediaQuerySet> Copy() const {
-    return AdoptRef(new MediaQuerySet(*this));
+    return WTF::AdoptRef(new MediaQuerySet(*this));
   }
 
  private:
@@ -96,7 +96,7 @@ class MediaList final : public GarbageCollectedFinalized<MediaList>,
   CSSRule* ParentRule() const { return parent_rule_; }
   CSSStyleSheet* ParentStyleSheet() const { return parent_style_sheet_; }
 
-  const MediaQuerySet* Queries() const { return media_queries_.Get(); }
+  const MediaQuerySet* Queries() const { return media_queries_.get(); }
 
   void Reattach(RefPtr<MediaQuerySet>);
 

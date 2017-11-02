@@ -29,17 +29,11 @@ class CORE_EXPORT PropertyRegistration
                                const PropertyDescriptor&,
                                ExceptionState&);
 
-  PropertyRegistration(const CSSSyntaxDescriptor&,
-                       bool inherits,
-                       const CSSValue* initial,
-                       PassRefPtr<CSSVariableData> initial_variable_data,
-                       CSSInterpolationTypes);
-
   const CSSSyntaxDescriptor& Syntax() const { return syntax_; }
   bool Inherits() const { return inherits_; }
   const CSSValue* Initial() const { return initial_; }
   CSSVariableData* InitialVariableData() const {
-    return initial_variable_data_.Get();
+    return initial_variable_data_.get();
   }
   const InterpolationTypes& GetInterpolationTypes() const {
     return interpolation_types_;
@@ -48,6 +42,12 @@ class CORE_EXPORT PropertyRegistration
   DEFINE_INLINE_TRACE() { visitor->Trace(initial_); }
 
  private:
+  PropertyRegistration(const AtomicString& name,
+                       const CSSSyntaxDescriptor&,
+                       bool inherits,
+                       const CSSValue* initial,
+                       RefPtr<CSSVariableData> initial_variable_data);
+
   const CSSSyntaxDescriptor syntax_;
   const bool inherits_;
   const Member<const CSSValue> initial_;

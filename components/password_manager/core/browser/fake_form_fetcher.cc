@@ -4,6 +4,8 @@
 
 #include "components/password_manager/core/browser/fake_form_fetcher.h"
 
+#include <memory>
+
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/statistics_table.h"
 
@@ -37,6 +39,25 @@ FakeFormFetcher::GetFederatedMatches() const {
   return federated_;
 }
 
+const std::vector<const PasswordForm*>&
+FakeFormFetcher::GetSuppressedHTTPSForms() const {
+  return suppressed_https_forms_;
+}
+
+const std::vector<const autofill::PasswordForm*>&
+FakeFormFetcher::GetSuppressedPSLMatchingForms() const {
+  return suppressed_psl_matching_forms_;
+}
+
+const std::vector<const autofill::PasswordForm*>&
+FakeFormFetcher::GetSuppressedSameOrganizationNameForms() const {
+  return suppressed_same_organization_name_forms_;
+}
+
+bool FakeFormFetcher::DidCompleteQueryingSuppressedForms() const {
+  return did_complete_querying_suppressed_forms_;
+}
+
 void FakeFormFetcher::SetNonFederated(
     const std::vector<const autofill::PasswordForm*>& non_federated,
     size_t filtered_count) {
@@ -51,7 +72,7 @@ void FakeFormFetcher::Fetch() {
 }
 
 std::unique_ptr<FormFetcher> FakeFormFetcher::Clone() {
-  return nullptr;
+  return std::make_unique<FakeFormFetcher>();
 }
 
 }  // namespace password_manager

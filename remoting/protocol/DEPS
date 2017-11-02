@@ -5,6 +5,8 @@ include_rules = [
   "+ppapi/c",
   "+ppapi/cpp",
   "+ppapi/utility",
+  "+media/base",
+  "+media/video",
   "+remoting/codec",
   "+remoting/signaling",
   "+third_party/boringssl",

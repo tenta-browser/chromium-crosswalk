@@ -26,7 +26,6 @@ class MetafilePlayer;
 class PrintJobWorker;
 class PrintedDocument;
 class PrintedPage;
-class PrintedPagesSource;
 class PrinterQuery;
 
 // Manages the print work for a specific document. Talks to the printer through
@@ -44,7 +43,8 @@ class PrintJob : public PrintJobWorkerOwner,
 
   // Grabs the ownership of the PrintJobWorker from another job, which is
   // usually a PrinterQuery. Set the expected page count of the print job.
-  void Initialize(PrintJobWorkerOwner* job, PrintedPagesSource* source,
+  void Initialize(PrintJobWorkerOwner* job,
+                  const base::string16& name,
                   int page_count);
 
   // content::NotificationObserver implementation.
@@ -79,10 +79,6 @@ class PrintJob : public PrintJobWorkerOwner,
   // our data.
   bool FlushJob(base::TimeDelta timeout);
 
-  // Disconnects the PrintedPage source (PrintedPagesSource). It is done when
-  // the source is being destroyed.
-  void DisconnectSource();
-
   // Returns true if the print job is pending, i.e. between a StartPrinting()
   // and the end of the spooling.
   bool is_job_pending() const;
@@ -105,6 +101,10 @@ class PrintJob : public PrintJobWorkerOwner,
       const gfx::Rect& content_area,
       const gfx::Point& physical_offset,
       bool ps_level2);
+
+  void StartPdfToTextConversion(
+      const scoped_refptr<base::RefCountedMemory>& bytes,
+      const gfx::Size& page_size);
 #endif  // defined(OS_WIN)
 
  protected:
@@ -125,7 +125,7 @@ class PrintJob : public PrintJobWorkerOwner,
   // eventual deadlock.
   void ControlledWorkerShutdown();
 
-  // Called at shutdown when running a nested message loop.
+  // Called at shutdown when running a nested run loop.
   void Quit();
 
   void HoldUntilStopIsCalled();
@@ -138,10 +138,6 @@ class PrintJob : public PrintJobWorkerOwner,
 #endif  // defined(OS_WIN)
 
   content::NotificationRegistrar registrar_;
-
-  // Source that generates the PrintedPage's (i.e. a WebContents). It will be
-  // set back to NULL if the source is deleted before this object.
-  PrintedPagesSource* source_;
 
   // All the UI is done in a worker thread because many Win32 print functions
   // are blocking and enters a message loop without your consent. There is one
@@ -167,7 +163,7 @@ class PrintJob : public PrintJobWorkerOwner,
   std::vector<int> pdf_page_mapping_;
 #endif  // defined(OS_WIN)
 
-  // Used at shutdown so that we can quit a nested message loop.
+  // Used at shutdown so that we can quit a nested run loop.
   base::WeakPtrFactory<PrintJob> quit_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PrintJob);

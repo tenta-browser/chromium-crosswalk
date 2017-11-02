@@ -110,14 +110,6 @@ std::string ContentClient::GetProcessTypeNameInEnglish(int type) {
   return std::string();
 }
 
-#if defined(OS_MACOSX)
-bool ContentClient::GetSandboxProfileForSandboxType(
-    int sandbox_type,
-    int* sandbox_profile_resource_id) const {
-  return false;
-}
-#endif
-
 bool ContentClient::IsSupplementarySiteIsolationModeEnabled() {
   return false;
 }
@@ -140,5 +132,8 @@ media::MediaDrmBridgeClient* ContentClient::GetMediaDrmBridgeClient() {
   return nullptr;
 }
 #endif  // OS_ANDROID
+
+void ContentClient::OnServiceManagerConnected(
+    ServiceManagerConnection* connection) {}
 
 }  // namespace content

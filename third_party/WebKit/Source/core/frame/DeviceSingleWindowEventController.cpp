@@ -5,14 +5,14 @@
 #include "core/frame/DeviceSingleWindowEventController.h"
 
 #include "core/dom/Document.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/page/Page.h"
 
 namespace blink {
 
 DeviceSingleWindowEventController::DeviceSingleWindowEventController(
     Document& document)
-    : PlatformEventController(document.GetFrame()),
+    : PlatformEventController(&document),
       needs_checking_null_events_(true),
       document_(document) {
   document.domWindow()->RegisterEventListenerObserver(this);

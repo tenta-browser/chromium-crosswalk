@@ -1,26 +1,28 @@
+<link rel="import" href="chrome://resources/html/polymer.html">
+
+<link rel="import" href="chrome://resources/cr_elements/cr_icons_css.html">
+<link rel="import" href="chrome://resources/cr_elements/cr_toggle/cr_toggle.html">
+<link rel="import" href="chrome://resources/cr_elements/hidden_style_css.html">
+<link rel="import" href="chrome://resources/cr_elements/paper_button_style_css.html">
+<link rel="import" href="chrome://resources/html/action_link.html">
+<link rel="import" href="chrome://resources/html/action_link_css.html">
 <link rel="import" href="chrome://resources/html/assert.html">
 <link rel="import" href="chrome://resources/html/cr.html">
 <link rel="import" href="chrome://resources/html/i18n_behavior.html">
-<link rel="import" href="chrome://resources/html/load_time_data.html">
-<link rel="import" href="chrome://resources/html/polymer.html">
-<link rel="import" href="chrome://extensions/icons.html">
-<link rel="import" href="chrome://extensions/item_util.html">
-<link rel="import" href="chrome://extensions/strings.html">
+<link rel="import" href="icons.html">
+<link rel="import" href="item_util.html">
+<link rel="import" href="strings.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-icons/iron-icons.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-icons/communication-icons.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/iron-flex-layout/iron-flex-layout-classes.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button.html">
+<link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button-light.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-styles/shadow.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-toggle-button/paper-toggle-button.html">
+<link rel="import" href="navigation_helper.html">
 
 <dom-module id="extensions-item">
-  <style include="iron-flex"></style>
   <template>
-    <style>
-      [hidden] {
-        display: none !important;
-      }
-
+    <style include=
+        "iron-flex cr-hidden-style cr-icons action-link paper-button-style">
       #icon-wrapper {
         align-self: flex-start;
         display: flex;
@@ -37,23 +39,19 @@
         background: white;
         display: flex;
         flex-direction: column;
-        font-size: 13px;
         height: 160px;
-        width: 400px;
+        width: var(--extensions-card-width, 400px);
       }
 
       #card.dev-mode {
         height: 208px;
       }
 
-      #card.disabled {
-        opacity: 0.6;
-      }
-
       #main {
         display: flex;
         flex-grow: 1;
         padding: 16px 20px 17px;
+        position: relative;
       }
 
       #content {
@@ -64,13 +62,12 @@
       }
 
       #name-and-version {
-        line-height: 15px;
+        @apply(--cr-primary-text);
         margin-bottom: 4px;
       }
 
       #name {
         -webkit-margin-end: 8px;
-        color: #333;
       }
 
       #description,
@@ -84,30 +81,23 @@
       #extension-id,
       #inspect-views,
       #button-strip {
+        /* TODO(dschuyler): use --cr-secondary-text. */
         color: var(--paper-grey-600);
-      }
-
-      #description,
-      #extension-id,
-      #inspect-views {
-        line-height: 20px;
-      }
-
-      #inspect-views paper-button {
-        color: var(--google-blue-700);
-        height: 20px;
-        padding: 0;
-        text-transform: none;
+        font-weight: 400;
       }
 
       #button-strip {
         -webkit-padding-end: 4px;
-        -webkit-padding-start: 20px;
-        border-top: 1px solid var(--paper-grey-400);
+        -webkit-padding-start: var(--cr-section-padding);
+        border-top: var(--cr-separator-line);
         box-sizing: border-box;
-        height: 48px;
+        height: var(--cr-section-min-height);
         padding-bottom: 8px;
         padding-top: 8px;
+      }
+
+      #button-strip paper-button {
+        margin: 0 4px;
       }
 
       #source-indicator {
@@ -141,40 +131,35 @@
         color: white;
         display: none;
         margin-top: 8px;
+        max-width: 150px;
         opacity: 0.6;
         padding: 8px 12px;
-        position: absolute;
         transform: translateX(-50%);  /* Move back 50% of width so that the
                                          text and icon share an x-center. */
+      }
+
+      :host-context([dir='rtl']) #source-indicator-text {
+        transform: translateX(50%);
       }
 
       #source-indicator:hover #source-indicator-text {
         display: block;
       }
 
-      paper-button,
-      paper-toggle-button {
-        cursor: pointer;
-      }
-
-      #button-strip paper-button {
-        align-items: center;
-        display: flex;
-        margin: 0 4px;
-        min-height: 32px;
-        padding: 0 12px;
-        text-transform: uppercase;
+      cr-toggle {
+        -webkit-margin-end: 8px;  /* Avoid ripple from overlapping container. */
       }
 
       .action-button {
         color: var(--google-blue-500);
       }
 
+      #errors-button {
+        color: var(--google-red-700);
+      }
+
       #dev-reload-button {
-        -webkit-margin-end: 20px;
-        height: 20px;
-        padding: 0;
-        width: 20px;
+        -webkit-margin-end: 12px;
       }
 
       #warnings {
@@ -231,14 +216,14 @@
                 if="[[!computeInspectViewsHidden_(data.views)]]">
               <div id="inspect-views">
                 <span>$i18n{itemInspectViews}</span>
-                <paper-button on-tap="onInspectTap_">
+                <a is="action-link" on-tap="onInspectTap_">
                   [[computeFirstInspectLabel_(data.views)]]
-                </paper-button>
-                <paper-button
+                </a>
+                <a is="action-link"
                     hidden$="[[computeExtraViewsHidden_(data.views)]]"
                     on-tap="onExtraInspectTap_">
                   [[computeExtraInspectLabel_(data.views)]]
-                </paper-button>
+                </a>
               </div>
             </template>
           </template>
@@ -249,7 +234,8 @@
           <paper-button id="details-button" on-tap="onDetailsTap_">
             $i18n{itemDetails}
           </paper-button>
-          <paper-button id="remove-button" on-tap="onRemoveTap_">
+          <paper-button id="remove-button" on-tap="onRemoveTap_"
+              hidden="[[isControlled_(data.controlledInfo)]]">
             $i18n{itemRemove}
           </paper-button>
           <paper-button id="errors-button" on-tap="onErrorsTap_"
@@ -258,9 +244,9 @@
           </paper-button>
         </div>
         <template is="dom-if" if="[[!computeDevReloadButtonHidden_(data.*)]]">
-          <paper-icon-button id="dev-reload-button"
-              on-tap="onReloadTap_" icon="refresh">
-          </paper-icon-button>
+          <button id="dev-reload-button" is="paper-icon-button-light"
+              class="icon-refresh no-overlap" on-tap="onReloadTap_">
+          </button>
         </template>
         <paper-button id="repair-button" class="action-button"
             on-tap="onRepairTap_"
@@ -272,13 +258,13 @@
             hidden$="[[!isTerminated_(data.state)]]">
           $i18n{itemReload}
         </paper-button>
-        <paper-toggle-button id="enable-toggle" class="action-button"
+        <cr-toggle id="enable-toggle" class="action-button"
             checked="[[isEnabled_(data.state)]]" on-change="onEnableChange_"
-            enabled="[[isEnableToggleEnabled_(data)]]"
+            disabled="[[!isEnableToggleEnabled_(data.*)]]"
             hidden$="[[!showEnableToggle_(data.*)]]">
-        </paper-toggle-button>
+        </cr-toggle>
       </div>
     </div>
   </template>
-  <script src="chrome://extensions/item.js"></script>
+  <script src="item.js"></script>
 </dom-module>

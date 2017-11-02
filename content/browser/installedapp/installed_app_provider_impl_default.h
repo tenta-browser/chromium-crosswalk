@@ -24,7 +24,7 @@ class InstalledAppProviderImplDefault
   // InstalledAppProvider overrides:
   void FilterInstalledApps(
       std::vector<blink::mojom::RelatedApplicationPtr> related_apps,
-      const FilterInstalledAppsCallback& callback) override;
+      FilterInstalledAppsCallback callback) override;
 
   static void Create(
       mojo::InterfaceRequest<blink::mojom::InstalledAppProvider> request);

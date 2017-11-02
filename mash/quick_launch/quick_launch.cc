@@ -6,7 +6,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,11 +15,9 @@
 #include "services/catalog/public/interfaces/constants.mojom.h"
 #include "services/service_manager/public/c/main.h"
 #include "services/service_manager/public/cpp/connector.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 #include "services/service_manager/public/cpp/service.h"
 #include "services/service_manager/public/cpp/service_context.h"
 #include "services/service_manager/public/cpp/service_runner.h"
-#include "services/tracing/public/cpp/provider.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/views/background.h"
@@ -43,7 +41,7 @@ class QuickLaunchUI : public views::WidgetDelegateView,
         connector_(connector),
         prompt_(new views::Textfield),
         catalog_(std::move(catalog)) {
-    set_background(views::Background::CreateStandardPanelBackground());
+    SetBackground(views::CreateStandardPanelBackground());
     prompt_->set_controller(this);
     AddChildView(prompt_);
 
@@ -66,7 +64,7 @@ class QuickLaunchUI : public views::WidgetDelegateView,
     bounds.Inset(5, 5);
     prompt_->SetBoundsRect(bounds);
   }
-  gfx::Size GetPreferredSize() const override {
+  gfx::Size CalculatePreferredSize() const override {
     gfx::Size ps = prompt_->GetPreferredSize();
     ps.Enlarge(500, 10);
     return ps;
@@ -154,7 +152,8 @@ class QuickLaunchUI : public views::WidgetDelegateView,
 };
 
 QuickLaunch::QuickLaunch() {
-  registry_.AddInterface<::mash::mojom::Launchable>(this);
+  registry_.AddInterface<::mash::mojom::Launchable>(
+      base::Bind(&QuickLaunch::Create, base::Unretained(this)));
 }
 
 QuickLaunch::~QuickLaunch() {
@@ -166,26 +165,32 @@ void QuickLaunch::RemoveWindow(views::Widget* window) {
   auto it = std::find(windows_.begin(), windows_.end(), window);
   DCHECK(it != windows_.end());
   windows_.erase(it);
-  if (windows_.empty() && base::MessageLoop::current()->is_running())
-    base::MessageLoop::current()->QuitWhenIdle();
+  if (windows_.empty() && base::RunLoop::IsRunningOnCurrentThread())
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 void QuickLaunch::OnStart() {
-  tracing_.Initialize(context()->connector(), context()->identity().name());
-
-  aura_init_ = base::MakeUnique<views::AuraInit>(
+  // If AuraInit was unable to initialize there is no longer a peer connection.
+  // The ServiceManager is in the process of shutting down, however we haven't
+  // been notified yet. Close our ServiceContext and shutdown.
+  const bool register_path_provider = running_standalone_;
+  aura_init_ = views::AuraInit::Create(
       context()->connector(), context()->identity(), "views_mus_resources.pak",
-      std::string(), nullptr, views::AuraInit::Mode::AURA_MUS);
+      std::string(), nullptr, views::AuraInit::Mode::AURA_MUS,
+      register_path_provider);
+  if (!aura_init_) {
+    context()->QuitNow();
+    return;
+  }
 
   Launch(mojom::kWindow, mojom::LaunchMode::MAKE_NEW);
 }
 
 void QuickLaunch::OnBindInterface(
-    const service_manager::ServiceInfo& source_info,
+    const service_manager::BindSourceInfo& source_info,
     const std::string& interface_name,
     mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(source_info.identity, interface_name,
-                          std::move(interface_pipe));
+  registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
 
 void QuickLaunch::Launch(uint32_t what, mojom::LaunchMode how) {
@@ -206,8 +211,7 @@ void QuickLaunch::Launch(uint32_t what, mojom::LaunchMode how) {
   windows_.push_back(window);
 }
 
-void QuickLaunch::Create(const service_manager::Identity& remote_identity,
-                         ::mash::mojom::LaunchableRequest request) {
+void QuickLaunch::Create(::mash::mojom::LaunchableRequest request) {
   bindings_.AddBinding(this, std::move(request));
 }
 

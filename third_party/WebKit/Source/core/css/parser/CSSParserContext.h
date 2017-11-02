@@ -5,17 +5,21 @@
 #ifndef CSSParserContext_h
 #define CSSParserContext_h
 
+#include "core/CSSPropertyNames.h"
 #include "core/CoreExport.h"
 #include "core/css/parser/CSSParserMode.h"
-#include "core/dom/Document.h"
-#include "core/frame/UseCounter.h"
+#include "core/frame/WebFeatureForward.h"
+#include "platform/heap/Handle.h"
 #include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/Referrer.h"
+#include "platform/wtf/text/TextEncoding.h"
 
 namespace blink {
 
 class CSSStyleSheet;
+class Document;
+class ExecutionContext;
 class StyleSheetContents;
 
 class CORE_EXPORT CSSParserContext
@@ -40,7 +44,7 @@ class CORE_EXPORT CSSParserContext
   static CSSParserContext* Create(const CSSParserContext* other,
                                   const KURL& base_url_override,
                                   ReferrerPolicy referrer_policy_override,
-                                  const String& charset_override,
+                                  const WTF::TextEncoding& charset_override,
                                   const Document* use_counter_document);
 
   static CSSParserContext* Create(
@@ -48,11 +52,14 @@ class CORE_EXPORT CSSParserContext
       SelectorProfile = kDynamicProfile,
       const Document* use_counter_document = nullptr);
   static CSSParserContext* Create(const Document&);
-  static CSSParserContext* Create(const Document&,
-                                  const KURL& base_url_override,
-                                  ReferrerPolicy referrer_policy_override,
-                                  const String& charset = g_empty_string,
-                                  SelectorProfile = kDynamicProfile);
+  static CSSParserContext* Create(
+      const Document&,
+      const KURL& base_url_override,
+      ReferrerPolicy referrer_policy_override,
+      const WTF::TextEncoding& charset = WTF::TextEncoding(),
+      SelectorProfile = kDynamicProfile);
+  // This is used for workers, where we don't have a document.
+  static CSSParserContext* Create(const ExecutionContext&);
 
   bool operator==(const CSSParserContext&) const;
   bool operator!=(const CSSParserContext& other) const {
@@ -62,7 +69,7 @@ class CORE_EXPORT CSSParserContext
   CSSParserMode Mode() const { return mode_; }
   CSSParserMode MatchMode() const { return match_mode_; }
   const KURL& BaseURL() const { return base_url_; }
-  const String& Charset() const { return charset_; }
+  const WTF::TextEncoding& Charset() const { return charset_; }
   const Referrer& GetReferrer() const { return referrer_; }
   bool IsHTMLDocument() const { return is_html_document_; }
   bool IsDynamicProfile() const { return profile_ == kDynamicProfile; }
@@ -82,9 +89,9 @@ class CORE_EXPORT CSSParserContext
 
   KURL CompleteURL(const String& url) const;
 
-  void Count(UseCounter::Feature) const;
+  void Count(WebFeature) const;
   void Count(CSSParserMode, CSSPropertyID) const;
-  void CountDeprecation(UseCounter::Feature) const;
+  void CountDeprecation(WebFeature) const;
   bool IsUseCounterRecordingEnabled() const { return document_; }
   bool IsDocumentHandleEqual(const Document* other) const;
 
@@ -96,7 +103,7 @@ class CORE_EXPORT CSSParserContext
 
  private:
   CSSParserContext(const KURL& base_url,
-                   const String& charset,
+                   const WTF::TextEncoding& charset,
                    CSSParserMode,
                    CSSParserMode match_mode,
                    SelectorProfile,
@@ -107,7 +114,7 @@ class CORE_EXPORT CSSParserContext
                    const Document* use_counter_document);
 
   KURL base_url_;
-  String charset_;
+  WTF::TextEncoding charset_;
   CSSParserMode mode_;
   CSSParserMode match_mode_;
   SelectorProfile profile_ = kDynamicProfile;

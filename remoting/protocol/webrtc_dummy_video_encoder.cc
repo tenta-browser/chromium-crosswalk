@@ -11,12 +11,62 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "remoting/protocol/video_channel_state_observer.h"
+
+#if defined(USE_H264_ENCODER)
+#include "media/video/h264_parser.h"
+#endif
 
 namespace remoting {
 namespace protocol {
+
+#if defined(USE_H264_ENCODER)
+namespace {
+
+// -- COPIED FROM //content/renderer/media/gpu/rtc_video_encoder.cc --
+// This logic should be shared in //media/video/h264_parser.h.
+// Populates struct webrtc::RTPFragmentationHeader for H264 codec.
+// Each entry specifies the offset and length (excluding start code) of a NALU.
+// Returns true if successful.
+//
+// TODO(zijiehe): Following logic should be placed in
+// //media/video/h264_parser.h. See
+// https://chromium-review.googlesource.com/c/chromium/src/+/703926
+bool GetRTPFragmentationHeaderH264(webrtc::RTPFragmentationHeader* header,
+                                   const uint8_t* data, uint32_t length) {
+  media::H264Parser parser;
+  parser.SetStream(data, length);
+
+  std::vector<media::H264NALU> nalu_vector;
+  while (true) {
+    media::H264NALU nalu;
+    const media::H264Parser::Result result = parser.AdvanceToNextNALU(&nalu);
+    if (result == media::H264Parser::kOk) {
+      nalu_vector.push_back(nalu);
+    } else if (result == media::H264Parser::kEOStream) {
+      break;
+    } else {
+      DLOG(ERROR) << "Unexpected H264 parser result";
+      return false;
+    }
+  }
+
+  header->VerifyAndAllocateFragmentationHeader(nalu_vector.size());
+  for (size_t i = 0; i < nalu_vector.size(); ++i) {
+    header->fragmentationOffset[i] = nalu_vector[i].data - data;
+    header->fragmentationLength[i] = nalu_vector[i].size;
+    header->fragmentationPlType[i] = 0;
+    header->fragmentationTimeDiff[i] = 0;
+  }
+  return true;
+}
+
+}  // namespace
+#endif
 
 WebrtcDummyVideoEncoder::WebrtcDummyVideoEncoder(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
@@ -26,7 +76,8 @@ WebrtcDummyVideoEncoder::WebrtcDummyVideoEncoder(
       state_(kUninitialized),
       codec_type_(type),
       video_channel_state_observer_(video_channel_state_observer) {
-  DCHECK(type == webrtc::kVideoCodecVP8 || type == webrtc::kVideoCodecVP9);
+  DCHECK(type == webrtc::kVideoCodecVP8 || type == webrtc::kVideoCodecVP9 ||
+         type == webrtc::kVideoCodecH264);
 }
 
 WebrtcDummyVideoEncoder::~WebrtcDummyVideoEncoder() {}
@@ -53,7 +104,6 @@ int32_t WebrtcDummyVideoEncoder::InitEncode(
 
 int32_t WebrtcDummyVideoEncoder::RegisterEncodeCompleteCallback(
     webrtc::EncodedImageCallback* callback) {
-  DCHECK(callback);
   base::AutoLock lock(lock_);
   encoded_callback_ = callback;
   return WEBRTC_VIDEO_CODEC_OK;
@@ -101,8 +151,8 @@ webrtc::EncodedImageCallback::Result WebrtcDummyVideoEncoder::SendEncodedFrame(
     const WebrtcVideoEncoder::EncodedFrame& frame,
     base::TimeTicks capture_time) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
-  uint8_t* buffer =
-      reinterpret_cast<uint8_t*>(const_cast<char*>(frame.data.data()));
+  uint8_t* buffer = reinterpret_cast<uint8_t*>(
+      base::string_as_array(const_cast<std::string*>(&frame.data)));
   size_t buffer_size = frame.data.size();
   base::AutoLock lock(lock_);
   if (state_ == kUninitialized) {
@@ -128,30 +178,60 @@ webrtc::EncodedImageCallback::Result WebrtcDummyVideoEncoder::SendEncodedFrame(
   codec_specific_info.codecType = codec_type_;
 
   if (codec_type_ == webrtc::kVideoCodecVP8) {
-    codec_specific_info.codecSpecific.VP8.simulcastIdx = 0;
-    codec_specific_info.codecSpecific.VP8.temporalIdx = webrtc::kNoTemporalIdx;
-    codec_specific_info.codecSpecific.VP8.tl0PicIdx = webrtc::kNoTl0PicIdx;
-    codec_specific_info.codecSpecific.VP8.pictureId = webrtc::kNoPictureId;
+    webrtc::CodecSpecificInfoVP8* vp8_info =
+        &codec_specific_info.codecSpecific.VP8;
+    vp8_info->simulcastIdx = 0;
+    vp8_info->temporalIdx = webrtc::kNoTemporalIdx;
+    vp8_info->tl0PicIdx = webrtc::kNoTl0PicIdx;
+    vp8_info->pictureId = webrtc::kNoPictureId;
   } else if (codec_type_ == webrtc::kVideoCodecVP9) {
-    codec_specific_info.codecSpecific.generic.simulcast_idx = 0;
-    codec_specific_info.codecSpecific.VP9.gof_idx = webrtc::kNoGofIdx;
-    codec_specific_info.codecSpecific.VP9.temporal_idx = webrtc::kNoTemporalIdx;
-    codec_specific_info.codecSpecific.VP9.spatial_idx = webrtc::kNoSpatialIdx;
-    codec_specific_info.codecSpecific.VP9.tl0_pic_idx = webrtc::kNoTl0PicIdx;
-    codec_specific_info.codecSpecific.VP9.picture_id = webrtc::kNoPictureId;
+    webrtc::CodecSpecificInfoVP9* vp9_info =
+        &codec_specific_info.codecSpecific.VP9;
+    vp9_info->inter_pic_predicted = !frame.key_frame;
+    vp9_info->ss_data_available = frame.key_frame;
+    vp9_info->spatial_layer_resolution_present = frame.key_frame;
+    if (frame.key_frame) {
+      vp9_info->width[0] = frame.size.width();
+      vp9_info->height[0] = frame.size.height();
+    }
+    vp9_info->num_spatial_layers = 1;
+    vp9_info->gof_idx = webrtc::kNoGofIdx;
+    vp9_info->temporal_idx = webrtc::kNoTemporalIdx;
+    vp9_info->spatial_idx = webrtc::kNoSpatialIdx;
+    vp9_info->tl0_pic_idx = webrtc::kNoTl0PicIdx;
+    vp9_info->picture_id = webrtc::kNoPictureId;
+  } else if (codec_type_ == webrtc::kVideoCodecH264) {
+#if defined(USE_H264_ENCODER)
+    webrtc::CodecSpecificInfoH264* h264_info =
+        &codec_specific_info.codecSpecific.H264;
+    h264_info->packetization_mode =
+        webrtc::H264PacketizationMode::NonInterleaved;
+#else
+    NOTREACHED();
+#endif
   } else {
     NOTREACHED();
   }
 
   webrtc::RTPFragmentationHeader header;
-  memset(&header, 0, sizeof(header));
+  if (codec_type_ == webrtc::kVideoCodecH264) {
+#if defined(USE_H264_ENCODER)
+    if (!GetRTPFragmentationHeaderH264(&header, buffer, buffer_size)) {
+      return webrtc::EncodedImageCallback::Result(
+          webrtc::EncodedImageCallback::Result::ERROR_SEND_FAILED);
+    }
+#else
+    NOTREACHED();
+#endif
+  } else {
+    header.VerifyAndAllocateFragmentationHeader(1);
+    header.fragmentationOffset[0] = 0;
+    header.fragmentationLength[0] = buffer_size;
+    header.fragmentationPlType[0] = 0;
+    header.fragmentationTimeDiff[0] = 0;
+  }
 
-  header.VerifyAndAllocateFragmentationHeader(1);
-  header.fragmentationOffset[0] = 0;
-  header.fragmentationLength[0] = buffer_size;
-  header.fragmentationPlType[0] = 0;
-  header.fragmentationTimeDiff[0] = 0;
-
+  DCHECK(encoded_callback_);
   return encoded_callback_->OnEncodedImage(encoded_image, &codec_specific_info,
                                            &header);
 }
@@ -160,10 +240,9 @@ WebrtcDummyVideoEncoderFactory::WebrtcDummyVideoEncoderFactory()
     : main_task_runner_(base::ThreadTaskRunnerHandle::Get()) {
   // TODO(isheriff): These do not really affect anything internally
   // in webrtc.
-  codecs_.push_back(cricket::WebRtcVideoEncoderFactory::VideoCodec(
-      webrtc::kVideoCodecVP9, "VP8", 1280, 720, 30));
-  codecs_.push_back(cricket::WebRtcVideoEncoderFactory::VideoCodec(
-      webrtc::kVideoCodecVP9, "VP9", 1280, 720, 30));
+  codecs_.push_back(cricket::VideoCodec("VP8"));
+  codecs_.push_back(cricket::VideoCodec("VP9"));
+  codecs_.push_back(cricket::VideoCodec("H264"));
 }
 
 WebrtcDummyVideoEncoderFactory::~WebrtcDummyVideoEncoderFactory() {
@@ -171,7 +250,8 @@ WebrtcDummyVideoEncoderFactory::~WebrtcDummyVideoEncoderFactory() {
 }
 
 webrtc::VideoEncoder* WebrtcDummyVideoEncoderFactory::CreateVideoEncoder(
-    webrtc::VideoCodecType type) {
+    const cricket::VideoCodec& codec) {
+  webrtc::VideoCodecType type = webrtc::PayloadStringToCodecType(codec.name);
   WebrtcDummyVideoEncoder* encoder = new WebrtcDummyVideoEncoder(
       main_task_runner_, video_channel_state_observer_, type);
   base::AutoLock lock(lock_);
@@ -183,8 +263,8 @@ webrtc::VideoEncoder* WebrtcDummyVideoEncoderFactory::CreateVideoEncoder(
   return encoder;
 }
 
-const std::vector<cricket::WebRtcVideoEncoderFactory::VideoCodec>&
-WebrtcDummyVideoEncoderFactory::codecs() const {
+const std::vector<cricket::VideoCodec>&
+WebrtcDummyVideoEncoderFactory::supported_codecs() const {
   return codecs_;
 }
 

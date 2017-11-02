@@ -12,10 +12,12 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/stl_util.h"
 #include "base/win/win_util.h"
 #include "ui/display/display.h"
 #include "ui/display/display_layout.h"
 #include "ui/display/display_layout_builder.h"
+#include "ui/display/display_switches.h"
 #include "ui/display/win/display_info.h"
 #include "ui/display/win/dpi.h"
 #include "ui/display/win/scaling_util.h"
@@ -24,6 +26,7 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
+#include "ui/gfx/icc_profile.h"
 
 namespace display {
 namespace win {
@@ -78,7 +81,9 @@ std::vector<DisplayInfo> FindAndRemoveTouchingDisplayInfos(
   return touching_display_infos;
 }
 
-Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info) {
+Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info,
+                                     ColorProfileReader* color_profile_reader,
+                                     bool hdr_enabled) {
   Display display(display_info.id());
   float scale_factor = display_info.device_scale_factor();
   display.set_device_scale_factor(scale_factor);
@@ -88,6 +93,14 @@ Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info) {
   display.set_bounds(gfx::ScaleToEnclosingRect(display_info.screen_rect(),
                      1.0f / scale_factor));
   display.set_rotation(display_info.rotation());
+  if (!Display::HasForceColorProfile()) {
+    if (hdr_enabled) {
+      display.SetColorSpaceAndDepth(gfx::ColorSpace::CreateSCRGBLinear());
+    } else {
+      display.SetColorSpaceAndDepth(
+          color_profile_reader->GetDisplayColorSpace(display_info.id()));
+    }
+  }
   return display;
 }
 
@@ -109,7 +122,9 @@ Display CreateDisplayFromDisplayInfo(const DisplayInfo& display_info) {
 // map to multiple screen points due to overlap. The first discovered screen
 // will take precedence.
 std::vector<ScreenWinDisplay> DisplayInfosToScreenWinDisplays(
-    const std::vector<DisplayInfo>& display_infos) {
+    const std::vector<DisplayInfo>& display_infos,
+    ColorProfileReader* color_profile_reader,
+    bool hdr_enabled) {
   // Find and extract the primary display.
   std::vector<DisplayInfo> display_infos_remaining = display_infos;
   auto primary_display_iter = std::find_if(
@@ -137,8 +152,10 @@ std::vector<ScreenWinDisplay> DisplayInfosToScreenWinDisplays(
 
   // Layout and create the ScreenWinDisplays.
   std::vector<Display> displays;
-  for (const auto& display_info : display_infos)
-    displays.push_back(CreateDisplayFromDisplayInfo(display_info));
+  for (const auto& display_info : display_infos) {
+    displays.push_back(CreateDisplayFromDisplayInfo(
+        display_info, color_profile_reader, hdr_enabled));
+  }
 
   std::unique_ptr<DisplayLayout> layout(builder.Build());
   layout->ApplyToDisplayList(&displays, nullptr, 0);
@@ -156,7 +173,6 @@ std::vector<Display> ScreenWinDisplaysToDisplays(
   std::vector<Display> displays;
   for (const auto& screen_win_display : screen_win_displays)
     displays.push_back(screen_win_display.display());
-
   return displays;
 }
 
@@ -204,10 +220,15 @@ gfx::Point ScalePointRelative(const gfx::Point& from_origin,
 
 }  // namespace
 
-ScreenWin::ScreenWin() {
+ScreenWin::ScreenWin() : ScreenWin(true) {}
+
+ScreenWin::ScreenWin(bool initialize)
+    : color_profile_reader_(new ColorProfileReader(this)),
+      hdr_enabled_(base::FeatureList::IsEnabled(features::kHighDynamicRange)) {
   DCHECK(!g_screen_win_instance);
   g_screen_win_instance = this;
-  Initialize();
+  if (initialize)
+    Initialize();
 }
 
 ScreenWin::~ScreenWin() {
@@ -394,6 +415,8 @@ const std::vector<Display>& ScreenWin::GetAllDisplays() const {
 }
 
 Display ScreenWin::GetDisplayNearestWindow(gfx::NativeWindow window) const {
+  if (!window)
+    return GetPrimaryDisplay();
   HWND window_hwnd = GetHWNDFromNativeView(window);
   if (!window_hwnd) {
     // When |window| isn't rooted to a display, we should just return the
@@ -445,11 +468,13 @@ gfx::Rect ScreenWin::DIPToScreenRectInWindow(gfx::NativeView view,
 
 void ScreenWin::UpdateFromDisplayInfos(
     const std::vector<DisplayInfo>& display_infos) {
-  screen_win_displays_ = DisplayInfosToScreenWinDisplays(display_infos);
+  screen_win_displays_ = DisplayInfosToScreenWinDisplays(
+      display_infos, color_profile_reader_.get(), hdr_enabled_);
   displays_ = ScreenWinDisplaysToDisplays(screen_win_displays_);
 }
 
 void ScreenWin::Initialize() {
+  color_profile_reader_->UpdateIfNeeded();
   singleton_hwnd_observer_.reset(
       new gfx::SingletonHwndObserver(
           base::Bind(&ScreenWin::OnWndProc, base::Unretained(this))));
@@ -488,7 +513,29 @@ void ScreenWin::OnWndProc(HWND hwnd,
                           UINT message,
                           WPARAM wparam,
                           LPARAM lparam) {
-  if (message != WM_DISPLAYCHANGE)
+  if (message != WM_DISPLAYCHANGE &&
+    !(message == WM_SETTINGCHANGE && wparam == SPI_SETWORKAREA))
+    return;
+
+  color_profile_reader_->UpdateIfNeeded();
+  std::vector<Display> old_displays = std::move(displays_);
+  UpdateFromDisplayInfos(GetDisplayInfosFromSystem());
+  change_notifier_.NotifyDisplaysChanged(old_displays, displays_);
+}
+
+void ScreenWin::OnColorProfilesChanged() {
+  // The color profile reader will often just confirm that our guess that the
+  // color profile was sRGB was indeed correct. Avoid doing an update in these
+  // cases.
+  bool changed = false;
+  for (const auto& display : displays_) {
+    if (display.color_space() !=
+        color_profile_reader_->GetDisplayColorSpace(display.id())) {
+      changed = true;
+      break;
+    }
+  }
+  if (!changed)
     return;
 
   std::vector<Display> old_displays = std::move(displays_);
@@ -565,8 +612,8 @@ ScreenWinDisplay ScreenWin::GetScreenWinDisplay(
   }
   // There is 1:1 correspondence between MONITORINFOEX and ScreenWinDisplay.
   // If we make it here, it means we have no displays and we should hand out the
-  // default display.
-  DCHECK_EQ(screen_win_displays_.size(), 0u);
+  // default display. [Sometimes we get here anyway: crbug.com/768845]
+  // DCHECK_EQ(screen_win_displays_.size(), 0u);
   return ScreenWinDisplay();
 }
 
@@ -589,8 +636,7 @@ void ScreenWin::RecordDisplayScaleFactors() const {
     // it so that if it's wildly out-of-band we won't send it to the backend.
     const int reported_scale = std::min(
         std::max(base::checked_cast<int>(scale_factor * 100), 0), 1000);
-    if (std::find(unique_scale_factors.begin(), unique_scale_factors.end(),
-                  reported_scale) == unique_scale_factors.end()) {
+    if (!base::ContainsValue(unique_scale_factors, reported_scale)) {
       unique_scale_factors.push_back(reported_scale);
       UMA_HISTOGRAM_SPARSE_SLOWLY("UI.DeviceScale", reported_scale);
     }

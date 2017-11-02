@@ -10,7 +10,6 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkData.h"
-#include "third_party/skia/include/core/SkPictureAnalyzer.h"
 
 namespace blink {
 
@@ -20,75 +19,62 @@ void DrawingDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void DrawingDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize& visual_rect_offset,
     WebDisplayItemList* list) const {
-  if (record_)
-    list->AppendDrawingItem(visual_rect, record_);
+  if (record_) {
+    // Convert visual rect into the GraphicsLayer's coordinate space.
+    LayoutRect visual_rect = VisualRect();
+    visual_rect.Move(-visual_rect_offset);
+    list->AppendDrawingItem(EnclosingIntRect(visual_rect), record_);
+  }
 }
 
 bool DrawingDisplayItem::DrawsContent() const {
   return record_.get();
 }
 
-void DrawingDisplayItem::AnalyzeForGpuRasterization(
-    SkPictureGpuAnalyzer& analyzer) const {
-  // TODO(enne): Need an SkPictureGpuAnalyzer on PictureRecord.
-  // This is a bit overkill to ToSkPicture a record just to get
-  // numSlowPaths.
-  if (!record_)
-    return;
-  analyzer.analyzePicture(ToSkPicture(record_).get());
-}
-
 #ifndef NDEBUG
-void DrawingDisplayItem::DumpPropertiesAsDebugString(
-    StringBuilder& string_builder) const {
-  DisplayItem::DumpPropertiesAsDebugString(string_builder);
-  if (record_) {
-    string_builder.Append(
-        String::Format(", rect: [%f,%f %fx%f]", record_->cullRect().x(),
-                       record_->cullRect().y(), record_->cullRect().width(),
-                       record_->cullRect().height()));
-  }
+void DrawingDisplayItem::PropertiesAsJSON(JSONObject& json) const {
+  DisplayItem::PropertiesAsJSON(json);
+  json.SetString("rect", record_bounds_.ToString());
+  json.SetBoolean("opaque", known_to_be_opaque_);
 }
 #endif
 
 static bool RecordsEqual(sk_sp<const PaintRecord> record1,
-                         sk_sp<const PaintRecord> record2) {
-  if (record1->approximateOpCount() != record2->approximateOpCount())
+                         sk_sp<const PaintRecord> record2,
+                         const FloatRect& bounds) {
+  if (record1->size() != record2->size())
     return false;
 
   // TODO(enne): PaintRecord should have an operator==
-  sk_sp<SkData> data1 = ToSkPicture(record1)->serialize();
-  sk_sp<SkData> data2 = ToSkPicture(record2)->serialize();
+  sk_sp<SkData> data1 = ToSkPicture(record1, bounds)->serialize();
+  sk_sp<SkData> data2 = ToSkPicture(record2, bounds)->serialize();
   return data1->equals(data2.get());
 }
 
-static SkBitmap RecordToBitmap(sk_sp<const PaintRecord> record) {
+static SkBitmap RecordToBitmap(sk_sp<const PaintRecord> record,
+                               const FloatRect& bounds) {
   SkBitmap bitmap;
-  SkRect rect = record->cullRect();
-  bitmap.allocPixels(SkImageInfo::MakeN32Premul(rect.width(), rect.height()));
+  bitmap.allocPixels(
+      SkImageInfo::MakeN32Premul(bounds.Width(), bounds.Height()));
   SkiaPaintCanvas canvas(bitmap);
   canvas.clear(SK_ColorTRANSPARENT);
-  canvas.translate(-rect.x(), -rect.y());
+  canvas.translate(-bounds.X(), -bounds.Y());
   canvas.drawPicture(std::move(record));
   return bitmap;
 }
 
 static bool BitmapsEqual(sk_sp<const PaintRecord> record1,
-                         sk_sp<const PaintRecord> record2) {
-  SkRect rect = record1->cullRect();
-  if (rect != record2->cullRect())
-    return false;
-
-  SkBitmap bitmap1 = RecordToBitmap(record1);
-  SkBitmap bitmap2 = RecordToBitmap(record2);
-  bitmap1.lockPixels();
-  bitmap2.lockPixels();
+                         sk_sp<const PaintRecord> record2,
+                         const FloatRect& bounds) {
+  SkBitmap bitmap1 = RecordToBitmap(record1, bounds);
+  SkBitmap bitmap2 = RecordToBitmap(record2, bounds);
   int mismatch_count = 0;
   const int kMaxMismatches = 10;
-  for (int y = 0; y < rect.height() && mismatch_count < kMaxMismatches; ++y) {
-    for (int x = 0; x < rect.width() && mismatch_count < kMaxMismatches; ++x) {
+  for (int y = 0; y < bounds.Height() && mismatch_count < kMaxMismatches; ++y) {
+    for (int x = 0; x < bounds.Width() && mismatch_count < kMaxMismatches;
+         ++x) {
       SkColor pixel1 = bitmap1.getColor(x, y);
       SkColor pixel2 = bitmap2.getColor(x, y);
       if (pixel1 != pixel2) {
@@ -98,8 +84,6 @@ static bool BitmapsEqual(sk_sp<const PaintRecord> record1,
       }
     }
   }
-  bitmap1.unlockPixels();
-  bitmap2.unlockPixels();
   return !mismatch_count;
 }
 
@@ -108,20 +92,28 @@ bool DrawingDisplayItem::Equals(const DisplayItem& other) const {
     return false;
 
   const sk_sp<const PaintRecord>& record = this->GetPaintRecord();
+  const FloatRect& bounds = this->GetPaintRecordBounds();
   const sk_sp<const PaintRecord>& other_record =
       static_cast<const DrawingDisplayItem&>(other).GetPaintRecord();
+  const FloatRect& other_bounds =
+      static_cast<const DrawingDisplayItem&>(other).GetPaintRecordBounds();
 
   if (!record && !other_record)
     return true;
   if (!record || !other_record)
     return false;
+  if (bounds != other_bounds)
+    return false;
 
-  if (RecordsEqual(record, other_record))
+  if (RecordsEqual(record, other_record, bounds))
     return true;
 
   // Sometimes the client may produce different records for the same visual
   // result, which should be treated as equal.
-  return BitmapsEqual(std::move(record), std::move(other_record));
+  return BitmapsEqual(
+      std::move(record), std::move(other_record),
+      // Limit the bounds to prevent OOM.
+      Intersection(bounds, FloatRect(bounds.X(), bounds.Y(), 6000, 6000)));
 }
 
 }  // namespace blink

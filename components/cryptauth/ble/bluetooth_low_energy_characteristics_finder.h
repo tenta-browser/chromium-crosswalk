@@ -66,6 +66,8 @@ class BluetoothLowEnergyCharacteristicsFinder
   void GattDiscoveryCompleteForService(
       device::BluetoothAdapter* adapter,
       device::BluetoothRemoteGattService* service) override;
+  void GattServicesDiscovered(device::BluetoothAdapter* adapter,
+                              device::BluetoothDevice* device) override;
   void GattCharacteristicAdded(
       device::BluetoothAdapter* adapter,
       device::BluetoothRemoteGattCharacteristic* characteristic) override;
@@ -74,9 +76,13 @@ class BluetoothLowEnergyCharacteristicsFinder
   BluetoothLowEnergyCharacteristicsFinder();
 
  private:
-  // Handles the discovery of a new characteristic.
-  void HandleCharacteristicUpdate(
+  // Handles the discovery of a new characteristic. Returns whether all
+  // characteristics were found.
+  bool HandleCharacteristicUpdate(
       device::BluetoothRemoteGattCharacteristic* characteristic);
+
+  // Ends the characteristic discovery and calls error callback if necessary.
+  void OnCharacteristicDiscoveryEnded(device::BluetoothDevice* device);
 
   // Scans the remote chracteristics of the service with |uuid| in |device|
   // calling HandleCharacteristicUpdate() for each of them.
@@ -89,12 +95,11 @@ class BluetoothLowEnergyCharacteristicsFinder
   void UpdateCharacteristicsStatus(
       device::BluetoothRemoteGattCharacteristic* characteristic);
 
-  // Resets |success_callback_| and |success_callback_|. This should be called
-  // whenever a callback is called to avoid multiple callbacks calls.
-  void ResetCallbacks();
-
   // The Bluetooth adapter where the connection was established.
   scoped_refptr<device::BluetoothAdapter> adapter_;
+
+  // The Bluetooth device to which the connection was established.
+  device::BluetoothDevice* bluetooth_device_;
 
   // Remote service the |connection_| was established with.
   RemoteAttribute remote_service_;
@@ -107,6 +112,9 @@ class BluetoothLowEnergyCharacteristicsFinder
 
   // Called when all characteristics were found.
   SuccessCallback success_callback_;
+
+  // Keeps track whether we have ever call the error callback.
+  bool has_error_callback_been_invoked_ = false;
 
   // Called when there is an error.
   ErrorCallback error_callback_;

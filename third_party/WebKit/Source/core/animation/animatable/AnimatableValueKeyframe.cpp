@@ -14,7 +14,7 @@ AnimatableValueKeyframe::AnimatableValueKeyframe(
   for (PropertyValueMap::const_iterator iter =
            copy_from.property_values_.begin();
        iter != copy_from.property_values_.end(); ++iter)
-    SetPropertyValue(iter->key, iter->value.Get());
+    SetPropertyValue(iter->key, iter->value.get());
 }
 
 PropertyHandleSet AnimatableValueKeyframe::Properties() const {
@@ -27,24 +27,24 @@ PropertyHandleSet AnimatableValueKeyframe::Properties() const {
   return properties;
 }
 
-PassRefPtr<Keyframe> AnimatableValueKeyframe::Clone() const {
-  return AdoptRef(new AnimatableValueKeyframe(*this));
+RefPtr<Keyframe> AnimatableValueKeyframe::Clone() const {
+  return WTF::AdoptRef(new AnimatableValueKeyframe(*this));
 }
 
-PassRefPtr<Keyframe::PropertySpecificKeyframe>
+RefPtr<Keyframe::PropertySpecificKeyframe>
 AnimatableValueKeyframe::CreatePropertySpecificKeyframe(
     const PropertyHandle& property) const {
   return PropertySpecificKeyframe::Create(
       Offset(), &Easing(), PropertyValue(property.CssProperty()), Composite());
 }
 
-PassRefPtr<Keyframe::PropertySpecificKeyframe>
+RefPtr<Keyframe::PropertySpecificKeyframe>
 AnimatableValueKeyframe::PropertySpecificKeyframe::CloneWithOffset(
     double offset) const {
   return Create(offset, easing_, value_, composite_);
 }
 
-PassRefPtr<Interpolation>
+RefPtr<Interpolation>
 AnimatableValueKeyframe::PropertySpecificKeyframe::CreateInterpolation(
     const PropertyHandle& property,
     const Keyframe::PropertySpecificKeyframe& end) const {

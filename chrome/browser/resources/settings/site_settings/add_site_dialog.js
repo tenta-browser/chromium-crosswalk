@@ -21,7 +21,7 @@ Polymer({
 
     /**
      * Whether this is about an Allow, Block, SessionOnly, or other.
-     * @type {settings.PermissionValues}
+     * @type {settings.ContentSetting}
      */
     contentSetting: String,
 
@@ -41,16 +41,14 @@ Polymer({
     assert(this.contentSetting);
   },
 
-  /**
-   * Opens the dialog.
-   * @param {string} type Whether this was launched from an Allow list or a
-   *     Block list.
-   */
-  open: function(type) {
-    this.addWebUIListener('onIncognitoStatusChanged', function(isActive) {
-      this.showIncognitoSessionOnly_ = isActive &&
-          this.contentSetting != settings.PermissionValues.SESSION_ONLY;
-    }.bind(this));
+  /** Open the dialog. */
+  open: function() {
+    this.addWebUIListener('onIncognitoStatusChanged', hasIncognito => {
+      this.$.incognito.checked = false;
+      this.showIncognitoSessionOnly_ = hasIncognito &&
+          !loadTimeData.getBoolean('isGuest') &&
+          this.contentSetting != settings.ContentSetting.SESSION_ONLY;
+    });
     this.browserProxy.updateIncognitoStatus();
     this.$.dialog.showModal();
   },
@@ -68,10 +66,10 @@ Polymer({
       return;
     }
 
-    this.browserProxy.isPatternValid(this.site_).then(function(isValid) {
+    this.browserProxy.isPatternValid(this.site_).then(isValid => {
       this.$.site.invalid = !isValid;
       this.$.add.disabled = !isValid;
-    }.bind(this));
+    });
   },
 
   /** @private */
@@ -87,7 +85,7 @@ Polymer({
   onSubmit_: function() {
     if (this.$.add.disabled)
       return;  // Can happen when Enter is pressed.
-    this.browserProxy.setCategoryPermissionForOrigin(
+    this.browserProxy.setCategoryPermissionForPattern(
         this.site_, this.site_, this.category, this.contentSetting,
         this.$.incognito.checked);
     this.$.dialog.close();

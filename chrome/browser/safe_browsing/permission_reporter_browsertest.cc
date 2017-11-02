@@ -11,6 +11,7 @@
 #include "base/test/simple_test_clock.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
+#include "chrome/browser/permissions/permission_uma_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/mock_permission_report_sender.h"
 #include "chrome/browser/safe_browsing/ping_manager.h"
@@ -40,13 +41,14 @@ class PermissionReporterBrowserTest : public SyncTest {
   void SetUpOnMainThread() override {
     SyncTest::SetUpOnMainThread();
 
+    PermissionUmaUtil::FakeOfficialBuildForTest();
     base::RunLoop run_loop;
     content::BrowserThread::PostTaskAndReply(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &PermissionReporterBrowserTest::AttachMockReportSenderOnIOThread,
             base::Unretained(this),
-            make_scoped_refptr(g_browser_process->safe_browsing_service())),
+            base::WrapRefCounted(g_browser_process->safe_browsing_service())),
         run_loop.QuitClosure());
     run_loop.Run();
   }
@@ -92,7 +94,6 @@ IN_PROC_BROWSER_TEST_F(PermissionReporterBrowserTest,
   PermissionRequestManager* manager = GetPermissionRequestManager(browser);
   std::unique_ptr<MockPermissionPromptFactory> mock_permission_prompt_factory =
       base::MakeUnique<MockPermissionPromptFactory>(manager);
-  manager->DisplayPendingRequests();
 
   ASSERT_TRUE(embedded_test_server()->Start());
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(
@@ -136,7 +137,6 @@ IN_PROC_BROWSER_TEST_F(PermissionReporterBrowserTest,
   PermissionRequestManager* manager = GetPermissionRequestManager(browser);
   std::unique_ptr<MockPermissionPromptFactory> mock_permission_prompt_factory =
       base::MakeUnique<MockPermissionPromptFactory>(manager);
-  manager->DisplayPendingRequests();
 
   ASSERT_TRUE(embedded_test_server()->Start());
   ui_test_utils::NavigateToURLBlockUntilNavigationsComplete(

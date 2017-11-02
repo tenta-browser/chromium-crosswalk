@@ -7,7 +7,9 @@
 #include <memory>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/time/default_tick_clock.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/suggestions/image_decoder_impl.h"
@@ -62,8 +64,8 @@ SuggestionsServiceFactory::~SuggestionsServiceFactory() {}
 KeyedService* SuggestionsServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
-      BrowserThread::GetBlockingPool()->GetSequencedTaskRunner(
-          base::SequencedWorkerPool::GetSequenceToken());
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
 
   Profile* profile = static_cast<Profile*>(context);
 
@@ -86,16 +88,14 @@ KeyedService* SuggestionsServiceFactory::BuildServiceInstanceFor(
       profile->GetPath().Append(FILE_PATH_LITERAL("Thumbnails")));
 
   std::unique_ptr<ImageFetcherImpl> image_fetcher(
-      new ImageFetcherImpl(
-          base::MakeUnique<suggestions::ImageDecoderImpl>(),
-          profile->GetRequestContext()));
-  std::unique_ptr<ImageManager> thumbnail_manager(new ImageManager(
-      std::move(image_fetcher), std::move(db), database_dir,
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::DB)));
+      new ImageFetcherImpl(std::make_unique<suggestions::ImageDecoderImpl>(),
+                           profile->GetRequestContext()));
+  std::unique_ptr<ImageManager> thumbnail_manager(
+      new ImageManager(std::move(image_fetcher), std::move(db), database_dir));
   return new SuggestionsServiceImpl(
       signin_manager, token_service, sync_service, profile->GetRequestContext(),
       std::move(suggestions_store), std::move(thumbnail_manager),
-      std::move(blacklist_store));
+      std::move(blacklist_store), std::make_unique<base::DefaultTickClock>());
 }
 
 void SuggestionsServiceFactory::RegisterProfilePrefs(

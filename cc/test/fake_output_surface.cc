@@ -6,21 +6,22 @@
 
 #include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/output/output_surface_client.h"
-#include "cc/resources/returned_resource.h"
-#include "cc/test/begin_frame_args_test.h"
+#include "components/viz/common/resources/returned_resource.h"
+#include "components/viz/service/display/output_surface_client.h"
+#include "components/viz/test/begin_frame_args_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gl/gl_utils.h"
 
 namespace cc {
 
 FakeOutputSurface::FakeOutputSurface(
-    scoped_refptr<ContextProvider> context_provider)
+    scoped_refptr<viz::ContextProvider> context_provider)
     : OutputSurface(std::move(context_provider)), weak_ptr_factory_(this) {
   DCHECK(OutputSurface::context_provider());
 }
 
 FakeOutputSurface::FakeOutputSurface(
-    std::unique_ptr<SoftwareOutputDevice> software_device)
+    std::unique_ptr<viz::SoftwareOutputDevice> software_device)
     : OutputSurface(std::move(software_device)), weak_ptr_factory_(this) {
   DCHECK(OutputSurface::software_device());
 }
@@ -34,15 +35,17 @@ void FakeOutputSurface::Reshape(const gfx::Size& size,
                                 bool use_stencil) {
   if (context_provider()) {
     context_provider()->ContextGL()->ResizeCHROMIUM(
-        size.width(), size.height(), device_scale_factor, has_alpha);
+        size.width(), size.height(), device_scale_factor,
+        gl::GetGLColorSpace(color_space), has_alpha);
   } else {
     software_device()->Resize(size, device_scale_factor);
   }
   last_reshape_color_space_ = color_space;
 }
 
-void FakeOutputSurface::SwapBuffers(OutputSurfaceFrame frame) {
-  last_sent_frame_.reset(new OutputSurfaceFrame(std::move(frame)));
+void FakeOutputSurface::SwapBuffers(viz::OutputSurfaceFrame frame) {
+  last_sent_frame_ =
+      std::make_unique<viz::OutputSurfaceFrame>(std::move(frame));
   ++num_sent_frames_;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
@@ -69,7 +72,7 @@ uint32_t FakeOutputSurface::GetFramebufferCopyTextureFormat() {
     return GL_RGB;
 }
 
-void FakeOutputSurface::BindToClient(OutputSurfaceClient* client) {
+void FakeOutputSurface::BindToClient(viz::OutputSurfaceClient* client) {
   DCHECK(client);
   DCHECK(!client_);
   client_ = client;
@@ -83,9 +86,13 @@ bool FakeOutputSurface::SurfaceIsSuspendForRecycle() const {
   return suspended_for_recycle_;
 }
 
-OverlayCandidateValidator* FakeOutputSurface::GetOverlayCandidateValidator()
-    const {
+viz::OverlayCandidateValidator*
+FakeOutputSurface::GetOverlayCandidateValidator() const {
   return overlay_candidate_validator_;
+}
+
+gfx::BufferFormat FakeOutputSurface::GetOverlayBufferFormat() const {
+  return gfx::BufferFormat::RGBX_8888;
 }
 
 bool FakeOutputSurface::IsDisplayedAsOverlayPlane() const {

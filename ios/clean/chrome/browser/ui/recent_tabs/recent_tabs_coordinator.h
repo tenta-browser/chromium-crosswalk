@@ -6,11 +6,15 @@
 #define IOS_CLEAN_CHROME_BROWSER_UI_RECENT_TABS_RECENT_TABS_COORDINATOR_H_
 
 #import <UIKit/UIKit.h>
-#import "ios/shared/chrome/browser/ui/coordinators/browser_coordinator.h"
+#import "ios/chrome/browser/ui/coordinators/browser_coordinator.h"
 
 // A coordinator for the recent tabs UI, which can be presented modally on its
 // own or inside the NTP.
 @interface RecentTabsCoordinator : BrowserCoordinator
+
+// The presentation mode of this coordinator. Needs to be set before |-start|.
+@property(nonatomic, assign) BrowserCoordinatorMode mode;
+
 @end
 
 #endif  // IOS_CLEAN_CHROME_BROWSER_UI_RECENT_TABS_RECENT_TABS_COORDINATOR_H_

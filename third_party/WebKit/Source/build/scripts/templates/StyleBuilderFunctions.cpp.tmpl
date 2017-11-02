@@ -1,11 +1,19 @@
-{% from 'macros.tmpl' import license %}
+{% from 'templates/macros.tmpl' import license, source_files_for_generated_file %}
+{% from 'core/css/properties/templates/application_macros.tmpl' import set_value, convert_and_set_value %}
+
 {#
     This file is for property handlers which use the templating engine to
     reduce (handwritten) code duplication.
 
     The `properties' dict can be used to access a property's parameters in
     jinja2 templates (i.e. setter, getter, initial, type_name)
+
+    TODO(meade): Delete this file once all StyleBuilderFunction generation
+    is moved to the CSSPropertyAPI.
 #}
+
+{{source_files_for_generated_file(template_file, input_files)}}
+
 #include "StyleBuilderFunctions.h"
 
 #include "CSSValueKeywords.h"
@@ -17,6 +25,7 @@
 #include "core/css/CSSURIValue.h"
 #include "core/css/CSSValuePair.h"
 #include "core/css/resolver/StyleResolverState.h"
+#include "core/style/ComputedStyle.h"
 
 {% macro declare_initial_function(property_id) %}
 void StyleBuilderFunctions::applyInitial{{property_id}}(StyleResolverState& state)
@@ -27,33 +36,15 @@ void StyleBuilderFunctions::applyInherit{{property_id}}(StyleResolverState& stat
 {% macro declare_value_function(property_id) %}
 void StyleBuilderFunctions::applyValue{{property_id}}(StyleResolverState& state, const CSSValue& value)
 {%- endmacro %}
-{% macro set_value(property) %}
-{% if property.svg %}
-state.Style()->AccessSVGStyle().{{property.setter}}
-{%- elif property.font %}
-state.GetFontBuilder().{{property.setter}}
-{%- else %}
-state.Style()->{{property.setter}}
-{%- endif %}
-{% endmacro %}
-{% macro convert_and_set_value(property) %}
-{% if property.converter %}
-{{set_value(property)}}(StyleBuilderConverter::{{property.converter}}(state, value));
-{# TODO(sashab): Remove this list from this file. #}
-{% elif property.type_name in ['short', 'unsigned short', 'int', 'unsigned int', 'unsigned', 'float', 'LineClampValue'] %}
-{{set_value(property)}}(ToCSSPrimitiveValue(value).ConvertTo<{{property.type_name}}>());
-{%- else %}
-{{set_value(property)}}(ToCSSIdentifierValue(value).ConvertTo<{{property.type_name}}>());
-{%- endif %}
-{% endmacro %}
 {% macro set_is_inherited(property) %}
 state.Style()->{{property.is_inherited_setter}}
 {% endmacro %}
 
 namespace blink {
 
-{% for property_id, property in properties.items() if property.should_declare_functions %}
-{% set apply_type = property.apply_type %}
+{% for property_id, property in properties.items()
+       if property.should_declare_functions
+          and not property.use_api_in_stylebuilder %}
 {% if not property.custom_initial %}
 {{declare_initial_function(property_id)}} {
   {% if property.svg %}
@@ -99,7 +90,7 @@ namespace blink {
 {% set vector = attribute + "List()" %}
 {{declare_initial_function(property_id)}} {
   CSS{{animation}}Data& data = state.Style()->Access{{animation}}s();
-  data.{{vector}}.Clear();
+  data.{{vector}}.clear();
   data.{{vector}}.push_back(CSS{{animation}}Data::Initial{{attribute}}());
 }
 
@@ -113,7 +104,7 @@ namespace blink {
 
 {{declare_value_function(property_id)}} {
   CSS{{animation}}Data& data = state.Style()->Access{{animation}}s();
-  data.{{vector}}.Clear();
+  data.{{vector}}.clear();
   for (auto& listValue : ToCSSValueList(value))
     data.{{vector}}.push_back(CSSToStyleMap::MapAnimation{{attribute}}(*listValue));
 }
@@ -456,11 +447,11 @@ while (currParent && currParent->Is{{fill_type}}Set()) {
   state.Style()->SetGridTemplate{{type}}s(ComputedStyle::InitialGridTemplate{{type}}s());
   state.Style()->SetNamedGrid{{type}}Lines(ComputedStyle::InitialNamedGrid{{type}}Lines());
   state.Style()->SetOrderedNamedGrid{{type}}Lines(ComputedStyle::InitialOrderedNamedGrid{{type}}Lines());
-  state.Style()->SetGridAutoRepeat{{type}}s(ComputedStyle::InitialGridAutoRepeatTracks());
-  state.Style()->SetGridAutoRepeat{{type}}sInsertionPoint(ComputedStyle::InitialGridAutoRepeatInsertionPoint());
+  state.Style()->SetGridAutoRepeat{{type}}s(ComputedStyle::InitialGridAutoRepeat{{type}}s());
+  state.Style()->SetGridAutoRepeat{{type}}sInsertionPoint(ComputedStyle::InitialGridAutoRepeat{{type}}sInsertionPoint());
   state.Style()->SetAutoRepeatNamedGrid{{type}}Lines(ComputedStyle::InitialNamedGrid{{type}}Lines());
   state.Style()->SetAutoRepeatOrderedNamedGrid{{type}}Lines(ComputedStyle::InitialOrderedNamedGrid{{type}}Lines());
-  state.Style()->SetGridAutoRepeat{{type}}sType(ComputedStyle::InitialGridAutoRepeatType());
+  state.Style()->SetGridAutoRepeat{{type}}sType(ComputedStyle::InitialGridAutoRepeat{{type}}sType());
 
 }
 

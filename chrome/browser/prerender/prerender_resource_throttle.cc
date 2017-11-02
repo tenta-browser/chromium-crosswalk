@@ -120,10 +120,10 @@ void PrerenderResourceThrottle::WillStartRequest(bool* defer) {
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&PrerenderResourceThrottle::WillStartRequestOnUI, AsWeakPtr(),
-                 request_->method(), info->GetResourceType(), request_->url(),
-                 info->GetWebContentsGetterForRequest(),
-                 prerender_throttle_info_));
+      base::BindOnce(&PrerenderResourceThrottle::WillStartRequestOnUI,
+                     AsWeakPtr(), request_->method(), info->GetResourceType(),
+                     request_->url(), info->GetWebContentsGetterForRequest(),
+                     prerender_throttle_info_));
 }
 
 void PrerenderResourceThrottle::WillRedirectRequest(
@@ -138,10 +138,11 @@ void PrerenderResourceThrottle::WillRedirectRequest(
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&PrerenderResourceThrottle::WillRedirectRequestOnUI,
-                 AsWeakPtr(), header, info->GetResourceType(), info->IsAsync(),
-                 IsNoStoreResponse(*request_), redirect_info.new_url,
-                 info->GetWebContentsGetterForRequest()));
+      base::BindOnce(&PrerenderResourceThrottle::WillRedirectRequestOnUI,
+                     AsWeakPtr(), header, info->GetResourceType(),
+                     info->IsAsync(), IsNoStoreResponse(*request_),
+                     redirect_info.new_url,
+                     info->GetWebContentsGetterForRequest()));
 }
 
 void PrerenderResourceThrottle::WillProcessResponse(bool* defer) {
@@ -157,10 +158,10 @@ void PrerenderResourceThrottle::WillProcessResponse(bool* defer) {
 
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&PrerenderResourceThrottle::WillProcessResponseOnUI,
-                 content::IsResourceTypeFrame(info->GetResourceType()),
-                 IsNoStoreResponse(*request_), redirect_count,
-                 prerender_throttle_info_));
+      base::BindOnce(&PrerenderResourceThrottle::WillProcessResponseOnUI,
+                     content::IsResourceTypeFrame(info->GetResourceType()),
+                     IsNoStoreResponse(*request_), redirect_count,
+                     prerender_throttle_info_));
 }
 
 const char* PrerenderResourceThrottle::GetNameForLogging() const {
@@ -202,8 +203,8 @@ void PrerenderResourceThrottle::WillStartRequestOnUI(
                                  prerender_contents->prerender_manager());
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&PrerenderResourceThrottle::SetPrerenderMode, throttle,
-                   prerender_contents->prerender_mode()));
+        base::BindOnce(&PrerenderResourceThrottle::SetPrerenderMode, throttle,
+                       prerender_contents->prerender_mode()));
 
     // Abort any prerenders that spawn requests that use unsupported HTTP
     // methods or schemes.
@@ -218,18 +219,14 @@ void PrerenderResourceThrottle::WillStartRequestOnUI(
       cancel = true;
     } else if (!PrerenderManager::DoesSubresourceURLHaveValidScheme(url) &&
                resource_type != content::RESOURCE_TYPE_MAIN_FRAME) {
-      // For ORIGIN_OFFLINE, simply cancel this invalid request and continue.
-      // For other origins, fail the prerender here.
-      if (prerender_contents->origin() != ORIGIN_OFFLINE) {
-        // Destroying the prerender for unsupported scheme only for non-main
-        // resource to allow chrome://crash to actually crash in the
-        // *RendererCrash tests instead of being intercepted here. The
-        // unsupported
-        // scheme for the main resource is checked in WillRedirectRequestOnUI()
-        // and PrerenderContents::CheckURL(). See http://crbug.com/673771.
-        prerender_contents->Destroy(FINAL_STATUS_UNSUPPORTED_SCHEME);
-        ReportUnsupportedPrerenderScheme(url);
-      }
+      // Destroying the prerender for unsupported scheme only for non-main
+      // resource to allow chrome://crash to actually crash in the
+      // *RendererCrash tests instead of being intercepted here. The
+      // unsupported
+      // scheme for the main resource is checked in WillRedirectRequestOnUI()
+      // and PrerenderContents::CheckURL(). See http://crbug.com/673771.
+      prerender_contents->Destroy(FINAL_STATUS_UNSUPPORTED_SCHEME);
+      ReportUnsupportedPrerenderScheme(url);
       cancel = true;
 #if defined(OS_ANDROID)
     } else if (resource_type == content::RESOURCE_TYPE_FAVICON) {
@@ -250,9 +247,9 @@ void PrerenderResourceThrottle::WillStartRequestOnUI(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(cancel ? &PrerenderResourceThrottle::Cancel
-                        : &PrerenderResourceThrottle::ResumeHandler,
-                 throttle));
+      base::BindOnce(cancel ? &PrerenderResourceThrottle::Cancel
+                            : &PrerenderResourceThrottle::ResumeHandler,
+                     throttle));
 }
 
 // static
@@ -297,9 +294,9 @@ void PrerenderResourceThrottle::WillRedirectRequestOnUI(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(cancel ? &PrerenderResourceThrottle::Cancel
-                        : &PrerenderResourceThrottle::ResumeHandler,
-                 throttle));
+      base::BindOnce(cancel ? &PrerenderResourceThrottle::Cancel
+                            : &PrerenderResourceThrottle::ResumeHandler,
+                     throttle));
 }
 
 // static

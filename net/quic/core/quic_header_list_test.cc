@@ -4,16 +4,18 @@
 
 #include "net/quic/core/quic_header_list.h"
 
-#include "net/quic/core/quic_flags.h"
+#include "net/quic/platform/api/quic_flags.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/quic_test_utils.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
 
 namespace net {
 
+class QuicHeaderListTest : public QuicTest {};
+
 // This test verifies that QuicHeaderList accumulates header pairs in order.
-TEST(QuicHeaderListTest, OnHeader) {
+TEST_F(QuicHeaderListTest, OnHeader) {
   QuicHeaderList headers;
   headers.OnHeader("foo", "bar");
   headers.OnHeader("april", "fools");
@@ -22,29 +24,36 @@ TEST(QuicHeaderListTest, OnHeader) {
   EXPECT_EQ("{ foo=bar, april=fools, beep=, }", headers.DebugString());
 }
 
-TEST(QuicHeaderListTest, TooLarge) {
+TEST_F(QuicHeaderListTest, TooLarge) {
   QuicHeaderList headers;
   string key = "key";
   string value(1 << 18, '1');
+  // Send a header that exceeds max_header_list_size.
   headers.OnHeader(key, value);
-  headers.OnHeaderBlockEnd(key.size() + value.size());
+  // Send a second header exceeding max_header_list_size.
+  headers.OnHeader(key + "2", value);
+  // We should not allocate more memory after exceeding max_header_list_size.
+  EXPECT_LT(headers.DebugString().size(), 2 * value.size());
+  size_t total_bytes = 2 * (key.size() + value.size()) + 1;
+  headers.OnHeaderBlockEnd(total_bytes, total_bytes);
   EXPECT_TRUE(headers.empty());
 
   EXPECT_EQ("{ }", headers.DebugString());
 }
 
-TEST(QuicHeaderListTest, NotTooLarge) {
+TEST_F(QuicHeaderListTest, NotTooLarge) {
   QuicHeaderList headers;
-  headers.set_max_uncompressed_header_bytes(1 << 20);
+  headers.set_max_header_list_size(1 << 20);
   string key = "key";
   string value(1 << 18, '1');
   headers.OnHeader(key, value);
-  headers.OnHeaderBlockEnd(key.size() + value.size());
+  size_t total_bytes = key.size() + value.size();
+  headers.OnHeaderBlockEnd(total_bytes, total_bytes);
   EXPECT_FALSE(headers.empty());
 }
 
 // This test verifies that QuicHeaderList is copyable and assignable.
-TEST(QuicHeaderListTest, IsCopyableAndAssignable) {
+TEST_F(QuicHeaderListTest, IsCopyableAndAssignable) {
   QuicHeaderList headers;
   headers.OnHeader("foo", "bar");
   headers.OnHeader("april", "fools");

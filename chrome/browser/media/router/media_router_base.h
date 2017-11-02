@@ -12,9 +12,11 @@
 #include "base/callback_list.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "chrome/browser/media/router/media_route.h"
+#include "build/build_config.h"
+#include "chrome/browser/media/router/issue_manager.h"
 #include "chrome/browser/media/router/media_router.h"
 #include "chrome/browser/media/router/media_routes_observer.h"
+#include "chrome/common/media_router/media_route.h"
 
 namespace media_router {
 
@@ -22,17 +24,22 @@ class MediaRouterBase : public MediaRouter {
  public:
   ~MediaRouterBase() override;
 
+  // MediaRouter implementation.
   std::unique_ptr<PresentationConnectionStateSubscription>
   AddPresentationConnectionStateChangedCallback(
       const MediaRoute::Id& route_id,
       const content::PresentationConnectionStateChangedCallback& callback)
       override;
-
-  // Called when the incognito profile for this instance is being shut down.
-  // This will terminate all incognito media routes.
   void OnIncognitoProfileShutdown() override;
-
+  IssueManager* GetIssueManager() final;
   std::vector<MediaRoute> GetCurrentRoutes() const override;
+#if !defined(OS_ANDROID)
+  scoped_refptr<MediaRouteController> GetRouteController(
+      const MediaRoute::Id& route_id) override;
+#endif  // !defined(OS_ANDROID)
+  void RegisterRemotingSource(int32_t tab_id,
+                              CastRemotingConnector* remoting_source) override;
+  void UnregisterRemotingSource(int32_t tab_id) override;
 
  protected:
   FRIEND_TEST_ALL_PREFIXES(MediaRouterMojoImplTest,
@@ -59,6 +66,10 @@ class MediaRouterBase : public MediaRouter {
   // JoinRoute().
   bool HasJoinableRoute() const;
 
+  // Returns a pointer to the MediaRoute whose ID is |route_id|, or nullptr
+  // if not found.
+  const MediaRoute* GetRoute(const MediaRoute::Id& route_id) const;
+
   using PresentationConnectionStateChangedCallbacks = base::CallbackList<void(
       const content::PresentationConnectionStateChangeInfo&)>;
 
@@ -66,6 +77,11 @@ class MediaRouterBase : public MediaRouter {
       MediaRoute::Id,
       std::unique_ptr<PresentationConnectionStateChangedCallbacks>>
       presentation_connection_state_callbacks_;
+
+  // Stores CastRemotingConnectors that can be connected to the MediaRemoter
+  // for media remoting when MediaRemoter is started. The map uses the tab ID
+  // as the key.
+  std::unordered_map<int32_t, CastRemotingConnector*> remoting_sources_;
 
  private:
   friend class MediaRouterBaseTest;
@@ -84,6 +100,14 @@ class MediaRouterBase : public MediaRouter {
 
   // KeyedService
   void Shutdown() override;
+
+#if !defined(OS_ANDROID)
+  // MediaRouter
+  void DetachRouteController(const MediaRoute::Id& route_id,
+                             MediaRouteController* controller) override;
+#endif  // !defined(OS_ANDROID)
+
+  IssueManager issue_manager_;
 
   std::unique_ptr<InternalMediaRoutesObserver> internal_routes_observer_;
   bool initialized_;

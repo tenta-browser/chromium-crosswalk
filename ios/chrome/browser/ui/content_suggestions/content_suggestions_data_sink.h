@@ -5,6 +5,7 @@
 #ifndef IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_DATA_SINK_H_
 #define IOS_CHROME_BROWSER_UI_CONTENT_SUGGESTIONS_CONTENT_SUGGESTIONS_DATA_SINK_H_
 
+@class CollectionViewItem;
 @class ContentSuggestionIdentifier;
 @class ContentSuggestionsSectionInformation;
 
@@ -14,8 +15,16 @@
 
 // Notifies the Data Sink that new data is available for the section identified
 // by |sectionInfo|.
+// If |forceReload| is YES, the section is reloaded with the new suggestions.
+// If |forceReload| is NO, the new data are loaded only if the section is empty.
 - (void)dataAvailableForSection:
-    (ContentSuggestionsSectionInformation*)sectionInfo;
+            (ContentSuggestionsSectionInformation*)sectionInfo
+                    forceReload:(BOOL)forceReload;
+
+// Notifies the Data Sink that the section identified by |sectionInfo|
+// |isLoading| or not.
+- (void)section:(ContentSuggestionsSectionInformation*)sectionInfo
+      isLoading:(BOOL)isLoading;
 
 // The suggestion associated with |suggestionIdentifier| has been invalidated by
 // the backend data source and should be cleared now. This is why this method is
@@ -35,8 +44,8 @@
 // now, removing the current content.
 - (void)reloadSection:(ContentSuggestionsSectionInformation*)sectionInfo;
 
-// Notifies the Data Sink that a new favicon is available for the |URL|.
-- (void)faviconAvailableForURL:(const GURL&)URL;
+// Notifies the data sink that the |item| has changed.
+- (void)itemHasChanged:(CollectionViewItem<SuggestedContent>*)item;
 
 @end
 

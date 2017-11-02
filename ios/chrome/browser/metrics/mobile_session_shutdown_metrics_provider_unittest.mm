@@ -8,6 +8,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/strings/string16.h"
 #include "base/test/histogram_tester.h"
 #include "base/test/test_simple_task_runner.h"
 #include "components/metrics/metrics_pref_names.h"
@@ -18,6 +19,7 @@
 #include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest-param-test.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "testing/platform_test.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -66,7 +68,8 @@ class MobileSessionShutdownMetricsProviderForTesting
 };
 
 class MobileSessionShutdownMetricsProviderTest
-    : public testing::TestWithParam<int> {
+    : public PlatformTest,
+      public testing::WithParamInterface<int> {
  public:
   MobileSessionShutdownMetricsProviderTest() {
     metrics::MetricsService::RegisterPrefs(local_state_.registry());
@@ -147,7 +150,7 @@ TEST_P(MobileSessionShutdownMetricsProviderTest, ProvideStabilityMetrics) {
                           was_last_shutdown_clean);
   metrics_state_ = metrics::MetricsStateManager::Create(
       &local_state_, new metrics::TestEnabledStateProvider(false, false),
-      metrics::MetricsStateManager::StoreClientInfoCallback(),
+      base::string16(), metrics::MetricsStateManager::StoreClientInfoCallback(),
       metrics::MetricsStateManager::LoadClientInfoCallback());
   metrics_service_.reset(new metrics::MetricsService(
       metrics_state_.get(), &metrics_client_, &local_state_));
@@ -171,7 +174,7 @@ TEST_P(MobileSessionShutdownMetricsProviderTest, ProvideStabilityMetrics) {
 
   // Now call the method under test and verify exactly one sample is written to
   // the expected bucket.
-  metrics_provider_->ProvideInitialStabilityMetrics(nullptr);
+  metrics_provider_->ProvidePreviousSessionData(nullptr);
   histogram_tester.ExpectUniqueSample("Stability.MobileSessionShutdownType",
                                       expected_buckets[GetParam()], 1);
 }
