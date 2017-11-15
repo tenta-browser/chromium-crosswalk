@@ -292,21 +292,6 @@ TEST_F(TrialTokenValidatorTest, ValidatorRespectsDisabledTokens) {
                 kSampleToken, appropriate_origin_, &feature, Now()));
 }
 
-TEST_F(TrialTokenValidatorTest, ValidatorRespectsDisabledTokens) {
-  std::string feature;
-  // Disable an irrelevant token; token should still validate
-  DisableToken(expired_token_signature_);
-  EXPECT_EQ(blink::WebOriginTrialTokenStatus::Success,
-            TrialTokenValidator::ValidateToken(kSampleToken,
-                                               appropriate_origin_, &feature));
-  EXPECT_EQ(kAppropriateFeatureName, feature);
-  // Disable the token; it should no longer be valid
-  DisableToken(valid_token_signature_);
-  EXPECT_EQ(blink::WebOriginTrialTokenStatus::TokenDisabled,
-            TrialTokenValidator::ValidateToken(kSampleToken,
-                                               appropriate_origin_, &feature));
-}
-
 TEST_F(TrialTokenValidatorTest, ValidateRequestInsecure) {
   response_headers_->AddHeader(std::string("Origin-Trial: ") +
                                kInsecureOriginToken);

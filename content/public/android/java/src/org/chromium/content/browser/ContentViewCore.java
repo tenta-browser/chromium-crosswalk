@@ -1693,7 +1693,7 @@ public class ContentViewCore implements AccessibilityStateChangeListener, Displa
      * @param delta the factor by which the current page scale should be multiplied by.
      * @return whether the gesture was sent.
      */
-    private boolean pinchByDelta(float delta) {
+    public boolean pinchByDelta(float delta) {
         if (mNativeContentViewCore == 0) return false;
 
         long timeMs = SystemClock.uptimeMillis();

@@ -1640,8 +1640,7 @@ void LayoutText::SecureText(UChar mask) {
 void LayoutText::SetText(RefPtr<StringImpl> text, bool force) {
   DCHECK(text);
 
-  bool equal = Equal(text_.Impl(), text.Get());
-  if (equal && !force)
+  if (!force && Equal(text_.Impl(), text.Get()))
     return;
 
   SetTextInternal(std::move(text));
@@ -1654,14 +1653,8 @@ void LayoutText::SetText(RefPtr<StringImpl> text, bool force) {
         LayoutInvalidationReason::kTextChanged);
   known_to_have_no_overflow_and_no_fallback_fonts_ = false;
 
-  // Don't bother updating the AX tree if there's no change. Otherwise, when
-  // typing in password fields, we would announce each "dot" twice: once when a
-  // character is typed, and second when that character is hidden.
-  if (!equal) {
-    AXObjectCache* cache = GetDocument().ExistingAXObjectCache();
-    if (cache)
-      cache->TextChanged(this);
-  }
+  if (AXObjectCache* cache = GetDocument().ExistingAXObjectCache())
+    cache->TextChanged(this);
 
   TextAutosizer* text_autosizer = GetDocument().GetTextAutosizer();
   if (text_autosizer)

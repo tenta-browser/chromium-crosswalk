@@ -1369,9 +1369,6 @@ DirectoryTree.prototype.decorateDirectoryTree = function(
   chrome.fileManagerPrivate.onDirectoryChanged.addListener(
       this.privateOnDirectoryChangedBound_);
 
-  this.scrollBar_ = new ScrollBar();
-  this.scrollBar_.initialize(this.parentElement, this);
-
   /**
    * Flag to show fake entries in the tree.
    * @type {boolean}

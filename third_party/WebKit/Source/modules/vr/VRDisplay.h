@@ -152,8 +152,6 @@ class VRDisplay final : public EventTargetWithInlineData,
 
   bool FocusedOrPresenting();
 
-  bool FocusedOrPresenting();
-
   ScriptedAnimationController& EnsureScriptedAnimationController(Document*);
   void ProcessScheduledAnimations(double timestamp);
   void ProcessScheduledWindowAnimations(double timestamp);

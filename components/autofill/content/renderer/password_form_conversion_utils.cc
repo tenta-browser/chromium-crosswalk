@@ -785,9 +785,4 @@ std::string GetSignOnRealm(const GURL& origin) {
   return origin.ReplaceComponents(rep).spec();
 }
 
-std::string GetSignOnRealm(const GURL& origin) {
-  GURL::Replacements rep;
-  rep.SetPathStr("");
-  return origin.ReplaceComponents(rep).spec();
-}
 }  // namespace autofill

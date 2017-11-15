@@ -196,8 +196,6 @@ void WebContentsViewAndroid::Focus() {
   RenderWidgetHostViewAndroid* rwhv = GetRenderWidgetHostViewAndroid();
   if (web_contents_->ShowingInterstitialPage()) {
     web_contents_->GetInterstitialPage()->Focus();
-    if (content_view_core_)
-      content_view_core_->ForceUpdateImeAdapter(rwhv->GetNativeImeAdapter());
   } else {
     rwhv->Focus();
   }

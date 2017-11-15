@@ -246,20 +246,14 @@ class ScheduledReload final : public ScheduledNavigation {
     std::unique_ptr<UserGestureIndicator> gesture_indicator =
         CreateUserGestureIndicator();
     ResourceRequest resource_request = frame->Loader().ResourceRequestForReload(
-        RuntimeEnabledFeatures::locationHardReloadEnabled()
-            ? kFrameLoadTypeReloadBypassingCache
-            : kFrameLoadTypeReload,
-        KURL(), ClientRedirectPolicy::kClientRedirect);
+        kFrameLoadTypeReload, KURL(), ClientRedirectPolicy::kClientRedirect);
     if (resource_request.IsNull())
       return;
     FrameLoadRequest request = FrameLoadRequest(nullptr, resource_request);
     request.SetClientRedirect(ClientRedirectPolicy::kClientRedirect);
     MaybeLogScheduledNavigationClobber(
         ScheduledNavigationType::kScheduledReload, frame);
-    frame->Loader().Load(request,
-                         RuntimeEnabledFeatures::locationHardReloadEnabled()
-                             ? kFrameLoadTypeReloadBypassingCache
-                             : kFrameLoadTypeReload);
+    frame->Loader().Load(request, kFrameLoadTypeReload);
   }
 
   KURL Url() const override { return frame_->GetDocument()->Url(); }

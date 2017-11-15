@@ -502,10 +502,6 @@ bool CompositorImpl::IsForSubframe() {
   return false;
 }
 
-bool CompositorImpl::IsForSubframe() {
-  return false;
-}
-
 ui::UIResourceProvider& CompositorImpl::GetUIResourceProvider() {
   return *this;
 }
@@ -519,7 +515,7 @@ void CompositorImpl::SetRootLayer(scoped_refptr<cc::Layer> root_layer) {
     subroot_layer_->RemoveFromParent();
     subroot_layer_ = NULL;
   }
-  if (root_window_->GetLayer() && root_layer != nullptr) {
+  if (root_window_->GetLayer()) {
     subroot_layer_ = root_window_->GetLayer();
     root_window_->GetLayer()->AddChild(root_layer);
   }

@@ -365,4 +365,8 @@ Still reading?
     <!-- TODO(crbug.com/739746): Remove after lint version has been updated. -->
     <ignore regexp="remoting/android/java/res/mipmap-anydpi-v26/ic_launcher.xml"/>
   </issue>
+  <issue id="StaticFieldLeak" severity="ignore">
+    <!-- TODO(iotto) : Fix XWalkCoreWrapper.java -->
+    <ignore regexp="xwalk/runtime/android/core/src/org/xwalk/core/XWalkCoreWrapper.java" />
+  </issue>
 </lint>

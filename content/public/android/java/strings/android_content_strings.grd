@@ -93,6 +93,9 @@
   </translations>
   <release allow_pseudo="false" seq="1">
     <messages fallback_to_english="true">
+      <message name="IDS_PASTE_AS_PLAIN_TEXT" desc="">
+        Paste as plain text
+      </message>
       <message name="IDS_ACTIONBAR_SHARE" desc="Contextual action bar item for sharing a block of text via email, or other method. [CHAR-LIMIT=24]">
         Share
       </message>
