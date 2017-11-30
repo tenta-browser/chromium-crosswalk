@@ -6,7 +6,7 @@ vars = {
   'boringssl_revision':
     'e3bb51cb2360fca5b87d559fc263b2763bd14739',
   'buildspec_platforms':
-    'all',
+    'win, win64, mac64, linux64, ios, android, chromeos',
   'buildtools_revision':
     '84fdc992430562c77356707e9a047c7c691b7c3e',
   'catapult_revision':
@@ -80,7 +80,7 @@ deps = {
   'src/third_party/SPIRV-Tools/src':
     (Var("chromium_git")) + '/external/github.com/KhronosGroup/SPIRV-Tools.git@9166854ac93ef81b026e943ccd230fed6c8b8d3c',
   'src/third_party/angle':
-    (Var("chromium_git")) + '/angle/angle.git@e8ef2bc4bd019fd6080db5a1a5f0dd18bc0ccd25',
+    (Var("chromium_git")) + '/angle/angle.git@842c43ae67bad842fa0364e625fdee34e8857aa8',
   'src/third_party/bidichecker':
     (Var("chromium_git")) + '/external/bidichecker/lib.git@97f2aa645b74c28c57eca56992235c79850fa9e0',
   'src/third_party/boringssl/src':
@@ -186,7 +186,7 @@ deps = {
   'src/tools/swarming_client':
     (Var("chromium_git")) + '/infra/luci/client-py.git@72b6a2dc604673b84794937cb3da3fd755ccc4cd',
   'src/v8':
-    (Var("chromium_git")) + '/v8/v8.git@5eb0505f3301063000480cc2ca346e61f717a616'
+    (Var("chromium_git")) + '/v8/v8.git@35308de856d7c4fc130d84983b3f001b8b4cf558'
 }
 
 deps_os = {
