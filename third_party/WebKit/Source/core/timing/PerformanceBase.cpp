@@ -501,7 +501,7 @@ void PerformanceBase::DeliverObservationsTimerFired(TimerBase*) {
 
 // static
 double PerformanceBase::ClampTimeResolution(double time_seconds) {
-  const double kResolutionSeconds = 0.000005;
+  const double kResolutionSeconds = 0.000020;
   return floor(time_seconds / kResolutionSeconds) * kResolutionSeconds;
 }
 
