@@ -72,7 +72,6 @@ public class ResourceExtractor {
             OutputStream os = null;
             try {
                 os = new FileOutputStream(outFile);
-                Log.i(TAG, "Extracting resource %s", outFile);
 
                 int count = 0;
                 while ((count = is.read(buffer, 0, BUFFER_SIZE)) != -1) {
@@ -92,7 +91,6 @@ public class ResourceExtractor {
         }
 
         private void doInBackgroundImpl() {
-            Log.d(TAG, "ResourceExtractor running .... %s", Arrays.toString(mAssetsToExtract));
             final File outputDir = getOutputDir();
             final File appDataDir = getAppDataDir();
 

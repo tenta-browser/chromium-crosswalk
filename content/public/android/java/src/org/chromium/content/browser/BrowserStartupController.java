@@ -289,7 +289,6 @@ public class BrowserStartupController {
     void prepareToStartBrowserProcess(
             final boolean singleProcess, final Runnable completionCallback)
                     throws ProcessInitException {
-        Log.i(TAG, "Initializing chromium process, singleProcess=%b", singleProcess);
 
         // Normally Main.java will have kicked this off asynchronously for Chrome. But other
         // ContentView apps like tests also need them so we make sure we've extracted resources
