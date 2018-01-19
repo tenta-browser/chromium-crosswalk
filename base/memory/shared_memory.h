@@ -208,7 +208,7 @@ class BASE_EXPORT SharedMemory {
   // that takes ownership of the handle. As such, it's not valid to pass the
   // sample handle to the IPC subsystem twice. Returns an invalid handle on
   // failure.
-  SharedMemoryHandle GetReadOnlyHandle();
+  SharedMemoryHandle GetReadOnlyHandle() const;
 
   // Returns an ID for the mapped region. This is ID of the SharedMemoryHandle
   // that was mapped. The ID is valid even after the SharedMemoryHandle is
@@ -226,7 +226,7 @@ class BASE_EXPORT SharedMemory {
   // before being mapped.
   bool external_section_ = false;
   string16 name_;
-#else
+#elif !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
   // If valid, points to the same memory region as shm_, but with readonly
   // permissions.
   SharedMemoryHandle readonly_shm_;
