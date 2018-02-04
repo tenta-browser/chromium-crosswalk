@@ -300,7 +300,7 @@ public class ContentView extends FrameLayout
         if (mContentViewCore != null) {
             return mContentViewCore.awakenScrollBars(startDelay, invalidate);
         }
-        return 0;
+        return false;
     }
 
     @Override
