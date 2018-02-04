@@ -231,51 +231,76 @@ public class ContentView extends FrameLayout
      */
     @Override
     public void scrollBy(int x, int y) {
-        mContentViewCore.scrollBy(x, y);
+        if (mContentViewCore != null) {
+            mContentViewCore.scrollBy(x, y);
+        }
     }
 
     @Override
     public void scrollTo(int x, int y) {
-        mContentViewCore.scrollTo(x, y);
+        if (mContentViewCore != null) {
+            mContentViewCore.scrollTo(x, y);
+        }
     }
 
     @Override
     protected int computeHorizontalScrollExtent() {
         // TODO(dtrainor): Need to expose scroll events properly to public. Either make getScroll*
         // work or expose computeHorizontalScrollOffset()/computeVerticalScrollOffset as public.
-        return mContentViewCore.computeHorizontalScrollExtent();
+        if (mContentViewCore != null) {
+            return mContentViewCore.computeHorizontalScrollExtent();
+        }
+        return 0;
     }
 
     @Override
     protected int computeHorizontalScrollOffset() {
-        return mContentViewCore.computeHorizontalScrollOffset();
+        if (mContentViewCore != null) {
+            return mContentViewCore.computeHorizontalScrollOffset();
+        }
+        return 0;
     }
 
     @Override
     protected int computeHorizontalScrollRange() {
-        return mContentViewCore.computeHorizontalScrollRange();
+        if (mContentViewCore != null) {
+            return mContentViewCore.computeHorizontalScrollRange();
+        }
+        return 0;
     }
 
     @Override
     protected int computeVerticalScrollExtent() {
-        return mContentViewCore.computeVerticalScrollExtent();
+        if (mContentViewCore != null) {
+            return mContentViewCore.computeVerticalScrollExtent();
+        }
+        return 0;
     }
 
     @Override
     protected int computeVerticalScrollOffset() {
-        return mContentViewCore.computeVerticalScrollOffset();
+        if (mContentViewCore != null) {
+            return mContentViewCore.computeVerticalScrollOffset();
+        }
+        return 0;
     }
 
     @Override
     protected int computeVerticalScrollRange() {
-        return mContentViewCore.computeVerticalScrollRange();
+        if (mContentViewCore != null) {
+            return mContentViewCore.computeVerticalScrollRange();
+        }
+        return 0;
     }
 
     // End FrameLayout overrides.
 
     @Override
     public boolean awakenScrollBars(int startDelay, boolean invalidate) {
-        return mContentViewCore.awakenScrollBars(startDelay, invalidate);
+        if (mContentViewCore != null) {
+            return mContentViewCore.awakenScrollBars(startDelay, invalidate);
+        }
+        return 0;
     }
 
     @Override
